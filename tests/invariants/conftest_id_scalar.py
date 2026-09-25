@@ -1039,7 +1039,7 @@ _SERIES_XT: tuple[str, ...] = ()
 #: ``team_shape_xfns`` (plain) and ``off_ball_run_value_xfns`` (xt) as dead-parameter cascade.
 #: ``space_creation_xfns`` REMAINS and is the last member: its chain ends at
 #: ``_compute_space_creation_for_action``, whose unread ``home_team_id`` is a DELIBERATE
-#: retention recorded in CLAUDE.md ("D3 retires it by disuse, not removal").
+#: retention recorded in AGENTS.md ("D3 retires it by disuse, not removal").
 _XFNS_PLAIN = ("space_creation_xfns",)
 _XFNS_XT: tuple[str, ...] = ()
 
@@ -1220,7 +1220,7 @@ COVERED_BY_AGGREGATOR_GATE: dict[str, str] = {
         # so cleaning the sink cascaded to the public surface. `add_off_ball_runs` and
         # `add_space_creation` REMAIN: the first feeds `_off_ball_runs_kernel`, whose unread copy
         # is preserved deliberately (its Gate B green IS the measurement that it is unread), and
-        # the second ends at `_compute_space_creation_for_action`, the CLAUDE.md-recorded
+        # the second ends at `_compute_space_creation_for_action`, the AGENTS.md-recorded
         # "retire by disuse, not removal" case.
         "add_ghost_gk",
         "add_off_ball_runs",

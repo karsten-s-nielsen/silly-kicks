@@ -3,7 +3,7 @@
 The SkillCorner S1 geometry gate needs built tracking, so ``load_match(events_only=True)`` cannot run
 it and stays a PURE loader (it consults no artifact). An events-only consumer admits an S1-excluded
 match ONLY if its EVENTS pass the Task-0 event-side check, recorded in a committed, provenance-stamped
-verdict artifact. "Policy lives at the edge, never in the shared engine" (CLAUDE.md): this module is
+verdict artifact. "Policy lives at the edge, never in the shared engine" (AGENTS.md): this module is
 that edge, and Rule D makes it the one sanctioned events-only entry for consumers.
 
 Imports are QUALIFIED (``from scripts._xxx import ...``), not bare: this module is imported as

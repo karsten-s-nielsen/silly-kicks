@@ -4,7 +4,7 @@ Task 3 wires two more aggregators into the ``_fov_registry`` engine (Task 2). Ea
 an OPT-IN ``visible_area`` kwarg that appends ``<col>_observed_fraction`` / ``_observed_source``
 companions for its region-based metric(s), reusing the ONE companion engine.
 
-Every assertion is BOTH-sided (CLAUDE.md): the PRIMARY columns are byte-identical with and without
+Every assertion is BOTH-sided (AGENTS.md): the PRIMARY columns are byte-identical with and without
 ``visible_area`` (the companion path touches no metric value), and the COMPANION fraction MOVES with
 the crop -- a full-pitch polygon observes the whole region (fraction ~1.0) while a partial crop that
 cuts through the region yields a fraction strictly inside (0, 1) (the non-vacuity guard). The
@@ -305,7 +305,7 @@ def test_defensive_line_companion_invariant_to_outfield_shift():
 
     # Non-vacuity: the shift genuinely moved outfield positions.
     assert not f["x"].equals(f2["x"])
-    # Counterfactual non-vacuity (CLAUDE.md): the shift genuinely moved the PRIMARY metric on a
+    # Counterfactual non-vacuity (AGENTS.md): the shift genuinely moved the PRIMARY metric on a
     # finite row -- so the companion being UNCHANGED is a real frame-independence result (zone is
     # geometry, not player-derived), not a computation that silently produced nothing. Compare only
     # rows finite on BOTH sides, since NaN != NaN would make a bare `.any()` vacuously true.

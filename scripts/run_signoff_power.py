@@ -72,7 +72,7 @@ def build_design_matrix(spells, confounders):
 def _upstream_provenance(table_path: str, *, allow_dirty: bool) -> dict:
     """Read the provenance of an INPUT table produced by another driver.
 
-    CLAUDE.md states the rule this implements: an artifact whose inputs came from another driver
+    AGENTS.md states the rule this implements: an artifact whose inputs came from another driver
     needs provenance on BOTH, or the clean SHA on the downstream metrics launders the dirty
     upstream input. The producers write a `*_manifest.json` beside their table carrying
     `run_commit` / `run_tree_dirty`; a table with NO manifest is reported as unknown rather than

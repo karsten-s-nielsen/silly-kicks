@@ -45,7 +45,7 @@ def test_fidelity_1_coordinates_are_pinned():
             ]
         ),
         rtol=0,
-        # atol CHOSEN, not inherited (CLAUDE.md/ADR-050): this is a COMMITTED artifact compared in
+        # atol CHOSEN, not inherited (AGENTS.md/ADR-050): this is a COMMITTED artifact compared in
         # CI across ubuntu and windows, the same shape as the feature contract. 1e-6 m is a
         # micrometre -- orders of magnitude below any real coordinate change, and above the float
         # noise these values actually carry (e.g. 1.2750000000000057, 0.8924999999999983), which is
@@ -69,7 +69,7 @@ def test_fidelity_2_coordinates_are_pinned():
             ]
         ),
         rtol=0,
-        # atol CHOSEN, not inherited (CLAUDE.md/ADR-050): this is a COMMITTED artifact compared in
+        # atol CHOSEN, not inherited (AGENTS.md/ADR-050): this is a COMMITTED artifact compared in
         # CI across ubuntu and windows, the same shape as the feature contract. 1e-6 m is a
         # micrometre -- orders of magnitude below any real coordinate change, and above the float
         # noise these values actually carry (e.g. 1.2750000000000057, 0.8924999999999983), which is

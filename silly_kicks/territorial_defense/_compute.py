@@ -8,7 +8,7 @@ player id (ADR-019), raw id emitted; a conserving :class:`TerritorialDefenseRepo
 HONEST LIMIT -- this metric is validated as an INSTRUMENT, NOT as player-attributable. The
 marginal-removal delta is team-conditioned by construction, and on a single-tournament /
 national-team corpus the defender-vs-team confound is unidentifiable, so per-defender numbers are
-NOT a defender ranking (see NOTICE / CLAUDE.md; a crossed defender+team ICC over a multi-club
+NOT a defender ranking (see NOTICE / AGENTS.md; a crossed defender+team ICC over a multi-club
 transfer corpus is the future gate).
 
 See NOTICE for full bibliographic citations.

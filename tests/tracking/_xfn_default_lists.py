@@ -3,7 +3,7 @@
 Three guards carried three BYTE-IDENTICAL copies of this discovery rule, each pinned only by
 `assert len(lists) >= 10` against a real population of 19. A floor cannot detect an omission -- and
 an omission here means a NEW default list that no leakage guard sweeps, i.e. a leaky factory could
-be opted into it with nothing looking. CLAUDE.md calls that a HybridVAEP-class correctness break.
+be opted into it with nothing looking. AGENTS.md calls that a HybridVAEP-class correctness break.
 
 Decision: Cycle B.
 """

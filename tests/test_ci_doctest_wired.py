@@ -5,7 +5,7 @@ step is dropped, or its private-module ``--ignore-glob`` drifts, public examples
 being checked (or private modules start failing CI). We assert the SEMANTIC wiring -- the step
 exists, targets ``silly_kicks/``, ignores single-underscore privates while KEEPING dunder
 ``__init__``, and runs on EVERY leg (no ``matrix.primary`` restriction) -- not mere string
-presence (this mirrors the rigor of ``test_ci_slow_gating_wired.py``). See the CLAUDE.md Testing
+presence (this mirrors the rigor of ``test_ci_slow_gating_wired.py``). See the AGENTS.md Testing
 note.
 """
 

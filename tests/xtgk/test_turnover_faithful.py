@@ -101,7 +101,7 @@ def test_fit_is_row_order_invariant():
 
     tc_ord, p_ord = _fit(rows, min_support=1)
     # Non-vacuity: the chronological fit is CORRECT (ground truth), so an order-invariance pass
-    # below cannot be "both legs equally wrong" (CLAUDE.md both-sides rule).
+    # below cannot be "both legs equally wrong" (AGENTS.md both-sides rule).
     assert tc_ord.value(z, p_ord) == pytest.approx(0.30, abs=1e-9)
 
     # A full reversal (each shot now precedes its turnover positionally) and a fixed non-trivial

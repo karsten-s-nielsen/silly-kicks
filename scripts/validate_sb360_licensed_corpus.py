@@ -100,7 +100,7 @@ def measure_match(item) -> pd.DataFrame:
     n = len(actions)
     rows: list[dict] = []
 
-    # Pre-link ONCE and thread `links` to every consumer (the CLAUDE.md pre-linking pattern). Without
+    # Pre-link ONCE and thread `links` to every consumer (the AGENTS.md pre-linking pattern). Without
     # it the battery runs with links=None, so a links-dependent aggregator (add_sync_score) can't run
     # and is recorded as `raises` -- a HARNESS artifact, not a library refusal (the ADR-053 mis-call
     # class). `on_low_coverage="ignore"`: freeze-frame link rate is legitimately partial, not an error.

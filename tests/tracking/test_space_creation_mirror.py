@@ -5,7 +5,7 @@ The 4.24.0 opponent perspective mirrored the transition/EPV artifacts along x on
 wrong for an injected, y-asymmetric xT-derived surface, where the faithful transform for
 "the opponent attacks the other goal" is a point reflection (both axes).
 
-Measured on this tree @ ec543cc (numbers pasted per the CLAUDE.md rule -- claims about a
+Measured on this tree @ ec543cc (numbers pasted per the AGENTS.md rule -- claims about a
 numeric property carry the measurement):
 
 * ``_make_synthetic_epv_grid``          : EXACTLY flipud-symmetric (a tiled x-ramp).

@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current (last released) — 4.126.0 (PR-S198, ADR-104): TF-56 prescriptive defensive-positioning optimiser + measured `positioning_gap`.** New event-free `silly_kicks/positioning/`: a pure simulated-annealing solver `optimise_positions` behind composable `Objective`/`Constraint`/`Optimizer` protocols + a measured frame/team `compute_positioning_gap(frames, *, xt, params)` = threat(actual) − threat(best REACHABLE shape) ≥ 0 (`xt` injected; deterministic seed; `ThreatObjective` computes the pitch-control surface DIRECTLY, never `PitchControlCache` per ADR-043). Driver on the 4.124.0 load-seam (events-only `_xt_corpus` count-pass xT fit — no OOM — + `pining_source`/`for_each` score). `compute_*` (aggregator count stays 33); +1 C4 container; glossary +3; NO bundled weights. Owner-run DGX construct-validity battery over the FULL 980-match owner corpus → **GO** (predictive r=0.0428, p=9e-185, n=458k; discriminating; non-degenerate), so the `positioning_gap` column SHIPS. Additive — no VAEP/tracking retrain, no re-materialize. Full detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — repo instruction restructure: `CLAUDE.md` → `AGENTS.md` class-1 + on-demand `docs/context/` (docs/infra, NO version bump).** The 230 KB always-loaded `CLAUDE.md` is partitioned into a terse class-1 `AGENTS.md` (~24 KB — current rules + `ADR`/`docs/context/` pointers only) plus a 17-file on-demand `docs/context/` tree holding the WHY/history/measurement; `CLAUDE.md` becomes a one-line `@AGENTS.md` importer (verified in Claude Code 2.1.280). A CI gate `tests/test_agents_md_budget.py` enforces a byte target/ceiling + per-bullet char cap + a PER-INVARIANT completeness check against a fixture snapshotted from `CLAUDE.md`@77286f4 (proves no invariant dropped) so the surface cannot re-bloat. Phase-2 (owner-approved): the shared global `~/.claude/CLAUDE.md` gets the same partition next. Docs/infra only — no `silly_kicks/` BEHAVIOUR change (two comment-only doc-pointer repoints excepted), no version bump, no PyPI. **Last released: 4.126.0 (PR-S198, ADR-104) — TF-56 positioning optimiser + `positioning_gap`;** full detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -65,7 +65,7 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   the platform-/version-sensitive subset there (path handling, CRLF, the pandas-3 copy-on-write class,
   golden/snapshot). Owner-decided coverage change; deferred, not built. Also: the committed
   `.test_durations` is regenerated (`pytest -m "not e2e" --store-durations`) when the suite shifts
-  materially or a shard drifts toward budget (see CLAUDE.md Testing).
+  materially or a shard drifts toward budget (see AGENTS.md Testing).
 - **Missing ball-touch detection to enrich event↔frame sync (candidate future enhancement; anchors on
   TF-43 ELASTIC).** External prior-art **PathCRF** (KDD 2026, arXiv:2602.12080; code
   `github.com/hyunsungkim-ds/pathcrf`, **MPL-2.0 → reimplement, do NOT lift into MIT**) recovers ball

@@ -5,7 +5,7 @@ a corpus (the ADR-099 ranking gate). Its numbers come from a networked corpus pa
 is a pure function of a per-``(defender, game, team)`` metric table + a lineup map, so every gate below
 runs on hand-built DataFrames with NO network and NO fitted model.
 
-The gate is tested FROM BOTH SIDES (the CLAUDE.md rule): a below-threshold design must NOT license a
+The gate is tested FROM BOTH SIDES (the AGENTS.md rule): a below-threshold design must NOT license a
 ranking, and a strong-defender design must -- and neither side may pass by the other's mechanism (a
 volume-only design cannot buy a license; a defender-null ICC cannot either).
 """

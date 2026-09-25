@@ -35,7 +35,7 @@ Usage (on the box, scripts/ on sys.path, pining token in env):
       [--max-per-provider N] [--tracking-limit N] [--match-ids-json <FILE>] [--list-matches]
 
 The keeper arm uses the SWEEPER ghost-GK variant (an advanced in-possession keeper can sit past the
-frozen default model's 30 m label ceiling; parent spec section 9 / CLAUDE.md), never the frozen default.
+frozen default model's 30 m label ceiling; parent spec section 9 / AGENTS.md), never the frozen default.
 """
 
 from __future__ import annotations

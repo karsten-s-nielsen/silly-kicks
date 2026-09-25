@@ -1,6 +1,6 @@
 """The ghost path must obey the speed_source contract in BOTH directions.
 
-CLAUDE.md: "An UNMARKED or PARTIALLY-marked frame set missing vx/vy still RAISES: fail-loud
+AGENTS.md: "An UNMARKED or PARTIALLY-marked frame set missing vx/vy still RAISES: fail-loud
 wins on a mixed frame set." Measured before this cycle, the ghost path fabricated in both.
 """
 

@@ -67,7 +67,7 @@ def _scenario():
         # NON-ZERO deliberately, and `speed` matches the vector. A fully stationary 22-player frame
         # is out-of-domain for a model fit on real matches: measured, vx=vy=0 inflates the ghost
         # mirror asymmetry to 3.73 m (vs 1.26 m recorded) and trips _GHOST_Y_TOL, while any
-        # realistic velocity passes. Zeroing vx/vy is a NAMED fixture defect here -- CLAUDE.md
+        # realistic velocity passes. Zeroing vx/vy is a NAMED fixture defect here -- AGENTS.md
         # records it as one of two that made the xS liveness gate score noise for three cycles.
         vx=2.0,
         vy=0.5,

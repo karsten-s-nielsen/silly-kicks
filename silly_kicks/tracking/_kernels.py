@@ -80,7 +80,7 @@ def _write_positional(
     The per-row form is therefore byte-identical wherever the old code ran at all (verified on the
     unique-id path), and merely well-defined where the old code died. Stating the weaker true claim
     on purpose: an earlier draft of this docstring asserted differing anchors as "measured" on the
-    strength of a synthetic probe rather than a real gamestate, which is the substitution CLAUDE.md
+    strength of a synthetic probe rather than a real gamestate, which is the substitution AGENTS.md
     warns about.
 
     NaN-anchor rows stay NaN, per the ADR-003 contract: pressure is undefined when the anchor

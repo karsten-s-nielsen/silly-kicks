@@ -1,0 +1,1591 @@
+[
+  {
+    "key": "hexagonal-purity",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "Hexagonal",
+      "zero global state"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "converters-finalize",
+    "domain": "providers.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "_finalize_output",
+      "ConversionReport"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gs-goal-capture",
+    "domain": "providers.md",
+    "adr_refs": [
+      "ADR-018"
+    ],
+    "required_tokens": [
+      "shotOutcomeType",
+      "owngoal",
+      "is_synthetic",
+      "nonEvent"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gs-null-actor-nan",
+    "domain": "providers.md",
+    "adr_refs": [
+      "ADR-027"
+    ],
+    "required_tokens": [
+      "_resolve_team_ids",
+      "null-actor"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gs-dribble-ends",
+    "domain": "providers.md",
+    "adr_refs": [
+      "ADR-018"
+    ],
+    "required_tokens": [
+      "_derive_end_coordinates",
+      "extra_type_ids"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gs-ball-carry",
+    "domain": "providers.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "ballCarryOutcome"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "skillcorner-time",
+    "domain": "providers.md",
+    "adr_refs": [
+      "ADR-017"
+    ],
+    "required_tokens": [
+      "_to_period_relative"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "skillcorner-result",
+    "domain": "providers.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "result_source",
+      "pass_outcome"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "skillcorner-coords",
+    "domain": "providers.md",
+    "adr_refs": [
+      "ADR-038"
+    ],
+    "required_tokens": [
+      "_transform_coords",
+      "_scale_to_spadl"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "sportec-play-eval",
+    "domain": "providers.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "_extract_play_eval",
+      "play_evaluation"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "metrica-unchanged",
+    "domain": "providers.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "BALL LOST"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "restart-coords",
+    "domain": "providers.md",
+    "adr_refs": [
+      "ADR-025"
+    ],
+    "required_tokens": [
+      "add_restart_coordinates",
+      "resolve_restart_geometry",
+      "enriched_start_x"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "converter-ids-sacred",
+    "domain": "providers.md",
+    "adr_refs": [
+      "ADR-001"
+    ],
+    "required_tokens": [
+      "tackle_winner",
+      "tackle_loser"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "providers-parse-ports",
+    "domain": "providers.md",
+    "adr_refs": [
+      "ADR-031",
+      "ADR-054"
+    ],
+    "required_tokens": [
+      "parse_dfl_events",
+      "shape_events_to_native",
+      "snapshot_to_tracking_frames"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "tracking-schema-linkage",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-004"
+    ],
+    "required_tokens": [
+      "TRACKING_FRAMES_COLUMNS",
+      "link_actions_to_frames",
+      "slice_around_event"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "tracking-time-period-relative",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-017"
+    ],
+    "required_tokens": [
+      "validate_time_base",
+      "per_period_link_rate"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gk-identity",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-007"
+    ],
+    "required_tokens": [
+      "is_goalkeeper_source",
+      "derive_goalkeepers"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "metrica-input-contract",
+    "domain": "tracking-features.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "bottom-to-top"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "preprocess",
+    "domain": "tracking-features.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "smooth_frames",
+      "derive_velocities",
+      "PreprocessConfig"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "tf-family-table",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-005"
+    ],
+    "required_tokens": [
+      "add_pressure_on_actor",
+      "add_das",
+      "add_pitch_control",
+      "compute_defensive_credits",
+      "add_obso"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "linkage-provenance-idempotent",
+    "domain": "tracking-features.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "test_provenance_skip_guard",
+      "link_quality_score"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "prelinking-links-kwarg",
+    "domain": "tracking-features.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "_pre_index_frames",
+      "infer_ball_carrier"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "pitch-control-cache-kwarg",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-008"
+    ],
+    "required_tokens": [
+      "PitchControlCache",
+      "pitch_control_cache"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "frame-memory-category",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-103"
+    ],
+    "required_tokens": [
+      "compute_pitch_control_batch",
+      "ball_state"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "tracking-frame-nullable-ids",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-058"
+    ],
+    "required_tokens": [
+      "_cast_to_declared_schema",
+      "IntCastingNaNError",
+      "GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "das-unscoreable",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-043"
+    ],
+    "required_tokens": [
+      "DasUnscoreableError",
+      "das_source",
+      "DAS_SOURCE_VALUES"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "frame-consuming-call-shape",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-078"
+    ],
+    "required_tokens": [
+      "run_tracking_features",
+      "FAMILY_MODEL_REQUIREMENTS",
+      "test_call_convention_registry"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "receiver-model",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-066"
+    ],
+    "required_tokens": [
+      "ReceiverModel",
+      "labeling_strategy_for_provider",
+      "NoReleaseDirectionError",
+      "pooling_gate"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "frame-aware-xfns-positional",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-020"
+    ],
+    "required_tokens": [
+      "resolve_frame_ids_by_position",
+      "test_frame_aware_xfns_dup_action_id"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "action-ltr-reprojection",
+    "domain": "orientation.md",
+    "adr_refs": [
+      "ADR-028"
+    ],
+    "required_tokens": [
+      "_action_orientation",
+      "acting_team_attacks_rtl",
+      "reproject_to_action_ltr",
+      "test_mirror_registry"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "frame-ltr-orientation",
+    "domain": "orientation.md",
+    "adr_refs": [
+      "ADR-029"
+    ],
+    "required_tokens": [
+      "orient_frames_to_ltr",
+      "compute_attacking_direction",
+      "play_left_to_right"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "kloppy-tracking-cs",
+    "domain": "orientation.md",
+    "adr_refs": [
+      "ADR-031"
+    ],
+    "required_tokens": [
+      "_kloppy_coordinates",
+      "socceraction_coordinate_system",
+      "to_pitch_dimensions"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "tf23b-geometric-backstop",
+    "domain": "orientation.md",
+    "adr_refs": [
+      "ADR-035"
+    ],
+    "required_tokens": [
+      "finalize_orientation",
+      "orient_frames_to_ltr_by_geometry"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "resolve-defended-goals",
+    "domain": "orientation.md",
+    "adr_refs": [
+      "ADR-055"
+    ],
+    "required_tokens": [
+      "resolve_defended_goals",
+      "GoalMap",
+      "GoalEndUnresolvedError",
+      "attacked_goal"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gate-c-map-swap",
+    "domain": "orientation.md",
+    "adr_refs": [
+      "ADR-055"
+    ],
+    "required_tokens": [
+      "gate_c_must_move",
+      "test_goal_map_consumers"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "direction-not-identity",
+    "domain": "orientation.md",
+    "adr_refs": [
+      "ADR-051"
+    ],
+    "required_tokens": [
+      "_unresolvable_direction_mask",
+      "test_d3_direction_invariance"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "goal-relative-point-reflection",
+    "domain": "orientation.md",
+    "adr_refs": [
+      "ADR-051"
+    ],
+    "required_tokens": [
+      "to_goal_relative_x",
+      "to_goal_relative_y",
+      "GEOMETRY_VERSION"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "reflection-seam",
+    "domain": "orientation.md",
+    "adr_refs": [
+      "ADR-045"
+    ],
+    "required_tokens": [
+      "ReflectionKind",
+      "reflect_columns",
+      "UndeclaredGeometricColumnWarning"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "id-compat",
+    "domain": "id-compat.md",
+    "adr_refs": [
+      "ADR-019",
+      "ADR-043"
+    ],
+    "required_tokens": [
+      "id_compat",
+      "PUBLIC_ID_SCALAR_ENTRIES",
+      "canonical_id",
+      "align_join_keys",
+      "validate_id_dtypes"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "xt-family",
+    "domain": "xt.md",
+    "adr_refs": [
+      "ADR-021",
+      "ADR-022",
+      "ADR-100",
+      "ADR-102"
+    ],
+    "required_tokens": [
+      "ExpectedThreat",
+      "singh_counts",
+      "value_iteration",
+      "fit_from_counts",
+      "to_dict"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "xt-y-inverted-physical",
+    "domain": "xt.md",
+    "adr_refs": [
+      "ADR-041"
+    ],
+    "required_tokens": [
+      "physical_grid",
+      "values_at_points",
+      "require_fitted_xt",
+      "compute_threat_pc"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "xt-gk-v1",
+    "domain": "xt-gk.md",
+    "adr_refs": [
+      "ADR-024"
+    ],
+    "required_tokens": [
+      "compute_xt_gk",
+      "XtGkParams",
+      "GkCompletionModel",
+      "native_origin_is_trusted"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "xt-gk-v2",
+    "domain": "xt-gk.md",
+    "adr_refs": [
+      "ADR-036"
+    ],
+    "required_tokens": [
+      "compute_xt_gk_v2",
+      "MarkovPossessionValue",
+      "GkRetentionModel",
+      "EmpiricalTurnoverValue",
+      "flat_zones"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gkdv",
+    "domain": "gkdv.md",
+    "adr_refs": [
+      "ADR-043",
+      "ADR-075",
+      "ADR-082"
+    ],
+    "required_tokens": [
+      "build_ghost_frames",
+      "delta_das",
+      "delta_threat_suppression",
+      "GkdvParams",
+      "layer0_instrument_verdict",
+      "PHYSICS_ARM_PROBE_RATIO"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "restdefense",
+    "domain": "rest-defense.md",
+    "adr_refs": [
+      "ADR-080",
+      "ADR-081",
+      "ADR-089"
+    ],
+    "required_tokens": [
+      "compute_rest_defense",
+      "count_goalside",
+      "rd_danger_behind_line",
+      "build_restdefense_ghost_frames"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "ghost-grid-sweeper",
+    "domain": "rest-defense.md",
+    "adr_refs": [
+      "ADR-083"
+    ],
+    "required_tokens": [
+      "GhostGridSpec",
+      "DEFAULT_GHOST_GRID",
+      "sweeper",
+      "predict_density"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "ghost-outfield",
+    "domain": "rest-defense.md",
+    "adr_refs": [
+      "ADR-087"
+    ],
+    "required_tokens": [
+      "GhostOutfieldModel",
+      "serve_ghost_outfield_positions",
+      "GHOST_OUTFIELD_SOURCE_VALUES"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "shot-stopping",
+    "domain": "gk-metrics.md",
+    "adr_refs": [
+      "ADR-085"
+    ],
+    "required_tokens": [
+      "compute_shot_stopping",
+      "goals_prevented",
+      "psxg_column"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gk-decision",
+    "domain": "gk-metrics.md",
+    "adr_refs": [
+      "ADR-092"
+    ],
+    "required_tokens": [
+      "compute_gk_decision_value",
+      "decision_pct",
+      "reachability_min_xpass",
+      "parse_passing_options"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "keeper-identity-resolver",
+    "domain": "gk-metrics.md",
+    "adr_refs": [
+      "ADR-078",
+      "ADR-084",
+      "ADR-085"
+    ],
+    "required_tokens": [
+      "resolve_keeper_identities",
+      "KeeperIdentity",
+      "apply_keeper_identities_to_frames",
+      "add_defending_gk_player_id",
+      "KeeperAppearances"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gk-domain-player-key",
+    "domain": "gk-metrics.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "player_key",
+      "fct_action_context"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "territory",
+    "domain": "event-metrics.md",
+    "adr_refs": [
+      "ADR-086",
+      "ADR-099"
+    ],
+    "required_tokens": [
+      "compute_territorial_dominance",
+      "trim_fraction",
+      "TERRITORY_METHODS"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "expected-passing",
+    "domain": "event-metrics.md",
+    "adr_refs": [
+      "ADR-090"
+    ],
+    "required_tokens": [
+      "PassCompletionModel",
+      "destination_profiles"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "xsuccess-vaep-adjusted",
+    "domain": "event-metrics.md",
+    "adr_refs": [
+      "ADR-095"
+    ],
+    "required_tokens": [
+      "XSuccessModel",
+      "rate_adjusted",
+      "END-BLIND",
+      "adjusted_value"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "duels",
+    "domain": "event-metrics.md",
+    "adr_refs": [
+      "ADR-086"
+    ],
+    "required_tokens": [
+      "compute_duel_ratings",
+      "update_glicko",
+      "duel_winner_source"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "match-outcome",
+    "domain": "event-metrics.md",
+    "adr_refs": [
+      "ADR-097"
+    ],
+    "required_tokens": [
+      "compute_match_outcome",
+      "goal_count_pmf",
+      "same_possession",
+      "dixon_coles",
+      "DependenceModel"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "win-probability",
+    "domain": "event-metrics.md",
+    "adr_refs": [
+      "ADR-101"
+    ],
+    "required_tokens": [
+      "compute_win_probability",
+      "goal_leverage",
+      "rate_ximpact",
+      "certify_coherence",
+      "WinProbabilityModel"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "territorial-defense",
+    "domain": "tracking-metrics.md",
+    "adr_refs": [
+      "ADR-090"
+    ],
+    "required_tokens": [
+      "compute_territorial_defense",
+      "a_threat_suppressed",
+      "b_attribution_slippage",
+      "frame_convention",
+      "build_trimmed_hull"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "positioning",
+    "domain": "tracking-metrics.md",
+    "adr_refs": [
+      "ADR-104"
+    ],
+    "required_tokens": [
+      "optimise_positions",
+      "compute_positioning_gap",
+      "ThreatObjective",
+      "ReachabilityConstraint",
+      "pressure_on_target"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "vaep-hybrid-owngoal",
+    "domain": "vaep.md",
+    "adr_refs": [
+      "ADR-018"
+    ],
+    "required_tokens": [
+      "HybridVAEP",
+      "_is_owngoal",
+      "xg_column"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "causal",
+    "domain": "vaep.md",
+    "adr_refs": [
+      "ADR-015"
+    ],
+    "required_tokens": [
+      "att_power_curve",
+      "placebo_shift",
+      "OpportunityConfig"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "atomic",
+    "domain": "vaep.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "Atomic-SPADL",
+      "ATOMIC_SPADL_COLUMNS",
+      "convert_to_atomic"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "calibration",
+    "domain": "vaep.md",
+    "adr_refs": [
+      "ADR-009",
+      "ADR-060"
+    ],
+    "required_tokens": [
+      "CarrierAccuracyObjective",
+      "AugmentedVaepBrierObjective",
+      "FrozenXt",
+      "select_recommended_point"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "trained-artifacts-failclosed",
+    "domain": "trained-models.md",
+    "adr_refs": [
+      "ADR-011",
+      "ADR-016",
+      "ADR-040",
+      "ADR-044",
+      "ADR-050"
+    ],
+    "required_tokens": [
+      "SHA256SUMS",
+      "verify_chirality",
+      "_feature_contract",
+      "IntegrityError",
+      "load_xgb_booster_base_score_safe"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "hub-publish-seam",
+    "domain": "trained-models.md",
+    "adr_refs": [
+      "ADR-088"
+    ],
+    "required_tokens": [
+      "publish_model_with_card",
+      "upload_model_only"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "ghost-numba-leaf",
+    "domain": "trained-models.md",
+    "adr_refs": [
+      "ADR-076"
+    ],
+    "required_tokens": [
+      "_vectorized_leaf_values",
+      "_FlatTrees",
+      "SILLY_KICKS_GHOST_FORCE_NUMPY",
+      "kde_backend"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "velocity-keyed-variants",
+    "domain": "trained-models.md",
+    "adr_refs": [
+      "ADR-067"
+    ],
+    "required_tokens": [
+      "variant_key_for_velocity",
+      "position_only",
+      "_resolve_ghost_model_for_frames",
+      "feature_set"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "detection-aware-visibility",
+    "domain": "trained-models.md",
+    "adr_refs": [
+      "ADR-069"
+    ],
+    "required_tokens": [
+      "_provider_visibility",
+      "_DETECTION_AWARE_PROVIDERS",
+      "assert_detection_aware_visibility",
+      "validate_corpus_visibility"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "provenance-column-vs-diagnostic",
+    "domain": "velocity-fov.md",
+    "adr_refs": [
+      "ADR-054"
+    ],
+    "required_tokens": [
+      "validate_velocity_regime",
+      "VelocityRegimeDiagnosis",
+      "_serve_positions_core",
+      "ghost_gk_source"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "velocity-less-edge-seam",
+    "domain": "velocity-fov.md",
+    "adr_refs": [
+      "ADR-063"
+    ],
+    "required_tokens": [
+      "zero_velocity_if_unavailable",
+      "_velocity_availability"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "velocity-contract-ci",
+    "domain": "velocity-fov.md",
+    "adr_refs": [
+      "ADR-054"
+    ],
+    "required_tokens": [
+      "compute_xshot_occurrence",
+      "test_velocity_feature_contract",
+      "space_opponent_source"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "fov-registry",
+    "domain": "velocity-fov.md",
+    "adr_refs": [
+      "ADR-077"
+    ],
+    "required_tokens": [
+      "validate_fov",
+      "FovDiagnosis",
+      "_fov_registry",
+      "append_observability_companions",
+      "ObservabilityEntry"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gs-keeper-clamp",
+    "domain": "velocity-fov.md",
+    "adr_refs": [
+      "ADR-083"
+    ],
+    "required_tokens": [
+      "validate_gk_position_clamp",
+      "GkClampDiagnosis",
+      "GoalkeeperClampWarning"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "speed-source-three-tokens",
+    "domain": "velocity-fov.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "speed_source",
+      "TRACKING_CATEGORICAL_DOMAINS"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "sb360-visibility-companions",
+    "domain": "velocity-fov.md",
+    "adr_refs": [
+      "ADR-062"
+    ],
+    "required_tokens": [
+      "classify_region_observation",
+      "REGION_OBSERVATION_SOURCE_VALUES"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "converters-order-insensitive",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [
+      "ADR-065"
+    ],
+    "required_tokens": [
+      "sort_actions_chronologically",
+      "_assert_chronological_action_id",
+      "start_time"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "artifact-clean-tree",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [
+      "ADR-037"
+    ],
+    "required_tokens": [
+      "require_clean_tree",
+      "git_provenance",
+      "run_tree_dirty"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "corpus-driver-seam",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [
+      "ADR-052"
+    ],
+    "required_tokens": [
+      "for_each",
+      "shard_root",
+      "assert_conservation",
+      "_require_injective",
+      "reconcile"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "expensive-pass-shardable",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "write_table_atomically",
+      "providers_for_slice",
+      "n_degenerate_by_size"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "resume-before-load",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [
+      "ADR-052"
+    ],
+    "required_tokens": [
+      "list_match_refs",
+      "xt_count_pass",
+      "events_only_loader",
+      "ItemExcluded",
+      "_KEY_EXCEPTIONS"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "registry-gate-derives-population",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [
+      "ADR-056"
+    ],
+    "required_tokens": [
+      "ARTIFACT_DRIVERS",
+      "_UNDERIVABLE",
+      "_script_population",
+      "string_literals"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "input-contract-declares-symbols",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [
+      "ADR-056"
+    ],
+    "required_tokens": [
+      "declare_inputs",
+      "_input_contract"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "fixture-generator-byte-identical",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [
+      "ADR-056"
+    ],
+    "required_tokens": [
+      "_generate_synthetic_match"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "corpus-visibility-failclosed",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [
+      "ADR-038"
+    ],
+    "required_tokens": [
+      "is_public_row",
+      "assert_public_corpus",
+      "artifact_label"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "validation-unrepresentable",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "InjectionSpec",
+      "att_power_curve"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "spec-enumerate-callers",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "_dominant_region_area",
+      "derive_opengoal_range"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "pining-statsbomb-loader",
+    "domain": "corpus-drivers.md",
+    "adr_refs": [
+      "ADR-062"
+    ],
+    "required_tokens": [
+      "_sb_raw",
+      "flatten_events",
+      "shape_snapshots"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "version-ssot",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-079"
+    ],
+    "required_tokens": [
+      "_version.py",
+      "hatch.version"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "no-pandera",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "SPADL_COLUMNS",
+      "no pandera"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "metric-contracts",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-098"
+    ],
+    "required_tokens": [
+      "metric_contracts",
+      "METRIC_CONTRACTS"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "config-cache",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "actiontypes_df",
+      "functools.cache"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "vectorized-dispatch",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "np.select"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "no-rescan-group-rows",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-068"
+    ],
+    "required_tokens": [
+      "group_rows",
+      "_frame_index"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "subquadratic-guard",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-073"
+    ],
+    "required_tokens": [
+      "assert_subquadratic_growth",
+      "call_counter",
+      "rows_scanned_counter",
+      "SCALE_GUARDED"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "warnings-stacklevel",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "stacklevel=2"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "ml-naming",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "per-file-ignores"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "detect-input-convention",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-059"
+    ],
+    "required_tokens": [
+      "detect_input_convention",
+      "_a_team_spans_periods",
+      "POSSESSION_PERSPECTIVE"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "block-detection",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-046"
+    ],
+    "required_tokens": [
+      "shot_blocked",
+      "cross_blocked",
+      "_blocked_flag"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "nan-safe-enrichment",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-003"
+    ],
+    "required_tokens": [
+      "nan_safe_enrichment",
+      "_nan_safety"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "add-star-purity",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-033"
+    ],
+    "required_tokens": [
+      "PURITY_ENTRIES",
+      "pitch_control_at_target"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "both-sides-nonvacuity",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "non-vacuity",
+      "test_ghost_gk_mirror_invariant"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "private-module-consumers",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "PRIVATE_CONSUMERS.md"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "academic-attribution",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-005"
+    ],
+    "required_tokens": [
+      "NOTICE"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "aggregator-liveness",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "STRUCTURAL_CONSTANTS",
+      "test_aggregator_column_liveness"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "geometry-constants",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-050"
+    ],
+    "required_tokens": [
+      "penalty_area_half_width",
+      "in_penalty_area_absolute",
+      "in_penalty_area_goal_relative"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "visibility-nothing-there",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-055"
+    ],
+    "required_tokens": [
+      "point_observed",
+      "region_observed_fraction",
+      "add_visible_area_coverage"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "liveness-fixture-precondition",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-032"
+    ],
+    "required_tokens": [
+      "PR-S118"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "leaky-xfns-no-factory",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-030",
+      "ADR-047",
+      "ADR-049"
+    ],
+    "required_tokens": [
+      "packing_xfns",
+      "off_ball_run_value_xfns"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "warning-categories-separate",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "SyntheticEPVWarning",
+      "IgnoredSurfaceInputsWarning",
+      "OrientationUnresolvedWarning"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "policy-at-edge",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "predict_mean",
+      "predict_proba"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "raw-primitives-consumer-side",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-009"
+    ],
+    "required_tokens": [
+      "structural_lbs",
+      "structural_sgm",
+      "structural_sdi"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "feature-glossary",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-048"
+    ],
+    "required_tokens": [
+      "feature_glossary",
+      "FeatureColumn",
+      "describe_level"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "c4-model-pinned",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "docs/c4"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "coverage-denominator",
+    "domain": "conventions-core.md",
+    "adr_refs": [
+      "ADR-042"
+    ],
+    "required_tokens": [
+      "n_valued_disruptive_runs",
+      "RunValueCoverageWarning",
+      "peak_speed_source"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "dependencies",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "ruthless-efficiency",
+      "statsbombpy",
+      "accessible-space"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "where-history-lives",
+    "domain": "conventions-core.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "docs/PRIVATE_CONSUMERS.md"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "testing-cmd-scope",
+    "domain": "ci.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "not e2e",
+      "ruff check silly_kicks"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "ci-sharding",
+    "domain": "ci.md",
+    "adr_refs": [
+      "ADR-074"
+    ],
+    "required_tokens": [
+      "pytest-split",
+      "--splits",
+      "shard-reconcile",
+      ".test_durations",
+      "test_ci_shard_wiring"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "pandas-span",
+    "domain": "ci.md",
+    "adr_refs": [
+      "ADR-057"
+    ],
+    "required_tokens": [
+      "test_ci_pandas_span_wired",
+      "copy=True"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "lint-pins",
+    "domain": "ci.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "test_ci_lint_pins_wired",
+      "pandas-stubs"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "build-backend-publisher",
+    "domain": "ci.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "test_ci_publish_guard_wired",
+      "gh-action-pypi-publish",
+      "Metadata-Version"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "doctests",
+    "domain": "ci.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "--doctest-modules",
+      "test_ci_doctest_wired"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "slow-gating",
+    "domain": "ci.md",
+    "adr_refs": [
+      "ADR-023"
+    ],
+    "required_tokens": [
+      "test_ci_slow_gating_wired",
+      "primary: true"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "gate-behaviour-quote-assertion",
+    "domain": "ci.md",
+    "adr_refs": [],
+    "required_tokens": [
+      "quote the assertion body"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "sb360-verdict-audit",
+    "domain": "ci.md",
+    "adr_refs": [
+      "ADR-053"
+    ],
+    "required_tokens": [
+      "verdict_provenance",
+      "UNAUDITABLE_BOUNDARY",
+      "_adjudicate"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "detection-before-fix-metaassertion",
+    "domain": "ci.md",
+    "adr_refs": [
+      "ADR-051"
+    ],
+    "required_tokens": [
+      "anti-rot"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "et-direction-fail-loud",
+    "domain": "orientation.md",
+    "adr_refs": [
+      "ADR-010",
+      "ADR-029",
+      "ADR-035"
+    ],
+    "required_tokens": [
+      "home_team_start_left_extratime"
+    ],
+    "dropped_with_owner_approval": null
+  },
+  {
+    "key": "atomic-defensive-credit-mirror",
+    "domain": "tracking-features.md",
+    "adr_refs": [
+      "ADR-096"
+    ],
+    "required_tokens": [
+      "_defensive_credit_atomic_adapter",
+      "AtomicVAEP"
+    ],
+    "dropped_with_owner_approval": null
+  }
+]
