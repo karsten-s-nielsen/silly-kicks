@@ -1,0 +1,82 @@
+{
+  "verdict": {
+    "predictive": "predictive",
+    "predictive_5s": "predictive",
+    "predictive_r": 0.04280773218078097,
+    "predictive_p": 9.009071279892926e-185,
+    "predictive_n": 458175,
+    "predictive_5s_r": 0.03930544592898182,
+    "predictive_5s_p": 4.4880663643187686e-156,
+    "discriminating": true,
+    "non_degenerate": true,
+    "composite": "go",
+    "n_domain": 458175,
+    "gap_median": 0.03891451433733195,
+    "n_units": 1932,
+    "unit_gap_std": 0.048477746847251854,
+    "n_feasible_fraction": 1.0,
+    "converged_fraction": 0.9997468216292901,
+    "note_optimizer_stability": "fixture instrument (tests/positioning/test_probe.py::optimizer_stability); not a corpus statistic"
+  },
+  "registered_constants": {
+    "MIN_DOMAIN_FRAMES": 200,
+    "PREDICTIVE_ALPHA": 0.05,
+    "CONCEDED_WINDOWS_S": [
+      5.0,
+      10.0
+    ],
+    "MIN_UNITS": 2
+  },
+  "conservation": {
+    "n_frames_in": 4304488,
+    "n_frames_scored": 458175,
+    "n_frames_dropped": 3846313,
+    "n_matches": 966
+  },
+  "generation": "4320b55487453c07",
+  "n_attempted": 0,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "n_excluded": 14,
+  "run_commit": "26156e1473e500d11d021dc3290b47b64238e91c",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "partition": "all",
+  "input_contract": {
+    "version": 1,
+    "driver": "build_tf56_positioning_validity",
+    "params": {
+      "conceded_windows_s": [
+        5.0,
+        10.0
+      ],
+      "min_domain_frames": 200,
+      "min_units": 2,
+      "positioning": {
+        "domain_ball_to_goal_m": 35.0,
+        "reachability": {
+          "max_acceleration": 7.0,
+          "max_reach_seconds": 0.7,
+          "reaction_time": 0.1
+        },
+        "sa": {
+          "cooling": 0.995,
+          "init_sigma_m": 2.0,
+          "init_temperature": 1.0,
+          "num_iterations": 2000,
+          "patience": 200
+        },
+        "sample_fps": 1.0
+      },
+      "predictive_alpha": 0.05,
+      "schema": "tf56-positioning-2"
+    },
+    "extractors": [
+      "silly_kicks.positioning._compute",
+      "silly_kicks.positioning._probe",
+      "silly_kicks.positioning._solve"
+    ],
+    "models": [],
+    "digest": "d445892918fdca742791485a40a224086a565da540f1ae916d6141598ae6ae11"
+  }
+}

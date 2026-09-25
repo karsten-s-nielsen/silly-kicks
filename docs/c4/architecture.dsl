@@ -39,8 +39,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze): Sportec/DFL + SB360 freeze-frames -> frames + visible_area; keeper-appearance extractors (4 providers) -> KeeperAppearances port. ADR-031/054/084." "Python" "Library"
-            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 456 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 459 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
             keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
+            positioning = container "silly_kicks.positioning" "TF-56 prescriptive positioning optimiser: SA solver (optimise_positions) for the best REACHABLE shape + measured positioning_gap = threat(actual) - threat(optimum). compute_*; xt injected." "Python" "Library"
         }
 
         // --- Relationships: Context level ---
@@ -145,6 +146,10 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         analyst -> win_probability "Computes in-game win probability + goal leverage via" "compute_win_probability() / goal_leverage()"
         win_probability -> spadl "Reads SPADL actions + canonical id helpers from" "Python import"
         vaep -> win_probability "Weights VAEP_adjusted by goal leverage into xImpact (VAEP.rate_ximpact) via" "lazy import"
+        // --- Relationships: TF-56 prescriptive defensive-positioning optimiser ---
+        analyst -> positioning "Optimises the best reachable defensive shape + scores positioning_gap (INJECTED fitted xt) via" "optimise_positions() / compute_positioning_gap()"
+        positioning -> tracking "Reads xT-weighted pitch-control threat, kinematic TTI, goal map, ball-carrier from" "compute_threat_pc / compute_tti / resolve_defended_goals / infer_ball_carrier (PUBLIC seams; never reverse, allowlist-gated)"
+        positioning -> spadl "Reads pitch geometry (field dims) + canonical id helpers from" "Python import"
         // --- Relationships: TF-52 event-only team KPIs ---
         analyst -> team_metrics "Computes event-only per-(game, team) team KPIs (pressing, progression, build-up, counter-press) via" "compute_team_kpis()"
         team_metrics -> spadl "Reads SPADL actions, add_possessions, reflection + canonical id helpers from" "Python import"
