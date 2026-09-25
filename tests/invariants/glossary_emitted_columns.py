@@ -535,7 +535,7 @@ def _base_schema_and_provenance() -> set[str]:
     (``add_sync_score`` -> links, ``add_gradientsports_player_ids`` -> jersey frames) and the vaep
     location/movement/time features re-emit schema-named columns, so the raw union leaks the base
     schema. Subtract the canonical schema constants + the name-form of schema + the idempotent
-    linkage-provenance set (documented as provenance, not features, in CLAUDE.md).
+    linkage-provenance set (documented as provenance, not features, in AGENTS.md).
     """
     from silly_kicks.atomic.spadl.schema import ATOMIC_SPADL_COLUMNS
     from silly_kicks.spadl.schema import SPADL_COLUMNS

@@ -1,6 +1,6 @@
 """Every artifact-writing driver must be wired to the fail-closed provenance guard.
 
-CLAUDE.md states the rule: any `scripts/` driver that writes a registered artifact calls
+AGENTS.md states the rule: any `scripts/` driver that writes a registered artifact calls
 `require_clean_tree(git_provenance(), ...)` FIRST, before paying for any corpus work, and stamps
 `run_commit` + `run_tree_dirty` into its output.
 

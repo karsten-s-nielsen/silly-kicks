@@ -98,7 +98,7 @@ def test_keys_are_canonical_STRINGS_and_lookups_accept_any_id_dtype():
 
 
 def test_a_RAW_TUPLE_lookup_against_the_MAPPING_misses():
-    """Witness for the rule CLAUDE.md states: never hold the mappings as a plain dict.
+    """Witness for the rule AGENTS.md states: never hold the mappings as a plain dict.
 
     Not hypothetical -- it shipped exactly this way in
     ``scripts/validate_shot_goalmouth_sb.py``, which scanned ``goal_map.items()`` comparing

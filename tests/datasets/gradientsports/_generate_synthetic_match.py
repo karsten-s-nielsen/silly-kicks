@@ -816,7 +816,7 @@ def build_match():
     #    must not add goals -- the goal assertions belong to the three ADR-018 events above.
     #
     # The x spread is deliberate rather than one repeated value: a constant column is the
-    # degeneracy that has twice made a gate score noise here (see CLAUDE.md on fixture validity).
+    # degeneracy that has twice made a gate score noise here (see AGENTS.md on fixture validity).
     conv_eid = 55
     for team_id, player_id, home, period, base_time, side in (
         (HOME_TEAM_ID, 9, True, 1, 1300.0, +1.0),

@@ -22,7 +22,7 @@ Design (ADR-033):
 * **Per-function variants.** A helper that branches on column presence (e.g.
   ``if "gk_role" not in actions.columns``) gets one variant per branch — the
   gate otherwise only closes the default path. A best-effort AST heuristic
-  nudges toward this; the real backstop is the contributor contract (CLAUDE.md).
+  nudges toward this; the real backstop is the contributor contract (AGENTS.md).
 
 See ADR-033 + ``docs/superpowers/specs/2026-06-16-add-star-purity-gate-design.md``.
 """
@@ -895,7 +895,7 @@ def test_meta_column_branching_helpers_have_multiple_variants():
     """BEST-EFFORT nudge (review #6), NOT a guarantee. The AST heuristic only recognizes the ONE shape
     the motivating bug took (``if <col> [not] in <df>.columns:``); a helper that branches a different
     way (a ``.get``, a try/except, a precomputed-mask flag) and mutates on one branch is NOT flagged.
-    The real guarantee is per-variant coverage in PURITY_ENTRIES. Contributor contract (CLAUDE.md): any
+    The real guarantee is per-variant coverage in PURITY_ENTRIES. Contributor contract (AGENTS.md): any
     add_* that conditionally adds columns MUST register >=2 purity variants (present AND absent branch)."""
     _SINGLE_VARIANT_OK: dict[str, str] = {}  # qkey: reason (justified single-variant; e.g. non-mutating branch)
     for qkey, variants in PURITY_ENTRIES.items():

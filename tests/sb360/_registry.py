@@ -24,7 +24,7 @@ import silly_kicks.tracking as _T
 VISIBILITY_ROSTERS: tuple[str, ...] = ("gk_absent", "defender_absent", "gk_one_end")
 
 #: Linkage-provenance columns, merged in by 11 of the 33 aggregators (the idempotent-merge
-#: contract in CLAUDE.md). They are NOT feature columns and carry no verdict.
+#: contract in AGENTS.md). They are NOT feature columns and carry no verdict.
 #:
 #: Auditing them would be worse than noise, it would be meaningless: Leg A's ``frame_id`` is
 #: its ``action_id`` by construction while Leg B numbers a 10 Hz stream, so ``frame_id`` and

@@ -6,7 +6,7 @@ x400 x2 bootstrap loops. Absorption routes EVERY pinv through the ``n_team``-siz
 and all six EMS trace coefficients), so the largest pinv is ``n_team x n_team`` regardless of ``n_def``.
 
 These are DETERMINISTIC structural guards (a pinv call-SIZE spy + an operation-count growth exponent),
-NOT wall-clock budgets -- the repo bans ``assert ms < budget`` perf tests (CLAUDE.md: perf regressions
+NOT wall-clock budgets -- the repo bans ``assert ms < budget`` perf tests (AGENTS.md: perf regressions
 are guarded structurally). They END the "found by hand each round" loop: a reintroduced dense pinv(p)
 fails here, in CI, instead of on an 8-hour DGX pass. Both are RED on the pre-absorption path (max pinv
 dim = p; pinv-work grows as n_def^3).

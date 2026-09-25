@@ -9,7 +9,7 @@
   relation is a 180-degree POINT reflection (``x -> 105-x`` AND ``y -> 68-y``).
 
 ``_cover_shadows`` and ``_gk_influence`` carried byte-identical code and were NOT in the
-first pass -- an adversarial review found them, and found that CLAUDE.md had already been
+first pass -- an adversarial review found them, and found that AGENTS.md had already been
 rewritten to claim ``cover_shadows`` was repaired. Both are now fixed; these are the
 ground-truth tests, built on a deliberately y-ASYMMETRIC grid because a fitted xT is
 close enough to y-symmetric that a symmetric fixture cannot see either defect.

@@ -15,7 +15,7 @@ The house contract for a velocity-dependent aggregator is two-pronged, and `_das
 
 * velocity DECLARED unavailable -> degrade to NaN. Nothing is fabricated, so nothing is wrong.
 * velocity NOT declared and vx/vy absent -> RAISE, informatively. That is the "forgot
-  ``derive_velocities()``" case, and CLAUDE.md is explicit that fail-loud wins on a
+  ``derive_velocities()``" case, and AGENTS.md is explicit that fail-loud wins on a
   partially-marked frame set.
 
 A bare ``KeyError`` on a column name is neither: it is indistinguishable from a bug, it names

@@ -121,7 +121,7 @@ def test_outfield_space_arm_is_near_keeper_invariant_but_threat_is_not():
 
 def test_ghost_frames_measurably_differ_from_the_factual_twin():
     # The counterfactual must ACTUALLY move A's rearguard -- else the arm is vacuously 0 for any
-    # metric ("every counterfactual needs a non-vacuity assertion", CLAUDE.md). The arm's THREAT/SPACE
+    # metric ("every counterfactual needs a non-vacuity assertion", AGENTS.md). The arm's THREAT/SPACE
     # values can legitimately be ~0 for a toy model + coarse xT grid (a metric property, not a bug),
     # so non-vacuity is asserted on the FRAMES, not the metric.
     from silly_kicks.restdefense._arms import _sample_carrier

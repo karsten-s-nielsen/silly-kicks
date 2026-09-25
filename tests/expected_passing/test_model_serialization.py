@@ -25,7 +25,7 @@ def _repoison(tmp_path, mutate):
 
     Re-writing the digest makes the SHA guard PASS, so ``load`` reaches the downstream chirality /
     feature-contract guards. Without this, a model.json edit trips the SHA check first and the guard
-    named in the test never fires (the "band tested from one side" defect CLAUDE.md forbids).
+    named in the test never fires (the "band tested from one side" defect AGENTS.md forbids).
     """
     m = PassCompletionModel().fit(_passes())
     m.save(tmp_path)

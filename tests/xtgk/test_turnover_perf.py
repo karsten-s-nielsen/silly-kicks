@@ -108,7 +108,7 @@ def test_scan_kernel_invoked_once_not_per_turnover(monkeypatch):
 
 
 def test_numba_kernel_is_active_when_installed():
-    # CLAUDE.md: [numba] is bundled in [test] so CI exercises the @njit path. Guard against a SILENT
+    # AGENTS.md: [numba] is bundled in [test] so CI exercises the @njit path. Guard against a SILENT
     # permanent fallback to pure-Python (which passes every parity test yet loses the ~100x speedup):
     # when numba is importable, the COMPILED kernel must be the one that runs.
     import importlib.util

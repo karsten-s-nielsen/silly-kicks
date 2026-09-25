@@ -1,4 +1,4 @@
-"""Non-vacuity: the GK-inclusion and w_field re-weighting measurably move the danger (CLAUDE.md)."""
+"""Non-vacuity: the GK-inclusion and w_field re-weighting measurably move the danger (AGENTS.md)."""
 
 import numpy as np
 

@@ -182,7 +182,7 @@ def test_geometry_version_was_bumped_for_the_point_reflection():
 def test_geometry_sentinel_still_differs_from_the_library_constant():
     """The sentinel in test_xshot_occurrence.py must create a REAL mismatch.
 
-    Behavioural, not a substring search over source: CLAUDE.md is explicit that keyword tests over
+    Behavioural, not a substring search over source: AGENTS.md is explicit that keyword tests over
     source are not evidence of behaviour, and a grep would pass on a comment. A gate that exists to
     prevent green-by-construction decay must not itself be green by construction.
     """

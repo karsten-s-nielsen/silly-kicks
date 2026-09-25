@@ -1,6 +1,6 @@
 """The power driver must not stamp a clean SHA on numbers derived from a dirty upstream table.
 
-CLAUDE.md states the rule directly: an artifact whose inputs came from another driver needs
+AGENTS.md states the rule directly: an artifact whose inputs came from another driver needs
 provenance on BOTH, or the clean SHA on the downstream metrics launders the dirty upstream input.
 The spells table and the arm-values table are both produced by OTHER drivers, at other times.
 """
