@@ -290,3 +290,38 @@ jobs:
               sys.exit("::error::shard partition broken (or cross-runner collection divergence):\n" + "\n".join(errs))
           print(f"OK: {len(fulls)} legs, {N} shards each partition the full suite exactly")
           PY
+
+  # TEMPORARY (ci/regen-test-durations) -- regenerate the committed .test_durations against the
+  # CURRENT suite (ADR-074). The sharded matrix balances on that file; it was last measured at
+  # 4.96.0, and ~17% of today's tests are unmeasured -> count-mode clump -> one shard hits ~19 min.
+  # Runs the FULL primary selection (`not e2e`, incl. slow) UNSHARDED on the binding ubuntu-3.12 leg
+  # to record every test's duration, then uploads .test_durations. PROCEDURE: download the artifact,
+  # commit the file, and DELETE this job in the same PR (squash-merge => main gets only the
+  # durations, never this job). Local capture mis-balances (CI ~2x + per-interpreter relative
+  # timings differ) -- it MUST be CI-measured.
+  durations-capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SILLY_KICKS_ASSERT_INVARIANTS: "1"
+      NUMBA_CACHE_DIR: ${{ github.workspace }}/.numba_cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.numba_cache
+          key: numba-ubuntu-latest-3.12-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py') }}
+      - run: pip install -e ".[kloppy,xgboost,das,test]"
+      # UNSHARDED full primary selection -- one run records every test's duration. Same flags as the
+      # matrix (`not e2e`, --benchmark-skip so benchmarks stay in their own job, -p no:randomly) so the
+      # captured set == exactly the matrix's set. --store-durations rewrites .test_durations.
+      - run: pytest tests/ -m "not e2e" --store-durations -p no:randomly --benchmark-skip --tb=short
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-durations-ci
+          path: .test_durations
+          include-hidden-files: true   # .test_durations is a dotfile; upload-artifact skips it otherwise
