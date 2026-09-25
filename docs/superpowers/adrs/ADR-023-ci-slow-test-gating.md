@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-06-08 |
-| **Status** | Accepted |
+| **Status** | Accepted (delivery amended 2026-09-25 — slow runs in a dedicated `slow` job, not inline on the primary leg; see [Amendment](#amendment--2026-09-25-slow-runs-in-a-dedicated-job)) |
 | **Deciders** | Karsten Nielsen; main-worktree session (4 review rounds) |
 
 ## Context
@@ -70,9 +70,35 @@ invariance.
 - `pyyaml` promoted to a direct `[test]` dep (the tripwire's parser) rather than riding the transitive
   `huggingface_hub → pyyaml` edge.
 
+## Amendment — 2026-09-25: slow runs in a dedicated job
+
+The **decision** here stands unchanged: the platform-/interpreter-invariant heavy tests are
+`@pytest.mark.slow` and run **once** on the primary interpreter (`ubuntu-latest` 3.12). Only the
+**delivery mechanism** changed, to remove a structural asymmetry ADR-074's duration-sharding could not:
+carrying the slow tail (measured ~13.6 min, ~37% of the `not e2e` runtime) *inline* on the primary
+leg's shards made that leg heavier than every other leg by the slow total, so a regenerated
+`.test_durations` still left it the long pole (~13.4 min).
+
+- The slow tail moves to a **dedicated `slow` job** (ubuntu-3.12, `pytest -m "slow and not e2e"`,
+  sharded `--splits 2`). Every `test` matrix leg — including ubuntu-3.12 — now runs the **same**
+  `not e2e and not slow` selection, so no leg is structurally heavier (binding job wall ~9.9 min).
+- `matrix.primary` and the two mutually-exclusive bulk `if:` branches are **removed**; there is one
+  unconditional non-slow bulk step.
+- `tests/test_ci_slow_gating_wired.py` is rewritten to assert the dedicated-job topology (no
+  `matrix.primary`; one unconditional `not slow` bulk step; a `slow` job selecting `slow and not e2e`
+  on 3.12). A new `tests/test_ci_slow_reconcile_wired.py` pins the conservation invariant
+  (`non-slow ⊎ slow == not-e2e` on the primary interpreter) that lives only in the `shard-reconcile`
+  body + the slow job's node-ID uploads.
+- No version bump / no PyPI — CI + test-infra only.
+
+Decided in `docs/superpowers/specs/2026-09-25-ci-runtime-slow-decouple-design.md` (r2 APPROVE); interacts
+with the duration-sharding of [ADR-074](ADR-074-ci-duration-sharding.md).
+
 ## Related
-- **Specs:** `docs/superpowers/specs/2026-06-08-ci-slow-test-gating-design.md`
-- **Plans:** `docs/superpowers/plans/2026-06-08-ci-slow-test-gating.md`
+- **Specs:** `docs/superpowers/specs/2026-06-08-ci-slow-test-gating-design.md`;
+  `docs/superpowers/specs/2026-09-25-ci-runtime-slow-decouple-design.md` (the delivery amendment above)
+- **Plans:** `docs/superpowers/plans/2026-06-08-ci-slow-test-gating.md`;
+  `docs/superpowers/plans/2026-09-25-ci-runtime-slow-decouple.md`
 - **Files:** `.github/workflows/ci.yml`, `tests/test_ci_slow_gating_wired.py`, `pyproject.toml` (`[test]`).
 - **ADRs:** contract guards kept on all legs relate to ADR-019 (id-dtype) and ADR-020 (frame-aware xfns).
 - **No version bump / no PyPI publish** — CI + test-infra only; `tests/` and `.github/` are not in the

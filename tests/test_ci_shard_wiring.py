@@ -45,26 +45,38 @@ def _defines_njit(src: str) -> bool:
 
 
 def _sharded_cmds() -> list[str]:
+    jobs = [_CI["jobs"]["test"]]
+    if "slow" in _CI["jobs"]:
+        jobs.append(_CI["jobs"]["slow"])
     return [
         s["run"]
-        for s in _CI["jobs"]["test"]["steps"]
+        for job in jobs
+        for s in job["steps"]
         if "run" in s and "--splits" in s["run"] and "pytest tests/" in s["run"]
     ]
 
 
 def test_shard_axis_is_contiguous_1_to_N() -> None:
     shards = _CI["jobs"]["test"]["strategy"]["matrix"]["shard"]
-    assert shards == list(range(1, len(shards) + 1)), f"shard axis must be 1..N contiguous, got {shards}"
+    assert shards == list(range(1, len(shards) + 1)), f"test shard axis must be 1..N contiguous, got {shards}"
+    slow_shards = _CI["jobs"]["slow"]["strategy"]["matrix"]["slow-shard"]
+    assert slow_shards == list(range(1, len(slow_shards) + 1)), (
+        f"slow-shard axis must be 1..N contiguous, got {slow_shards}"
+    )
 
 
 def test_splits_value_matches_shard_count() -> None:
-    n = len(_CI["jobs"]["test"]["strategy"]["matrix"]["shard"])
-    cmds = _sharded_cmds()
-    assert cmds, "no sharded pytest commands found in the test job"
-    for cmd in cmds:
-        m = re.search(r"--splits\s+(\d+)", cmd)
-        assert m and int(m.group(1)) == n, f"--splits must equal shard count {n}: {cmd}"
-        assert "--group ${{ matrix.shard }}" in cmd, f"missing per-shard --group: {cmd}"
+    checks = [
+        (_CI["jobs"]["test"], len(_CI["jobs"]["test"]["strategy"]["matrix"]["shard"]), "matrix.shard"),
+        (_CI["jobs"]["slow"], len(_CI["jobs"]["slow"]["strategy"]["matrix"]["slow-shard"]), "matrix.slow-shard"),
+    ]
+    for job, n, group_var in checks:
+        cmds = [s["run"] for s in job["steps"] if "run" in s and "--splits" in s["run"] and "pytest tests/" in s["run"]]
+        assert cmds, f"no sharded pytest commands found for group var {group_var}"
+        for cmd in cmds:
+            m = re.search(r"--splits\s+(\d+)", cmd)
+            assert m and int(m.group(1)) == n, f"--splits must equal shard count {n}: {cmd}"
+            assert f"--group ${{{{ {group_var} }}}}" in cmd, f"missing per-shard --group {group_var}: {cmd}"
 
 
 def test_every_sharded_command_pins_collection_order() -> None:
@@ -89,9 +101,11 @@ def test_benchmark_is_a_standalone_job_not_on_a_shard() -> None:
     assert "--benchmark-only" not in test_runs, "benchmark-only must NOT sit on a sharded test step"
 
 
-def test_shard_reconcile_job_exists_and_needs_test() -> None:
+def test_shard_reconcile_job_exists_and_needs_test_and_slow() -> None:
     job = _CI["jobs"].get("shard-reconcile")
-    assert job is not None and job["needs"] == "test", "shard-reconcile job must exist and need: test"
+    assert job is not None, "shard-reconcile job must exist"
+    needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
+    assert "test" in needs and "slow" in needs, f"shard-reconcile must need both test and slow, got {needs}"
 
 
 def test_numba_cache_key_covers_all_njit_files() -> None:
@@ -108,12 +122,15 @@ def test_numba_cache_key_covers_all_njit_files() -> None:
     assert "silly_kicks/xtgk/_turnover.py" in njit_files, (
         "detector no longer finds the call-form njit file (_turnover.py) -- it has drifted"
     )
-    cache = [s for s in _CI["jobs"]["test"]["steps"] if "actions/cache" in str(s.get("uses", ""))]
-    assert cache, "no numba actions/cache step in the test job"
-    patterns = re.findall(r"'([^']+)'", str(cache[0]["with"]["key"]))
-    # Path.glob DOES treat ** as zero-or-more dirs, matching GitHub hashFiles -- fnmatch does NOT.
-    covered: set[str] = set()
-    for pat in patterns:
-        covered |= {str(p.relative_to(_REPO)).replace("\\", "/") for p in _REPO.glob(pat)}
-    missing = set(njit_files) - covered
-    assert not missing, f"@njit files not covered by the numba cache key: {sorted(missing)}"
+    # BOTH jobs that compile the kernels (test + the dedicated slow job) must cover every @njit file,
+    # or Lever C silently no-ops for the uncovered ones in that job.
+    for job_name in ("test", "slow"):
+        cache = [s for s in _CI["jobs"][job_name]["steps"] if "actions/cache" in str(s.get("uses", ""))]
+        assert cache, f"no numba actions/cache step in the {job_name} job"
+        patterns = re.findall(r"'([^']+)'", str(cache[0]["with"]["key"]))
+        # Path.glob DOES treat ** as zero-or-more dirs, matching GitHub hashFiles -- fnmatch does NOT.
+        covered: set[str] = set()
+        for pat in patterns:
+            covered |= {str(p.relative_to(_REPO)).replace("\\", "/") for p in _REPO.glob(pat)}
+        missing = set(njit_files) - covered
+        assert not missing, f"@njit files not covered by the {job_name} numba cache key: {sorted(missing)}"
