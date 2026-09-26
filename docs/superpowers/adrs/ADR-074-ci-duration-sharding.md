@@ -81,6 +81,13 @@ B-Windows) is the recorded next lever if latency/cost later warrant it.
 
 ### Neutral
 - Tests + workflow + docs only — **no `silly_kicks` runtime change, no retrain, C4-free.**
+- **Amended 2026-09-25 (slow-decouple):** the `@slow` tail (ADR-023) was carried inline on the primary
+  leg's shards, making that leg heavier than the others by the slow total, so regenerating
+  `.test_durations` alone still left it the long pole. It moved to a dedicated `--splits 2` `slow` job;
+  every `test` leg now runs the same `not e2e and not slow` selection and `shard-reconcile` gained a
+  `non-slow ⊎ slow == not-e2e` conservation cross-check. See
+  [ADR-023 Amendment](ADR-023-ci-slow-test-gating.md#amendment--2026-09-25-slow-runs-in-a-dedicated-job)
+  and `docs/superpowers/specs/2026-09-25-ci-runtime-slow-decouple-design.md`.
 
 ### Known limits (stated, not discovered)
 - **Windows is install/numba-bound**; sharding cannot divide the 1:49 install, so the SLA there rests on

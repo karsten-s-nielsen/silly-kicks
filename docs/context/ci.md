@@ -34,7 +34,7 @@ regenerate:** temporarily re-add a `durations-capture` job (full `pytest -m "not
 --store-durations` under the warm numba cache, `include-hidden-files: true` on the upload since
 `.test_durations` is a dotfile), download its `test-durations-ci` artifact, commit it, and remove the
 job (a permanent ~20-min serial capture would become the wall-clock bottleneck). Regenerate when the
-suite shifts materially or a shard drifts toward budget; balance is tuned for the ubuntu primary leg
+suite shifts materially or a shard drifts toward budget; balance is tuned for the ubuntu-3.12 leg
 (others may run hotter — acceptable, the runtime `shard-reconcile` job still proves completeness). `-p no:randomly` pins collection order (a shuffle plugin would break the partition;
 `tests/test_ci_shard_wiring.py` bans it). Coverage is proved two ways: the static
 `tests/test_ci_shard_wiring.py` (contiguous `1..N`, `--splits == N`, `-p no:randomly`, numba-cache
@@ -110,12 +110,15 @@ self-contained examples stay executable `>>>` doctests. Do NOT reintroduce `>>> 
 filler — the gate's `_demonstrates_something` rejects it (the 4.53.0 tightening).
 
 **`@pytest.mark.slow` = expensive AND platform/interpreter-INVARIANT** (does-it-run train-script
-smokes, same-run internal-consistency/parity, calibration cache-equivalence). These run **once on the
-CI primary leg (`ubuntu-3.12`, matrix `primary: true`)**; every other leg runs `-m "not e2e and not
-slow"`. Do **NOT** mark version-sensitive tests `slow` (golden-hash / snapshot / absolute-numeric — e.g.
-`test_golden_*`) — they must stay on all legs (OS + interpreter axes), as must cheap behavioral-contract
-guards (dup-`action_id`, id-dtype-invariance, orientation/roster). The matrix partition is guarded by
-`tests/test_ci_slow_gating_wired.py`. Decision: ADR-023.
+smokes, same-run internal-consistency/parity, calibration cache-equivalence). These run **once in a
+dedicated `slow` job** (`ubuntu-3.12`, `pytest -m "slow and not e2e" --splits 2`), decoupled from the
+`test` matrix so no leg is structurally heavier by the ~37%-of-runtime slow tail; every `test` leg runs
+the same `-m "not e2e and not slow"` (2026-09-25 slow-decouple, ADR-023 amendment). Do **NOT** mark
+version-sensitive tests `slow` (golden-hash / snapshot / absolute-numeric — e.g. `test_golden_*`) — they
+must stay on all legs (OS + interpreter axes), as must cheap behavioral-contract guards
+(dup-`action_id`, id-dtype-invariance, orientation/roster). The split is guarded by
+`tests/test_ci_slow_gating_wired.py`, and the `non-slow ⊎ slow == not-e2e` conservation cross-check
+(the proof decoupling dropped nothing) by `tests/test_ci_slow_reconcile_wired.py`. Decision: ADR-023.
 
 **Claims about a gate's behaviour must quote the assertion body, not its registration.**
 A gate's registry (`ENTRIES`, `PURITY_ENTRIES`, `AGGREGATORS`, `_PUBLIC_MODULE_FILES`,

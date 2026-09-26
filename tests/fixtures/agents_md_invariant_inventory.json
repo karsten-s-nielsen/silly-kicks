@@ -1526,7 +1526,7 @@
     ],
     "required_tokens": [
       "test_ci_slow_gating_wired",
-      "primary: true"
+      "@pytest.mark.slow"
     ],
     "dropped_with_owner_approval": null
   },
