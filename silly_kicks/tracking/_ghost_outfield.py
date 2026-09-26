@@ -1174,7 +1174,7 @@ def ghost_rearguard_coherence(served: pd.DataFrame) -> dict:
     n_groups = 0
     n_ordered = 0
     min_dists: list[float] = []
-    for _key, grp in finite.groupby(["game_id", "period_id", "frame_id", "team_id"], sort=False):
+    for _key, grp in finite.groupby(["game_id", "period_id", "frame_id", "team_id"], sort=False, observed=True):
         gg = grp.sort_values("slot_index", kind="stable")
         if len(gg) < 2:
             continue

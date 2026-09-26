@@ -228,7 +228,7 @@ def extract_xcross_features(
     na_fill = "\x00"  # sentinel: no canonical id equals it, so NA (ball) rows never match
     team = canonical_id_series(f["team_id"]).fillna(na_fill).to_numpy()
     pid = canonical_id_series(f["player_id"]).fillna(na_fill).to_numpy()
-    gr_x = np.array([_geo.to_goal_relative_x(x, goal_x=goal_x) for x in f["x"].to_numpy()])
+    gr_x = np.array([_geo.to_goal_relative_x(x, goal_x=goal_x) for x in f["x"].to_numpy(dtype="float64")])
     # y is GOAL-RELATIVE from here down (PR 5). Paired with gr_x this is the 180-degree point
     # reflection; before PR 5 y rode through untransformed, so `atan2(y - GOAL_Y, gr_x)` negated
     # every bearing between the two goal ends while every radial stayed byte-identical. The local
@@ -658,6 +658,9 @@ class XCrossAttemptModel:
         # Provenance (set by the trainer before save(); recorded in metadata).
         self.shipped_variant: str | None = None
         self.provider_list: list | None = None
+        # Training commit (clean tree); written into metadata by save() so a retrain re-stamps it
+        # rather than dropping the hand-patched value the bundle carried (ADR-054 c487c49; ADR-106).
+        self.training_commit: str | None = None
 
     def fit(
         self,
@@ -726,6 +729,9 @@ class XCrossAttemptModel:
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),
             "feature_contract": _feature_contract_block(self.feature_set),
+            # LAST, matching the bundled artifacts' key order (ADR-054 c487c49 hand-patch) so a
+            # re-save stays byte-identical (test_weights_bundle_golden).
+            "training_commit": self.training_commit,
         }
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:
@@ -780,6 +786,7 @@ class XCrossAttemptModel:
         model.cross_types = meta.get("cross_types", model.cross_types)
         model.shipped_variant = meta.get("shipped_variant")
         model.provider_list = meta.get("provider_list")
+        model.training_commit = meta.get("training_commit")
         model._booster = load_xgb_booster_base_score_safe(path / "model.json")
 
         from silly_kicks.tracking._chirality import verify_chirality

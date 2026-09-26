@@ -136,7 +136,14 @@ class SimulatedAnnealing:
         # Iteration-0 incumbent: the factual shape, via the SAME code path as every trial score.
         actual_score = float(objective.score(real))
 
+        # F1b (ADR-106): `current`/`trial` are scratch COMPUTE frames the SA loop mutates via `.at`.
+        # If `frame` stores float32 coords, a float64 `.at` assign raises pandas 3's LossySetitemError,
+        # so work the mutable copy in float64 (compute dtype; nothing here is persisted). `real` is left
+        # untouched (read-only, feasibility vs the real position).
         current = real.copy()
+        for _c in ("x", "y"):
+            if _c in current.columns:
+                current[_c] = current[_c].astype("float64")
         current_score = actual_score
         best = real.copy()
         best_score = actual_score
@@ -176,7 +183,7 @@ class SimulatedAnnealing:
                 continue  # rejected proposal -- does not advance the patience plateau
 
             n_feasible += 1
-            trial = current.copy()
+            trial = current.copy()  # float64 compute frame (see `current` above) -> `.at` is lossless
             trial.at[di, "x"] = candidate[0]
             trial.at[di, "y"] = candidate[1]
             new_score = float(objective.score(trial))

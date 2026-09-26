@@ -264,8 +264,9 @@ def test_equivalence_to_sportec_adapter():
     # Build the equivalent UNLABELED absolute frames (x = x_centered + 52.5, y = y_centered + 34),
     # matching the sportec adapter's pre-flip absolute coordinates.
     abs_frames = raw.copy()
-    abs_frames["x"] = abs_frames["x_centered"] + 52.5
-    abs_frames["y"] = abs_frames["y_centered"] + 34.0
+    # F1b (ADR-106): real frames store float32 coords, so build the unlabeled input that way.
+    abs_frames["x"] = (abs_frames["x_centered"] + 52.5).astype("float32")
+    abs_frames["y"] = (abs_frames["y_centered"] + 34.0).astype("float32")
     abs_frames["speed"] = abs_frames["speed_native"]
     abs_frames["speed_source"] = None
     abs_frames["team_attacking_direction"] = None
@@ -278,8 +279,11 @@ def test_equivalence_to_sportec_adapter():
 
     a = adapter_out.sort_values(["period_id", "frame_id", "is_ball", "player_id"]).reset_index(drop=True)
     h = helper_out.sort_values(["period_id", "frame_id", "is_ball", "player_id"]).reset_index(drop=True)
-    pd.testing.assert_series_equal(a["x"], h["x"], check_names=False)
-    pd.testing.assert_series_equal(a["y"], h["y"], check_names=False)
+    # Equivalence is of VALUES/orientation: the sportec adapter re-casts to the float32 schema at its
+    # finalize seam, while orient_frames_to_ltr is a reorienter that does not impose a dtype, so the two
+    # may land on different float widths (F1b). check_dtype=False asserts the orientation, not the width.
+    pd.testing.assert_series_equal(a["x"], h["x"], check_names=False, check_dtype=False)
+    pd.testing.assert_series_equal(a["y"], h["y"], check_names=False, check_dtype=False)
 
 
 def test_exported_from_tracking_namespace():

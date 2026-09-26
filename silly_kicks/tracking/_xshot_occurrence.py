@@ -445,6 +445,11 @@ class XShotOccurrenceModel:
         # Provenance (set by the trainer before save(); recorded in metadata — N5).
         self.shipped_variant: str | None = None
         self.provider_list: list | None = None
+        # The commit the weights were trained at (clean tree via require_clean_tree). Written into
+        # metadata.json by save() when set, so a retrain re-stamps it instead of dropping it -- the
+        # bundled artifacts previously carried a hand-patched value (ADR-054 c487c49); this closes
+        # that gap so the trainer produces it end-to-end, matching train_ghost_gk (ADR-106).
+        self.training_commit: str | None = None
 
     def fit(
         self,
@@ -532,6 +537,9 @@ class XShotOccurrenceModel:
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),
             "feature_contract": _feature_contract_block(self.feature_set),
+            # LAST, matching the bundled artifacts' key order (the ADR-054 c487c49 hand-patch
+            # appended it) so a re-save stays byte-identical (test_weights_bundle_golden).
+            "training_commit": self.training_commit,
         }
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:
@@ -594,6 +602,7 @@ class XShotOccurrenceModel:
         model.shot_types = meta.get("shot_types", model.shot_types)
         model.shipped_variant = meta.get("shipped_variant")
         model.provider_list = meta.get("provider_list")
+        model.training_commit = meta.get("training_commit")
         model._booster = load_xgb_booster_base_score_safe(path / "model.json")
 
         from silly_kicks.tracking._chirality import verify_chirality

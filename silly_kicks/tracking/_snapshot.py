@@ -233,6 +233,15 @@ def _cast_to_declared_schema(frames: pd.DataFrame) -> pd.DataFrame:
     cross-major trap: assert the behaviour, never the dtype literal).
     """
     for col, declared in TRACKING_FRAMES_COLUMNS.items():
+        if declared == "category" and col in _ID_COLUMNS:
+            # F1b (ADR-106): team_id is `category` over the CALLER's domain. A numeric id is cast to
+            # Int64 FIRST -- else the ball row's NA upcast it to float64 and the category would hold
+            # "366.0" not "366" (the ADR-019 trap, now inside the category); a genuine string id
+            # becomes a category-of-object. Either way `id_compat._decat` unwraps it at comparison.
+            is_str_id = not pd.api.types.is_numeric_dtype(frames[col].dtype)
+            underlying = frames[col] if is_str_id else frames[col].astype("Int64")
+            frames[col] = underlying.astype("category")
+            continue
         if col in _ID_COLUMNS and not pd.api.types.is_numeric_dtype(frames[col].dtype):
             continue  # genuine string ids (object on pandas 2, str/string[pyarrow] on pandas 3) -- keep
         if str(frames[col].dtype) != declared:

@@ -130,8 +130,10 @@ def derive_velocities(
         vx[idx_arr] = vx_g
         vy[idx_arr] = vy_g
 
-    sorted_frames["vx"] = vx
-    sorted_frames["vy"] = vy
-    sorted_frames["speed"] = np.sqrt(vx * vx + vy * vy)
+    # F1b (ADR-106): kinematic STORAGE is float32 (compute upcasts at kernel boundaries), matching the
+    # float32 coordinate columns they derive from. NaN preserved.
+    sorted_frames["vx"] = np.asarray(vx, dtype=np.float32)
+    sorted_frames["vy"] = np.asarray(vy, dtype=np.float32)
+    sorted_frames["speed"] = np.sqrt(vx * vx + vy * vy).astype(np.float32)
     sorted_frames = sorted_frames.iloc[np.argsort(original_index)].reset_index(drop=True)
     return sorted_frames

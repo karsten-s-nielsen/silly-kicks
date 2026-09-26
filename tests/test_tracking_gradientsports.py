@@ -22,10 +22,11 @@ def test_tiny_output_columns_match_schema():
     assert set(frames.columns) == set(GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS)
 
 
-def test_tiny_player_team_id_are_int64_nullable():
+def test_tiny_player_id_int64_team_id_category():
+    # F1b (ADR-106): player_id stays nullable Int64 (dynamic post-build); team_id → category.
     frames, _ = convert_to_frames(TINY, home_team_id=100, home_team_start_left=True)
     assert str(frames["player_id"].dtype) == "Int64"
-    assert str(frames["team_id"].dtype) == "Int64"
+    assert str(frames["team_id"].dtype) == "category"
 
 
 def test_tiny_ball_rows_have_nan_player_id():

@@ -166,10 +166,17 @@ def test_velocity_is_consistent_with_position():
 def test_id_dtype_parameterization_reaches_the_producer(id_dtype):
     """A hand-built fixture silently picks one id dtype and can mask a real ADR-019 defect.
 
-    The frame dtype is NOT the requested one for `int64`: a frame set carries a NaN-id ball
-    row and numpy int64 cannot hold NaN, so the producer's own concat upcasts to float64.
-    Measured, not assumed -- and Leg B must land on the same dtype or the legs disagree about
-    identity before any value is compared.
+    The frame `player_id` dtype is NOT the requested one for `int64`: a frame set carries a NaN-id
+    ball row and numpy int64 cannot hold NaN, so the producer's own concat upcasts to float64.
+    Measured, not assumed -- and Leg B must land on the same `player_id` dtype or the legs disagree
+    about identity before any value is compared.
+
+    F1b (ADR-106): `team_id` is exempt from the legs-must-match rule. Leg A goes through the producer,
+    which stores `team_id` as `category` (over an Int64-first underlying); Leg B is hand-built. The two
+    need NOT share `team_id` dtype -- `id_compat._decat` makes category vs its underlying value-neutral
+    (the ADR-019 category-axis gate proves the aggregator features are identical), so the audit compares
+    FEATURE values regardless of the id-column dtype. What is asserted is that the producer emits the
+    F1b schema on Leg A.
     """
     actions_a, frames_a, _ = F.build_leg_a(id_dtype=id_dtype)
     actions_b, frames_b, _ = F.build_leg_b(id_dtype=id_dtype)
@@ -178,7 +185,7 @@ def test_id_dtype_parameterization_reaches_the_producer(id_dtype):
     assert actions_a["player_id"].dtype == actions_b["player_id"].dtype
     assert str(frames_a["player_id"].dtype) == F.frame_id_dtype(id_dtype)
     assert frames_a["player_id"].dtype == frames_b["player_id"].dtype
-    assert frames_a["team_id"].dtype == frames_b["team_id"].dtype
+    assert isinstance(frames_a["team_id"].dtype, pd.CategoricalDtype)
 
 
 @pytest.mark.parametrize("roster", ["full", "gk_absent", "defender_absent"])

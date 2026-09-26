@@ -131,8 +131,9 @@ def smooth_frames(
         else:
             raise ValueError(f"smooth_frames: unsupported method={method_used!r}")
 
-    sorted_frames["x_smoothed"] = x_smoothed
-    sorted_frames["y_smoothed"] = y_smoothed
+    # F1b (ADR-106): smoothed-position STORAGE is float32, matching the float32 coordinate columns.
+    sorted_frames["x_smoothed"] = x_smoothed.astype(np.float32)
+    sorted_frames["y_smoothed"] = y_smoothed.astype(np.float32)
 
     sorted_frames = sorted_frames.iloc[np.argsort(original_index)].reset_index(drop=True)
     # ADR-103 F1a: `category` -- a match-constant string across every row (the single biggest object
