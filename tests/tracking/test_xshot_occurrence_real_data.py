@@ -171,8 +171,11 @@ def test_gradientsports_via_real_converter():
     frames, _report = convert_to_frames(
         raw, home_team_id=100, home_team_start_left=True, output_convention="absolute_frame"
     )
-    # GS canonical schema: Int64 identifiers (the asymmetry the join must handle).
-    assert str(frames["team_id"].dtype) == "Int64"
+    # GS canonical schema (F1b/ADR-106): player_id nullable Int64, team_id `category` (over Int64).
+    # The join must handle the category exactly as it handled Int64 (via id_compat._decat); the
+    # behavioural join-not-miss assertion at the end is the real guard, this pins the F1b dtypes.
+    assert str(frames["team_id"].dtype) == "category"
+    assert str(frames["player_id"].dtype) == "Int64"
     frames = frames.copy()
     frames["vx"] = 0.0
     frames["vy"] = 0.0

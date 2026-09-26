@@ -328,15 +328,18 @@ def reflect_columns(
         return out
     fl, fw = _pitch_dims(field_length, field_width)
 
+    # Reflect in float64, then store back at the COLUMN's own dtype. F1b (ADR-106) makes coords
+    # float32, and a masked `.loc[m, col] = <float64 array>` raises pandas 3's LossySetitemError
+    # (pandas 2 silently upcast the column). `str(dtype)` keeps it a numpy DTypeLike for `astype`.
     for col in point_x:
         if col in out.columns:
-            out.loc[m, col] = fl - out[col].to_numpy(dtype="float64")[m]
+            out.loc[m, col] = (fl - out[col].to_numpy(dtype="float64")[m]).astype(str(out[col].dtype))
     for col in point_y:
         if col in out.columns:
-            out.loc[m, col] = fw - out[col].to_numpy(dtype="float64")[m]
+            out.loc[m, col] = (fw - out[col].to_numpy(dtype="float64")[m]).astype(str(out[col].dtype))
     for col in (*vector_x, *vector_y):
         if col in out.columns:
-            out.loc[m, col] = -out[col].to_numpy(dtype="float64")[m]
+            out.loc[m, col] = (-out[col].to_numpy(dtype="float64")[m]).astype(str(out[col].dtype))
     for col in direction_label:
         if col in out.columns:
             # Swap ltr<->rtl on a full object array, then assign the WHOLE column. A masked

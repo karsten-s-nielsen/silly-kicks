@@ -75,6 +75,28 @@ def test_aggregator_id_dtype_invariant(agg, act_str, frm_str, ht_str):
     )
 
 
+@pytest.mark.parametrize("agg", AGGREGATORS, ids=lambda a: a.__name__)
+def test_aggregator_category_team_id_invariant(agg):
+    """F1b (ADR-106): frame ``team_id`` is stored ``category``. Every aggregator must be invariant to
+    it -- id_compat._decat unwraps the category to its underlying Int64 at comparison, so the output
+    must equal the numeric baseline exactly (value-neutral). This is the category axis of the ADR-019
+    invariance gate; a new id path that mishandles a category team_id fails here."""
+    base_actions, base_frames, home = make_actions(), make_frames(), 5
+    baseline = agg(base_actions.copy(), base_frames.copy(), home)
+
+    f = base_frames.copy()
+    f["team_id"] = f["team_id"].astype("Int64").astype("category")  # the F1b storage dtype
+    variant = agg(base_actions.copy(), f, home)
+
+    feat_cols = [c for c in baseline.columns if not _is_id_col(c)]
+    pd.testing.assert_frame_equal(
+        baseline[feat_cols].reset_index(drop=True),
+        variant[feat_cols].reset_index(drop=True),
+        check_dtype=False,
+        check_like=True,
+    )
+
+
 def test_enumerated_surface_equals_registered():  # B3 meta-assertion
     # `name[variant]` entries are ALTERNATE-METHOD sweeps of an aggregator already registered
     # under its bare name; strip the suffix so a variant can never stand in for its base.

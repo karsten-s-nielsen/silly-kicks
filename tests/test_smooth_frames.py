@@ -52,8 +52,9 @@ def test_smoothed_columns_added():
     out = smooth_frames(_toy_frames(), config=PreprocessConfig.default())
     assert "x_smoothed" in out.columns
     assert "y_smoothed" in out.columns
-    assert out["x_smoothed"].dtype == np.float64
-    assert out["y_smoothed"].dtype == np.float64
+    # F1b (ADR-106): smoothed-position STORAGE is float32.
+    assert out["x_smoothed"].dtype == np.float32
+    assert out["y_smoothed"].dtype == np.float32
 
 
 def test_provenance_column_added():

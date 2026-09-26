@@ -3075,7 +3075,7 @@ def _precompute_das_lookup(
     # the lookup stores NaN, making all action-coupled results NaN.
     valid_rows = player_rows.dropna(subset=["DAS"])
     lookup: dict[tuple, dict] = {}
-    for (pid, fid, tid), grp in valid_rows.groupby(["period_id", "frame_id", "team_id"]):
+    for (pid, fid, tid), grp in valid_rows.groupby(["period_id", "frame_id", "team_id"], observed=True):
         lookup.setdefault((pid, fid), {})[tid] = float(grp["DAS"].sum())
     return lookup
 

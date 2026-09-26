@@ -1068,7 +1068,7 @@ def _extract_all_ghost_gk_features(
                 & ~frame_data["is_ball"].astype(bool)
             ]
             if len(defending) > 0:
-                _dxs = np.asarray(defending["x"].values)
+                _dxs = defending["x"].to_numpy(dtype="float64")
                 _gr = (_FIELD_LENGTH - _dxs) if flip else _dxs
                 _sorted_xs = np.sort(_gr)
                 _n_back = min(4, len(_sorted_xs))

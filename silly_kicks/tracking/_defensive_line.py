@@ -206,7 +206,7 @@ def compute_defensive_line(
 
     # Group by (game_id, period_id, frame_id, team_id)
     rows: list[dict] = []
-    groups = outfield.groupby(["game_id", "period_id", "frame_id", "team_id"], dropna=False)
+    groups = outfield.groupby(["game_id", "period_id", "frame_id", "team_id"], dropna=False, observed=True)
 
     for (game_id, period_id, frame_id, team_id), group in groups:
         p = len(group)

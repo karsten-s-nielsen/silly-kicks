@@ -14,22 +14,31 @@ TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     # PERIOD-RELATIVE: seconds since the start of the period, resets to 0 each period (ADR-017)
     "time_seconds": "float64",
     "frame_rate": "float64",
-    # NULLABLE by necessity, not by preference. Every frame set carries a ball row, which belongs
-    # to no team and holds no player, so both are NA on it BY CONSTRUCTION -- and numpy `int64`
-    # cannot represent NA. Declared `int64` these raised `IntCastingNaNError` on every snapshot,
-    # which ADR-055 measured and read as its dtype PIN being unimplementable; it was the
-    # DECLARATION. All five provider variants already overrode them (four to `object`, Gradient
-    # Sports to `Int64`), so the base was satisfied by nothing: a default masquerading as a
-    # contract. Not `object`, because `id_compat`'s both-object path is CONTENT-probed (~15% per
-    # side) since boxed floats raw-compare False against the same id as a string.
+    # player_id NULLABLE by necessity (ball row is NA BY CONSTRUCTION; numpy int64 cannot hold NA --
+    # ADR-055/058). Stays Int64 (object in the kloppy family) and NOT `category`, because it is
+    # MUTATED post-build (`_das.py` `.loc[ball_mask,"player_id"]="ball"` masked setitem; `_run_values`
+    # Int64-reassign; the keeper/actor identity bridges), and `category` is not transparent to a new
+    # category at setitem (the ADR-103 dynamic-column rule). team_id IS `category` (F1b / ADR-106
+    # option A): STATIC/set-once + very low cardinality (~2/match) -> a large frame-memory win; its
+    # only post-build touch is a masked `=None` (-> NaN, allowed on a categorical). `id_compat._decat`
+    # unwraps the category to its underlying Int64/object at every comparison, so all id logic is
+    # value-neutral. player_id -> category is reconsiderable once DAS is reimplemented natively (that
+    # removes the `_das` `"ball"` sentinel blocker).
     "player_id": "Int64",
-    "team_id": "Int64",
+    "team_id": "category",
     "is_ball": "bool",
     "is_goalkeeper": "bool",
-    "x": "float64",
-    "y": "float64",
-    "z": "float64",
-    "speed": "float64",
+    # F1b (ADR-106): coordinate + kinematic storage is float32. STORAGE only -- every compute path
+    # upcasts the coord slice to float64 at its kernel boundary (so the numba/ADR-076 bit-identity
+    # contract is re-anchored on float64 inputs and the ONLY numeric drift is the deterministic
+    # storage-rounding, ~1e-5 m, far below tracking-sensor precision). Halves the dominant frame
+    # column memory. float32 holds NaN, so NA-on-ball-row (z) / positional-only (speed) are preserved.
+    # `vx`/`vy`/`x_smoothed`/`y_smoothed` are added by preprocess (not declared here) and are cast to
+    # float32 at the end of derive_velocities/smooth_frames.
+    "x": "float32",
+    "y": "float32",
+    "z": "float32",
+    "speed": "float32",
     # ADR-103 F1a: only STATIC, set-once low-cardinality columns are `category` (int codes + tiny dict,
     # ~30-50x smaller than object over a match's rows) -- value-transparent for ==/.dropna()/pd.unique/
     # presence. DYNAMIC columns that are mutated post-build stay `object`, because `category` is NOT
@@ -56,9 +65,11 @@ KLOPPY_TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     **TRACKING_FRAMES_COLUMNS,
     "game_id": "object",
     "player_id": "object",
-    "team_id": "object",
 }
-"""Kloppy gateway output: object identifiers (kloppy domain types are strings)."""
+"""Kloppy gateway output: object ``game_id``/``player_id`` (kloppy domain types are strings). ``team_id``
+inherits the base ``category`` (F1b / ADR-106): the underlying is object strings, so it is a
+category-of-object here vs a category-of-Int64 on the numeric-id providers -- ``id_compat._decat`` unwraps
+either. ``player_id`` stays object (dynamic post-build; see the base schema note)."""
 
 SPORTEC_TRACKING_FRAMES_COLUMNS: dict[str, str] = KLOPPY_TRACKING_FRAMES_COLUMNS
 """Sportec native output: same shape as kloppy variant --- DFL TeamId / PersonId
