@@ -156,7 +156,7 @@ def convert_to_frames(
     for col, dtype_str in SPORTEC_TRACKING_FRAMES_COLUMNS.items():
         if dtype_str == "bool":
             final[col] = final[col].astype("bool")
-        elif dtype_str in {"int64", "float64"}:
+        elif dtype_str in {"int64", "float64", "float32"}:
             final[col] = pd.to_numeric(final[col], errors="coerce").astype(dtype_str)  # type: ignore[arg-type]
         elif dtype_str == "category":
             final[col] = final[col].astype("category")

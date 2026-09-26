@@ -348,6 +348,8 @@ def _write_back(frames: pd.DataFrame, *, provenance: pd.DataFrame) -> pd.DataFra
     hit = joined["ghost_x"].notna().to_numpy() & joined["ghost_y"].notna().to_numpy()
     idx = joined.index[hit]
     if len(idx):
-        out.loc[idx, "x"] = joined.loc[idx, "ghost_x"].to_numpy(dtype=float)
-        out.loc[idx, "y"] = joined.loc[idx, "ghost_y"].to_numpy(dtype=float)
+        # F1b (ADR-106): store ghost coords back at the frame's own dtype (float32); pandas 3 masked
+        # setitem rejects a lossy float64 RHS.
+        out.loc[idx, "x"] = joined.loc[idx, "ghost_x"].to_numpy(dtype=float).astype(str(out["x"].dtype))
+        out.loc[idx, "y"] = joined.loc[idx, "ghost_y"].to_numpy(dtype=float).astype(str(out["y"].dtype))
     return out

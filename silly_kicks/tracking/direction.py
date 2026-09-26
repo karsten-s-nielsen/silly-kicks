@@ -293,12 +293,16 @@ def orient_frames_to_ltr_by_geometry(
             needs_flip = away_gk_x < _PITCH_MID_X
         if needs_flip:
             fmask = period_arr == period
-            out.loc[fmask, "x"] = _PITCH_LENGTH_M - x_arr[fmask]
-            out.loc[fmask, "y"] = _PITCH_WIDTH_M - out["y"].to_numpy(dtype="float64")[fmask]
+            # F1b (ADR-106): coords are float32; store the flipped float64 result back at the column's
+            # own dtype, else pandas 3's masked setitem raises LossySetitemError (pandas 2 upcast).
+            out.loc[fmask, "x"] = (_PITCH_LENGTH_M - x_arr[fmask]).astype(str(out["x"].dtype))
+            out.loc[fmask, "y"] = (_PITCH_WIDTH_M - out["y"].to_numpy(dtype="float64")[fmask]).astype(
+                str(out["y"].dtype)
+            )
             if has_vx:
-                out.loc[fmask, "vx"] = -out["vx"].to_numpy(dtype="float64")[fmask]
+                out.loc[fmask, "vx"] = (-out["vx"].to_numpy(dtype="float64")[fmask]).astype(str(out["vx"].dtype))
             if has_vy:
-                out.loc[fmask, "vy"] = -out["vy"].to_numpy(dtype="float64")[fmask]
+                out.loc[fmask, "vy"] = (-out["vy"].to_numpy(dtype="float64")[fmask]).astype(str(out["vy"].dtype))
 
     if "team_attacking_direction" in out.columns and out["team_attacking_direction"].isna().all():
         known = is_player & out["period_id"].isin(_LTR_KNOWN_PERIODS)

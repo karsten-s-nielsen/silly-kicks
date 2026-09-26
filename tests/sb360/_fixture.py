@@ -495,6 +495,16 @@ def build_leg_b(*, roster: str = "full", id_dtype: str = "int64"):
 
     frames = _cast_frame_ids(pd.DataFrame(rows), id_dtype)
 
+    # F1b (ADR-106): Leg A goes through `snapshot_to_tracking_frames`, whose coordinate STORAGE is
+    # float32. Leg B is hand-assembled (float64), so mirror that dtype here -- else a POSITION-only
+    # metric (nearest_defender_distance, defensive_line_x) would observe 'differs' purely on the
+    # float32-vs-float64 storage rounding (~1e-5 m), confounding the VELOCITY signal this audit exists
+    # to isolate. team_id dtype is deliberately NOT matched: id_compat is value-neutral across category
+    # vs Int64 (proven by the ADR-019 category-axis gate), so it cannot move a feature value.
+    for _c in ("x", "y", "z", "vx", "vy", "speed", "x_smoothed", "y_smoothed"):
+        if _c in frames.columns:
+            frames[_c] = frames[_c].astype("float32")
+
     # Link with the REAL linker, for the same reason Leg A uses the real producer: a
     # hand-built five-column table drifts the moment the linkage contract changes, and the
     # LinkReport gives a free assertion that every action actually found a frame.

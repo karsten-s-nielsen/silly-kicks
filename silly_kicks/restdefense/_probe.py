@@ -248,8 +248,9 @@ def _substitute(frames: pd.DataFrame, targets: pd.DataFrame) -> pd.DataFrame:
     hit = joined["imp_x"].notna().to_numpy() & joined["imp_y"].notna().to_numpy()
     idx = joined.index[hit]
     if len(idx):
-        out.loc[idx, "x"] = joined.loc[idx, "imp_x"].to_numpy(dtype=float)
-        out.loc[idx, "y"] = joined.loc[idx, "imp_y"].to_numpy(dtype=float)
+        # F1b (ADR-106): cast to the frame's coord dtype (float32); pandas 3 masked setitem is strict.
+        out.loc[idx, "x"] = joined.loc[idx, "imp_x"].to_numpy(dtype=float).astype(str(out["x"].dtype))
+        out.loc[idx, "y"] = joined.loc[idx, "imp_y"].to_numpy(dtype=float).astype(str(out["y"].dtype))
     return out
 
 
@@ -338,7 +339,7 @@ def paired_vector_controls(
             labels = [lbl for lbl, _, _ in recs]
             dxs = np.array([d for _, d, _ in recs], dtype=float)
             dys = np.array([d for _, _, d in recs], dtype=float)
-            cf.loc[labels, "x"] = cf.loc[labels, "x"].to_numpy(dtype=float) + dxs
-            cf.loc[labels, "y"] = cf.loc[labels, "y"].to_numpy(dtype=float) + dys
+            cf.loc[labels, "x"] = (cf.loc[labels, "x"].to_numpy(dtype=float) + dxs).astype(str(cf["x"].dtype))
+            cf.loc[labels, "y"] = (cf.loc[labels, "y"].to_numpy(dtype=float) + dys).astype(str(cf["y"].dtype))
         out[name] = cf
     return out

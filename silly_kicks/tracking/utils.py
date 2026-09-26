@@ -129,7 +129,9 @@ def _derive_speed(frames: pd.DataFrame) -> pd.DataFrame:
     derived = pd.Series(np.sqrt(dx**2 + dy**2) * out["frame_rate"], index=out.index)
 
     fill_mask = out["speed"].isna() & derived.notna()
-    out.loc[fill_mask, "speed"] = derived[fill_mask]
+    # F1b (ADR-106): `speed` is float32; `derived` (=sqrt(dx^2+dy^2)*frame_rate) is float64, so store it
+    # back at the column dtype, else pandas 3's masked setitem raises LossySetitemError (pandas 2 upcast).
+    out.loc[fill_mask, "speed"] = derived[fill_mask].astype(out["speed"].dtype)
     out.loc[fill_mask, "speed_source"] = "derived"
     return out
 
@@ -941,7 +943,7 @@ def validate_gk_position_clamp(
     ceiling_by_unit: dict[tuple[str, str], float] = {}
     pileup_by_unit: dict[tuple[str, str], float] = {}
     n_units = 0
-    for (g, t), grp in gk.groupby(["game_id", "team_id"], sort=False):
+    for (g, t), grp in gk.groupby(["game_id", "team_id"], sort=False, observed=True):
         d = grp["_dist"].to_numpy(float)
         if len(d) < min_keeper_frames:
             continue

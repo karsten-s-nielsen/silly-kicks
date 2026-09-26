@@ -84,6 +84,10 @@ def interpolate_frames(
     original_index = sorted_frames["index"].to_numpy()
     sorted_frames = sorted_frames.drop(columns="index")
 
+    # F1b (ADR-106): interpolate in float64, store back at the input dtype (float32 storage —
+    # a bare `to_numpy(dtype=float)` round-trip would silently upcast a float32 coord to float64).
+    # str(dtype) keeps it a numpy DTypeLike for `ndarray.astype` (a pandas DtypeObj is not).
+    x_dtype, y_dtype = str(sorted_frames["x"].dtype), str(sorted_frames["y"].dtype)
     x = sorted_frames["x"].to_numpy(dtype=float, copy=True)
     y = sorted_frames["y"].to_numpy(dtype=float, copy=True)
     t = sorted_frames["time_seconds"].to_numpy(dtype=float)
@@ -94,7 +98,7 @@ def interpolate_frames(
         x[idx_arr] = gx
         y[idx_arr] = gy
 
-    sorted_frames["x"] = x
-    sorted_frames["y"] = y
+    sorted_frames["x"] = x.astype(x_dtype)
+    sorted_frames["y"] = y.astype(y_dtype)
     sorted_frames = sorted_frames.iloc[np.argsort(original_index)].reset_index(drop=True)
     return sorted_frames

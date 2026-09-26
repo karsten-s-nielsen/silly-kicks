@@ -34,8 +34,8 @@ def opponents_action_ltr(
     opp = fr[is_opp.to_numpy()].copy()
     if opp.empty:
         return opp
-    x = opp["x"].to_numpy()
-    y = opp["y"].to_numpy()
+    x = opp["x"].to_numpy(dtype="float64")
+    y = opp["y"].to_numpy(dtype="float64")
     opp["_px"] = _FIELD_LENGTH - x if flip else x
     opp["_py"] = _FIELD_WIDTH - y if flip else y
     return opp

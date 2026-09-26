@@ -495,3 +495,47 @@ def test_infer_ball_carrier_emits_the_source_dtype_not_object():
         assert str(col.dtype) == name, f"{name} source leaked {col.dtype}"
         # non-vacuity: the column must actually carry a resolved carrier, not be all-NA
         assert col.notna().any(), f"{name}: fixture produced no carrier, test would be vacuous"
+
+
+# --- F1b (ADR-106): category-dtype id columns (team_id -> category) --------------------------------
+# `_decat` unwraps a category to its underlying dtype at every seam, so a category-of-Int64 and a
+# category-of-object behave identically to their non-category counterparts (value-neutral).
+
+
+def test_canonical_id_series_category_of_int64_matches_int64():
+    s_int = pd.Series([366, 512, pd.NA], dtype="Int64")
+    s_cat = s_int.astype("category")
+    assert idc.canonical_id_series(s_cat).tolist() == idc.canonical_id_series(s_int).tolist()
+    assert idc.canonical_id_series(s_cat).tolist() == ["366", "512", pd.NA]
+
+
+def test_canonical_id_series_category_of_object_matches_object():
+    s_obj = pd.Series(["DFL-CLU-A", "DFL-CLU-B", None], dtype="object")
+    s_cat = s_obj.astype("category")
+    assert idc.canonical_id_series(s_cat).tolist() == idc.canonical_id_series(s_obj).tolist()
+
+
+def test_ids_match_category_team_id_vs_scalar():
+    # THE motivating case, now on a category-of-Int64 team_id vs a string home_team_id scalar.
+    team_id = pd.Series([366, 366, 512], dtype="Int64").astype("category")
+    assert idc.ids_match(team_id, "366").tolist() == [True, True, False]
+    assert idc.ids_match(team_id, 366).tolist() == [True, True, False]
+
+
+def test_ids_equal_category_vs_int64_cross_dtype():
+    cat = pd.Series([7, 9, pd.NA], dtype="Int64").astype("category")
+    raw = pd.Series([7, 9, 9], dtype="int64")
+    assert idc.ids_equal(cat, raw).tolist() == [True, True, False]
+
+
+def test_ids_differ_category_opponent_mask():
+    actor = pd.Series([1, 2, pd.NA], dtype="Int64").astype("category")
+    other = pd.Series([2, 2, 2], dtype="Int64")
+    assert idc.ids_differ(actor, other).tolist() == [True, False, False]
+
+
+def test_align_join_keys_category_merges():
+    left = pd.DataFrame({"team_id": pd.Series([366, 512], dtype="Int64").astype("category"), "v": [1, 2]})
+    right = pd.DataFrame({"team_id": ["366", "512"], "w": [3, 4]})
+    lt, rt = idc.align_join_keys(left, right, ["team_id"])
+    assert lt.merge(rt, on="team_id")["w"].tolist() == [3, 4]

@@ -149,7 +149,7 @@ def convert_to_frames(
             final[col] = final[col].astype("bool")
         elif dtype_str == "Int64":
             final[col] = final[col].astype("Int64")
-        elif dtype_str in {"int64", "float64"}:
+        elif dtype_str in {"int64", "float64", "float32"}:
             final[col] = pd.to_numeric(final[col], errors="coerce").astype(dtype_str)  # type: ignore[arg-type]
         elif dtype_str == "category":
             final[col] = final[col].astype("category")

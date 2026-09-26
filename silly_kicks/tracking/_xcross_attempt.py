@@ -228,7 +228,7 @@ def extract_xcross_features(
     na_fill = "\x00"  # sentinel: no canonical id equals it, so NA (ball) rows never match
     team = canonical_id_series(f["team_id"]).fillna(na_fill).to_numpy()
     pid = canonical_id_series(f["player_id"]).fillna(na_fill).to_numpy()
-    gr_x = np.array([_geo.to_goal_relative_x(x, goal_x=goal_x) for x in f["x"].to_numpy()])
+    gr_x = np.array([_geo.to_goal_relative_x(x, goal_x=goal_x) for x in f["x"].to_numpy(dtype="float64")])
     # y is GOAL-RELATIVE from here down (PR 5). Paired with gr_x this is the 180-degree point
     # reflection; before PR 5 y rode through untransformed, so `atan2(y - GOAL_Y, gr_x)` negated
     # every bearing between the two goal ends while every radial stayed byte-identical. The local

@@ -91,8 +91,10 @@ def _delta_for_move(
     deltas = []
     for dx, dy in moves:
         pert = grp.copy()
-        pert.loc[mask, "x"] = pert.loc[mask, "x"].to_numpy(float) + dx
-        pert.loc[mask, "y"] = pert.loc[mask, "y"].to_numpy(float) + dy
+        # F1b (ADR-106): store back at the frame's coord dtype (float32); pandas 3 masked setitem rejects
+        # a lossy float64 RHS.
+        pert.loc[mask, "x"] = (pert.loc[mask, "x"].to_numpy(float) + dx).astype(str(pert["x"].dtype))
+        pert.loc[mask, "y"] = (pert.loc[mask, "y"].to_numpy(float) + dy).astype(str(pert["y"].dtype))
         feats = extract_fn(pert, **extract_kwargs)
         deltas.append(abs(float(model.predict_proba(feats)[0]) - base_p))
     return deltas

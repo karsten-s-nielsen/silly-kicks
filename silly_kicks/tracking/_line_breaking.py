@@ -149,7 +149,7 @@ def detect_line_breaking(
     # Pre-build grouped outfield opponent positions
     non_ball_non_gk = frames[(~frames["is_ball"].astype(bool)) & (~frames["is_goalkeeper"].astype(bool))]
     frame_groups: dict = dict(
-        iter(non_ball_non_gk.groupby(["game_id", "period_id", "frame_id", "team_id"], sort=False))
+        iter(non_ball_non_gk.groupby(["game_id", "period_id", "frame_id", "team_id"], sort=False, observed=True))
     )
 
     # Pre-build (game, period, frame) -> list of team_ids for O(1) opposing lookup

@@ -112,7 +112,7 @@ def validate_period_directions(frames: pd.DataFrame, *, caller: str) -> None:
 
     keys = ["game_id", "period_id"] if "game_id" in players.columns else ["period_id"]
     for key, grp in players.groupby(keys, sort=False):
-        per_team = grp.groupby("team_id", sort=False)["team_attacking_direction"].agg(
+        per_team = grp.groupby("team_id", sort=False, observed=True)["team_attacking_direction"].agg(
             lambda s: set(s.dropna().unique())
         )
         contradictory = sorted(str(t) for t, dirs in per_team.items() if len(dirs) > 1)
@@ -253,9 +253,11 @@ def acting_team_attacks_rtl(
             _warn_unresolved("team_attacking_direction is present but entirely null")
         return flip
 
-    # One direction per key tuple: first non-null (constant within a period).
+    # One direction per key tuple: first non-null (constant within a period). observed=True: `keys`
+    # includes the now-category team_id (F1b / ADR-106), so the pandas observed=False default would
+    # warn + risk phantom empty groups on a filtered subset (the ADR-057 landmine).
     lookup = (
-        players.groupby(keys)["team_attacking_direction"]
+        players.groupby(keys, observed=True)["team_attacking_direction"]
         .first()
         .reset_index()
         .rename(columns={"team_attacking_direction": "_dir"})

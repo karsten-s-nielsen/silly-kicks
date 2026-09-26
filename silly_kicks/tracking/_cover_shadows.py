@@ -381,8 +381,10 @@ def _classify_man_markers(
     else:
         toward_own_goal = np.array([1.0, 0.0])
 
-    att_pos = attackers[["x", "y"]].to_numpy()
-    def_pos = defenders[["x", "y"]].to_numpy()
+    # F1b (ADR-106): upcast float32-stored coords to float64 at the compute boundary (single
+    # deterministic drift source = storage-rounding; matches the _extract_frame_players idiom).
+    att_pos = attackers[["x", "y"]].to_numpy(dtype="float64")
+    def_pos = defenders[["x", "y"]].to_numpy(dtype="float64")
     def_ids = defenders["player_id"].to_numpy()
 
     # Compute behind-points for all attackers

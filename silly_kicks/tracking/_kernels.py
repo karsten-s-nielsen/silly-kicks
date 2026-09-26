@@ -232,8 +232,8 @@ def _defenders_in_triangle_to_goal(
     by = np.full_like(ay, _GOAL_LEFT_POST_Y)
     cx = np.full_like(ax, _GOAL_X)
     cy = np.full_like(ay, _GOAL_RIGHT_POST_Y)
-    px = merged["x"].to_numpy()
-    py = merged["y"].to_numpy()
+    px = merged["x"].to_numpy(dtype="float64")
+    py = merged["y"].to_numpy(dtype="float64")
 
     def _sign(x1, y1, x2, y2, x3, y3):
         return (x1 - x3) * (y2 - y3) - (x2 - x3) * (y1 - y3)
@@ -441,8 +441,8 @@ def _pressure_andrienko(
 
     ax = merged["ax"].to_numpy()
     ay = merged["ay"].to_numpy()
-    px = merged["x"].to_numpy()
-    py = merged["y"].to_numpy()
+    px = merged["x"].to_numpy(dtype="float64")
+    py = merged["y"].to_numpy(dtype="float64")
 
     threat_dx = goal_x - ax
     threat_dy = goal_y - ay
@@ -520,8 +520,8 @@ def _pressure_link(
 
     ax = merged["ax"].to_numpy()
     ay = merged["ay"].to_numpy()
-    px = merged["x"].to_numpy()
-    py = merged["y"].to_numpy()
+    px = merged["x"].to_numpy(dtype="float64")
+    py = merged["y"].to_numpy(dtype="float64")
 
     presser_dx = px - ax
     presser_dy = py - ay
@@ -810,8 +810,8 @@ def _actor_pre_window_kernel(
     for aid, group in grouped:
         if len(group) < 2:
             continue
-        xs = group["x"].to_numpy()
-        ys = group["y"].to_numpy()
+        xs = group["x"].to_numpy(dtype="float64")
+        ys = group["y"].to_numpy(dtype="float64")
         dx = np.diff(xs)
         dy = np.diff(ys)
         arc = float(np.sqrt(dx * dx + dy * dy).sum())

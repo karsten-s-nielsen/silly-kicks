@@ -42,6 +42,29 @@ def _canonical(x):
     return str(x)
 
 
+def _decat(s: pd.Series) -> pd.Series:
+    """Decategorize a `category` id column to its UNDERLYING dtype (F1b / ADR-106).
+
+    Frame `team_id` is stored `category` for memory (option A; `player_id` stays Int64/object).
+    Every id path here keys on ``dtype.kind``, and a categorical reports kind ``"O"`` regardless of
+    its underlying values -- so a category-of-Int64 vs Int64 comparison would miss the numeric fast
+    path and fall to the element-wise ``_canonical`` loop, and two categoricals would raw-compare via
+    the boxed-object probe. Decategorizing to the categories' own dtype (``Int64`` -> the numeric fast
+    path, genuine strings -> the string fast path) restores the correct, fast behaviour and is the ONE
+    place category is unwrapped. NA is preserved (it is not a category). Non-categorical -> unchanged.
+    """
+    if isinstance(s.dtype, pd.CategoricalDtype):
+        cats_dtype = s.cat.categories.dtype
+        # A categorical can hold NA (the ball row's id) even when its CATEGORIES are a non-nullable
+        # numpy int -- so decategorizing straight to that dtype raises "Cannot convert float NaN to
+        # integer". Route integer categories through nullable Int64 (which holds NA and canonicalizes
+        # identically); object/float/nullable-Int categories decategorize as-is.
+        if cats_dtype.kind in "iu":
+            return s.astype("Int64")
+        return s.astype(cats_dtype)
+    return s
+
+
 def canonical_id(x):
     """Scalar entry point -- delegates to the single ``_canonical`` truth.
 
@@ -100,7 +123,7 @@ def canonical_id_series(s: pd.Series) -> pd.Series:
     >>> canonical_id_series(pd.Series([2.0, "3"], dtype=object)).tolist()
     ['2', '3']
     """
-    s = pd.Series(s)
+    s = _decat(pd.Series(s))
     out = pd.Series(pd.NA, index=s.index, dtype="object")
     notna = s.notna()
     if not notna.any():
@@ -329,7 +352,7 @@ def ids_equal(a: pd.Series, b: pd.Series) -> pd.Series:
     >>> ids_equal(pd.Series([1, None], dtype="Int64"), pd.Series([1, None], dtype="Int64")).tolist()
     [True, False]
     """
-    a, b = pd.Series(a), pd.Series(b)
+    a, b = _decat(pd.Series(a)), _decat(pd.Series(b))
     pa, pb = _positional(a, b)
     if _raw_comparable(a, b):
         eq = (pa == pb) & pa.notna() & pb.notna()
@@ -363,7 +386,7 @@ def ids_differ(a: pd.Series, b: pd.Series) -> pd.Series:
     (ADR-027 -- Gradient Sports emits genuinely team-less duel/foul events) must not be
     counted as an opponent just because its id fails to equal ours.
     """
-    a, b = pd.Series(a), pd.Series(b)
+    a, b = _decat(pd.Series(a)), _decat(pd.Series(b))
     pa, pb = _positional(a, b)
     if _raw_comparable(a, b):
         differ = pa.notna() & pb.notna() & (pa != pb)
@@ -398,7 +421,7 @@ def ids_match(series, scalar) -> pd.Series:
     >>> ids_match(team_id, None).tolist()
     [False, False, False]
     """
-    s = pd.Series(series)
+    s = _decat(pd.Series(series))
     key = canonical_id(scalar)
     if key is pd.NA:
         return pd.Series(np.zeros(len(s), dtype=bool), index=s.index)
@@ -442,7 +465,7 @@ def ids_isin(series, scalars) -> pd.Series:
     >>> ids_isin(pd.Series([999, None]), {None}).tolist()
     [False, False]
     """
-    s = pd.Series(series)
+    s = _decat(pd.Series(series))
     if scalars is None:
         return pd.Series(np.zeros(len(s), dtype=bool), index=s.index)
     keys = {k for k in (canonical_id(v) for v in scalars) if isinstance(k, str)}
@@ -531,6 +554,10 @@ def align_join_keys(left: pd.DataFrame, right: pd.DataFrame, keys: list):
         lk, rk = (k, k) if isinstance(k, str) else (k[0], k[1])
         if lk not in left.columns or rk not in right.columns:
             continue
+        # F1b (ADR-106): a `category` merge key merges unreliably (pandas requires matching
+        # categories, else object-casts), so decategorize to the underlying dtype FIRST -- then the
+        # numeric/object compatibility rules below decide correctly.
+        left[lk], right[rk] = _decat(left[lk]), _decat(right[rk])
         if _merge_compatible(left[lk].dtype, right[rk].dtype) and not _boxed_object_pair(left[lk], right[rk]):
             continue
         left[lk] = canonical_id_series(left[lk])
