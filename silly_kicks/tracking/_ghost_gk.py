@@ -423,12 +423,14 @@ _SET_PIECE_DECAY_SECONDS = 10.0
 
 
 def keeper_detection_mask(visibility: pd.Series, *, provider: str) -> np.ndarray:
-    """Rows whose keeper was ACTUALLY DETECTED. Fail-closed on the ambiguous null (spec 4.3)."""
-    _pv.validate_provider(provider)
-    if provider in _pv._FULLY_OBSERVED_PROVIDERS:
-        return np.ones(len(visibility), dtype=bool)
-    _pv.assert_detection_aware_visibility(visibility, provider=provider)
-    return visibility.fillna(False).astype(bool).to_numpy()
+    """Rows whose keeper was ACTUALLY DETECTED. Fail-closed on the ambiguous null (spec 4.3).
+
+    Thin keeper-facing wrapper; delegates to the general :func:`._provider_visibility.detected_mask`
+    (ADR-109). Kept as a named entry point for its ghost-GK-training consumer; **byte-identical** to
+    the pre-ADR-109 body (same ``validate_provider`` -> fully-observed -> assert -> ``fillna(False)``
+    order, ``assume_observed`` defaulting off).
+    """
+    return _pv.detected_mask(visibility, provider=provider)
 
 
 #: Closed vocabulary for the ``ghost_gk_source`` provenance column (the ``DAS_SOURCE_VALUES`` /
