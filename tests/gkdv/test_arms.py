@@ -217,17 +217,18 @@ def _port_frames() -> pd.DataFrame:
 
 
 def _das_frames(gk_x: float = 10.0) -> pd.DataFrame:
-    """A DELIBERATELY EXTREME 2-v-2 roster for the direction-inference discriminator.
+    """A 2-v-2 roster carrying BOTH teams' keepers, so native DAS can resolve the attacking
+    direction from the GoalMap (ADR-055, keeper geometry -- unresolvable with one keeper).
 
-    accessible-space infers direction from ``groupby(team)[x].mean().idxmin()``. A 4 m
-    keeper move shifts an 11-player mean by only ~0.36 m, so a realistic roster can never
-    flip the argmin and could not discriminate a pinned implementation from an unpinned one.
-    Here team 1 has two players, so relocating its keeper from x=10 to x=100 moves the team
-    mean from 15 to 60 and crosses team 2's mean of 35 -- the argmin genuinely flips.
+    Team-1 keeper near x=0, team-2 keeper near x=105: team 1 defends 0, team 2 defends 105, so
+    team 2 (in possession) attacks 0. ``gk_x`` relocates the team-1 keeper for the ghost leg; the
+    delta is a real counterfactual because the direction is pinned ONCE on the factual frames and
+    fed to both legs, not re-inferred per leg.
     """
     rows = [
         dict(player_id="gk1", team_id="1", is_ball=False, is_goalkeeper=True, x=gk_x, y=34.0, vx=0.0, vy=0.0),
         dict(player_id="d1", team_id="1", is_ball=False, is_goalkeeper=False, x=20.0, y=30.0, vx=0.0, vy=0.0),
+        dict(player_id="gk2", team_id="2", is_ball=False, is_goalkeeper=True, x=100.0, y=34.0, vx=0.0, vy=0.0),
         dict(player_id="a1", team_id="2", is_ball=False, is_goalkeeper=False, x=30.0, y=34.0, vx=1.0, vy=0.0),
         dict(player_id="a2", team_id="2", is_ball=False, is_goalkeeper=False, x=40.0, y=38.0, vx=1.0, vy=0.0),
         dict(player_id="ball", team_id=None, is_ball=True, is_goalkeeper=False, x=40.0, y=34.0, vx=0.0, vy=0.0),
@@ -237,52 +238,44 @@ def _das_frames(gk_x: float = 10.0) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-#: The ghost keeper, displaced far enough to flip an UNPINNED direction inference.
+#: The ghost keeper, displaced 90 m upfield -- a large, unambiguous counterfactual move.
 _GHOST_GK_X = 100.0
 
 
 def test_das_arm_passes_ONE_pinned_direction_to_BOTH_legs(monkeypatch):
     """STRUCTURAL primary -- and it runs on EVERY CI leg, with NO accessible-space.
 
-    Every asserted fact here is about the CALLS, not the returns, so the stub returns a
-    synthetic scalar instead of delegating to the real library. Delegation was the ONLY
-    reason this guard would have needed ``importorskip``, and a guard for a declared live
-    hazard that skips everywhere is not a guard.
-
-    The property -- "one direction, computed on the FACTUAL frames, passed identically to
-    both legs" -- is gkdv's own code, so testing it must not require the optional extra.
-    Detects a revert to ``get_das(infer_attacking_direction=True)``.
+    delta_das pins the direction ONCE, as a GoalMap on the FACTUAL frames, and threads that SAME
+    map into the paired seam that scores both legs together. Every asserted fact is about the
+    CALLS, so the stubs return synthetic Series instead of scoring. Detects three reverts:
+    per-leg direction inference, pinning on the GHOST leg, and pinning twice.
     """
     import silly_kicks.gkdv._das_port as port
 
-    # The stub's return is DERIVED FROM THE FRAMES IT IS GIVEN, and every call is recorded.
-    # A constant stub cannot see two plausible reverts: pinning on the GHOST leg instead of
-    # the factual one, and pinning per-leg (both of which return the same constant vector
-    # and would sail through an equality assertion). Keyed on mean x, the ghost's 6 m
-    # displacement makes those two implementations produce visibly different vectors.
+    sentinel = object()  # a stand-in GoalMap: identity is what the assertions track
     pin_calls: list[pd.DataFrame] = []
 
     def _stub_pin_direction(frames):
-        pin_calls.append(frames)
-        return pd.Series([round(float(frames["x"].mean()), 6)] * len(frames))
+        pin_calls.append(frames.copy())
+        return sentinel
 
     monkeypatch.setattr(port, "pin_direction", _stub_pin_direction)
 
-    calls: list[dict] = []
+    paired_calls: list[dict] = []
 
-    def _stub_team_das_by_frame(frames, attacking_team_id_by_frame, *, direction_col):
-        calls.append(
+    def _stub_paired(actual, counterfactual, attacking_team_id_by_frame, *, goal_map):
+        paired_calls.append(
             {
-                "col": direction_col,
-                "values": tuple(frames[direction_col]) if direction_col in frames else None,
+                "actual_mean_x": round(float(actual["x"].mean()), 6),
+                "ghost_mean_x": round(float(counterfactual["x"].mean()), 6),
+                "goal_map": goal_map,
             }
         )
-        # delta_das delegates to delta_das_batch, which reduces via team_das_by_frame (ONE per leg);
-        # return a per-frame Series (synthetic -- NO delegation to the library).
-        key = pd.MultiIndex.from_frame(frames[["game_id", "period_id", "frame_id"]].drop_duplicates())
-        return pd.Series([float(len(calls))], index=key)
+        ka = pd.MultiIndex.from_frame(actual[["game_id", "period_id", "frame_id"]].drop_duplicates())
+        kg = pd.MultiIndex.from_frame(counterfactual[["game_id", "period_id", "frame_id"]].drop_duplicates())
+        return pd.Series([1.0], index=ka), pd.Series([0.0], index=kg)
 
-    monkeypatch.setattr(port, "team_das_by_frame", _stub_team_das_by_frame)
+    monkeypatch.setattr(port, "paired_team_das_by_frame", _stub_paired)
 
     actual = _port_frames()
     ghost = actual.copy()
@@ -290,13 +283,10 @@ def test_das_arm_passes_ONE_pinned_direction_to_BOTH_legs(monkeypatch):
     ghost.loc[gk, "x"] = ghost.loc[gk, "x"] - 6.0
     delta_das(actual, ghost, attacking_team_id=2)
 
-    assert len(calls) == 2, f"expected exactly two DAS legs, saw {len(calls)}"
-    assert all(call["col"] == "attacking_direction" for call in calls), (
-        "a leg ran WITHOUT a pinned direction column -- accessible-space would re-infer "
-        "direction from team mean-x, which the ghost displacement perturbs"
-    )
-    assert calls[0]["values"] == calls[1]["values"], (
-        "the two legs used DIFFERENT direction vectors -- the delta is not a counterfactual"
+    # ONE paired pass, both legs together, under the ONE pinned map.
+    assert len(paired_calls) == 1, f"expected exactly one paired DAS pass, saw {len(paired_calls)}"
+    assert paired_calls[0]["goal_map"] is sentinel, (
+        "the paired seam ran WITHOUT the pinned GoalMap -- direction would be re-inferred per leg"
     )
 
     # ONE inference, and it must be the FACTUAL one. Both are separately mutable:
@@ -304,31 +294,30 @@ def test_das_arm_passes_ONE_pinned_direction_to_BOTH_legs(monkeypatch):
     assert len(pin_calls) == 1, (
         f"direction was inferred {len(pin_calls)} times -- it must be pinned ONCE, on the factual frames, and reused"
     )
-    expected = round(float(actual["x"].mean()), 6)
     assert pin_calls[0]["x"].mean() == pytest.approx(actual["x"].mean()), (
         "direction was pinned on the GHOST frames -- the counterfactual leg must inherit "
         "the factual direction, not define it"
     )
-    assert calls[0]["values"] == (expected,) * len(actual), "the pinned FACTUAL direction was not used"
-    assert round(float(ghost["x"].mean()), 6) != expected, (
-        "vacuous: the ghost displacement did not move the stub's keying statistic, so the "
-        "factual-vs-ghost assertions above could not fail"
+    # The paired seam received the factual as actual and the moved copy as ghost, in that order.
+    assert paired_calls[0]["actual_mean_x"] == pytest.approx(round(float(actual["x"].mean()), 6))
+    assert paired_calls[0]["ghost_mean_x"] == pytest.approx(round(float(ghost["x"].mean()), 6))
+    assert round(float(ghost["x"].mean()), 6) != round(float(actual["x"].mean()), 6), (
+        "vacuous: the ghost displacement did not move mean-x, so factual-vs-ghost cannot be told apart"
     )
+
+
+def _stub_paired_ones(actual, counterfactual, attacking_team_id_by_frame, *, goal_map):
+    ka = pd.MultiIndex.from_frame(actual[["game_id", "period_id", "frame_id"]].drop_duplicates())
+    kg = pd.MultiIndex.from_frame(counterfactual[["game_id", "period_id", "frame_id"]].drop_duplicates())
+    return pd.Series([1.0], index=ka), pd.Series([1.0], index=kg)
 
 
 def test_das_arm_does_not_mutate_its_inputs(monkeypatch):
-    """Runs library-free: the arm writes ``attacking_direction`` onto both legs, and doing
-    that in place would corrupt the caller's frames."""
+    """Runs library-free: the arm must not write onto (or otherwise mutate) either caller leg."""
     import silly_kicks.gkdv._das_port as port
 
-    monkeypatch.setattr(port, "pin_direction", lambda frames: pd.Series([1.0] * len(frames)))
-    monkeypatch.setattr(
-        port,
-        "team_das_by_frame",
-        lambda frames, atid, *, direction_col: pd.Series(
-            [1.0], index=pd.MultiIndex.from_frame(frames[["game_id", "period_id", "frame_id"]].drop_duplicates())
-        ),
-    )
+    monkeypatch.setattr(port, "pin_direction", lambda frames: object())
+    monkeypatch.setattr(port, "paired_team_das_by_frame", _stub_paired_ones)
 
     actual, ghost = _port_frames(), _port_frames()
     before_actual, before_ghost = actual.copy(deep=True), ghost.copy(deep=True)
@@ -338,18 +327,12 @@ def test_das_arm_does_not_mutate_its_inputs(monkeypatch):
 
 
 def test_das_arm_rejects_row_misaligned_legs(monkeypatch):
-    """The pin is applied POSITIONALLY, so a misaligned ghost would be scored against
-    another row's direction -- a per-row sign flip invisible in the returned scalar."""
+    """The legs are paired POSITIONALLY, so a misaligned ghost would be scored against another
+    row's state -- a per-row error invisible in the returned scalar."""
     import silly_kicks.gkdv._das_port as port
 
-    monkeypatch.setattr(port, "pin_direction", lambda frames: pd.Series([1.0] * len(frames)))
-    monkeypatch.setattr(
-        port,
-        "team_das_by_frame",
-        lambda frames, atid, *, direction_col: pd.Series(
-            [1.0], index=pd.MultiIndex.from_frame(frames[["game_id", "period_id", "frame_id"]].drop_duplicates())
-        ),
-    )
+    monkeypatch.setattr(port, "pin_direction", lambda frames: object())
+    monkeypatch.setattr(port, "paired_team_das_by_frame", _stub_paired_ones)
 
     actual = _port_frames()
     misaligned = actual.iloc[::-1]  # same rows, same length, DIFFERENT order
@@ -359,49 +342,14 @@ def test_das_arm_rejects_row_misaligned_legs(monkeypatch):
         delta_das(actual, misaligned, attacking_team_id=2)
 
 
-def _infer_direction(frames: pd.DataFrame) -> tuple:
-    """What an UNPINNED accessible-space would infer for these frames."""
-    from accessible_space.interface import infer_playing_direction
-
-    masked = frames.copy()
-    # Mirrors _pin_attacking_direction's own ball-masking step. House idiom rather than
-    # `== True`: equivalent on a plain bool column, safe on a nullable one.
-    masked.loc[masked["is_ball"].astype(bool), "team_id"] = None
-    return tuple(
-        infer_playing_direction(
-            masked,
-            team_col="team_id",
-            period_col="period_id",
-            team_in_possession_col="team_in_possession",
-            x_col="x",
-            ball_team=None,
-            frame_col="frame_id",
-        ).to_numpy()
-    )
-
-
-def test_unpinned_implementation_would_measurably_differ():
-    """VALUE discriminator: prove the pin is not a no-op on this fixture.
-
-    If this ever goes green with the pin removed, the fixture has stopped discriminating
-    and must be made more extreme.
-    """
-    pytest.importorskip("accessible_space")
-
-    assert _infer_direction(_das_frames()) != _infer_direction(_das_frames(_GHOST_GK_X)), (
-        "fixture no longer discriminates: an unpinned implementation infers the SAME "
-        "direction for both legs here, so the pinning guard above proves nothing"
-    )
-
-
 def test_pinned_delta_differs_from_the_unpinned_delta():
-    """The strongest form: the pin changes the ANSWER, not merely an intermediate column.
+    """The strongest form: pinning ONE GoalMap changes the ANSWER, not merely an intermediate.
 
-    Computes the same difference the arm computes, but letting each leg infer its own
-    direction -- exactly what a revert to ``get_das(infer_attacking_direction=True)`` would
-    do -- and asserts the two disagree.
+    Computes the same difference the arm computes, but letting EACH leg build its own GoalMap
+    (``get_individual_das`` with no pinned map) -- a revert to per-leg direction -- and asserts
+    the two disagree. The ghost leg (both keepers displaced toward one end) resolves a different
+    (or degenerate) direction than the factual, so the unpinned delta diverges from the pinned one.
     """
-    pytest.importorskip("accessible_space")
     from silly_kicks.tracking import get_individual_das
 
     actual, ghost = _das_frames(), _das_frames(_GHOST_GK_X)
@@ -419,8 +367,6 @@ def test_pinned_delta_differs_from_the_unpinned_delta():
 
 
 def test_das_arm_identical_frames_give_exactly_zero():
-    pytest.importorskip("accessible_space")
-
     frames = _das_frames()
     assert delta_das(frames, frames.copy(), attacking_team_id="2") == 0.0
 
@@ -428,8 +374,6 @@ def test_das_arm_identical_frames_give_exactly_zero():
 def test_das_arm_is_id_dtype_safe():
     """ADR-019: ``attacking_team_id`` is compared against ``team_id`` inside the port, so a
     value-equal scalar of a different dtype must give an IDENTICAL result."""
-    pytest.importorskip("accessible_space")
-
     actual, ghost = _das_frames(), _das_frames(_GHOST_GK_X)
     stringy = delta_das(actual, ghost, attacking_team_id="2")
     numeric = delta_das(actual, ghost, attacking_team_id=2)
@@ -438,26 +382,22 @@ def test_das_arm_is_id_dtype_safe():
 
 
 # ---------------------------------------------------------------------------
-# Delta-DAS -- LIVE through real accessible-space
+# Delta-DAS -- LIVE through the native engine
 # ---------------------------------------------------------------------------
 
-#: accessible-space's carrier/offside column, resolved by NAME inside ``_das``.
+#: The ball-carrier column, resolved by NAME inside ``_das`` (passer exclusion, offside mask).
 _CARRIER_COL = "ball_carrier_player_id"
 
 
 def _das_frames_with_carrier(gk_x: float = 10.0) -> pd.DataFrame:
     """``_das_frames`` plus the ball-carrier column real frames actually carry.
 
-    The sibling DAS fixtures above carry NO carrier column, so
-    ``_resolve_player_in_possession_col`` returns ``None`` for them and accessible-space's
-    offside path -- which 2-D-indexes the carrier as PASSERS -- never runs. Production
-    frames DO carry it (``derive_team_in_possession`` preserves it), so without this the
-    arm's live behaviour is untested exactly where it is exercised.
+    The sibling DAS fixtures carry NO carrier column, so ``_resolve_player_in_possession_col``
+    returns ``None`` and the passer is never excluded from the offside mask. Production frames DO
+    carry it (``derive_team_in_possession`` preserves it), so this exercises the carrier path.
 
-    The dtype is pinned EXPLICITLY, not left to inference: pandas 2 infers ``object`` (where
-    the 2-D indexing is harmless) and pandas 3 infers ``StringDtype`` (where it raises).
-    Relying on inference would make this guard silently interpreter-dependent -- which is
-    precisely how the all-NaN defect shipped.
+    The dtype is pinned to ``string`` EXPLICITLY (not left to per-pandas-version inference), so
+    the carrier id flows through the ``id_compat`` canonicalisation as a nullable-string id.
     """
     frames = _das_frames(gk_x)
     # "a2" is a real team-2 player sitting on the ball in this layout.
@@ -465,43 +405,35 @@ def _das_frames_with_carrier(gk_x: float = 10.0) -> pd.DataFrame:
     return frames
 
 
-def test_das_arm_returns_a_LIVE_FINITE_delta_through_real_accessible_space():
+def test_das_arm_returns_a_LIVE_FINITE_delta_through_the_native_engine():
     """The arm's headline number must be a real one -- NOT a silent all-NaN collapse.
 
-    Every other assertion about the DAS arm either stubs ``_das_port`` or runs on frames
-    with no carrier column, so nothing noticed when accessible-space scored ZERO frames on
-    pandas 3: ``team_das`` sums ``DAS.dropna()``, and the sum of an empty selection is
-    ``0.0``, so BOTH legs degraded to ``0.0`` and the delta came back a tidy, finite,
-    completely fictional zero. Measured: reintroducing the defect leaves the rest of
-    ``tests/gkdv/`` green, all 163 of it.
-
-    So finiteness alone is NOT sufficient here, and the two non-vacuity assertions below
-    are the actual guard:
+    A ``team_das`` leg sums ``DAS.dropna()``, whose empty sum is ``0.0``, so if BOTH legs scored
+    zero frames the delta would come back a tidy, finite, completely fictional zero. Finiteness
+    alone is therefore NOT sufficient; the two non-vacuity assertions below are the actual guard:
 
     * the underlying per-player DAS values must be finite -- the frames really scored;
     * the delta must be non-zero -- the all-NaN collapse produces exactly ``0.0``.
     """
-    pytest.importorskip("accessible_space")
     from silly_kicks.tracking import get_individual_das
 
     actual, ghost = _das_frames_with_carrier(), _das_frames_with_carrier(_GHOST_GK_X)
 
-    # Fixture non-vacuity: this must really present the dtype that exercises the 2-D
-    # indexing path. Were it to arrive as object, the guard would pass without testing.
+    # Fixture non-vacuity: the carrier really arrives as a nullable-string id (not object).
     assert isinstance(actual[_CARRIER_COL].dtype, pd.StringDtype), (
-        "fixture must carry a StringDtype carrier column, else the offside path is untested"
+        "fixture must carry a StringDtype carrier column, else the carrier path is untested"
     )
 
     # (1) The frames genuinely scored -- not an all-NaN degrade that sums to zero.
     scored = get_individual_das(actual)
     finite = scored.loc[~scored["is_ball"].astype(bool), "DAS"]
     assert finite.notna().any(), (
-        "accessible-space scored NO frame: every underlying DAS is NaN, so any delta built "
-        "from these legs is fictional regardless of how finite it looks"
+        "the engine scored NO frame: every underlying DAS is NaN, so any delta built from "
+        "these legs is fictional regardless of how finite it looks"
     )
     assert float(finite.dropna().sum()) > 0.0, "a real accessible-space area is strictly positive"
 
-    # (2) The arm's own output, through the real library end to end.
+    # (2) The arm's own output, through the native engine end to end.
     delta = delta_das(actual, ghost, attacking_team_id="2")
     assert np.isfinite(delta), f"delta_das returned a non-finite value: {delta!r}"
     assert delta != 0.0, (

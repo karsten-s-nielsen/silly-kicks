@@ -90,6 +90,13 @@ class MirrorEntry:
     #: ``_closing_time_per_series``), so a one-column result means the closing-time path was missed
     #: and would otherwise read as success. Required whenever ``call_with_map`` is set.
     gate_c_must_move: tuple[str, ...] = ()
+    #: Gate A comparison mode. When True the tolerance is a RELATIVE ``rtol`` (base-vs-mirror
+    #: ``max|b-m| / max|b|`` over finite rows), not an absolute delta. Set for a column family whose
+    #: invariance is exact in real arithmetic but whose float floor scales with the value's magnitude --
+    #: ``add_das``, whose danger-term ``arccos`` opening angle amplifies tiny float differences near the
+    #: goal mouth to ``~1e-7`` RELATIVE (spec 6.4 F1). Default False keeps every other entry's absolute
+    #: contract (xS / xCross bit-equality at 1e-9) unchanged.
+    relative_tolerance: bool = False
     #: Optional per-entry scene builder, defaulting to :func:`canonical_scene`.
     #:
     #: The shared scene is the right default: every entry measured on ONE scene is what makes
@@ -122,6 +129,7 @@ def _entry(
     gate_b_exempt=None,
     call_with_map=None,
     gate_c_must_move=(),
+    relative_tolerance=False,
     scene=None,
 ) -> None:
     MIRROR_ENTRIES[name] = MirrorEntry(
@@ -139,6 +147,7 @@ def _entry(
         known_defect_gate_b=defect_b,
         gate_b_exempt=gate_b_exempt or {},
         gate_c_must_move=tuple(gate_c_must_move),
+        relative_tolerance=relative_tolerance,
         scene=scene,
     )
 

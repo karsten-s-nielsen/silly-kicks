@@ -169,7 +169,8 @@ class DasObjective:
         conceded_space = DasObjective().score(frame)  # higher = more space conceded = worse
     """
 
-    def __init__(self, *, player_in_possession_col: str | None = None) -> None:
+    def __init__(self, *, goal_map=None, player_in_possession_col: str | None = None) -> None:
+        self._goal_map = goal_map
         self._ppc = player_in_possession_col
 
     def score(self, frame: pd.DataFrame) -> float:
@@ -181,7 +182,12 @@ class DasObjective:
 
             conceded = DasObjective().score(frame)  # attacking team's DAS scalar
         """
-        result = get_das(frame) if self._ppc is None else get_das(frame, player_in_possession_col=self._ppc)
+        # Explicit kwargs (not **kw): keeps get_das's typed signature checkable. When no carrier
+        # column is configured, OMIT player_in_possession_col so get_das uses its default resolution.
+        if self._ppc is not None:
+            result = get_das(frame, goal_map=self._goal_map, player_in_possession_col=self._ppc)
+        else:
+            result = get_das(frame, goal_map=self._goal_map)
         das = result["DAS"].dropna()
         return float(das.iloc[0]) if len(das) else float("nan")
 

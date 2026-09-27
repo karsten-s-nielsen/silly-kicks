@@ -3651,7 +3651,7 @@ calibration = [
 catboost = [
     { name = "catboost" },
 ]
-das = [
+das-reference = [
     { name = "accessible-space" },
 ]
 dev = [
@@ -3679,9 +3679,9 @@ numba = [
     { name = "numba" },
 ]
 test = [
-    { name = "accessible-space" },
     { name = "huggingface-hub" },
     { name = "hypothesis" },
+    { name = "matplotlib" },
     { name = "numba" },
     { name = "pyarrow" },
     { name = "pytest" },
@@ -3717,8 +3717,7 @@ xshot = [
 
 [package.metadata]
 requires-dist = [
-    { name = "accessible-space", marker = "extra == 'das'", specifier = ">=2.0,<3" },
-    { name = "accessible-space", marker = "extra == 'test'", specifier = ">=2.0,<3" },
+    { name = "accessible-space", marker = "extra == 'das-reference'", specifier = "==2.0.15" },
     { name = "catboost", marker = "extra == 'catboost'", specifier = ">=1.2" },
     { name = "huggingface-hub", marker = "extra == 'ghost-gk'", specifier = ">=0.20.0" },
     { name = "huggingface-hub", marker = "extra == 'test'", specifier = ">=0.20.0" },
@@ -3727,6 +3726,7 @@ requires-dist = [
     { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.0" },
     { name = "kloppy", marker = "extra == 'kloppy'", specifier = ">=3.18.0" },
     { name = "lightgbm", marker = "extra == 'lightgbm'", specifier = ">=4.0" },
+    { name = "matplotlib", marker = "extra == 'test'", specifier = ">=3.5" },
     { name = "numba", marker = "extra == 'calibration'", specifier = ">=0.59.0" },
     { name = "numba", marker = "extra == 'numba'", specifier = ">=0.59.0" },
     { name = "numba", marker = "extra == 'test'", specifier = ">=0.59.0" },
@@ -3758,7 +3758,7 @@ requires-dist = [
     { name = "xgboost", marker = "extra == 'train'", specifier = ">=2.0,<4.0" },
     { name = "xgboost", marker = "extra == 'xgboost'", specifier = ">=2.0.0" },
 ]
-provides-extras = ["calibration", "catboost", "das", "dev", "ghost-gk", "ghost-gk-train", "golden-master", "kloppy", "lightgbm", "numba", "parse-dfl", "test", "train", "xarray", "xcross", "xgboost", "xshot"]
+provides-extras = ["calibration", "catboost", "das-reference", "dev", "ghost-gk", "ghost-gk-train", "golden-master", "kloppy", "lightgbm", "numba", "parse-dfl", "test", "train", "xarray", "xcross", "xgboost", "xshot"]
 
 [[package]]
 name = "six"

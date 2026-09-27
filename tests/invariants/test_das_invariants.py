@@ -4,19 +4,21 @@ import numpy as np
 import pandas as pd
 import pytest
 
-pytest.importorskip("accessible_space")
-
 from silly_kicks.tracking._das import get_das, get_individual_das
-
-pytestmark = pytest.mark.e2e
 
 
 def _synthetic_frames(n_frames: int = 5) -> pd.DataFrame:
-    """Minimal synthetic tracking with 4 players + ball, with team_in_possession."""
+    """Minimal synthetic tracking with 4 players + ball, with team_in_possession.
+
+    Each team carries a keeper (P1 Home near x=0, P3 Away near x=105) so the native engine
+    resolves the attacking direction from the GoalMap (ADR-055).
+    """
     rng = np.random.default_rng(42)
     rows = []
     for fid in range(n_frames):
         for pid, tid in [("P1", "Home"), ("P2", "Home"), ("P3", "Away"), ("P4", "Away")]:
+            is_gk = pid in ("P1", "P3")
+            x = 5.0 if pid == "P1" else 100.0 if pid == "P3" else rng.uniform(0, 105)
             rows.append(
                 {
                     "game_id": 1,
@@ -24,7 +26,8 @@ def _synthetic_frames(n_frames: int = 5) -> pd.DataFrame:
                     "frame_id": fid,
                     "player_id": pid,
                     "team_id": tid,
-                    "x": rng.uniform(0, 105),
+                    "is_goalkeeper": is_gk,
+                    "x": x,
                     "y": rng.uniform(0, 68),
                     "vx": rng.normal(0, 2),
                     "vy": rng.normal(0, 2),
@@ -39,6 +42,7 @@ def _synthetic_frames(n_frames: int = 5) -> pd.DataFrame:
                 "frame_id": fid,
                 "player_id": "ball",
                 "team_id": None,
+                "is_goalkeeper": False,
                 "x": rng.uniform(20, 80),
                 "y": rng.uniform(10, 58),
                 "vx": rng.normal(0, 3),
@@ -53,11 +57,11 @@ def _synthetic_frames(n_frames: int = 5) -> pd.DataFrame:
 class TestDasInvariants:
     @pytest.fixture
     def das_result(self) -> pd.DataFrame:
-        return get_das(_synthetic_frames(5), use_progress_bar=False)
+        return get_das(_synthetic_frames(5))
 
     @pytest.fixture
     def individual_result(self) -> pd.DataFrame:
-        return get_individual_das(_synthetic_frames(5), use_progress_bar=False)
+        return get_individual_das(_synthetic_frames(5))
 
     def test_as_non_negative(self, das_result: pd.DataFrame) -> None:
         valid = das_result["AS"].dropna()
@@ -89,6 +93,6 @@ class TestStationary:
         frames = _synthetic_frames(3)
         frames["vx"] = 0.0
         frames["vy"] = 0.0
-        result = get_das(frames, use_progress_bar=False)
+        result = get_das(frames)
         valid = result["DAS"].dropna()
         assert len(valid) > 0, "All-stationary frames produced all-NaN DAS"

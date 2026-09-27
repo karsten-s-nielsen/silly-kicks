@@ -109,6 +109,21 @@ def test_mirrored_pitch_absolute_columns_declare_a_reflection(name):
 # ---------------------------------------------------------------------------
 
 
+def _leg_delta(b, m, both, *, relative):
+    """base-vs-mirror discrepancy over the finite rows, absolute or relative.
+
+    ``relative`` divides the max absolute discrepancy by the value's own magnitude (max |b|), so a
+    tolerance is scene-invariant for a family whose float floor scales with the value (``add_das``'s
+    ``arccos`` floor, spec 6.4 F1). Guards the all-zero column by falling back to the absolute delta.
+    Returns ``(delta, unit)`` so the assertion message names which scale it measured.
+    """
+    abs_delta = float(np.abs(b[both] - m[both]).max())
+    if not relative:
+        return abs_delta, "tol"
+    mag = float(np.abs(b[both]).max())
+    return (abs_delta / mag if mag > 0.0 else abs_delta), "rtol"
+
+
 def _gate_a_params():
     for name in sorted(MIRROR_ENTRIES):
         entry = MIRROR_ENTRIES[name]
@@ -165,9 +180,9 @@ def test_gate_a_mirror_invariance(name):
         both = np.isfinite(b) & np.isfinite(m)
         if not both.any():
             continue
-        delta = float(np.abs(b[both] - m[both]).max())
+        delta, unit = _leg_delta(b, m, both, relative=entry.relative_tolerance)
         assert delta <= entry.tolerance, (
-            f"{name}.{col}: base-vs-mirror {delta:.6g} > tol {entry.tolerance} ({entry.tolerance_basis})"
+            f"{name}.{col}: base-vs-mirror {delta:.6g} > {unit} {entry.tolerance} ({entry.tolerance_basis})"
         )
 
 
@@ -199,6 +214,39 @@ def test_gate_a_enforces_the_mirrored_pitch_absolute_contract():
     assert not np.allclose(base["abs_x"], mir["abs_x"], atol=1e-9), (
         "the plant is not discriminating -- pick a ball position off the halfway line"
     )
+
+
+def test_leg_delta_relative_mode_discriminates_both_ways():
+    """The rtol branch (spec 6.4 F1, ``add_das``) must be scene-invariant and flip verdict at the tol.
+
+    Without a both-sides witness the ``relative_tolerance`` branch is a one-sided pass: the real
+    ``add_das`` entry only ever exercises the ACCEPT side (canonical_scene residual ~1e-15). This pins
+    that the relative delta is ``|b-m| / max|b|`` (independent of magnitude), REJECTS a 1e-3 relative
+    swap, ACCEPTS the ~1e-7 arccos floor, and that the all-zero column cannot divide by zero.
+    """
+    both = np.ones(3, dtype=bool)
+    b = np.array([500.0, 400.0, 300.0])
+
+    # a 1e-3 RELATIVE swap -> rtol 1e-3 (scene-invariant), absolute 0.5
+    m_big = b * (1 + 1e-3)
+    rel_delta, unit = _leg_delta(b, m_big, both, relative=True)
+    assert unit == "rtol"
+    assert rel_delta == pytest.approx(1e-3, rel=1e-6)  # magnitude-independent
+    assert rel_delta > 1e-6, "must exceed add_das's tol -> the gate FAILS"
+
+    # the arccos float floor (~1e-7 relative) -> passes
+    rel_floor, _ = _leg_delta(b, b * (1 + 1e-7), both, relative=True)
+    assert rel_floor <= 1e-6
+
+    # absolute mode reports the raw, unnormalised delta
+    abs_delta, unit = _leg_delta(b, m_big, both, relative=False)
+    assert unit == "tol"
+    assert abs_delta == pytest.approx(0.5, rel=1e-6)
+
+    # all-zero column: fall back to the absolute delta, never NaN/inf
+    z = np.zeros(3)
+    d0, _ = _leg_delta(z, z, both, relative=True)
+    assert d0 == 0.0
 
 
 def test_gate_a_categorical_reflection_cannot_silently_pass():

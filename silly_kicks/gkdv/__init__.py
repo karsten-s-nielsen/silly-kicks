@@ -7,11 +7,11 @@ attacker-value units as ``actual - ghost``, so **negative = deterrent** uniforml
 
 Depends on ``silly_kicks.tracking`` PUBLIC seams, on the repo-wide public
 ``silly_kicks.id_compat`` (ADR-019 requires every consumer to route id comparisons through
-it), and on exactly ONE private tracking symbol: ``_das._pin_attacking_direction``, confined
-to ``_das_port.py``, which has no public meaning because it encodes what the optional
-``accessible-space`` dependency expects of its input. Never the reverse -- ``tracking`` must
-not import ``gkdv``; the probe consumes ghost positions as DATA. Both directions are pinned
-by ``tests/gkdv/test_import_allowlist.py``.
+it), and on exactly ONE private tracking symbol: ``_das.individual_das_paired``, confined to
+``_das_port.py`` -- the ADR-043-safe paired DAS seam (SC-1) that scores the factual and ghost
+legs together under one ``GoalMap``, with no public meaning outside a counterfactual consumer.
+Never the reverse -- ``tracking`` must not import ``gkdv``; the probe consumes ghost positions
+as DATA. Both directions are pinned by ``tests/gkdv/test_import_allowlist.py``.
 
 See NOTICE for full bibliographic citations.
 """

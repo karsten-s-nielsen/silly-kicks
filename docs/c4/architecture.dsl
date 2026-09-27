@@ -10,7 +10,6 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         kloppy = softwareSystem "kloppy" "PySport event/tracking data normalization library" "External"
         mlLibs = softwareSystem "ML Libraries" "XGBoost, CatBoost, LightGBM gradient boosting frameworks" "External"
         hfHub = softwareSystem "HuggingFace Hub" "Model artifact hosting for pre-trained xS / xCross / Ghost-GK weights (Hub-only variants)" "External"
-        accessibleSpace = softwareSystem "accessible-space" "DAS (Dangerous Accessible Space) surface computation" "External"
         ruthless = softwareSystem "ruthless-efficiency" "Optuna/evolutionary optimization substrate (OptunaStrategy + CachedObjective)" "External"
         pining = softwareSystem "pining-for-the-data" "Gated mock provider REST API (SkillCorner/IDSSE public, Gradient Sports + SB360 owner-tier) over S3" "External"
         databricks = softwareSystem "Databricks Lakehouse" "bronze.* SPADL/tracking + spadl_actions xT corpus + dev_gold action/shot marts (fct_action_values/context, fct_shot_xg, dim_matches) for the xT-GK v2 gate + rho retention" "External"
@@ -20,7 +19,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
 
             spadl = container "silly_kicks.spadl" "SPADL event conversion (23 action types) from 7 providers + a kloppy gateway; enrichments (possessions, game state, GK analytics), block-detection columns, canonical pitch/penalty-area constants." "Python" "Library"
             vaep = container "silly_kicks.vaep" "VAEP action valuation: features, action/possession/time-windowed labels, and gradient-boosted models. HybridVAEP removes result leakage; optional Expected-Threat feature factory." "Python" "Library"
-            tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, adapters, linkage, spatial/GKDV models, 33 action-coupled aggregators, run_tracking_features producer, native GK derivation (_gk_resolve), feature-contract guard." "Python" "Library"
+            tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, adapters, linkage, spatial/GKDV models, 33 action-coupled aggregators, run_tracking_features, native GK + native DAS engine (ADR-107/108), feature-contract guard." "Python" "Library"
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 32-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid; held-out transition-NLL evaluator; physical_grid resampling. ADR-041." "Python" "Library"
             xtgk = container "silly_kicks.xtgk" "xT-GK v2: possession value V(z,p) (Markov surface + deep-zone gate), metric compute_xt_gk_v2 over 3 injected ports, resolved-GK-geometry edge (apply_resolved_gk_geometry), bundled rho weights." "Python" "Library"
@@ -51,7 +50,6 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         sillyKicks -> kloppy "Accepts EventDataset / TrackingDataset from" "kloppy bridge"
         sillyKicks -> mlLibs "Trains and predicts with" "Python API"
         sillyKicks -> hfHub "Downloads pre-trained xS / xCross / Ghost-GK models from" "huggingface_hub"
-        sillyKicks -> accessibleSpace "Computes DAS surfaces via" "accessible-space API"
         sillyKicks -> ruthless "Runs Optuna calibration studies via" "OptunaStrategy"
         sillyKicks -> pining "Loads calibration match data from" "Bearer -> presigned S3"
         sillyKicks -> databricks "Loads bronze tables + xT corpus + dev_gold action/shot marts (xT-GK v2 gate, rho retention, resolved GK origins xt_gk_origin_x/y) from" "databricks-sql-connector"
@@ -71,7 +69,6 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         spadl -> kloppy "Accepts kloppy EventDataset (derives game_id from dataset metadata) in kloppy converter" "kloppy bridge"
         tracking -> kloppy "Accepts kloppy TrackingDataset in kloppy gateway" "kloppy bridge"
         tracking -> hfHub "Lazy-downloads xS / xCross / Ghost-GK model weights via" "huggingface_hub"
-        tracking -> accessibleSpace "Computes DAS via" "get_individual_das()"
 
         vaep -> spadl "Reads SPADL config, schema constants, and action names from" "Python import"
         vaep -> mlLibs "Delegates model training to" "fit() dispatch"
@@ -91,10 +88,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
 
         // --- Relationships: GKDV v1 (TF-19 PR-3) ---
         analyst -> gkdv "Values keeper positioning against a league-average ghost via" "build_ghost_frames + delta_das / delta_threat_suppression"
-        gkdv -> tracking "Consumes PUBLIC tracking seams + ONE confined private DAS port (_das_port.py); never the reverse (allowlist-gated)" "Python import"
+        gkdv -> tracking "Consumes PUBLIC tracking seams + ONE confined private DAS seam (_das.individual_das_paired via _das_port.py, ADR-107); never the reverse (allowlist-gated)" "Python import"
         restdefense -> tracking "Consumes PUBLIC tracking seams (GoalMap, defensive line, team shape, linkage, FOV) only; never the reverse (allowlist-gated)" "Python import"
         gkdv -> xthreat "Weights the pitch-control field by per-cell threat with an injected fitted model" "ExpectedThreat"
-        gkdv -> accessibleSpace "Sums per-player DAS under ONE direction pinned on the factual frames via" "_das_port / get_individual_das()"
 
         // --- Relationships: Causal-validation toolkit (ADR-015; TF-19 sign-off package) ---
         maintainer -> causal "Measures GK-confounder entanglement + derives the registered N_min power constant via" "validate_xshot_causal.py / build_layer2_spells.py -> run_signoff_power.py"

@@ -112,7 +112,7 @@ def _legacy_compute_das(actions, frames, links, carrier_params):
     linked_frame_ids = linked[["period_id", "frame_id"]].drop_duplicates()
     das_frames = frames_with_tip.merge(linked_frame_ids, on=["period_id", "frame_id"], how="inner")
     try:
-        das_result = get_individual_das(das_frames, use_progress_bar=False, chunk_size=10)
+        das_result = get_individual_das(das_frames, chunk_size=10)
     except DasUnscoreableError:
         # The public routing DEGRADES this exact class to NaN (das_source='unscoreable_call',
         # ADR-043); the oracle must degrade identically or the parity check compares a raise
