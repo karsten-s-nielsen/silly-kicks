@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.tracking._ghost_gk import keeper_detection_mask
-from silly_kicks.tracking._provider_visibility import assert_detection_aware_visibility
+from silly_kicks.tracking._provider_visibility import assert_detection_aware_visibility, detected_mask
 
 
 def test_all_null_detection_aware_raises_with_remedy():
@@ -115,3 +115,65 @@ def test_work_calls_guard_provider_frames():
     work = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_work")
     calls = {n.func.id for n in ast.walk(work) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert "_guard_provider_frames" in calls, "_work must call _guard_provider_frames before returning frames"
+
+
+# --- detected_mask: the general per-player detection primitive (spec 2026-09-27, ADR-109) -------
+# `keeper_detection_mask`'s body is player-agnostic; it is extracted here as the shared seam that
+# TF-58 (outfield) + the deferred GK-gate consume. `keeper_detection_mask` delegates, byte-identical.
+
+_FULLY_OBSERVED = ("gradientsports", "sportec", "idsse", "metrica")
+
+
+def test_detected_mask_general_per_row():
+    # Player-agnostic: an arbitrary (e.g. outfield) visibility Series -> per-row mask; per-row null
+    # -> False (matches keeper_detection_mask's fillna(False) doctrine).
+    out = detected_mask(pd.Series([True, False, True, None]), provider="skillcorner")
+    np.testing.assert_array_equal(out, np.array([True, False, True, False]))
+
+
+def test_detected_mask_all_null_detection_aware_raises():
+    with pytest.raises(ValueError, match=r"tracking\.skillcorner"):
+        detected_mask(pd.Series([None, None], dtype="object"), provider="skillcorner")
+
+
+def test_detected_mask_unknown_provider_raises():
+    with pytest.raises(ValueError, match="unclassified provider"):
+        detected_mask(pd.Series([True, False]), provider="bogus_provider")
+
+
+@pytest.mark.parametrize("provider", _FULLY_OBSERVED)
+def test_detected_mask_fully_observed_all_true(provider):
+    # No detection flag exists -> all-True regardless of visibility content.
+    out = detected_mask(pd.Series([True, False, None]), provider=provider)
+    np.testing.assert_array_equal(out, np.array([True, True, True]))
+
+
+def test_detected_mask_opt_out_known_provider_all_true():
+    # assume_observed=True bypasses the detection verdict -> all-True (the ungated behaviour); this is
+    # the ONLY escape, so the default (gate on) must differ.
+    vis = pd.Series([True, False, True])
+    np.testing.assert_array_equal(
+        detected_mask(vis, provider="skillcorner", assume_observed=True), np.array([True, True, True])
+    )
+    # the default gates:
+    np.testing.assert_array_equal(detected_mask(vis, provider="skillcorner"), np.array([True, False, True]))
+
+
+def test_detected_mask_opt_out_unknown_provider_still_raises():
+    # D1-SPEC-04: validate_provider runs FIRST; the opt-out bypasses only the detection verdict, NOT
+    # provider classification -> a typo'd/unclassified provider RAISES even under assume_observed.
+    with pytest.raises(ValueError, match="unclassified provider"):
+        detected_mask(pd.Series([True, False]), provider="skillcornerr", assume_observed=True)
+
+
+def test_detected_mask_non_vacuous():
+    out = detected_mask(pd.Series([True, False, True, False]), provider="skillcorner")
+    assert out.any() and not out.all()  # non-constant -- guards the vacuous-fixture trap
+
+
+def test_keeper_detection_mask_delegates_to_detected_mask():
+    # The parity contract: the wrapper == the primitive on the same input.
+    vis = pd.Series([True, None, True, False])
+    np.testing.assert_array_equal(
+        keeper_detection_mask(vis, provider="skillcorner"), detected_mask(vis, provider="skillcorner")
+    )

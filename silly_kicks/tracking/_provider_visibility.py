@@ -11,6 +11,7 @@ smell this move removes. See ADR (detection-aware visibility guardrails) + the d
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 # Which providers' feeds carry a per-player detection flag (spec 4.3).
@@ -78,3 +79,37 @@ def assert_detection_aware_visibility(visibility: pd.Series, *, provider: str) -
     """
     if provider in _DETECTION_AWARE_PROVIDERS and visibility.isna().all():
         raise ValueError(_detection_discarded_message(provider))
+
+
+def detected_mask(visibility: pd.Series, *, provider: str, assume_observed: bool = False) -> np.ndarray:
+    """Per-row boolean mask: which rows' player was ACTUALLY DETECTED. Fail-closed (ADR-109).
+
+    The general, player-agnostic form of
+    :func:`silly_kicks.tracking._ghost_gk.keeper_detection_mask` (which now delegates here) -- the
+    caller passes the ``visibility`` of whatever rows it selected (keeper, outfield, ...). The shared
+    seam for every detection consumer: ghost-GK training (via the wrapper), and, in their own cycles,
+    TF-58's outfield collective variables and the GK detection-gate.
+
+    Order (ADR-109; matches the historical ``keeper_detection_mask``):
+
+    - :func:`validate_provider` runs FIRST -- **always**, even under ``assume_observed``. A typo'd or
+      unclassified provider raises here; the opt-out bypasses only the detection verdict, never the
+      provider taxonomy.
+    - ``assume_observed=True`` -> all-``True`` (the general opt-out; logged/flagged by the caller,
+      never the default, never keyed to a specific consumer).
+    - ``provider`` in :data:`_FULLY_OBSERVED_PROVIDERS` -> all-``True`` (no detection flag exists).
+    - ``provider`` in :data:`_DETECTION_AWARE_PROVIDERS` -> the entirely-null trap raises
+      (:func:`assert_detection_aware_visibility`), then ``visibility.fillna(False)`` (detected
+      ``True``; extrapolated / per-row-null ``False``).
+
+    PRIVATE symbol (this module is single-underscore). Its only consumer here is the intra-``tracking``
+    :func:`keeper_detection_mask`; future cross-package consumers (TF-58, the GK detection-gate) add
+    their own ``docs/PRIVATE_CONSUMERS.md`` allowlist rows in their PRs (D1-PLAN-07).
+    """
+    validate_provider(provider)
+    if assume_observed:
+        return np.ones(len(visibility), dtype=bool)
+    if provider in _FULLY_OBSERVED_PROVIDERS:
+        return np.ones(len(visibility), dtype=bool)
+    assert_detection_aware_visibility(visibility, provider=provider)
+    return visibility.fillna(False).astype(bool).to_numpy()
