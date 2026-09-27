@@ -272,7 +272,16 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: `gk_one_end` rosters -- so all six elastic columns are all_nan -> honest_nan, none no_signal.
 #: (An earlier draft counted the reception columns as +6 not_exercised, before the central-diff accel
 #: change made Leg B align a reception on the reduced rosters; that no longer holds.) Net stays 46.
-NOT_EXERCISED_BUDGET = 46
+#:
+#: RAISED 46 -> 49 by the NATIVE DAS engine (ADR-107/108, D2). `add_das` now takes attacking direction
+#: from the GoalMap (ADR-055) instead of the old mean-x/team-identity inference, so `gk_absent` (both
+#: keepers removed) can no longer orient DAS: `das_team`, `das_opponent`, `das_diff` go all-NaN on BOTH
+#: legs -> `no_signal` -> `not_exercised` (+3, gk_absent ONLY). This is a REAL, honest coverage loss --
+#: the old accessible-space add_das produced numbers on a keeperless freeze-frame by guessing a side,
+#: which were not evidence (same shape as the ADR-051 packing re-key at 45 -> 49). `das_source` moves
+#: `differs` -> `identical` on gk_absent (both legs emit the same unscoreable token), NOT a not_exercised
+#: tuple. defender_absent / gk_one_end keep one keeper -> the map resolves -> unchanged (all_nan / differs).
+NOT_EXERCISED_BUDGET = 49
 
 
 def _entry(

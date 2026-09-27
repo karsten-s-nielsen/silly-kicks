@@ -244,6 +244,14 @@ _entry(
     },
 )
 
+_DAS_GK_ABSENT_RATIONALE = (
+    "The gk_absent roster removes BOTH keepers. Native DAS (ADR-107) takes attacking direction from the "
+    "GoalMap (ADR-055 / D2, never team identity), which cannot resolve a defended end with no keeper at "
+    "either end, so DAS emits all-NaN on BOTH legs -> no_signal, unexercisable. On defender_absent / "
+    "gk_one_end one keeper remains, the map resolves, and Leg A honest-NaNs the velocity-less freeze-frame "
+    "(all_nan). [measured cause=n/a]"
+)
+
 _entry(
     "add_das",
     C.generic(T.add_das),
@@ -269,16 +277,17 @@ _entry(
     },
     visibility={
         "gk_absent": {
-            "das_team": AxisVerdict("all_nan", "honest_nan"),
-            "das_opponent": AxisVerdict("all_nan", "honest_nan"),
-            "das_diff": AxisVerdict("all_nan", "honest_nan"),
+            "das_team": AxisVerdict("no_signal", "not_exercised", rationale=_DAS_GK_ABSENT_RATIONALE),
+            "das_opponent": AxisVerdict("no_signal", "not_exercised", rationale=_DAS_GK_ABSENT_RATIONALE),
+            "das_diff": AxisVerdict("no_signal", "not_exercised", rationale=_DAS_GK_ABSENT_RATIONALE),
             "das_source": AxisVerdict(
-                "differs",
-                "differs_by_design",
+                "identical",
+                "works",
                 rationale=(
-                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                    "designed das_source to do exactly this. [measured cause=velocity]"
+                    "With no keeper at either end the native GoalMap cannot orient DAS (ADR-055), so BOTH legs "
+                    "degrade to the SAME das_source token on every row -- an AGREEING provenance column, not a "
+                    "differing one. (On the other rosters the legs take different paths and it `differs`.) "
+                    "[measured cause=n/a]"
                 ),
             ),
         },

@@ -27,7 +27,7 @@ Hexagonal: all core functions are pure (pandas in, pandas out), zero I/O, zero g
 | TF-16 | `_xshot_occurrence.py` | `XShotOccurrenceModel`/`add_xshot_occurrence`/`compute_xshot_occurrence` |
 | TF-17 | `_xcross_attempt.py` | `XCrossAttemptModel`/`add_xcross_attempt` |
 | TF-18 | `_ghost_gk.py` | `GhostGkModel`/`compute_ghost_gk`/`add_ghost_gk`/`serve_ghost_gk_positions` |
-| TF-28 | `_das.py` | `get_das`/`get_individual_das`/`add_das` |
+| TF-28 | `_das*.py` | native engine `_das_pack`→`_das_engine`/`_das_numba`→`_das` (ADR-107/108); `get_das`/`get_individual_das`/`get_xc`/`add_das`/`das_at_action`; `individual_das_paired` gkdv seam |
 | TF-30 | `_cover_shadows.py` | `add_cover_shadows` |
 | TF-31/44 | `_team_shape.py` | `compute_team_shape`/`add_team_shape` |
 | TF-32 | `_line_breaking.py` | `detect_line_breaking`/`add_line_break(method="ward")` |
@@ -98,7 +98,7 @@ Hexagonal: all core functions are pure (pandas in, pandas out), zero I/O, zero g
 - **Velocity availability diagnostic**: `validate_velocity_regime`/`VelocityRegimeDiagnosis`; a provenance COLUMN only where the VALUE changes (`ghost_gk_source`) — the ghost refuses at `_serve_positions_core`. (ADR-054; `docs/context/velocity-fov.md`)
 - **Velocity-less providers get the zero-velocity model** via `zero_velocity_if_unavailable`/`_velocity_availability` (Tier-1 lift / Tier-2 NaN / Tier-3 honest-NaN); `compute_xshot_occurrence` guarded by `test_velocity_feature_contract`; `space_opponent_source` softening; `speed_source` ∈ `TRACKING_CATEGORICAL_DOMAINS` (3 tokens). (ADR-063; `docs/context/velocity-fov.md`)
 - **GS keeper position clamped at 27.5 m** — `validate_gk_position_clamp`/`GkClampDiagnosis`/`GoalkeeperClampWarning`; GS GK-depth analysis invalid past the clamp. (ADR-083; `docs/context/velocity-fov.md`)
-- **`DasUnscoreableError` is the ONLY degradable DAS exception** — `add_das` emits `das_source` over `DAS_SOURCE_VALUES` (ADR-043; `docs/context/tracking-features.md`).
+- **DAS is a NATIVE engine, no `accessible-space`** — `_das_pack`(port)→`_das_engine`/`_das_numba`(fused njit)→`_das`(facade); float64, GoalMap direction (ADR-055), periodic quadrature (ADR-108), sentinel-free (`is_ball` mask, no `player_id` write); `individual_das_paired` SC-1 gkdv seam; reference defects are documented divergences. `DasUnscoreableError` is the ONLY degradable DAS exception; `add_das` emits `das_source` over `DAS_SOURCE_VALUES` (ADR-043/107/108; `docs/context/tracking-features.md`).
 - **Atomic defensive-credit is a FAITHFUL mirror** (`_defensive_credit_atomic_adapter` + the shared `_rollup_defending_aggregate`); the atomic `interception` dedup made `len(atomicconfig.actiontypes)` = 32 → **AtomicVAEP retrain + atomic re-materialize owed**. (ADR-096; `docs/context/tracking-features.md`)
 - **Keeper identity has ONE resolver** `resolve_keeper_identities` (native delegates; `KeeperIdentity`, `apply_keeper_identities_to_frames` bridge, `add_defending_gk_player_id`, `KeeperAppearances` port) — public `silly_kicks.keeper_identity` (ADR-078/084/085; `docs/context/gk-metrics.md`). GK-domain keeper id uses resolved `player_key` from `fct_action_context`, never raw `player_id` (`docs/context/gk-metrics.md`).
 - **Frame-consuming `add_*` have ONE call shape** (`frames` positional-or-keyword; optional kwargs keyword-only) — `test_call_convention_registry`; producer `run_tracking_features` injects models via `FAMILY_MODEL_REQUIREMENTS`. (ADR-078; `docs/context/tracking-features.md`)
@@ -139,4 +139,4 @@ See [TODO.md](TODO.md).
 
 ## Dependencies
 
-Runtime: pandas, numpy, scipy, scikit-learn (no pandera). Optional: kloppy (tracking parsers), xgboost, catboost, lightgbm, `accessible-space` (DAS), `ruthless-efficiency[optuna]>=0.4.0` + xgboost>=2.0,<4.0 (`[calibration]`/`[train]`), numba (`[numba]`), `statsbombpy` (importorskip-guarded e2e only). numpy>=2.0 compatible. → `docs/context/conventions-core.md`.
+Runtime: pandas, numpy, scipy, scikit-learn (no pandera). DAS is native (ADR-107; no `accessible-space` runtime/CI dep — dev-only `das-reference` pins `accessible-space==2.0.15` for the golden parity oracle). Optional: kloppy (tracking parsers), xgboost, catboost, lightgbm, `ruthless-efficiency[optuna]>=0.4.0` + xgboost>=2.0,<4.0 (`[calibration]`/`[train]`), numba (`[numba]`; DAS + pitch-control kernels), `statsbombpy` (importorskip-guarded e2e only). numpy>=2.0 compatible. → `docs/context/conventions-core.md`.

@@ -80,22 +80,22 @@ jobs:
           # the lint job's exact typing pins (ADR-057) are untouched.
           cache: pip
       # Lever C -- restore/persist numba's on-disk compiled @njit kernels. The two hashFiles patterns
-      # cover ALL 4 numba files: 3 @njit-DECORATED (_numba_kernels, _ghost_gk_numba, _ball_carrier_numba
-      # via the glob) + 1 CALL-form (_turnover.py:96 `_njit(cache=True)(...)`, listed explicitly). Pinned
-      # by tests/test_ci_shard_wiring.py::test_numba_cache_key_covers_all_njit_files so a NEW @njit file
-      # fails CI until the key is extended. A narrow key (not silly_kicks/**/*.py) is deliberate: it
-      # survives across PRs that touch non-numba code, which is what actually helps the windows floor.
+      # cover ALL 5 numba files: 4 @njit-DECORATED (_numba_kernels, _ghost_gk_numba, _ball_carrier_numba,
+      # _das_numba via the glob) + 1 CALL-form (_turnover.py:96 `_njit(cache=True)(...)`, listed
+      # explicitly). Pinned by tests/test_ci_shard_wiring.py::test_numba_cache_key_covers_all_njit_files
+      # so a NEW @njit file fails CI until the key is extended. A narrow key (not silly_kicks/**/*.py) is
+      # deliberate: it survives across PRs that touch non-numba code, which helps the windows floor.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.numba_cache
           key: numba-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py') }}
-      # `das` (accessible-space) is installed on EVERY leg, not just the primary one: the
-      # TF-28 DAS suites are all `importorskip`-guarded, so without the extra they SKIP
-      # rather than fail, and they had therefore never run in CI at all. gkdv's DAS arm
-      # (TF-19 PR-3) is a second consumer of that subsystem, whose correctness depends on a
-      # direction-inference subtlety inside it -- a guard that never runs is not a guard.
-      # The arm's own STRUCTURAL direction-pinning guard needs no extra and runs regardless.
-      - run: pip install -e ".[kloppy,xgboost,das,test]"
+      # DAS is a NATIVE engine (ADR-107): `accessible-space` is no longer installed on any CI leg.
+      # The TF-28 DAS + gkdv DAS-arm suites run on every leg (they no longer importorskip a library);
+      # their numerics are pinned against the committed golden oracle
+      # (tests/tracking/_fixtures/das_golden/, checksummed with no library needed). The dev-only
+      # `das-reference` extra (pinned accessible-space==2.0.15) is installed only where the oracle is
+      # regenerated or the corpus parity driver runs -- not here.
+      - run: pip install -e ".[kloppy,xgboost,test]"
       # Bulk suite, DURATION-SHARDED across parallel jobs. xdist `-n auto` was reverted: on the
       # 4-core/7GB CI runners it regressed py3.12 to a memory/JIT-pressure kill (4x heavy ML imports +
       # 4x numba compiles + the ghost-GK suite), the opposite of the 16-core local speedup. Sharding
@@ -182,7 +182,7 @@ jobs:
         with:
           path: ${{ github.workspace }}/.numba_cache
           key: numba-ubuntu-latest-3.12-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py') }}
-      - run: pip install -e ".[kloppy,xgboost,das,test]"
+      - run: pip install -e ".[kloppy,xgboost,test]"
       - run: pytest tests/ -m "slow and not e2e" --splits 2 --group ${{ matrix.slow-shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
       # reconcile artifacts (proofs #2/#3): each slow-shard uploads its node-ID set; slow-shard 1 also
       # uploads the slow FULL set and the combined `not e2e` (incl slow) set for the conservation check.
@@ -255,7 +255,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e ".[kloppy,xgboost,das,test]"
+      - run: pip install -e ".[kloppy,xgboost,test]"
       - run: pytest tests/ -m "not e2e" --benchmark-only --tb=short
 
   # Runtime PARTITION proof (the enumerate-and-conserve guard this repo wants): the shards must cover
