@@ -40,6 +40,12 @@ ARTIFACT_DRIVERS = (
     # the release's ship claim ("unification, measured no-op" vs a weights comparison).
     "materialize_tc3_frames",
     "measure_box_constant_delta",
+    # F1b (ADR-106) float32-storage feature-delta measurement. Runs each frame-geometry model's
+    # shared extractor on a real corpus with float64 vs float32-rounded coordinates and writes
+    # docs/research/f1b_float32/metrics.json (per-feature max/mean |delta| + gk_completion
+    # classification) -- the cited number that justifies the commit-2 retrain and settles the
+    # gk_completion include/exclude question, over external corpus data, so provenance.
+    "measure_f1b_feature_delta",
     # The cover-shadow RQ1 + pass-risk validation cycle (2026-08-19). `build_rq_pass_scores` is the
     # expensive corpus pass (per-pass GS scores -> gitignored pass_scores.parquet); the two consumers
     # read that persisted table and write the cited docs/research/ artifacts.

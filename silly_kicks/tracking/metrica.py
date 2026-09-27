@@ -217,7 +217,7 @@ def convert_to_frames(
     for c, dt in METRICA_TRACKING_FRAMES_COLUMNS.items():
         if dt == "bool":
             final[c] = final[c].astype("bool")
-        elif dt in {"int64", "float64"}:
+        elif dt in {"int64", "float64", "float32"}:
             final[c] = pd.to_numeric(final[c], errors="coerce").astype(dt)  # type: ignore[arg-type]
         elif dt == "category":
             final[c] = final[c].astype("category")

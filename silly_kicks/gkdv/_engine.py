@@ -449,8 +449,10 @@ def _write_back(frames: pd.DataFrame, *, provenance: pd.DataFrame, params: GkdvP
     hit_mask = joined["ghost_x"].notna().to_numpy() & joined["ghost_y"].notna().to_numpy()
     hits = joined.index[hit_mask]
     if len(hits):
-        out.loc[hits, "x"] = joined.loc[hits, "ghost_x"].to_numpy(dtype=float)
-        out.loc[hits, "y"] = joined.loc[hits, "ghost_y"].to_numpy(dtype=float)
+        # F1b (ADR-106): store the ghost coords back at the frame's own dtype (float32), else pandas 3's
+        # masked setitem raises LossySetitemError on a float64 RHS.
+        out.loc[hits, "x"] = joined.loc[hits, "ghost_x"].to_numpy(dtype=float).astype(str(out["x"].dtype))
+        out.loc[hits, "y"] = joined.loc[hits, "ghost_y"].to_numpy(dtype=float).astype(str(out["y"].dtype))
         if not params.ghost_keeps_actual_velocity:
             # Registered sensitivity variant (spec §4.5): a teleported-but-still-moving
             # ghost projects the ACTUAL keeper's momentum from the ghost position.

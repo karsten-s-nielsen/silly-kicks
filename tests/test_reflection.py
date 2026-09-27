@@ -345,3 +345,27 @@ def test_vaep_play_left_to_right_mirrors_enrichment_and_stays_in_place():
     # IN-PLACE contract preserved: the caller's own frame was mutated and returned.
     assert out[0] is df
     assert df.loc[0, "enriched_start_x"] == pytest.approx(95.0)
+
+
+def test_reflect_columns_preserves_float32_storage_dtype():
+    """F1b (ADR-106): reflecting a float32 coord/vector column stores the result back as float32.
+
+    The reflection reads coords as float64 (compute), so a masked ``.loc[m, col] = <float64>`` into a
+    float32 column raises pandas 3's LossySetitemError (pandas 2 silently upcast the column to float64,
+    quietly losing the float32 storage). Same-dtype assignment is safe on BOTH majors. Red-green on
+    pandas 2: pre-fix this asserted float64.
+    """
+    df = pd.DataFrame(
+        {
+            "x": np.array([10.0, 20.0], dtype=np.float32),
+            "y": np.array([30.0, 40.0], dtype=np.float32),
+            "vx": np.array([1.0, 2.0], dtype=np.float32),
+            "vy": np.array([3.0, 4.0], dtype=np.float32),
+        }
+    )
+    out = reflect_columns(df, np.array([True, False]), point_x=["x"], point_y=["y"], vector_x=["vx"], vector_y=["vy"])
+    for col in ("x", "y", "vx", "vy"):
+        assert out[col].dtype == np.float32, f"{col} upcast to {out[col].dtype} (float32 storage lost)"
+    # values still correct: row0 flipped (105-10=95, 68-30=38, -1, -3), row1 unchanged.
+    assert out["x"].tolist() == [95.0, 20.0]
+    assert out["vx"].tolist() == [-1.0, 2.0]

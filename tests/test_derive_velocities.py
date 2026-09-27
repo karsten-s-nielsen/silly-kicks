@@ -75,9 +75,10 @@ def test_emits_only_velocity_columns():
 def test_velocity_dtypes():
     smoothed = smooth_frames(_toy_frames(), config=PreprocessConfig.default())
     out = derive_velocities(smoothed, config=PreprocessConfig.default())
-    assert out["vx"].dtype == np.float64
-    assert out["vy"].dtype == np.float64
-    assert out["speed"].dtype == np.float64
+    # F1b (ADR-106): kinematic STORAGE is float32 (compute upcasts at kernel boundaries).
+    assert out["vx"].dtype == np.float32
+    assert out["vy"].dtype == np.float32
+    assert out["speed"].dtype == np.float32
 
 
 def test_speed_equals_norm_of_vx_vy():

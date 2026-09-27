@@ -45,6 +45,27 @@ def test_tracking_frames_columns_required_keys():
     assert "confidence" not in TRACKING_FRAMES_COLUMNS
 
 
+def test_coordinate_and_kinematic_columns_are_float32():
+    # F1b (ADR-106): coordinate + kinematic STORAGE is float32 (compute upcasts to float64 at the
+    # kernel boundary). Halves the dominant frame column memory.
+    for col in ("x", "y", "z", "speed"):
+        assert TRACKING_FRAMES_COLUMNS[col] == "float32", col
+
+
+def test_float32_coordinate_columns_preserve_na():
+    # float32 holds NaN, so NA-on-ball-row (z) / positional-only (speed) survive the float64->float32
+    # cast (ADR-058 NA-preservation, extended to float32). The real source is a float64 column whose
+    # absent value is np.nan (never a boxed pd.NA), so probe that.
+    import numpy as np
+    import pandas as pd
+
+    for col in ("x", "y", "z", "speed"):
+        declared = pd.api.types.pandas_dtype(TRACKING_FRAMES_COLUMNS[col])
+        cast = pd.Series([1.5, np.nan], dtype="float64").astype(declared)
+        assert cast.dtype == "float32", col
+        assert cast.isna().iloc[-1], col
+
+
 def test_static_low_cardinality_columns_are_category():
     # ADR-103: only STATIC set-once low-card columns are category (dynamic ones stay object --
     # category is not transparent to setitem/fillna; see feedback_category_dtype_only_for_static_columns).
@@ -57,12 +78,14 @@ def test_dynamic_low_cardinality_columns_stay_object():
         assert TRACKING_FRAMES_COLUMNS[col] == "object", col
 
 
-def test_kloppy_variant_overrides_identifiers_to_object():
+def test_kloppy_variant_overrides_game_and_player_id_to_object():
+    # F1b (ADR-106): kloppy overrides only game_id + player_id to object (kloppy domain strings +
+    # dynamic player_id). team_id INHERITS the base `category` (category-of-object here).
     assert KLOPPY_TRACKING_FRAMES_COLUMNS["game_id"] == "object"
     assert KLOPPY_TRACKING_FRAMES_COLUMNS["player_id"] == "object"
-    assert KLOPPY_TRACKING_FRAMES_COLUMNS["team_id"] == "object"
+    assert KLOPPY_TRACKING_FRAMES_COLUMNS["team_id"] == "category"
     for k, v in TRACKING_FRAMES_COLUMNS.items():
-        if k not in {"game_id", "player_id", "team_id"}:
+        if k not in {"game_id", "player_id"}:
             assert KLOPPY_TRACKING_FRAMES_COLUMNS[k] == v
 
 
@@ -70,10 +93,19 @@ def test_sportec_variant_matches_kloppy_variant():
     assert SPORTEC_TRACKING_FRAMES_COLUMNS == KLOPPY_TRACKING_FRAMES_COLUMNS
 
 
-def test_gradientsports_variant_uses_nullable_int64_identifiers():
+def test_gradientsports_variant_identifiers():
+    # F1b (ADR-106): player_id stays nullable Int64 (dynamic post-build), team_id is base `category`
+    # (category-of-Int64), game_id stays int64.
     assert GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS["player_id"] == "Int64"
-    assert GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS["team_id"] == "Int64"
+    assert GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS["team_id"] == "category"
     assert GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS["game_id"] == "int64"
+
+
+def test_team_id_is_category_player_id_is_not():
+    # F1b (ADR-106) option A: team_id -> category (static, low-card); player_id stays Int64/object
+    # (dynamic post-build, ADR-103 rule).
+    assert TRACKING_FRAMES_COLUMNS["team_id"] == "category"
+    assert TRACKING_FRAMES_COLUMNS["player_id"] == "Int64"
 
 
 def test_the_base_id_dtypes_can_actually_hold_the_ball_rows_NA():

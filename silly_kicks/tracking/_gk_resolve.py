@@ -667,8 +667,8 @@ def resolve_defended_goals(frames: pd.DataFrame) -> GoalMap:
 
     is_gk = _truthy_bool(players["is_goalkeeper"])
     keys = ["game_id", "period_id", "team_id"]
-    gk_mean = players[is_gk].groupby(keys, dropna=False)["x"].mean()
-    all_mean = players.groupby(keys, dropna=False)["x"].mean()
+    gk_mean = players[is_gk].groupby(keys, dropna=False, observed=True)["x"].mean()
+    all_mean = players.groupby(keys, dropna=False, observed=True)["x"].mean()
 
     resolved: dict = {}
     guessed: dict = {}

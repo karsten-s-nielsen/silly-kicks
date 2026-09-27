@@ -596,6 +596,7 @@ def main(argv=None) -> None:
     model = XShotOccurrenceModel(params=candidates[shipped]["params"], feature_set=args.feature_set)
     model.shipped_variant = shipped
     model.provider_list = candidates[shipped]["providers"]
+    model.training_commit = run_prov["commit"]  # clean tree (require_clean_tree above); stamped into metadata
     model.fit(
         Xfit,
         pd.Series(yfit),
