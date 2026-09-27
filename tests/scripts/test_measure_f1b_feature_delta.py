@@ -37,13 +37,16 @@ def test_with_type_name_maps_type_id():
 
     pass_id = spadlconfig.actiontype_id["pass"]
     out = _with_type_name(pd.DataFrame({"type_id": [pass_id]}))
+    assert out is not None
     assert out["type_name"].iloc[0] == "pass"
 
 
 def test_with_type_name_noop_when_present_or_absent():
     have = pd.DataFrame({"type_id": [0], "type_name": ["keep"]})
-    assert _with_type_name(have)["type_name"].iloc[0] == "keep"  # not overwritten
-    assert "type_name" not in _with_type_name(pd.DataFrame({"foo": [1]})).columns  # no type_id -> no col
+    kept = _with_type_name(have)
+    assert kept is not None and kept["type_name"].iloc[0] == "keep"  # not overwritten
+    absent = _with_type_name(pd.DataFrame({"foo": [1]}))
+    assert absent is not None and "type_name" not in absent.columns  # no type_id -> no col
     assert _with_type_name(None) is None
 
 
@@ -98,10 +101,39 @@ def test_aggregate_rolls_up_counts_and_classifies():
     combined = pd.DataFrame(
         [
             # model mdl, feature moved: two matches summed
-            dict(match_key="a", model="mdl", feature="moved", status="ok", n_rows=10, sum_abs=1.0, max_abs=5e-3, n_gt_atol=4),
-            dict(match_key="b", model="mdl", feature="moved", status="ok", n_rows=10, sum_abs=1.0, max_abs=9e-3, n_gt_atol=6),
-            dict(match_key="a", model="mdl", feature="flat", status="ok", n_rows=10, sum_abs=0.0, max_abs=0.0, n_gt_atol=0),
-            dict(match_key="c", model="mdl", feature="", status="empty", n_rows=0, sum_abs=0.0, max_abs=0.0, n_gt_atol=0),
+            dict(
+                match_key="a",
+                model="mdl",
+                feature="moved",
+                status="ok",
+                n_rows=10,
+                sum_abs=1.0,
+                max_abs=5e-3,
+                n_gt_atol=4,
+            ),
+            dict(
+                match_key="b",
+                model="mdl",
+                feature="moved",
+                status="ok",
+                n_rows=10,
+                sum_abs=1.0,
+                max_abs=9e-3,
+                n_gt_atol=6,
+            ),
+            dict(
+                match_key="a",
+                model="mdl",
+                feature="flat",
+                status="ok",
+                n_rows=10,
+                sum_abs=0.0,
+                max_abs=0.0,
+                n_gt_atol=0,
+            ),
+            dict(
+                match_key="c", model="mdl", feature="", status="empty", n_rows=0, sum_abs=0.0, max_abs=0.0, n_gt_atol=0
+            ),
         ]
     )
     agg = _aggregate(combined)["mdl"]

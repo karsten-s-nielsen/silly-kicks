@@ -115,8 +115,8 @@ def _subsample_frames(frames: pd.DataFrame, fps: float = 1.0) -> pd.DataFrame:
     step = max(1, round(fr / fps))
     if step == 1:
         return frames
-    uniq = frames[["game_id", "period_id", "frame_id"]].drop_duplicates().sort_values(
-        ["game_id", "period_id", "frame_id"]
+    uniq = (
+        frames[["game_id", "period_id", "frame_id"]].drop_duplicates().sort_values(["game_id", "period_id", "frame_id"])
     )
     keep = uniq[(uniq.groupby(["game_id", "period_id"]).cumcount() % step == 0).to_numpy()]
     return frames.merge(keep, on=["game_id", "period_id", "frame_id"], how="inner")
@@ -128,9 +128,11 @@ def _arm(frames: pd.DataFrame, dtype: str) -> pd.DataFrame:
     The float32 arm mirrors F1b storage; every extractor then upcasts the slice to float64 at its
     kernel boundary (ADR-106), so the measured delta is exactly the storage-rounding effect.
     """
+    target = np.dtype(dtype)  # a DtypeObj; bare `str` is not an astype overload under pandas-stubs
     out = frames.copy()
-    present = [c for c in _COORD_COLS if c in out.columns]
-    out[present] = out[present].astype(dtype)
+    for c in _COORD_COLS:
+        if c in out.columns:
+            out[c] = out[c].astype(target)
     return out
 
 
@@ -181,7 +183,7 @@ def _feat_ghost_outfield(frames, actions, home_team_id):
     frames = _subsample_frames(frames, fps=1.0)  # the training regime; infer_ball_carrier on full fps is ~25x cost
     carrier = None
     if "team_in_possession" not in frames.columns:
-        c = infer_ball_carrier(frames, **dict(DEFAULT_CARRIER_PARAMS))
+        c = infer_ball_carrier(frames, **dict(DEFAULT_CARRIER_PARAMS))  # type: ignore[arg-type]  # kwargs unpack of the carrier-params dict
         carrier = c[["game_id", "period_id", "frame_id", "ball_carrier_team_id"]]
     data = _extract_all_ghost_outfield_features(
         frames, actions, home_team_id=home_team_id, feature_set="faithful", carrier=carrier, both_teams=True
@@ -196,10 +198,10 @@ def _feat_gk_completion(frames, actions, home_team_id):
 
     if actions is None:
         return None
-    X, _y, _g = prepare_gk_completion_training_data(actions, frames=frames)
-    if len(X) == 0:
+    feats, _y, _g = prepare_gk_completion_training_data(actions, frames=frames)
+    if len(feats) == 0:
         return None
-    return X[list(GK_COMPLETION_FEATURE_NAMES)]
+    return feats[list(GK_COMPLETION_FEATURE_NAMES)]
 
 
 def _feat_receiver(frames, actions, home_team_id):
@@ -249,16 +251,25 @@ _EMITTED_SHARD_COLUMNS = ("match_key", "model", "feature", "status", "n_rows", "
 
 def _delta_rows(match_key: str, model: str, adapter, frames_f64, frames_f32, actions, home) -> list[dict]:
     """Per-feature delta rows for one (match, model), or a single status row on skip/mismatch/error."""
+
     def _status(status: str) -> list[dict]:
         return [
-            dict(match_key=match_key, model=model, feature="", status=status, n_rows=0, sum_abs=0.0,
-                 max_abs=0.0, n_gt_atol=0)
+            dict(
+                match_key=match_key,
+                model=model,
+                feature="",
+                status=status,
+                n_rows=0,
+                sum_abs=0.0,
+                max_abs=0.0,
+                n_gt_atol=0,
+            )
         ]
 
     try:
         f64 = adapter(frames_f64, actions, home)
         f32 = adapter(frames_f32, actions, home)
-    except Exception as exc:  # noqa: BLE001 -- a per-model extractor failure must not abort the corpus
+    except Exception as exc:  # a per-model extractor failure must not abort the corpus pass
         return _status(f"error:{type(exc).__name__}")
     if f64 is None or f32 is None or len(f64) == 0:
         return _status("empty")
