@@ -19,6 +19,7 @@ import pandas as pd
 import pytest
 
 from scripts import validate_das_native_parity as D
+from silly_kicks.tracking._das_pack import Reason, pack_frames
 from tests.tracking._das_golden import load_golden
 
 _CLEAN_PROV = {
@@ -106,6 +107,18 @@ def test_full_reduce_path_is_schema_complete_and_counts_reconcile(tmp_path, monk
     assert set(prov["timings_ms_per_frame"]) == {"ref", "numpy", "numba", "periodic"}
     assert set(prov["finite_mask_mismatches"]) == {"team", "player"}
     assert set(prov["reason_counts"]) == set(D._REASON_COLS.values())
+    # Divergence accounting block (spec 6.8 / 7.2): a count per documented D-* class + exclusion tally.
+    div = prov["divergences"]
+    assert set(div) == {
+        "d_off_frames",
+        "d_key_frames",
+        "d_ballnan_frames",
+        "d_possabsent_frames",
+        "excluded_rows",
+        "max_abs_das_divergent",
+    }
+    assert set(div["excluded_rows"]) == {"team", "player"}
+    assert set(div["max_abs_das_divergent"]) == {"team", "player"}
 
     # Population block: listed / scored / excluded.
     pop = out["population"]
@@ -121,6 +134,10 @@ def test_native_reproduces_the_reference_leg_within_parity(tmp_path, monkeypatch
     assert prov["team"]["das"]["abs"]["max"] < 1e-6
     assert prov["player"]["das"]["abs"]["max"] < 1e-6
     assert prov["finite_mask_mismatches"] == {"team": 0, "player": 0}
+    # S01/S05 are normal full-team scenes: no D-* divergence fires, so the headline is the whole corpus.
+    assert prov["divergences"]["d_off_frames"] == 0
+    assert prov["divergences"]["d_key_frames"] == 0
+    assert prov["divergences"]["excluded_rows"] == {"team": 0, "player": 0}
     # The quadrature shift (periodic - reference) is a REAL, non-zero corpus figure (ADR-108).
     assert np.isfinite(prov["quadrature_shift_das"]["max"])
 
@@ -196,3 +213,231 @@ def test_prepare_possession_derives_only_when_absent(monkeypatch):
     out = D._prepare_possession(raw)
     assert calls == {"infer": True, "derive_carrier_is_sentinel": True}
     assert "team_in_possession" in out.columns and out is derived
+
+
+# --------------------------------------------------------------------------------------------------
+# Divergence exclusion (spec 6.8 / 7.2): documented D-* frames leave the headline and are counted.
+# --------------------------------------------------------------------------------------------------
+
+
+def _off_frame(n_defenders: int) -> pd.DataFrame:
+    """One OK frame: a ball, one attacker (team H), and ``n_defenders`` defenders (team A), dir=+1.
+
+    Fewer than two finite defenders is the D-OFF condition (the reference applies an arbitrary offside
+    line; native does not), so ``n_defenders=1`` must flag and ``n_defenders=2`` must not.
+    """
+    rows = [
+        dict(
+            game_id=1,
+            period_id=1,
+            frame_id=1,
+            player_id="ball",
+            team_id=None,
+            is_ball=True,
+            is_goalkeeper=False,
+            x=52.5,
+            y=34.0,
+            vx=0.0,
+            vy=0.0,
+            team_in_possession="H",
+            dir=1.0,
+        ),
+        dict(
+            game_id=1,
+            period_id=1,
+            frame_id=1,
+            player_id=1,
+            team_id="H",
+            is_ball=False,
+            is_goalkeeper=False,
+            x=60.0,
+            y=34.0,
+            vx=1.0,
+            vy=0.0,
+            team_in_possession="H",
+            dir=1.0,
+        ),
+    ]
+    for j in range(n_defenders):
+        rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=1,
+                player_id=100 + j,
+                team_id="A",
+                is_ball=False,
+                is_goalkeeper=False,
+                x=70.0 + j,
+                y=34.0,
+                vx=-1.0,
+                vy=0.0,
+                team_in_possession="H",
+                dir=1.0,
+            )
+        )
+    return pd.DataFrame(rows)
+
+
+def test_d_off_per_frame_flags_frames_with_fewer_than_two_defenders():
+    one = pack_frames(_off_frame(1), attacking_direction_col="dir")
+    two = pack_frames(_off_frame(2), attacking_direction_col="dir")
+    assert one.reason.tolist() == [int(Reason.OK)] and two.reason.tolist() == [int(Reason.OK)]
+    assert D._d_off_per_frame(one).tolist() == [True], "one finite defender -> D-OFF"
+    assert D._d_off_per_frame(two).tolist() == [False], "two finite defenders -> offside is determinable"
+
+
+def _mk_row(grain: str, **kw) -> dict:
+    row: dict[str, object] = dict.fromkeys(D._EMITTED_SHARD_COLUMNS, np.nan)
+    row.update(grain=grain, provider="skillcorner", game_id=1)
+    row.update(kw)
+    return row
+
+
+def _match_row() -> dict:
+    return _mk_row("match", n_scored_frames=1, **{c: 0 for c in D._REASON_COLS.values()})
+
+
+def _shard(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(rows).reindex(columns=D._EMITTED_SHARD_COLUMNS)
+
+
+def test_reduce_excludes_d_off_rows_from_headline_and_counts_them():
+    rows = [
+        _mk_row(
+            "team",
+            period_id=1,
+            frame_id=1,
+            abs_das=1e-9,
+            rel_das=1e-9,
+            abs_as=1e-9,
+            rel_as=1e-9,
+            finite_ref=True,
+            finite_native=True,
+            quad_shift_das=0.0,
+            reason=int(Reason.OK),
+            is_d_off=False,
+        ),
+        # a D-OFF frame with a large reference gap: excluded from the headline, surfaced in the block.
+        _mk_row(
+            "team",
+            period_id=1,
+            frame_id=2,
+            abs_das=15.0,
+            rel_das=1.0,
+            abs_as=15.0,
+            rel_as=1.0,
+            finite_ref=True,
+            finite_native=True,
+            quad_shift_das=0.0,
+            reason=int(Reason.OK),
+            is_d_off=True,
+        ),
+        _match_row(),
+    ]
+    prov = D.reduce_parity([_shard(rows)])["skillcorner"]
+    assert prov["team"]["das"]["abs"]["max"] == pytest.approx(1e-9), "the 15.0 D-OFF gap must not enter the headline"
+    assert prov["divergences"]["d_off_frames"] == 1
+    assert prov["divergences"]["excluded_rows"]["team"] == 1
+    assert prov["divergences"]["max_abs_das_divergent"]["team"] == pytest.approx(15.0), "accounting shows the gap"
+
+
+def test_reduce_counts_and_excludes_d_key_frames_colliding_across_periods():
+    rows = [
+        _mk_row(
+            "team",
+            period_id=1,
+            frame_id=5,
+            abs_das=9.0,
+            rel_das=1.0,
+            abs_as=9.0,
+            rel_as=1.0,
+            finite_ref=True,
+            finite_native=True,
+            quad_shift_das=0.0,
+            reason=int(Reason.OK),
+            is_d_off=False,
+        ),
+        _mk_row(
+            "team",
+            period_id=2,
+            frame_id=5,
+            abs_das=9.0,
+            rel_das=1.0,
+            abs_as=9.0,
+            rel_as=1.0,
+            finite_ref=True,
+            finite_native=True,
+            quad_shift_das=0.0,
+            reason=int(Reason.OK),
+            is_d_off=False,
+        ),
+        _mk_row(
+            "team",
+            period_id=1,
+            frame_id=6,
+            abs_das=1e-9,
+            rel_das=1e-9,
+            abs_as=1e-9,
+            rel_as=1e-9,
+            finite_ref=True,
+            finite_native=True,
+            quad_shift_das=0.0,
+            reason=int(Reason.OK),
+            is_d_off=False,
+        ),
+        _match_row(),
+    ]
+    prov = D.reduce_parity([_shard(rows)])["skillcorner"]
+    assert prov["divergences"]["d_key_frames"] == 2, "frame_id 5 under two periods -> both rows are D-KEY"
+    assert prov["team"]["das"]["abs"]["max"] == pytest.approx(1e-9), "only the unique-key frame is in the headline"
+
+
+def test_reduce_headline_finite_mask_excludes_degrade_reason_frames():
+    rows = [
+        _mk_row(
+            "team",
+            period_id=1,
+            frame_id=1,
+            abs_das=1e-9,
+            rel_das=1e-9,
+            abs_as=1e-9,
+            rel_as=1e-9,
+            finite_ref=True,
+            finite_native=True,
+            quad_shift_das=0.0,
+            reason=int(Reason.OK),
+            is_d_off=False,
+        ),
+        # native NaNs a NaN-ball frame while the reference recorded a fictional 0.0 (D-BALLNAN).
+        _mk_row(
+            "team",
+            period_id=1,
+            frame_id=2,
+            abs_das=np.nan,
+            rel_das=np.nan,
+            abs_as=np.nan,
+            rel_as=np.nan,
+            finite_ref=True,
+            finite_native=False,
+            quad_shift_das=np.nan,
+            reason=int(Reason.BALL_NAN),
+            is_d_off=False,
+        ),
+        _match_row(),
+    ]
+    prov = D.reduce_parity([_shard(rows)])["skillcorner"]
+    assert prov["finite_mask_mismatches"]["team"] == 0, (
+        "the BALL_NAN mismatch is a divergence class, not a headline miss"
+    )
+    assert prov["divergences"]["d_ballnan_frames"] == 1
+
+
+def test_load_match_ids_groups_the_list_matches_shape_by_provider():
+    spec = [
+        {"provider": "skillcorner", "match_id": "111"},
+        {"provider": "gradientsports", "match_id": "222"},
+        {"provider": "skillcorner", "match_id": "333"},
+    ]
+    got = D._load_match_ids(spec)
+    assert got == {"skillcorner": ["111", "333"], "gradientsports": ["222"]}

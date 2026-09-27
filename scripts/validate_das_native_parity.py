@@ -45,6 +45,7 @@ from scripts._input_contract import declare_inputs
 # inject a fake corpus through it (tests/scripts/_fake_corpus.install_fake_corpus patches this name).
 from scripts._loader_pining import pining_source, resolve_cache_dir
 from silly_kicks.id_compat import canonical_id
+from silly_kicks.tracking._das_pack import PackedFrames, Reason
 from silly_kicks.tracking._das_params import DAS_PARAMS
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
 
@@ -78,7 +79,7 @@ _REASON_COLS = {
     6: "reason_direction_unresolved",
 }
 
-_SHARD_SCHEMA_VERSION = "das-native-parity-1"
+_SHARD_SCHEMA_VERSION = "das-native-parity-2"
 _EMITTED_SHARD_COLUMNS = [
     "grain",  # "team" (per scored frame) | "player" (per player per frame) | "match" (per-match scalars)
     "provider",
@@ -95,6 +96,11 @@ _EMITTED_SHARD_COLUMNS = [
     "finite_native",
     "quad_shift_das",  # native periodic - native reference (the ADR-108 shift)
     "numba_minus_numpy_das",  # native numba - native numpy (reference quad); NaN when numba absent
+    # Divergence tags (spec 6.8): the frame's Reason code + the D-OFF condition, so the reduce can hold
+    # documented divergences OUT of the headline parity and count each class (D-KEY is derived in the
+    # reduce from the keys). Present on team/player rows; OK/False on match rows.
+    "reason",
+    "is_d_off",
     # --- match rows: per-match scalars (NaN on team/player rows) ---
     "n_scored_frames",
     "ms_frame_ref",
@@ -157,9 +163,11 @@ def _direction_column(frames: pd.DataFrame, *, direction_col: str | None) -> pd.
 
 def _run_native(
     frames: pd.DataFrame, params, *, engine: Literal["auto", "numpy", "numba"]
-) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray]:
+) -> tuple[pd.DataFrame, pd.DataFrame, PackedFrames]:
     """Pack ``frames`` (direction from :data:`_DIR_COL`), run ``compute_das``, return tidy team/player
-    frames sorted by key -- the driver's own copy of the test helper (scripts must not import tests)."""
+    frames sorted by key plus the ``PackedFrames`` (the reduce reads its per-frame reason + defender
+    geometry to tag divergences) -- the driver's own copy of the test helper (scripts must not import
+    tests)."""
     from silly_kicks.tracking._das_engine import compute_das
     from silly_kicks.tracking._das_pack import pack_frames
 
@@ -196,7 +204,46 @@ def _run_native(
         .sort_values([*_FRAME_KEYS, "player_id"], kind="stable")
         .reset_index(drop=True)
     )
-    return team, player, packed.reason
+    return team, player, packed
+
+
+def _d_off_per_frame(packed: PackedFrames) -> np.ndarray:
+    """Per scored frame, the D-OFF condition: fewer than two finite-``norm_x`` defenders (spec 6.8/6.10).
+
+    The defending team is every non-possession player (``~p_attacking``); a defender counts toward the
+    offside line only where its ``norm_x`` is finite, and ``norm_x = px * direction`` is finite exactly
+    where ``px`` is finite on an OK frame (a scoreable frame has a finite direction). With fewer than two
+    such defenders the second-last opponent is undeterminable, so the reference draws an arbitrary line
+    (``_apply_offside`` returns before applying it) and native keeps the attacker -- a both-finite value
+    gap. Only OK frames can produce a native value at all, so non-OK reasons are never D-OFF here.
+    """
+    n = packed.n_frames
+    out = np.zeros(n, dtype=bool)
+    defender = (~packed.p_attacking) & np.isfinite(packed.px)
+    off = packed.offsets
+    for f in range(n):
+        if int(packed.reason[f]) != int(Reason.OK):
+            continue
+        if int(defender[off[f] : off[f + 1]].sum()) < 2:
+            out[f] = True
+    return out
+
+
+def _frame_flags(packed: PackedFrames) -> pd.DataFrame:
+    """One row per scored frame: ``(game_id, period_id, frame_id, reason, is_d_off)`` for the reduce.
+
+    Keys carry the native dtypes (from ``packed.keys``) so the left-merge onto the parity rows aligns.
+    """
+    keys = packed.keys.reset_index(drop=True)
+    return pd.DataFrame(
+        {
+            "game_id": keys["game_id"].to_numpy(),
+            "period_id": keys["period_id"].to_numpy(),
+            "frame_id": keys["frame_id"].to_numpy(),
+            "reason": packed.reason.astype(np.uint8),
+            "is_d_off": _d_off_per_frame(packed),
+        }
+    )
 
 
 # The ``accessible-space`` call kwargs -- byte-for-byte the golden generator's ``_COMMON``
@@ -397,18 +444,19 @@ def _measure_match(item, *, reference_leg=_reference_leg, direction_col: str | N
 
     # Legs, timed. Reference and native numpy are compared for parity; periodic gives the quad shift.
     (ref, t_ref) = _time_leg(lambda: reference_leg(scored))
-    ((np_team, np_player, reason), t_np) = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numpy"))
+    ((np_team, np_player, packed), t_np) = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numpy"))
     if _numba_available():
         ((nb_team, _nb_player, _r), t_nb) = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numba"))
     else:
         nb_team, t_nb = None, np.nan
     ((per_team, _pp, _r2), t_per) = _time_leg(lambda: _run_native(scored, DAS_PARAMS, engine="numpy"))
 
+    flags = _frame_flags(packed)  # per-frame reason + D-OFF, merged onto each parity row for the reduce
     rows: list[dict] = []
-    rows += _team_rows(provider, ref, np_team, nb_team, per_team)
-    rows += _player_rows(provider, ref, np_player)
+    rows += _team_rows(provider, ref, np_team, nb_team, per_team, flags)
+    rows += _player_rows(provider, ref, np_player, flags)
 
-    reason_counts = pd.Series(reason).map(_REASON_COLS).value_counts().to_dict()
+    reason_counts = pd.Series(packed.reason).map(_REASON_COLS).value_counts().to_dict()
     match_row = {
         "grain": "match",
         "provider": provider,
@@ -421,9 +469,17 @@ def _measure_match(item, *, reference_leg=_reference_leg, direction_col: str | N
     }
     for col in _REASON_COLS.values():
         match_row[col] = int(reason_counts.get(col, 0))
+    # Match rows carry no per-frame reason/D-OFF; set OK/False so the columns stay a clean uint8/bool
+    # (a mixed bool/NaN object column is unwritable to parquet). The reduce reads these on team/player
+    # rows only (it filters by grain first).
+    match_row["reason"] = int(Reason.OK)
+    match_row["is_d_off"] = False
     rows.append(match_row)
 
-    return pd.DataFrame(rows).reindex(columns=_EMITTED_SHARD_COLUMNS)
+    shard = pd.DataFrame(rows).reindex(columns=_EMITTED_SHARD_COLUMNS)
+    shard["reason"] = shard["reason"].astype("uint8")
+    shard["is_d_off"] = shard["is_d_off"].astype(bool)
+    return shard
 
 
 def _join_on_keys(ref_keys, ref_vals: dict, native: pd.DataFrame, key_cols: list[str]) -> pd.DataFrame:
@@ -440,7 +496,7 @@ def _join_on_keys(ref_keys, ref_vals: dict, native: pd.DataFrame, key_cols: list
     return ref_df.merge(native, on=key_cols, how="inner", suffixes=("_ref", "_nat"))
 
 
-def _team_rows(provider, ref, np_team, nb_team, per_team) -> list[dict]:
+def _team_rows(provider, ref, np_team, nb_team, per_team, flags) -> list[dict]:
     merged = _join_on_keys(
         ref["team_keys"],
         {"ref_as": ref["team_as"], "ref_das": ref["team_das"]},
@@ -454,6 +510,7 @@ def _team_rows(provider, ref, np_team, nb_team, per_team) -> list[dict]:
     merged = merged.merge(
         per_team.rename(columns={"team_das": "per_das"})[[*_FRAME_KEYS, "per_das"]], on=list(_FRAME_KEYS), how="left"
     )
+    merged = merged.merge(flags, on=list(_FRAME_KEYS), how="left")
     abs_das, rel_das = _abs_rel(merged["ref_das"].to_numpy(), merged["team_das"].to_numpy())
     abs_as, rel_as = _abs_rel(merged["ref_as"].to_numpy(), merged["team_as"].to_numpy())
     nb = merged["nb_das"].to_numpy() if "nb_das" in merged.columns else np.full(len(merged), np.nan)
@@ -474,18 +531,21 @@ def _team_rows(provider, ref, np_team, nb_team, per_team) -> list[dict]:
                 "finite_native": bool(np.isfinite(merged["team_das"].iloc[i])),
                 "quad_shift_das": float(merged["per_das"].iloc[i] - merged["ref_das"].iloc[i]),
                 "numba_minus_numpy_das": float(nb[i] - merged["team_das"].iloc[i]) if np.isfinite(nb[i]) else np.nan,
+                "reason": int(merged["reason"].iloc[i]),
+                "is_d_off": bool(merged["is_d_off"].iloc[i]),
             }
         )
     return rows
 
 
-def _player_rows(provider, ref, np_player) -> list[dict]:
+def _player_rows(provider, ref, np_player, flags) -> list[dict]:
     merged = _join_on_keys(
         ref["player_keys"],
         {"ref_as": ref["player_as"], "ref_das": ref["player_das"]},
         np_player,
         [*_FRAME_KEYS, "player_id"],
     )
+    merged = merged.merge(flags, on=list(_FRAME_KEYS), how="left")
     abs_das, rel_das = _abs_rel(merged["ref_das"].to_numpy(), merged["player_das"].to_numpy())
     abs_as, rel_as = _abs_rel(merged["ref_as"].to_numpy(), merged["player_as"].to_numpy())
     rows = []
@@ -504,6 +564,8 @@ def _player_rows(provider, ref, np_player) -> list[dict]:
                 "rel_as": rel_as[i],
                 "finite_ref": bool(np.isfinite(merged["ref_das"].iloc[i])),
                 "finite_native": bool(np.isfinite(merged["player_das"].iloc[i])),
+                "reason": int(merged["reason"].iloc[i]),
+                "is_d_off": bool(merged["is_d_off"].iloc[i]),
             }
         )
     return rows
@@ -540,8 +602,68 @@ def _grade_grain(df: pd.DataFrame) -> dict:
     }
 
 
+def _mark_divergences(g: pd.DataFrame) -> pd.DataFrame:
+    """Return a team-/player-grain slice with clean ``reason``/``is_d_off``/``is_d_key``/``_divergent``.
+
+    A row is divergent (held OUT of the headline parity, spec 6.8) iff its frame is not ``OK`` (a
+    NaN-degrade class -- D-BALLNAN, D-POSSABSENT and the other unscoreable reasons the reference scored a
+    fictional value for), is D-OFF (the shard flag), or is D-KEY: its ``frame_id`` collides across
+    periods within its game, which the reference conflates on a whole-match call (the golden generator
+    avoids it by slicing per period; this driver does not, so it manifests wherever a provider reuses
+    ``frame_id`` between periods).
+    """
+    if g.empty:
+        return g.assign(
+            reason=pd.Series(dtype="int64"),
+            is_d_off=pd.Series(dtype=bool),
+            is_d_key=pd.Series(dtype=bool),
+            _divergent=pd.Series(dtype=bool),
+        )
+    # Cast through the NULLABLE dtypes first: the shard columns arrive object-typed with NaN on any
+    # grain-mixed concat, and a plain object .fillna downcast is deprecated (pandas 3). Int64/boolean
+    # fill cleanly.
+    reason = g["reason"].astype("Int64").fillna(int(Reason.OK)).astype("int64").to_numpy()
+    is_d_off = g["is_d_off"].astype("boolean").fillna(False).astype(bool).to_numpy()
+    n_periods = g.groupby(["game_id", "frame_id"], observed=True)["period_id"].transform("nunique").to_numpy()
+    is_d_key = n_periods > 1
+    divergent = (reason != int(Reason.OK)) | is_d_off | is_d_key
+    return g.assign(reason=reason, is_d_off=is_d_off, is_d_key=is_d_key, _divergent=divergent)
+
+
+def _divergence_block(team: pd.DataFrame, player: pd.DataFrame) -> dict:
+    """Per-class divergence counts + the excluded-row tally + the excluded gaps' max abs-diff (spec 6.8/7.2).
+
+    Frame-level counts read the team grain (one row per scored frame); the player grain would multiply
+    each frame by its player count.
+    """
+
+    def _reason_eq(g: pd.DataFrame, code: Reason) -> int:
+        return int((g["reason"] == int(code)).sum()) if not g.empty else 0
+
+    div_team = team[team["_divergent"]] if not team.empty else team
+    div_player = player[player["_divergent"]] if not player.empty else player
+    return {
+        "d_off_frames": int(team["is_d_off"].sum()) if not team.empty else 0,
+        "d_key_frames": int(team["is_d_key"].sum()) if not team.empty else 0,
+        "d_ballnan_frames": _reason_eq(team, Reason.BALL_NAN),
+        "d_possabsent_frames": _reason_eq(team, Reason.POSSESSION_TEAM_ABSENT),
+        "excluded_rows": {
+            "team": int(team["_divergent"].sum()) if not team.empty else 0,
+            "player": int(player["_divergent"].sum()) if not player.empty else 0,
+        },
+        "max_abs_das_divergent": {
+            "team": _pct(div_team["abs_das"], 100) if not div_team.empty else float("nan"),
+            "player": _pct(div_player["abs_das"], 100) if not div_player.empty else float("nan"),
+        },
+    }
+
+
 def reduce_parity(shards: list[pd.DataFrame]) -> dict:
-    """Corpus parity/perf statistics per provider (spec 7.2). Empty shards -> ``{}``."""
+    """Corpus parity/perf statistics per provider (spec 7.2). Empty shards -> ``{}``.
+
+    Documented D-* divergence frames (spec 6.8) are held OUT of the headline ``team``/``player`` grades
+    and the finite-mask mismatch (which must then read 0), and accounted for in the ``divergences`` block.
+    """
     if not shards:
         return {}
     combined = pd.concat(shards, ignore_index=True)
@@ -549,9 +671,11 @@ def reduce_parity(shards: list[pd.DataFrame]) -> dict:
         return {}
     out: dict = {}
     for provider, sub in combined.groupby("provider"):
-        team = sub[sub["grain"] == "team"]
-        player = sub[sub["grain"] == "player"]
+        team = _mark_divergences(sub[sub["grain"] == "team"].copy())
+        player = _mark_divergences(sub[sub["grain"] == "player"].copy())
         match = sub[sub["grain"] == "match"]
+        team_clean = team[~team["_divergent"]] if not team.empty else team
+        player_clean = player[~player["_divergent"]] if not player.empty else player
 
         def _mask_mismatch(g: pd.DataFrame) -> int:
             return int((g["finite_ref"].astype("boolean") != g["finite_native"].astype("boolean")).sum())
@@ -559,9 +683,9 @@ def reduce_parity(shards: list[pd.DataFrame]) -> dict:
         quad = team["quad_shift_das"].abs()
         nbmax = team["numba_minus_numpy_das"].abs()
         out[str(provider)] = {
-            "team": _grade_grain(team) if not team.empty else {},
-            "player": _grade_grain(player) if not player.empty else {},
-            "finite_mask_mismatches": {"team": _mask_mismatch(team), "player": _mask_mismatch(player)},
+            "team": _grade_grain(team_clean) if not team_clean.empty else {},
+            "player": _grade_grain(player_clean) if not player_clean.empty else {},
+            "finite_mask_mismatches": {"team": _mask_mismatch(team_clean), "player": _mask_mismatch(player_clean)},
             "quadrature_shift_das": {"median": _pct(quad, 50), "p90": _pct(quad, 90), "max": _pct(quad, 100)},
             "numba_vs_numpy_das_max_abs": _pct(nbmax, 100),
             "timings_ms_per_frame": {
@@ -570,6 +694,7 @@ def reduce_parity(shards: list[pd.DataFrame]) -> dict:
             "reason_counts": {col: int(match[col].fillna(0).sum()) for col in _REASON_COLS.values()},
             "n_scored_frames": int(match["n_scored_frames"].fillna(0).sum()),
             "n_matches_scored": int(match["game_id"].nunique()),
+            "divergences": _divergence_block(team, player),
         }
     return out
 
@@ -654,6 +779,21 @@ def _population(refs, scored_providers: dict, manifest: dict) -> dict:
 # --------------------------------------------------------------------------------------------------
 
 
+def _load_match_ids(spec: list[dict]) -> dict[str, list[str]]:
+    """Group a ``--list-matches``-shaped list (``[{"provider", "match_id"}, ...]``) into the
+    ``pining_source(match_ids=)`` mapping.
+
+    Selection then flows through ``_wanted_for_provider`` -- the SAME rule ``for_each`` resumes on -- so
+    an owner can split ``--list-matches`` into N subsets and run N processes against ONE resumable shard
+    root (each does its own matches; resume-before-load skips the rest), turning the ~14 CPU-hour
+    sequential reference leg into a parallel pass.
+    """
+    out: dict[str, list[str]] = {}
+    for entry in spec:
+        out.setdefault(str(entry["provider"]), []).append(str(entry["match_id"]))
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=None, help="output dir (not needed with --list-matches)")
@@ -661,6 +801,12 @@ def main() -> None:
     ap.add_argument("--providers", nargs="*", default=None, help="providers to walk (default: all velocity-bearing)")
     ap.add_argument("--token", default=None, help="pining token (else resolved from the environment)")
     ap.add_argument("--max-matches", type=int, default=None)
+    ap.add_argument(
+        "--match-ids-json",
+        default=None,
+        help="restrict the run to the matches in this JSON file (the --list-matches shape: "
+        "[{provider, match_id}, ...]); split it across processes to parallelise the reference leg",
+    )
     ap.add_argument("--cache-dir", default=None)
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     ap.add_argument("--list-matches", action="store_true", help="print available match ids as JSON and exit")
@@ -687,7 +833,14 @@ def main() -> None:
 
     dest = Path(args.out)
     cache_dir = resolve_cache_dir(args.cache_dir)
-    refs, base_load = pining_source(providers, token=args.token, max_per_provider=args.max_matches, cache_dir=cache_dir)
+    match_ids = (
+        _load_match_ids(json.loads(Path(args.match_ids_json).read_text("utf-8"))) if args.match_ids_json else None
+    )
+    refs, base_load = pining_source(
+        providers, token=args.token, match_ids=match_ids, max_per_provider=args.max_matches, cache_dir=cache_dir
+    )
+    if match_ids is not None and not refs:
+        raise SystemExit(f"--match-ids-json {args.match_ids_json} selected no matches from providers {providers}.")
 
     def _load(ref):
         lm = base_load(ref)
