@@ -1,0 +1,14 @@
+{
+  "V-MULTIBALL": {
+    "message": "Dimension F is 1 (from PLAYER_POS: (1, 22, 4)), but BALL_POS shape is (2, 4)",
+    "type": "AssertionError"
+  },
+  "V-XC-FRAME": {
+    "message": "Pass frames are not present in tracking data: {999} not subset of {0, 1, 2}",
+    "type": "ValueError"
+  },
+  "V-XC-TEAM": {
+    "message": "Teams in passes data do not match teams in tracking data: {'t9'} is not a subset of {'t1', 't2', None}",
+    "type": "ValueError"
+  }
+}

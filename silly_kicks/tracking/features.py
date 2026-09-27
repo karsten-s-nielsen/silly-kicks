@@ -2988,91 +2988,81 @@ def _precompute_das_lookup(
     chunk_size: int | None = None,
     link_frame_ids: set | None = None,
     attacking_direction_col: str | None = None,
+    goal_map=None,
+    params=None,
+    n_threads: int | None = None,
 ) -> dict[tuple, dict]:
-    """Run get_individual_das ONCE on all frames, build per-frame team-level DAS lookup.
+    """Run ``get_individual_das`` ONCE on all frames, build a per-frame team-level DAS lookup.
 
-    Uses ``get_individual_das`` (per-player DAS) and sums per team.
-    ``get_das`` returns per-frame scalars that are identical for both teams,
-    which would make ``das_diff`` always zero.
+    Uses ``get_individual_das`` (per-player DAS) and sums per team; ``get_das`` returns a per-frame
+    scalar identical for both teams, which would make ``das_diff`` always zero.
 
     Parameters
     ----------
     frames : pd.DataFrame
         Long-form tracking frames.
-    chunk_size : int or None, default None
-        When set, passed through to ``accessible-space`` to process frames
-        in chunks of this size. Useful for memory-constrained environments
-        (e.g. Databricks ``applyInPandas`` with 1 GB group memory cap).
+    chunk_size, params, n_threads
+        Threaded verbatim to the native DAS engine (`get_individual_das` → `compute_das`).
     link_frame_ids : set or None, default None
-        When provided, restrict the (expensive) per-frame simulation to these
-        action-linked ``frame_id``s — per-frame DAS is a snapshot, so a linked
-        frame's value is independent of which other frames are present. The
-        attacking direction is pinned on the FULL frames first (via
-        ``_pin_attacking_direction``) so the restricted subset keeps the
-        full-period sign, making the result bit-identical to the unrestricted
-        computation. When None, all frames are simulated (direction inferred).
+        When provided, restrict the (expensive) per-frame simulation to these action-linked
+        ``frame_id``s — per-frame DAS is a snapshot, so a linked frame's value is independent of which
+        other frames are present. The ``GoalMap`` direction is resolved on the FULL frames FIRST (below),
+        so the restricted subset keeps the full-match sign (bit-identical to the unrestricted result).
     attacking_direction_col : str or None, default None
-        When supplied, the column on ``frames`` holding a caller-precomputed
-        per-frame numeric (+1/-1) attacking direction (the in-possession team's
-        direction). ``_pin_attacking_direction`` is skipped entirely — useful
-        when the caller already knows the direction and the per-frame inference
-        would assert or mis-infer (e.g. a dead-ball window with no non-NaN
-        ``team_in_possession``). The column is validated (see
-        ``_validate_per_frame_attacking_direction``) and threaded to
-        ``get_individual_das``; the library's possession gate is untouched.
-        Mutually exclusive with the ``_pin`` path: when given, it takes over
-        regardless of ``link_frame_ids``.
+        When supplied, a column holding a caller-precomputed per-frame numeric (+1/-1) attacking
+        direction; validated (`_validate_per_frame_attacking_direction`) and threaded to the engine
+        instead of a GoalMap. Mutually exclusive with ``goal_map``.
+    goal_map : GoalMap or None, default None
+        A caller-pinned direction map (ADR-055). When given it is used verbatim (the action API's map-pin,
+        spec §6.9 — enables mirror-registry Gate C on ``add_das``); when None (and no
+        ``attacking_direction_col``), one is built ONCE from the FULL frames via ``resolve_defended_goals``.
 
     Returns a dict mapping ``(period_id, frame_id)`` to ``{team_id: DAS_value}``.
     """
     from ._das import get_individual_das
+    from ._gk_resolve import resolve_defended_goals
 
-    kwargs: dict = {"use_progress_bar": False}
+    kwargs: dict = {"warn_cost": False}
     if chunk_size is not None:
         kwargs["chunk_size"] = chunk_size
+    if params is not None:
+        kwargs["params"] = params
+    if n_threads is not None:
+        kwargs["n_threads"] = n_threads
 
     if attacking_direction_col is not None:
-        # Caller supplied a per-frame numeric direction. Restrict to the linked
-        # frames (per-frame DAS is a snapshot), validate, and bypass _pin —
-        # whose infer_playing_direction asserts on all-NaN team_in_possession.
-        # The library's possession gate (which NaN-fills empty-possession
-        # frames) is left untouched.
+        # Caller supplied a per-frame numeric direction; restrict to the linked frames (per-frame DAS is
+        # a snapshot), validate, and thread it straight to the engine (no GoalMap needed).
         if link_frame_ids is not None:
             frames = frames[frames["frame_id"].isin(link_frame_ids)]
         _validate_per_frame_attacking_direction(frames, attacking_direction_col)
         kwargs["attacking_direction_col"] = attacking_direction_col
-    elif link_frame_ids is not None:
-        from ._das import _pin_attacking_direction
+    else:
+        # Caller-pinned GoalMap wins (the action-API map-pin); else build ONCE from the FULL frames
+        # (ADR-055), then restrict to the linked frames so the subset keeps the full-match direction.
+        if goal_map is None:
+            goal_map = resolve_defended_goals(frames)
+        if link_frame_ids is not None:
+            frames = frames[frames["frame_id"].isin(link_frame_ids)]
+        kwargs["goal_map"] = goal_map
 
-        frames = _pin_attacking_direction(frames)
-        frames = frames[frames["frame_id"].isin(link_frame_ids)]
-        kwargs["attacking_direction_col"] = "attacking_direction"
-
-    # Cross-repo: the lakehouse runs _fill_possession_from_set_piece_actions (possession
-    # back-fill for set-piece restarts) BEFORE add_das, so this guard correctly fires only
-    # when the link-restricted subset is still all-NaN AFTER that fill -- genuine dead-ball
-    # (e.g. IDSSE ~33% dead frames), not a fillable set-piece gap. `frames` here is the
-    # link-restricted subset (both branches above ran frames[frame_id.isin(link_frame_ids)]),
-    # so this surfaces silly-kicks' clear message instead of accessible-space's generic
-    # ValueError; add_das catches it and NaN-degrades.
+    # Genuine dead-ball: the link-restricted subset is all-NaN possession even after any consumer-side
+    # set-piece possession back-fill. Surface silly-kicks' clear message (add_das catches -> NaN-fill).
     if (
         link_frame_ids is not None
         and "team_in_possession" in frames.columns
         and not frames["team_in_possession"].notna().any()
     ):
-        msg = (
-            "team_in_possession is all-NaN in the link-restricted frame subset (dead-ball "
-            "window): DAS is undefined here. add_das degrades these actions to NaN "
-            f"(das_source={DAS_SOURCE_UNSCOREABLE_CALL!r})."
+        raise DasUnscoreableError(
+            "team_in_possession is all-NaN in the link-restricted frame subset (dead-ball window): DAS "
+            f"is undefined here. add_das degrades these actions to NaN (das_source={DAS_SOURCE_UNSCOREABLE_CALL!r}).",
+            das_source=DAS_SOURCE_UNSCOREABLE_CALL,
         )
-        raise DasUnscoreableError(msg)
 
     das_frames = get_individual_das(frames, **kwargs)
 
     player_rows = das_frames[das_frames["is_ball"] != True]  # noqa: E712
-    # Filter to rows with valid DAS — accessible-space may return NaN for some
-    # frames (e.g. insufficient players, off-pitch data). Without this filter,
-    # the lookup stores NaN, making all action-coupled results NaN.
+    # Drop NaN-DAS rows (non-scoreable frames) before summing; without this the lookup would store NaN.
     valid_rows = player_rows.dropna(subset=["DAS"])
     lookup: dict[tuple, dict] = {}
     for (pid, fid, tid), grp in valid_rows.groupby(["period_id", "frame_id", "team_id"], observed=True):
@@ -3148,16 +3138,23 @@ def das_at_action(
     frames: pd.DataFrame | None,
     *,
     col_name: str = "das_team",
+    links: pd.DataFrame | None = None,
+    goal_map=None,
     chunk_size: int | None = None,
+    attacking_direction_col: str | None = None,
+    params=None,
+    n_threads: int | None = None,
 ) -> pd.Series:
-    """Team-level DAS at the linked frame for the acting team.
+    """Team-level DAS at the linked frame for the acting team (spec §6.2 signature).
 
     Returns a Series with one value per action. NaN where the action couldn't link to a
     frame, where the linked frame carries no DAS, or where DAS was unscoreable for the
     whole call (:class:`~silly_kicks.tracking.DasUnscoreableError`).
 
-    A bare Series carries no provenance, so those three NaN causes are indistinguishable
-    here. Use :func:`add_das`, whose ``das_source`` column names the cause per row
+    ``links`` restricts the per-frame simulation to action-linked frames (as ``add_das`` does);
+    ``goal_map`` pins direction (ADR-055), mutually exclusive with ``attacking_direction_col``;
+    ``params``/``n_threads`` thread to the native engine. A bare Series carries no provenance, so the
+    NaN causes are indistinguishable here — use :func:`add_das`, whose ``das_source`` names the cause
     (ADR-043). Only ``DasUnscoreableError`` degrades; every other exception propagates.
 
     See NOTICE for full bibliographic citations.
@@ -3167,15 +3164,32 @@ def das_at_action(
     Compute dynamic accessible space at each action on a linked match::
 
         from silly_kicks.tracking.features import das_at_action
-        das = das_at_action(actions, frames)
+        das = das_at_action(actions, frames, links=links)
     """
     import numpy as np
 
     if frames is None:
         return pd.Series(np.nan, index=actions.index, name=col_name)
 
+    link_frame_ids: set | None = None
+    if links is not None and "frame_id" in links.columns:
+        link_frame_ids = set(links["frame_id"].dropna().astype(int).tolist())
+
+    if goal_map is not None and attacking_direction_col is not None:
+        raise ValueError("pass goal_map= OR attacking_direction_col=, not both.")
+    if attacking_direction_col is not None:
+        _validate_per_frame_attacking_direction(frames, attacking_direction_col, link_frame_ids=link_frame_ids)
+
     try:
-        lookup = _precompute_das_lookup(frames, chunk_size=chunk_size)
+        lookup = _precompute_das_lookup(
+            frames,
+            chunk_size=chunk_size,
+            link_frame_ids=link_frame_ids,
+            attacking_direction_col=attacking_direction_col,
+            goal_map=goal_map,
+            params=params,
+            n_threads=n_threads,
+        )
     except DasUnscoreableError as exc:
         _warnings.warn(
             f"DAS is unscoreable for these frames ({exc}); returning NaN for all actions",
@@ -3184,7 +3198,7 @@ def das_at_action(
         )
         return pd.Series(np.nan, index=actions.index, name=col_name)
 
-    mapped = _map_das_to_actions(actions, frames, lookup)
+    mapped = _map_das_to_actions(actions, frames, lookup, links=links)
     s = mapped["das_team"]
     s.name = col_name
     return s
@@ -3196,8 +3210,11 @@ def add_das(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
+    goal_map=None,
     chunk_size: int | None = None,
     attacking_direction_col: str | None = None,
+    params=None,
+    n_threads: int | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with ``das_team``, ``das_opponent``, ``das_diff``, ``das_source``.
 
@@ -3235,25 +3252,36 @@ def add_das(
     frames : pd.DataFrame
         Long-form tracking frames.
     links : pd.DataFrame or None, default None
-        Pre-computed action-frame link pointers.
+        Pre-computed action-frame link pointers. When given, the per-frame DAS
+        simulation is restricted to the linked frames (bit-identical, since
+        direction is pinned on the full frames first).
+    goal_map : GoalMap or None, default None
+        Caller-supplied defended-goal map (``resolve_defended_goals``, ADR-055),
+        the single source of attacking direction. When None it is built from the
+        **full** frames. Mutually exclusive with ``attacking_direction_col`` —
+        passing both raises ``ValueError``.
     chunk_size : int or None, default None
-        When set, passed through to ``accessible-space`` to process frames
-        in chunks. Useful for memory-constrained environments (e.g.
-        Databricks ``applyInPandas`` UDFs with 1 GB group memory cap).
+        When set, the native engine (ADR-107) processes frames in chunks of this
+        size — byte-identical to a single pass. Useful for memory-constrained
+        environments (e.g. Databricks ``applyInPandas`` UDFs with a group memory cap).
     attacking_direction_col : str or None, default None
         When supplied, the column on ``frames`` holding a caller-precomputed
         per-frame **numeric** (+1/-1) attacking direction — one value per
         ``(game_id, period_id, frame_id)``, the in-possession team's direction.
         silly-kicks validates it (exists / numeric / fully covered per group,
-        restricted to action-linked frames), then skips ``_pin_attacking_direction``
-        and threads it straight to ``accessible-space``. Use this when the
-        direction is already known and per-frame inference would assert or
-        mis-infer — e.g. a dead-ball window with no non-NaN ``team_in_possession``
-        (``_pin``'s ``infer_playing_direction`` asserts there). A misconfigured
-        column fails loud (``ValueError``/``TypeError``); it is **not** degraded
-        to NaN. The library's possession gate is unchanged: frames whose
-        ``team_in_possession`` is NaN still yield NaN DAS. When None, behavior is
-        bit-identical to before (direction inferred via ``_pin``).
+        restricted to action-linked frames), then bypasses the ``GoalMap`` and
+        uses it directly. Use this when the direction is already known. A
+        misconfigured column fails loud (``ValueError``/``TypeError``); it is
+        **not** degraded to NaN. The possession gate is unchanged: frames whose
+        ``team_in_possession`` is NaN still yield NaN DAS. Mutually exclusive with
+        ``goal_map``.
+    params : PassSimParams or None, default None
+        Native engine parameters (quadrature profile + physics constants). None
+        uses the shipped periodic default (ADR-108); the ``reference`` quadrature
+        is refused on this public surface (parity-only).
+    n_threads : int or None, default None
+        Thread count for the numba ``prange`` kernel. None lets the engine choose;
+        the result is byte-identical across thread counts.
 
     Examples
     --------
@@ -3261,7 +3289,7 @@ def add_das(
 
         from silly_kicks.tracking.features import add_das
         enriched = add_das(actions, frames)
-        # caller-supplied per-frame numeric direction (skips inference):
+        # caller-supplied per-frame numeric direction (skips the GoalMap):
         enriched = add_das(actions, frames, attacking_direction_col="attacking_direction")
     """
     import numpy as np
@@ -3275,9 +3303,11 @@ def add_das(
     if links is not None and "frame_id" in links.columns:
         link_frame_ids = set(links["frame_id"].dropna().astype(int).tolist())
 
-    # Fail loud on a misconfigured direction column BEFORE the try below (which
-    # degrades library/runtime failures to NaN). A bad column is a caller
-    # contract violation, not a runtime DAS failure — it must propagate.
+    # Fail loud BEFORE the try below (which degrades library/runtime failures to NaN). A bad
+    # direction column, or a goal_map + attacking_direction_col conflict, is a caller contract
+    # violation, not a runtime DAS failure — it must propagate (spec §6.2).
+    if goal_map is not None and attacking_direction_col is not None:
+        raise ValueError("pass goal_map= OR attacking_direction_col=, not both.")
     if attacking_direction_col is not None:
         _validate_per_frame_attacking_direction(frames, attacking_direction_col, link_frame_ids=link_frame_ids)
 
@@ -3287,6 +3317,9 @@ def add_das(
             chunk_size=chunk_size,
             link_frame_ids=link_frame_ids,
             attacking_direction_col=attacking_direction_col,
+            goal_map=goal_map,
+            params=params,
+            n_threads=n_threads,
         )
     except DasUnscoreableError as exc:
         _warnings.warn(
@@ -3332,9 +3365,17 @@ def _make_das_transformer():
                     out[f"{col}_a{i}"] = np.nan
             return out
 
-        # Precompute DAS for ALL frames — single get_das call
+        # Restrict the simulation to the frames the actions actually link to (the union over the three
+        # gamestate slots), resolved POSITIONALLY (ADR-020) -- per-frame DAS is a snapshot, so a linked
+        # frame's value is independent of which other frames are present, and the goal map is still built
+        # from the FULL frames inside _precompute_das_lookup. This is the O2 fix: ~2k linked frames per
+        # match, not ~140k.
+        link_frame_ids: set = set()
+        for slot in states[:nb]:
+            fids = _kernels.resolve_frame_ids_by_position(slot, frames)
+            link_frame_ids.update(int(f) for f in fids if not pd.isna(f))
         try:
-            lookup = _precompute_das_lookup(frames)
+            lookup = _precompute_das_lookup(frames, link_frame_ids=link_frame_ids or None)
         except DasUnscoreableError as exc:
             _warnings.warn(
                 f"DAS is unscoreable for these frames ({exc}); returning NaN for all DAS features",

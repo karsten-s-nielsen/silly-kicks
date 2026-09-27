@@ -16,14 +16,14 @@ TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     "frame_rate": "float64",
     # player_id NULLABLE by necessity (ball row is NA BY CONSTRUCTION; numpy int64 cannot hold NA --
     # ADR-055/058). Stays Int64 (object in the kloppy family) and NOT `category`, because it is
-    # MUTATED post-build (`_das.py` `.loc[ball_mask,"player_id"]="ball"` masked setitem; `_run_values`
-    # Int64-reassign; the keeper/actor identity bridges), and `category` is not transparent to a new
-    # category at setitem (the ADR-103 dynamic-column rule). team_id IS `category` (F1b / ADR-106
-    # option A): STATIC/set-once + very low cardinality (~2/match) -> a large frame-memory win; its
-    # only post-build touch is a masked `=None` (-> NaN, allowed on a categorical). `id_compat._decat`
-    # unwraps the category to its underlying Int64/object at every comparison, so all id logic is
-    # value-neutral. player_id -> category is reconsiderable once DAS is reimplemented natively (that
-    # removes the `_das` `"ball"` sentinel blocker).
+    # MUTATED post-build (`_run_values` Int64-reassign; the keeper/actor identity bridges), and
+    # `category` is not transparent to a new category at setitem (the ADR-103 dynamic-column rule).
+    # team_id IS `category` (F1b / ADR-106 option A): STATIC/set-once + very low cardinality (~2/match)
+    # -> a large frame-memory win; its only post-build touch is a masked `=None` (-> NaN, allowed on a
+    # categorical). `id_compat._decat` unwraps the category to its underlying Int64/object at every
+    # comparison, so all id logic is value-neutral. NOTE: native DAS (ADR-107) removed the old
+    # `_das.py` `player_id="ball"` sentinel setitem, so THAT blocker is gone; player_id -> category is
+    # now unblocked but not taken this cycle (the `_run_values`/identity-bridge mutations remain).
     "player_id": "Int64",
     "team_id": "category",
     "is_ball": "bool",

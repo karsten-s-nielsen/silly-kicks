@@ -118,3 +118,9 @@ Spec: `docs/superpowers/specs/2026-09-25-f1b-float32-frames-id-category-design.m
 `docs/superpowers/plans/2026-09-25-f1b-float32-frames-id-category.md`. Builds on ADR-103 (category rule),
 ADR-105 (vectorized kernel), ADR-058 (nullable frame ids), ADR-019 (`id_compat`), ADR-076 (numba
 bit-identity), ADR-096 (atomic interception dedup). Next cycle: native DAS reimplementation.
+
+> **Update (ADR-107, 2026-09-26): native DAS shipped.** The `_das.py` `player_id = "ball"` masked
+> setitem — the blocker that kept `player_id` off `category` (option A) — is GONE (the native engine
+> finds the ball by the `is_ball` mask, never a `player_id` write). `player_id → category` is therefore
+> now UNBLOCKED; it was not taken in the DAS cycle (still Int64/object), but the sentinel obstruction
+> this ADR recorded no longer applies.

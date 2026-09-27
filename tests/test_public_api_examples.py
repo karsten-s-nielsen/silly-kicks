@@ -264,6 +264,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/spadl/config.py",
     "silly_kicks/tracking/_cover_shadows.py",
     "silly_kicks/tracking/_das.py",
+    "silly_kicks/tracking/_das_taxonomy.py",
     "silly_kicks/tracking/_ghost_gk.py",
     "silly_kicks/tracking/_gk_completion.py",
     "silly_kicks/tracking/_gk_geometry.py",
@@ -559,9 +560,10 @@ _EXAMPLES_DEBT: dict[str, str] = {
     "silly_kicks/tracking/_cover_shadows.py::compute_blocking_score": (
         "Voronoi counterfactual threat reduction from removing one defender; needs a real frame and a fitted xT."
     ),
-    # --- TF-28 DAS adapter ---
-    "silly_kicks/tracking/_das.py::DasUnscoreableError": (
-        "Raised when the optional accessible-space dependency cannot score a frame at all."
+    # --- TF-28 DAS taxonomy (native engine, ADR-107; DasUnscoreableError now lives in _das_taxonomy) ---
+    "silly_kicks/tracking/_das_taxonomy.py::DasUnscoreableError": (
+        "The ONLY degradable DAS exception (ADR-043); raised at the _das_pack edge when a frame is "
+        "structurally unscoreable (velocity-unavailable, dead-ball) -- callers catch it and NaN-degrade."
     ),
     # --- TF-18 ghost GK (GhostClampWarning in the same block IS documented) ---
     "silly_kicks/tracking/_ghost_gk.py::IntegrityError": (

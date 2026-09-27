@@ -4,10 +4,13 @@ Three aggregators, three DIFFERENT reasons the mirror does or does not hold -- r
 per entry rather than smoothed into one tolerance:
 
 ``add_das``
-    Not silly-kicks geometry at all. The value comes from ``accessible-space``'s polar
-    quadrature, which is measurably non-equivariant under a reflection at the shipped
-    ``n_angles=30``. Tolerance sized above the measurement, still far below the swap the
-    gate exists to catch.
+    Now silly-kicks' OWN native engine (ADR-107), not a third-party dependency. Its angular
+    quadrature is PERIODIC (ADR-108), so a point reflection permutes rays without changing the
+    integral and DAS is mirror-invariant in real arithmetic. The only residual is the danger
+    term's ``arccos`` opening angle, whose derivative blows up at the goal mouth, so the entry
+    uses a RELATIVE ``rtol`` (spec 6.4 F1) rather than the old absolute delta that sized around
+    ``accessible-space``'s non-equivariant polar grid. It also joins Gate C now that direction
+    comes from a ``GoalMap`` (ADR-055) the entry can vary.
 ``add_xshot_occurrence`` / ``add_xcross_attempt``
     Mirror-invariant as of PR 5, at the exact tolerance. They were NOT, and the cause was
     silly-kicks' own goal-relative transform -- see the resolved note below.
@@ -36,9 +39,10 @@ rather than per aggregate, in ``tests/tracking/test_pr5_chirality_gates.py``.
 
 from __future__ import annotations
 
-# Measured on canonical_scene(); see the per-entry tolerance_basis for the derivation.
-# RE-DERIVED for the C0 coherent scene: artifact 173.7716, attribution swap 550.6902.
-_DAS_MIRROR_TOL = 200.0
+# RELATIVE rtol (spec 6.4 F1), NOT an absolute delta: the native periodic quadrature (ADR-108)
+# is mirror-invariant to the arccos float floor, which scales WITH the DAS magnitude. See the
+# per-entry tolerance_basis for the derivation and the measured residuals.
+_DAS_MIRROR_TOL = 1e-6
 
 
 def _with_possession(frames):
@@ -85,7 +89,7 @@ def register() -> None:
     from tests.tracking._mirror_registry import _entry
 
     # ------------------------------------------------------------------
-    # add_das -- third-party quadrature, not silly-kicks geometry
+    # add_das -- native periodic quadrature (ADR-107/108), mirror-invariant
     # ------------------------------------------------------------------
     _entry(
         "add_das",
@@ -97,33 +101,25 @@ def register() -> None:
             "das_source": "exempt",
         },
         tol=_DAS_MIRROR_TOL,
+        relative_tolerance=True,  # rtol, not absolute delta -- the arccos floor scales with the value
         basis=(
-            "accessible-space integrates over a POLAR grid whose angular quadrature is "
-            "NOT periodic: core.py:626/630 set the first ray's lower bound and the last "
-            "ray's upper bound to the ray itself, so rays 0 and n-1 each receive a "
-            "half-width wedge. A point reflection maps ray k -> ray (k+15) mod 30 at the "
-            "shipped n_angles=30, landing the two deficient wedges on different rays. "
-            "RE-DERIVED for the C0 coherent scene (D7), NOT rebased. The prior 15.0 was "
-            "sized on the pre-C0 fixture: gap 12.0349, team-attribution swap ~46.9, i.e. "
-            "gap-to-swap 3.90. That fixture held every position CONSTANT while declaring "
-            "vx=0.8/speed=1.0, so its DAS magnitudes were not a physical scene's. "
-            "Re-measured on the coherent scene: das_opponent gap 173.7716, das_diff "
-            "173.7399, das_team 0.0670; team-attribution swap (max |das_team - "
-            "das_opponent|) 550.6902. Artifact and detectable-defect scaled TOGETHER "
-            "(~14x), which is the evidence it is the same proportional quadrature "
-            "artifact rather than a new defect -- an artifact that grew while the swap "
-            "did not would have been a finding, not a tolerance update. "
-            "STATED TRADE: gap-to-swap narrowed 3.90 -> 3.17, so the old tolerance's two "
-            "properties (~25% headroom AND ~3.1x below the swap) can no longer both hold; "
-            "200.0 takes ~15% headroom over the measured artifact and sits 2.75x below the "
-            "swap. The defect class stays detectable, with less margin than before -- "
-            "recorded so a reviewer can disagree rather than discover it. If that margin "
-            "is judged too thin, the per-entry `scene` seam is the remedy (DAS's artifact "
-            "scales with the magnitude of the values, so a smaller-value scene separates "
-            "better); it is deliberately NOT used here, because the shared scene serves "
-            "every other entry better and 2.75x still discriminates."
+            "The native DAS engine (ADR-107) reflects EXACTLY in real arithmetic: its angular "
+            "quadrature is PERIODIC (ADR-108), so ray k and ray (k + n/2) carry equal wedges and a "
+            "point reflection permutes rays without changing the integral. The one residual is the "
+            "danger term's arccos opening angle, whose derivative -> inf at the goal mouth, so a tiny "
+            "float difference in its argument amplifies to ~1e-7 RELATIVE (spec 6.4 F1; measured max "
+            "1.4e-7 rel on golden scene S10). This is a RELATIVE rtol, not the old absolute delta: the "
+            "floor scales with the DAS magnitude, so a fixed absolute number would be tight on a large "
+            "scene and slack on a small one. rtol=1e-6 is ~7x the measured floor. On canonical_scene() "
+            "the residual is 8.5e-13 absolute / 1.5e-15 relative (machine epsilon -- this scene carries "
+            "no near-goal-mouth danger term), ~5e5x below the ~550 team-attribution swap the gate exists "
+            "to catch (a map flip moves das_team/das_opponent/das_diff by 504/553/552 = ~1.0 relative). "
+            "The arccos floor is INHERENT to accessible-space reference parity -- a stable atan2 opening "
+            "angle would drop it to ~1e-12 but DIVERGE from the reference, breaking the 1e-12 parity gate "
+            "-- so it is a floor, not a defect to fix. Discrimination is retained at engine level in "
+            "test_das_quadrature.py (an interior perturbation above the tol fails)."
         ),
-        role="unused",  # signature takes no home_team_id at all
+        role="unused",  # signature takes no home_team_id at all; direction now comes from the GoalMap
         non_vacuity=("das_team", "das_diff"),
         exempt=(
             {
@@ -133,6 +129,11 @@ def register() -> None:
                 )
             }
         ),
+        # Gate C (spec 6.9): direction is a GoalMap (ADR-055), so swapping the map must move DAS.
+        # All three numeric columns move (measured 504/553/552 on canonical_scene) -- declared EXACTLY,
+        # the completeness gate rejects a hand-picked subset.
+        call_with_map=lambda a, f, gm: add_das(a, _with_possession(f), goal_map=gm),
+        gate_c_must_move=("das_team", "das_opponent", "das_diff"),
     )
 
     # ------------------------------------------------------------------

@@ -116,3 +116,5 @@ pure-numpy did not collapse the cost → GPU engine (Phase 1, §4 of the spec) j
 serverless re-profile confirms ghost-GK remains dominant. Task 11 (broader `.iloc`/`iterrows` sweep)
 deferred — the committed 10-action fixture did not reproduce the lakehouse's ~14 % / 2.1 M-`_ixs`
 pathology; attribute on the serverless-scale profile first (YAGNI).
+
+> **DAS is native as of ADR-107 (2026-09-26).** The "accessible-space oracle pattern" referenced above is now the committed golden-fixture parity oracle (`tests/tracking/_fixtures/das_golden/`, dev-only `das-reference` extra); DAS degradation is enforced by the native `_das_pack` validation, not a library seam. The deferred Task-11 `.iloc`/`iterrows` sweep is still open: the native features DAS mapper `_map_das_to_actions` still iterates rows (`iterrows`); vectorising it (keyed merge via `id_compat.align_join_keys`) is an ADR-107 follow-up, not done this cycle.

@@ -26,6 +26,11 @@ _SCRIPTS = SCRIPTS  # single-sourced with the shared population seam (Cycle B)
 # Listed rather than inferred: "writes an artifact" is a semantic property, and a heuristic over
 # `write_text` would sweep in dev utilities whose output nobody cites.
 ARTIFACT_DRIVERS = (
+    # Native-DAS corpus parity + performance driver (ADR-107/108). Walks the owner-tier pining corpus,
+    # runs four DAS legs (accessible-space reference, native numpy/numba reference-quadrature, native
+    # periodic production) and writes docs/research/das_native_parity/metrics.json -- the parity
+    # percentiles + quadrature shift the ADR/CHANGELOG quote, over external corpus data, so provenance.
+    "validate_das_native_parity",
     # Enrolled with the SB360 coverage audit. Measures real StatsBomb 360 freeze-frame
     # coverage, and its keeper-visibility numbers go in front of a club -- exactly the
     # "cited, uncheckable" shape the rule below exists to prevent.

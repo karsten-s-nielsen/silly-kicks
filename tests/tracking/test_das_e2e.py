@@ -1,17 +1,16 @@
-"""DAS per-provider e2e tests (TF-28).
+"""DAS per-provider integration tests (TF-28, native engine).
 
 Full pipeline: load frames -> smooth_frames -> derive_velocities ->
 infer_ball_carrier -> derive_team_in_possession -> get_das / das_at_action.
 
 Uses tests/tracking/_provider_inputs.py loader + synthesize_actions for
-consistent action synthesis across providers.
+consistent action synthesis across providers. No longer ``e2e``-marked: the native engine
+is deterministic on real provider data (the library-crash reason for the marker is gone).
 """
 
 import numpy as np
 import pandas as pd
 import pytest
-
-pytest.importorskip("accessible_space")
 
 from silly_kicks.tracking import (
     derive_team_in_possession,
@@ -26,8 +25,6 @@ from tests.tracking._provider_inputs import (
     load_provider_frames,
     synthesize_actions,
 )
-
-pytestmark = pytest.mark.e2e
 
 # Available providers: slim-parquet providers + gradientsports
 _SLIM_PROVIDERS = sorted(p.stem.replace("_slim", "") for p in SLIM_DIR.glob("*_slim.parquet"))
@@ -55,23 +52,23 @@ def provider_data(request) -> tuple[str, pd.DataFrame, pd.DataFrame]:
 class TestGetDasE2E:
     def test_output_has_as_das_columns(self, provider_data) -> None:
         provider, frames, _actions = provider_data
-        result = get_das(frames, use_progress_bar=False)
+        result = get_das(frames)
         assert "AS" in result.columns, f"{provider}: missing AS column"
         assert "DAS" in result.columns, f"{provider}: missing DAS column"
 
     def test_output_length_matches_input(self, provider_data) -> None:
         provider, frames, _actions = provider_data
-        result = get_das(frames, use_progress_bar=False)
+        result = get_das(frames)
         assert len(result) == len(frames), f"{provider}: output length {len(result)} != input {len(frames)}"
 
     def test_das_dtype_float64(self, provider_data) -> None:
         _provider, frames, _actions = provider_data
-        result = get_das(frames, use_progress_bar=False)
+        result = get_das(frames)
         assert result["DAS"].dtype == np.float64
 
     def test_not_all_nan(self, provider_data) -> None:
         provider, frames, _actions = provider_data
-        result = get_das(frames, use_progress_bar=False)
+        result = get_das(frames)
         valid = result["DAS"].dropna()
         assert len(valid) > 0, f"{provider}: all DAS values are NaN"
 

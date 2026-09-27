@@ -135,20 +135,18 @@ def delta_das(
 
     Attacker-value units, so **negative = deterrent**.
 
-    Direction is pinned ONCE on the FACTUAL frames and the SAME pinned column is passed to
-    BOTH legs. accessible-space otherwise infers playing direction per period from
-    ``groupby(team)[x].mean().idxmin()``, and the ghost displacement perturbs that mean --
-    so the two legs could infer OPPOSITE directions and the difference would not be a
-    counterfactual at all. Routed through ``get_individual_das`` (summed per team) because
-    ``get_das`` hardcodes ``infer_attacking_direction=True`` and cannot accept a pin.
+    Direction is pinned ONCE on the FACTUAL frames as a ``GoalMap`` (ADR-055) and threaded into
+    BOTH legs. The native DAS engine resolves each in-possession team's attacked end from that
+    map instead of inferring it from the team's mean-x, so the ghost displacement cannot flip a
+    leg's direction and the difference stays a genuine counterfactual. Both legs are scored
+    together through the ADR-043-safe paired seam (``individual_das_paired``, SC-1).
 
     The direction-pinning rule above is prose; the gate that enforces it is
     ``tests/gkdv/test_arms.py::test_das_arm_passes_ONE_pinned_direction_to_BOTH_legs``.
 
-    NOTE (interpretation limit, spec §5): accessible-space receives no keeper flag
-    (``_COLUMN_MAP`` has no ``is_goalkeeper``), so this arm measures the accessible-space
-    consequence of relocating a GENERIC player. Keeper-specific physics are not modelled
-    here -- unlike the threat arm, where ``lambda_gk`` weights the keeper explicitly.
+    NOTE (interpretation limit, spec §5): the DAS engine receives no keeper flag, so this arm
+    measures the DAS consequence of relocating a GENERIC player. Keeper-specific physics are not
+    modelled here -- unlike the threat arm, where ``lambda_gk`` weights the keeper explicitly.
 
     Parameters
     ----------
@@ -185,15 +183,10 @@ def delta_das(
         delta = delta_das(actual, ghost, attacking_team_id=2)
         # delta < 0  ->  the real keeper denied accessible space vs the ghost.
 
-    Do NOT hand the two legs to ``accessible-space`` separately and subtract the results:
-    it infers playing direction per period from the team's mean x, the ghost displacement
-    perturbs that mean, and the two legs can come back pointing at OPPOSITE goals. This
-    function pins direction once on the factual frames and passes that single pinned
-    column into both legs, which is the whole reason it exists rather than being a
-    two-line call at the use site.
-
-    Requires the optional ``accessible-space`` dependency (the ``[das]`` extra); without
-    it the call raises rather than silently returning ``0.0``.
+    Do NOT score the two legs independently and subtract: a per-leg direction inference from the
+    team's mean-x could point the ghost leg at the OPPOSITE goal once the keeper is displaced.
+    This function pins ONE ``GoalMap`` on the factual frames and threads it into both legs, which
+    is the whole reason it exists rather than being a two-line call at the use site.
     """
     # Single-frame arm: a thin wrapper over delta_das_batch on a one-frame stack. A one-frame unit
     # pins direction from that frame (identical to the historical per-frame pin), and the batch owns
@@ -230,10 +223,11 @@ def _frame_key_index(frames: pd.DataFrame) -> pd.MultiIndex:
 
 
 def delta_das_batch(actual_frames, ghost_frames, *, attacking_team_id_by_frame, params=_DEFAULT_PARAMS):
-    """Batched Delta-DAS: one accessible-space call per leg over all a unit's scored frames.
+    """Batched Delta-DAS: ONE paired DAS pass over all a unit's scored frames (both legs together).
 
     See :func:`delta_das` for the per-frame semantics; this is its amortized batch form. Direction is
-    pinned ONCE over the unit and the same column feeds both legs. Returns a ``pd.Series`` indexed by
+    pinned ONCE over the unit as a ``GoalMap`` and threaded into both legs, which are scored together
+    through the ADR-043-safe paired seam (``individual_das_paired``). Returns a ``pd.Series`` indexed by
     ``(game_id, period_id, frame_id)``, value ``das(actual) - das(ghost)`` (attacker-value units, so
     **negative = deterrent**). A frame with no finite attacking DAS on either leg is NaN
     (``min_count=1``), never a fictional 0.0; a wholly unscoreable unit (velocity-less / dead-ball) is
@@ -264,16 +258,9 @@ def delta_das_batch(actual_frames, ghost_frames, *, attacking_team_id_by_frame, 
     _assert_legs_aligned(actual_frames, ghost_frames, fn="delta_das_batch")
     keys = _frame_key_index(actual_frames)
     try:
-        direction = _das_port.pin_direction(actual_frames)  # ONCE over the unit
-        actual_pinned = actual_frames.copy()
-        actual_pinned["attacking_direction"] = direction.to_numpy()
-        ghost_pinned = ghost_frames.copy()
-        ghost_pinned["attacking_direction"] = direction.to_numpy()
-        actual = _das_port.team_das_by_frame(
-            actual_pinned, attacking_team_id_by_frame, direction_col="attacking_direction"
-        )
-        ghost = _das_port.team_das_by_frame(
-            ghost_pinned, attacking_team_id_by_frame, direction_col="attacking_direction"
+        goal_map = _das_port.pin_direction(actual_frames)  # ONE GoalMap over the unit, fed to both legs
+        actual, ghost = _das_port.paired_team_das_by_frame(
+            actual_frames, ghost_frames, attacking_team_id_by_frame, goal_map=goal_map
         )
     except DasUnscoreableError:
         return pd.Series(np.nan, index=keys, name="delta_das")

@@ -26,20 +26,19 @@ TRACKING = ROOT / "tracking"
 # genuinely internal, and is it confined to one port module?" If the answer to either half is
 # no, promote it. `CONFINED_TO` below makes the second half structural, not prose.
 ALLOW_PRIVATE: dict[str, str] = {
-    # `_pin_attacking_direction` is a DAS internal with no public meaning -- it pins the
-    # direction convention `accessible-space` expects, which is a fact about that library's
-    # input contract, not a concept gkdv or any other consumer should be reasoning about.
-    # Promoting it would export an implementation detail of an optional dependency.
+    # `individual_das_paired` is the ADR-043-safe paired DAS path (score factual + ghost
+    # together under ONE GoalMap so the frame-keyed-cache landmine is structurally impossible,
+    # SC-1). It is intentionally NOT part of the public `silly_kicks.tracking` surface -- it is
+    # a counterfactual-scoring internal that only a paired consumer like gkdv reaches -- so it
+    # is imported from `silly_kicks.tracking._das` and exempted here.
     #
-    # It is CONFINED to `_das_port.py`, and the port exists so the structural direction-pinning
-    # guard runs on every CI leg WITHOUT the optional `accessible-space` extra installed. An
-    # import of this module from any other gkdv file is a real violation -- route it via the
-    # port. The sibling `get_individual_das` is NOT covered here: it is already public and the
-    # port imports it as such.
+    # It is CONFINED to `_das_port.py`, the ONE gkdv module that is the boundary onto native
+    # DAS. An import of this private from any other gkdv file is a real violation -- route it
+    # via the port. The siblings `resolve_defended_goals` / `get_individual_das` are NOT covered
+    # here: they are already public and the port imports them as such.
     "silly_kicks.tracking._das": (
-        "_pin_attacking_direction is a DAS-internal convention with no public meaning; "
-        "CONFINED to gkdv/_das_port.py, which exists so the direction-pinning guard runs "
-        "without the optional accessible-space extra"
+        "individual_das_paired is the ADR-043-safe paired DAS seam (SC-1) with no public "
+        "meaning; CONFINED to gkdv/_das_port.py, the one boundary onto native DAS"
     ),
 }
 
