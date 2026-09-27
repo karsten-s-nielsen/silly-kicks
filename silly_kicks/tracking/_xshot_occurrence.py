@@ -16,7 +16,7 @@ import json
 import math
 import warnings
 from pathlib import Path
-from typing import Literal
+from typing import Literal, overload
 
 import numpy as np
 import pandas as pd
@@ -751,6 +751,36 @@ def _ball_in_attacking_third(ball_x: float, goal_x: float) -> bool:
     return abs(ball_x - goal_x) <= _ATTACKING_THIRD_M
 
 
+@overload
+def prepare_xshot_training_data(
+    frames: pd.DataFrame,
+    shots: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    feature_set: XShotFeatureSet = ...,
+    horizon_seconds: float = ...,
+    attacking_third_only: bool = ...,
+    shot_types: tuple[str, ...] | None = ...,
+    carrier_params: dict | None = ...,
+    return_keys: Literal[False] = ...,
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]: ...
+
+
+@overload
+def prepare_xshot_training_data(
+    frames: pd.DataFrame,
+    shots: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    feature_set: XShotFeatureSet = ...,
+    horizon_seconds: float = ...,
+    attacking_third_only: bool = ...,
+    shot_types: tuple[str, ...] | None = ...,
+    carrier_params: dict | None = ...,
+    return_keys: Literal[True],
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, pd.DataFrame]: ...
+
+
 def prepare_xshot_training_data(
     frames: pd.DataFrame,
     shots: pd.DataFrame,
@@ -761,7 +791,8 @@ def prepare_xshot_training_data(
     attacking_third_only: bool = True,
     shot_types: tuple[str, ...] | None = None,
     carrier_params: dict | None = None,
-) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    return_keys: bool = False,
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray] | tuple[pd.DataFrame, np.ndarray, np.ndarray, pd.DataFrame]:
     """Build (features, labels, groups) for one match's frames -- the shared,
     public train/serve-parity entry point (spec §3.5).
 
@@ -794,7 +825,10 @@ def prepare_xshot_training_data(
     -------
     (features, labels, groups)
         ``features`` is a (n, 27) DataFrame; ``labels`` int 0/1; ``groups`` the
-        per-row ``game_id``.
+        per-row ``game_id``. With ``return_keys=True`` a 4th element is appended: a
+        ``(game_id, period_id, frame_id)`` DataFrame row-aligned to ``features`` (the
+        selected-frame identity, for keyed comparison across two feature computations;
+        purely additive -- the default 3-tuple path is byte-identical).
 
     Examples
     --------
@@ -816,6 +850,13 @@ def prepare_xshot_training_data(
                 XSHOT_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XSHOT_FEATURE_NAMES_FAITHFUL
             )
         )
+        if return_keys:
+            return (
+                empty,
+                np.zeros(0, dtype=int),
+                np.zeros(0),
+                pd.DataFrame(columns=["game_id", "period_id", "frame_id"]),
+            )
         return empty, np.zeros(0, dtype=int), np.zeros(0)
 
     carrier = infer_ball_carrier(work, **cp)
@@ -824,7 +865,8 @@ def prepare_xshot_training_data(
 
     feat_rows: list[pd.DataFrame] = []
     labels_idx: list[dict] = []
-    for (gid, pid, _fid), grp in poss.groupby(["game_id", "period_id", "frame_id"], dropna=False):
+    key_rows: list[dict] = []  # ADDITIVE (return_keys): (game_id, period_id, frame_id) per selected row
+    for (gid, pid, fid), grp in poss.groupby(["game_id", "period_id", "frame_id"], dropna=False):
         tip = grp["team_in_possession"].iloc[0]
         if pd.isna(tip):
             continue
@@ -850,6 +892,8 @@ def prepare_xshot_training_data(
                 "team_in_possession": tip,
             }
         )
+        if return_keys:
+            key_rows.append({"game_id": gid, "period_id": pid, "frame_id": fid})
 
     # feature_set-appropriate column set -- "extended" is guarded out above, so this is
     # faithful/position_only. Single-sourced so the empty-path and the concat-select cannot drift
@@ -858,6 +902,13 @@ def prepare_xshot_training_data(
 
     if not feat_rows:
         empty = pd.DataFrame(columns=_names)
+        if return_keys:
+            return (
+                empty,
+                np.zeros(0, dtype=int),
+                np.zeros(0),
+                pd.DataFrame(columns=["game_id", "period_id", "frame_id"]),
+            )
         return empty, np.zeros(0, dtype=int), np.zeros(0)
 
     features = pd.concat(feat_rows, ignore_index=True)[_names]
@@ -870,6 +921,8 @@ def prepare_xshot_training_data(
         shots_f = shots.iloc[0:0]  # empty type set + no type column -> no positives
     labels = build_xshot_labels(fidx, shots_f, horizon_seconds=horizon_seconds).to_numpy()
     groups = fidx["game_id"].to_numpy()
+    if return_keys:
+        return features, labels, groups, pd.DataFrame(key_rows, columns=["game_id", "period_id", "frame_id"])
     return features, labels, groups
 
 

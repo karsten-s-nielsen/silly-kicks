@@ -139,4 +139,4 @@ See [TODO.md](TODO.md).
 
 ## Dependencies
 
-Runtime: pandas, numpy, scipy, scikit-learn (no pandera). Optional: kloppy (tracking parsers), xgboost, catboost, lightgbm, `accessible-space` (DAS), `ruthless-efficiency[optuna]>=0.4.0` + xgboost>=2.0,<4.0 (`[calibration]`/`[train]`), numba (`[numba]`), `statsbombpy` (importorskip-guarded e2e only). numpy>=2.0 compatible. → `docs/context/conventions-core.md`.
+Runtime: pandas, numpy, scipy, scikit-learn (no pandera). Optional: kloppy (tracking parsers), xgboost, catboost, lightgbm, `accessible-space` (DAS), `ruthless-efficiency[optuna]>=0.6.0,<0.7.0` + xgboost>=2.0,<4.0 (`[calibration]`/`[train]`), numba (`[numba]`), `statsbombpy` (importorskip-guarded e2e only). numpy>=2.0 compatible. → `docs/context/conventions-core.md`.

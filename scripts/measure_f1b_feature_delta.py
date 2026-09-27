@@ -22,8 +22,17 @@ propagated through each extractor), but it must read frames whose coordinates ar
 a float32-materialized corpus cannot expose the rounding (its baseline arm is already rounded). The
 driver asserts the loaded coordinates are float64 and fails loud otherwise.
 
-Shards are LONG format -- one row per (match, model, feature) -- so the fixed-column ADR-052 schema
-holds while the feature set varies across models. Only the FAITHFUL (superset) feature set is
+The two arms are aligned by a stable per-row KEY (each adapter returns ``(features, keys)``), matched
+by inner join -- NOT by row position. The coord-selection-sensitive models (xshot/xcross via the
+attacking-third gate, receiver via link_actions_to_frames) can select slightly different frame SETS
+under float32 vs float64; a positional comparison would then subtract different frames and report a
+spurious delta. The per-feature delta is measured over the COMMON keys; rows present in only one arm
+are reported separately as ``selection_instability`` (they are a domain-filter flip, not a
+feature-value change).
+
+Shards are LONG format -- one ``status="selection"`` row per (match, model) carrying the only-in-one-
+arm counts, then one ``status="ok"`` row per (match, model, feature) -- so the fixed-column ADR-052
+schema holds while the feature set varies across models. Only the FAITHFUL (superset) feature set is
 measured per model: a position_only set drops one velocity feature and shares every other feature's
 delta exactly, so measuring the superset covers both.
 """
@@ -137,19 +146,26 @@ def _arm(frames: pd.DataFrame, dtype: str) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------------------------
-# Per-model feature adapters: each returns a numeric feature DataFrame (declared features only) for
-# one match's frames + actions. Only frame COORDINATES differ between the two arms, so the row
-# selection is identical and the frames align row-for-row.
+# Per-model feature adapters: each returns ``(features, keys)`` for one match's frames + actions, or
+# None. ``keys`` is a per-row identity DataFrame ROW-ALIGNED to ``features``. The driver compares the
+# two arms by KEY (inner-join), NOT by row position: the coord-selection-sensitive models (xshot /
+# xcross via the attacking-third gate; receiver via link_actions_to_frames) can select slightly
+# different frame SETS under float32 vs float64, so a positional row-for-row comparison would subtract
+# DIFFERENT frames and report a spurious delta (the float32-storage feature delta is measured on the
+# COMMON keys; rows present in only one arm are counted separately as selection-instability).
 
 
 def _feat_xshot(frames, actions, home_team_id):
     from silly_kicks.tracking._xshot_occurrence import XSHOT_FEATURE_NAMES_FAITHFUL, prepare_xshot_training_data
 
-    shots = actions if actions is not None else None
-    if shots is None:
+    if actions is None:
         return None
-    feats, _y, _g = prepare_xshot_training_data(frames, shots, home_team_id=home_team_id, feature_set="faithful")
-    return feats[list(XSHOT_FEATURE_NAMES_FAITHFUL)]
+    feats, _y, _g, keys = prepare_xshot_training_data(
+        frames, actions, home_team_id=home_team_id, feature_set="faithful", return_keys=True
+    )
+    if len(feats) == 0:
+        return None
+    return feats[list(XSHOT_FEATURE_NAMES_FAITHFUL)], keys[["game_id", "period_id", "frame_id"]]
 
 
 def _feat_xcross(frames, actions, home_team_id):
@@ -157,17 +173,26 @@ def _feat_xcross(frames, actions, home_team_id):
 
     if actions is None:
         return None
-    feats, _y, _g = prepare_xcross_training_data(frames, actions, home_team_id=home_team_id, feature_set="faithful")
-    return feats[list(XCROSS_FEATURE_NAMES_FAITHFUL)]
+    # return_meta=True surfaces the row-aligned frame index (game_id/period_id/frame_id); the box-detail
+    # columns it also carries are ignored -- only the selected-frame key is needed here.
+    feats, _y, _g, meta = prepare_xcross_training_data(
+        frames, actions, home_team_id=home_team_id, feature_set="faithful", return_meta=True
+    )
+    if len(feats) == 0:
+        return None
+    return feats[list(XCROSS_FEATURE_NAMES_FAITHFUL)], meta[["game_id", "period_id", "frame_id"]]
 
 
 def _feat_ghost_gk(frames, actions, home_team_id):
     from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES, prepare_ghost_gk_training_data
 
-    feats, _y = prepare_ghost_gk_training_data(
+    # prepare_ghost_gk returns (features, meta); meta carries the row-aligned identity columns.
+    feats, meta = prepare_ghost_gk_training_data(
         frames, home_team_id=home_team_id, actions=actions, feature_set="faithful"
     )
-    return feats[list(GHOST_GK_FEATURE_NAMES)]
+    if len(feats) == 0:
+        return None
+    return feats[list(GHOST_GK_FEATURE_NAMES)], meta[["game_id", "period_id", "frame_id", "gk_team_id"]]
 
 
 def _feat_ghost_outfield(frames, actions, home_team_id):
@@ -176,10 +201,6 @@ def _feat_ghost_outfield(frames, actions, home_team_id):
 
     if actions is None:
         return None
-    # The extractor needs the in-possession team per frame -- from a `team_in_possession` column, else
-    # an inferred ball-carrier (train_ghost_outfield does exactly this; tc3 frames lack the column).
-    # Ball-carrier is nearest-player-to-ball (discrete), so float32 storage rounding does not flip it;
-    # each arm infers its own and they align, or the driver records a row_mismatch honestly.
     frames = _subsample_frames(frames, fps=1.0)  # the training regime; infer_ball_carrier on full fps is ~25x cost
     carrier = None
     if "team_in_possession" not in frames.columns:
@@ -190,7 +211,11 @@ def _feat_ghost_outfield(frames, actions, home_team_id):
     )
     if len(data) == 0:
         return None
-    return data[list(GHOST_OUTFIELD_FEATURE_NAMES)]
+    key_cols = [c for c in ("game_id", "period_id", "frame_id", "team_id", "player_id") if c in data.columns]
+    keys = data[key_cols].copy()
+    # A slot can be empty (player_id NaN) or otherwise repeat; a per-key cumcount makes the identity unique.
+    keys["_slot"] = keys.groupby(key_cols, dropna=False).cumcount()
+    return data[list(GHOST_OUTFIELD_FEATURE_NAMES)], keys
 
 
 def _feat_gk_completion(frames, actions, home_team_id):
@@ -201,11 +226,16 @@ def _feat_gk_completion(frames, actions, home_team_id):
     feats, _y, _g = prepare_gk_completion_training_data(actions, frames=frames)
     if len(feats) == 0:
         return None
-    return feats[list(GK_COMPLETION_FEATURE_NAMES)]
+    # gk-pass selection is action-domain based (coord-independent), so both arms yield identical rows in
+    # identical order -- a positional key is a valid identity, and only-in-one-arm counts stay 0 (a rare
+    # geometry-edge count change surfaces as selection-instability, never a silent misalignment).
+    keys = pd.DataFrame({"_row": np.arange(len(feats))})
+    return feats[list(GK_COMPLETION_FEATURE_NAMES)], keys
 
 
 def _feat_receiver(frames, actions, home_team_id):
-    """One row per (pass, teammate): the public positions-only receiver features.
+    """One row per (pass, teammate): the public positions-only receiver features, keyed by
+    ``(action_id, candidate_id)``.
 
     Passes are linked to their pre-pass frame via `link_actions_to_frames`; the per-pass extractor is
     the shared serve/train entry (`receiver_candidate_features`), so this is the model's real feature.
@@ -220,7 +250,8 @@ def _feat_receiver(frames, actions, home_team_id):
         return None
     links, _report = link_actions_to_frames(passes, frames, on_low_coverage="ignore")
     fid_by_action = dict(zip(links["action_id"].to_numpy(), links["frame_id"].to_numpy(), strict=False))
-    rows = []
+    feat_rows = []
+    key_rows = []
     for _, action in passes.iterrows():
         fid = fid_by_action.get(action["action_id"])
         if fid is None:
@@ -230,10 +261,13 @@ def _feat_receiver(frames, actions, home_team_id):
             continue
         feats = receiver_candidate_features(action, frame, feature_set="public")
         if len(feats):
-            rows.append(feats[list(_PUBLIC_COLS)])
-    if not rows:
+            feat_rows.append(feats[list(_PUBLIC_COLS)])
+            key_rows.append(
+                pd.DataFrame({"action_id": action["action_id"], "candidate_id": feats["candidate_id"].to_numpy()})
+            )
+    if not feat_rows:
         return None
-    return pd.concat(rows, ignore_index=True)
+    return pd.concat(feat_rows, ignore_index=True), pd.concat(key_rows, ignore_index=True)
 
 
 _MODEL_ADAPTERS = {
@@ -245,12 +279,30 @@ _MODEL_ADAPTERS = {
     "receiver": _feat_receiver,
 }
 
-_SHARD_SCHEMA_VERSION = "f1b-feature-delta-1"
-_EMITTED_SHARD_COLUMNS = ("match_key", "model", "feature", "status", "n_rows", "sum_abs", "max_abs", "n_gt_atol")
+_SHARD_SCHEMA_VERSION = "f1b-feature-delta-2"  # bumped: key-aligned comparison + selection-instability counts
+_EMITTED_SHARD_COLUMNS = (
+    "match_key",
+    "model",
+    "feature",
+    "status",
+    "n_rows",
+    "sum_abs",
+    "max_abs",
+    "n_gt_atol",
+    "n_only_f64",
+    "n_only_f32",
+)
 
 
 def _delta_rows(match_key: str, model: str, adapter, frames_f64, frames_f32, actions, home) -> list[dict]:
-    """Per-feature delta rows for one (match, model), or a single status row on skip/mismatch/error."""
+    """Per-feature delta rows for one (match, model), KEY-ALIGNED across the two arms.
+
+    Each adapter returns ``(features, keys)``; the two arms are matched by an inner join on ``keys``,
+    not by row position, so a coord-driven selection flip cannot masquerade as a feature delta. Emits
+    one ``status="selection"`` row carrying the only-in-one-arm counts (``n_only_f64``/``n_only_f32``),
+    then one ``status="ok"`` row per feature with the delta over the COMMON keys. Single status row on
+    empty / error / duplicate-or-mismatched keys.
+    """
 
     def _status(status: str) -> list[dict]:
         return [
@@ -263,25 +315,64 @@ def _delta_rows(match_key: str, model: str, adapter, frames_f64, frames_f32, act
                 sum_abs=0.0,
                 max_abs=0.0,
                 n_gt_atol=0,
+                n_only_f64=0,
+                n_only_f32=0,
             )
         ]
 
     try:
-        f64 = adapter(frames_f64, actions, home)
-        f32 = adapter(frames_f32, actions, home)
+        r64 = adapter(frames_f64, actions, home)
+        r32 = adapter(frames_f32, actions, home)
     except Exception as exc:  # a per-model extractor failure must not abort the corpus pass
         return _status(f"error:{type(exc).__name__}")
-    if f64 is None or f32 is None or len(f64) == 0:
+    if r64 is None or r32 is None:
         return _status("empty")
-    if len(f64) != len(f32):
-        return _status("row_mismatch")
+    f64, k64 = r64
+    f32, k32 = r32
+    if len(f64) == 0 or len(f32) == 0:
+        return _status("empty")
+    if list(k64.columns) != list(k32.columns):
+        return _status("key_schema_mismatch")
 
-    out: list[dict] = []
+    # Per-row identity tuples. NaN is filled to a sentinel so an empty-slot key (e.g. ghost_outfield's
+    # NaN player_id) self-matches across arms; ids are NOT cast between arms, so identical keys give
+    # identical tuples. Match by KEY, not by row position (works for any key width, incl. 1 column).
+    kk64 = k64.reset_index(drop=True).fillna("__NA__")
+    kk32 = k32.reset_index(drop=True).fillna("__NA__")
+    key64 = [tuple(r) for r in kk64.to_numpy()]
+    key32 = [tuple(r) for r in kk32.to_numpy()]
+    if len(set(key64)) != len(key64) or len(set(key32)) != len(key32):
+        return _status("dup_keys")  # a non-unique key would make the join ambiguous -- fail honestly
+    set32 = set(key32)
+    pos32 = {k: i for i, k in enumerate(key32)}
+    sel_f64 = [i for i, k in enumerate(key64) if k in set32]  # common keys, in f64 order
+    n_only_f64 = len(key64) - len(sel_f64)
+    n_only_f32 = len(key32) - len(sel_f64)
+    if not sel_f64:
+        return _status("no_common_keys")
+    n_common = len(sel_f64)
+    a = f64.reset_index(drop=True).iloc[sel_f64].reset_index(drop=True)
+    b = f32.reset_index(drop=True).iloc[[pos32[key64[i]] for i in sel_f64]].reset_index(drop=True)
+
+    out: list[dict] = [
+        dict(
+            match_key=match_key,
+            model=model,
+            feature="",
+            status="selection",
+            n_rows=n_common,
+            sum_abs=0.0,
+            max_abs=0.0,
+            n_gt_atol=0,
+            n_only_f64=n_only_f64,
+            n_only_f32=n_only_f32,
+        )
+    ]
     for col in f64.columns:
-        a = f64[col].to_numpy(dtype="float64")
-        b = f32[col].to_numpy(dtype="float64")
-        both_finite = np.isfinite(a) & np.isfinite(b)
-        d = np.abs(a[both_finite] - b[both_finite])
+        av = a[col].to_numpy(dtype="float64")
+        bv = b[col].to_numpy(dtype="float64")
+        both_finite = np.isfinite(av) & np.isfinite(bv)
+        d = np.abs(av[both_finite] - bv[both_finite])
         out.append(
             dict(
                 match_key=match_key,
@@ -292,6 +383,8 @@ def _delta_rows(match_key: str, model: str, adapter, frames_f64, frames_f32, act
                 sum_abs=float(d.sum()),
                 max_abs=float(d.max()) if d.size else 0.0,
                 n_gt_atol=int((d > _ATOL).sum()),
+                n_only_f64=0,
+                n_only_f32=0,
             )
         )
     return out
@@ -358,13 +451,28 @@ def _aggregate(combined: pd.DataFrame) -> dict:
         max_over_features = max((v["max_abs_delta"] for v in features.values()), default=0.0)
         moved = sorted(k for k, v in features.items() if v["max_abs_delta"] > _ATOL)
         unmoved = sorted(k for k, v in features.items() if v["max_abs_delta"] <= _ATOL)
-        statuses = combined[combined["model"] == model]["status"].value_counts().to_dict()
+        m_all = combined[combined["model"] == model]
+        statuses = m_all["status"].value_counts().to_dict()
+        # Selection-instability: rows selected in only ONE arm (a float32-driven domain-filter flip),
+        # summed over the per-match `selection` rows. Kept SEPARATE from the per-feature delta so an
+        # alignment artifact can never inflate a feature's max|delta| (the reason this driver was fixed).
+        sel = m_all[m_all["status"] == "selection"]
+        only_f64 = int(sel["n_only_f64"].sum())
+        only_f32 = int(sel["n_only_f32"].sum())
+        n_common = int(sel["n_rows"].sum())
+        denom = only_f64 + only_f32 + n_common
         models[model] = {
             "max_abs_delta_over_features": max_over_features,
             "moved_features": moved,
             "unmoved_features": unmoved,
             "features": features,
             "match_status_counts": {str(k): int(v) for k, v in statuses.items()},
+            "selection_instability": {
+                "n_only_f64": only_f64,
+                "n_only_f32": only_f32,
+                "n_common": n_common,
+                "frac": float((only_f64 + only_f32) / denom) if denom else 0.0,
+            },
         }
     return models
 

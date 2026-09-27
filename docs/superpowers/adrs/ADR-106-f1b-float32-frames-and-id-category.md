@@ -97,6 +97,20 @@ weights (the version + CHANGELOG are claimed at the weights commit, not the sche
   metrics.json (adding a `training_commit` field to their model.json is a schema change beyond scope).
 - The T10 feature-delta measurement (`scripts/measure_f1b_feature_delta.py`) and the retrain BOTH run
   on the clean (amended) commit-1 tree, so the whole cycle is provenanced with `run_tree_dirty` = false.
+- **Amendment (2026-09-27) — merge sequencing, T10 key-alignment, ruthless cap.** To avoid F1b↔native-DAS
+  merge conflicts, each cycle's CODE squash-merges to `main` first (F1b, then DAS rebased onto it); the DGX
+  runs (retrain, T10 re-run, DAS corpus parity) then execute on a clean checkout of the merged-`main` SHA and
+  anchor IT — superseding the "anchors commit-1 `24ef308`" statements above (the training path is
+  byte-identical, so the weights are unchanged; `24ef308` collapses into the squash). The T10 driver was
+  corrected from a POSITIONAL row-for-row arm comparison to a KEY-ALIGNED one (inner-join on a stable per-row
+  key + `n_only_f64`/`n_only_f32` selection-instability counts): the earlier large per-feature maxes (e.g.
+  xshot `speed` 54.5) were a positional-alignment artifact on coord-sensitive frame selection (root-caused:
+  within-frame ball speed differs ≤3e-5 across arms, 0 possession flips over ~180k frames), NOT a
+  storage-rounding magnitude (~1e-5). This added a strictly-additive `return_keys=False` to
+  `prepare_xshot_training_data` (the default 3-tuple is byte-identical → training path unchanged;
+  provenance-guard tested). The `ruthless-efficiency[optuna]` pin gained a `<0.7.0` ceiling (0.7.0 made
+  `StoreConfig.objective_id` required, breaking every call site at pyright + runtime); the native-DAS cycle
+  lifts the ceiling in lockstep with wiring `objective_id`.
 
 ## References
 
