@@ -288,6 +288,9 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "scripts/train_xshot_occurrence.py" = ["N803", "N806", "T201"]
 # TF-17 xCross trainer: ML-style uppercase X + human-readable run summary (T201).
 "scripts/train_xcross_attempt.py" = ["N803", "N806", "T201"]
+# DGX parallel launcher shared-corpus helpers: ML-style uppercase X design matrices.
+"scripts/_corpus_mmap.py" = ["N803", "N806"]
+"scripts/_study_shared.py" = ["N803", "N806"]
 # xT-GK GK-distribution completion: ML-style uppercase X feature matrices (logistic model).
 "silly_kicks/tracking/_gk_completion.py" = ["N803", "N806"]
 # TF-54b expected-passing pass-completion model: ML-style uppercase X/Z feature matrices (logistic model).

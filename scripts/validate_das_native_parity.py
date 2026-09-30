@@ -708,6 +708,8 @@ def run_corpus(
     shard_root: Path | None = None,
     direction_col: str | None = None,
     reference_leg=_reference_leg,
+    shards_only: bool = False,
+    worker_tag: str = "serial",
 ) -> dict:
     """The map+reduce+write, factored out of ``main`` so the reduce PATH is testable offline.
 
@@ -715,6 +717,15 @@ def run_corpus(
     injected by the test (golden reference outputs + the golden ``dir`` column), so the full corpus
     pass runs with no ``accessible-space`` and no network. Production passes the defaults (the lazy
     ``accessible-space`` leg and the ``GoalMap`` direction).
+
+    ``shards_only`` runs the MAP only: it writes the per-match shards plus THIS worker's
+    ``manifest_<worker_tag>.json`` (``res.manifest()`` is otherwise in-memory only), then returns
+    WITHOUT reducing. That is what lets N processes each take a ``--match-ids-json`` subset against one
+    resumable ``shard_root`` and have the launcher call :func:`reduce_parity_artifact` exactly ONCE
+    over the full population afterward -- N concurrent subset-scoped ``metrics.json`` writes would each
+    race an artifact that is NOT the full-corpus one (DPL-PLAN-03). Every worker MUST pass a UNIQUE
+    ``worker_tag`` or the manifests collide. The serial path writes its manifest too and reduces
+    through the same single-sourced :func:`reduce_parity_artifact`.
     """
     from scripts._driver import for_each
 
@@ -734,10 +745,54 @@ def run_corpus(
         },
         label="match",
     )
-    shards = [pd.read_parquet(s) for s in sorted(res.shard_dir.glob("*.parquet"))]
+    # Persist this worker's manifest so the reduce can aggregate exclusions it cannot see from shards
+    # alone (SB360 structural exclusion, `.excluded.json` markers). res.manifest() is in-memory only.
+    (res.shard_dir / f"manifest_{worker_tag}.json").write_text(
+        json.dumps(res.manifest(), default=str), encoding="utf-8"
+    )
+    if shards_only:
+        return {"shards_only": True, "shard_dir": str(res.shard_dir)}
+    root = shard_root if shard_root is not None else dest / "shards"
+    return reduce_parity_artifact(refs, root, dest, prov=prov)
+
+
+def reduce_parity_artifact(refs, shard_root: Path, dest: Path, *, prov: dict) -> dict:
+    """Reduce the shards under ``shard_root`` into the single combined ``metrics.json`` (spec 7.2).
+
+    Single-sources the reduce for both the serial ``run_corpus`` and the parallel launcher, which calls
+    this ONCE after every ``shards_only`` worker finishes. Parity VALUES come from the shard parquet;
+    the population's exclusion counters come from ``_partition.aggregate_manifests`` (summing the
+    per-worker ``manifest_*.json``), never re-derived from shards -- shards cannot see a match excluded
+    with no output row (DPL-PLAN-10). ``listed_per_provider`` comes from the FULL ``refs`` (as serial
+    ``_population`` does), so a subset worker never under-reports the corpus. The emitted schema is
+    byte-identical to the pre-split serial artifact.
+    """
+    from scripts._partition import aggregate_manifests
+
+    shard_root = Path(shard_root)
+    shard_files = sorted(shard_root.rglob("*.parquet"))
+    if not shard_files:
+        raise SystemExit(f"no parity shards under {shard_root} -- run the map (shards) first")
+    gen_dirs = {p.parent for p in shard_files}
+    if len(gen_dirs) != 1:
+        raise SystemExit(
+            f"expected ONE shard generation under {shard_root}, found {sorted(str(g) for g in gen_dirs)}; "
+            "use a fresh --shard-root per corpus run"
+        )
+    gen_dir = next(iter(gen_dirs))
+    shards = [pd.read_parquet(s) for s in shard_files]
     parity = reduce_parity(shards)
     scored_providers = {p: parity[p]["n_matches_scored"] for p in parity}
-    manifest = res.manifest()
+    # Sum the per-worker manifests, then rebuild the exact `res.manifest()` shape so the artifact's
+    # top-level fields are unchanged from the serial version (Hyrum: metrics.json is a published seam).
+    agg = aggregate_manifests(gen_dir, defaults=("n_attempted", "n_failed", "n_counters_unrecorded", "n_excluded"))
+    manifest = {
+        "generation": gen_dir.name,
+        "n_attempted": agg["n_attempted"],
+        "n_failed": agg["n_failed"],
+        "n_counters_unrecorded": agg["n_counters_unrecorded"],
+        "n_excluded": agg["n_excluded"],
+    }
     out = {
         "providers": parity,
         "population": _population(refs, scored_providers, manifest),
@@ -810,6 +865,23 @@ def main() -> None:
     ap.add_argument("--cache-dir", default=None)
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     ap.add_argument("--list-matches", action="store_true", help="print available match ids as JSON and exit")
+    ap.add_argument(
+        "--shards-only",
+        action="store_true",
+        help="MAP only: write shards + this worker's manifest, skip the reduce (parallel worker). "
+        "Pair with a UNIQUE --worker-tag and a shared --shard-root; the launcher reduces once at the end.",
+    )
+    ap.add_argument(
+        "--reduce-only",
+        action="store_true",
+        help="REDUCE only: assemble metrics.json from the shards already under --shard-root (or "
+        "<out>/shards), then exit. Run after all --shards-only workers finish.",
+    )
+    ap.add_argument(
+        "--worker-tag",
+        default="serial",
+        help="unique tag for this worker's manifest_<tag>.json under --shards-only (default 'serial').",
+    )
     args = ap.parse_args()
 
     from scripts._provenance import git_provenance, require_clean_tree
@@ -846,6 +918,13 @@ def main() -> None:
         lm = base_load(ref)
         return (lm.provider, lm.match_id, lm.actions, lm.frames)
 
+    # Reduce-only: assemble the combined artifact from shards already on disk (after the workers).
+    if args.reduce_only:
+        root = Path(args.shard_root) if args.shard_root else dest / "shards"
+        out = reduce_parity_artifact(refs, root, dest, prov=prov)
+        print(json.dumps({k: v for k, v in out.items() if k != "input_contract"}, indent=2, default=str))
+        return
+
     # Production defaults: the lazy accessible-space reference leg + GoalMap direction (ADR-055).
     out = run_corpus(
         refs,
@@ -853,6 +932,8 @@ def main() -> None:
         dest,
         prov=prov,
         shard_root=Path(args.shard_root) if args.shard_root else None,
+        shards_only=args.shards_only,
+        worker_tag=args.worker_tag,
     )
     print(json.dumps({k: v for k, v in out.items() if k != "input_contract"}, indent=2, default=str))
 
