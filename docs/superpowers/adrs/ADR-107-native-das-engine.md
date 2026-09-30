@@ -128,6 +128,13 @@ package — it is not an error. Downstream pins on `[das]` therefore degrade to 
   `gkdv/_das_port.py` (allowlisted). The dead `_pin_attacking_direction` exemption is gone.
 - Cost constants (`_DAS_SECONDS_PER_FRAME`, and any `prange` efficiency factor) are re-measured from the
   owner-corpus artifact at commit 2 (Task 17).
+- The dev-only parity oracle must run under `pandas<3`: `accessible-space==2.0.15` silently disables
+  offside under pandas-3 Copy-on-Write (its internal `PLAYER_POS` is read-only, so the in-place offside
+  step raises a `ValueError` the library catches and "Ignoring offside"), inflating team DAS. So
+  `scripts/validate_das_native_parity.py` shells the reference into a pinned pandas-2 subprocess
+  (`_reference_leg_subprocess`, `SK_DAS_REFERENCE_PYTHON`) and feeds it a globally-unique frame key
+  (dense-rank over `game_id`/`period_id`/`frame_id`, since accessible-space pivots on `frame_id` alone).
+  The `das-reference` extra pins `pandas<3`. Native DAS owns its arrays and is immune.
 
 ## References
 

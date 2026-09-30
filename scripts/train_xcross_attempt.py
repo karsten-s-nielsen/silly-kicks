@@ -243,8 +243,19 @@ def _gated_probe_matches(meta: dict, admitted: bool) -> list:
     return held
 
 
-def _hpo_once(X, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, seed=42) -> dict:
-    """Run ruthless HPO once for one candidate; return the frozen best-params dict."""
+def _hpo_once(X, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, seed=42, study_shard_dir=None) -> dict:
+    """Run ruthless HPO once for one candidate; return the frozen best-params dict.
+
+    ``study_shard_dir`` (opt-in) caches the frozen params to ``<dir>/<tag>.study.json`` -- an existing
+    shard is returned (resume), else the result is written after HPO. Deterministic (seeded TPE +
+    tag-keyed sqlite store), so a cached study is byte-identical to an in-process one; this is what lets
+    the nested studies run as independent parallel workers (5c). JSON round-trips finite floats exactly.
+    """
+    if study_shard_dir is not None:
+        shard = Path(study_shard_dir) / f"{tag}.study.json"
+        if shard.exists():
+            return dict(json.loads(shard.read_text(encoding="utf-8"))["params"])
+
     from ruthless import Direction, FloatRange, InProcessBackend, OptunaConfig
     from ruthless.config.common import StoreConfig
     from ruthless.strategies.optuna_ import OptunaStrategy
@@ -272,7 +283,12 @@ def _hpo_once(X, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, 
     result = OptunaStrategy(cfg, seed=42).run(obj, backend=InProcessBackend())
     if result.best is None:
         raise RuntimeError("HPO produced no best candidate")
-    return dict(result.best.candidate.params)
+    params = dict(result.best.candidate.params)
+    if study_shard_dir is not None:
+        shard = Path(study_shard_dir) / f"{tag}.study.json"
+        shard.parent.mkdir(parents=True, exist_ok=True)
+        shard.write_text(json.dumps({"tag": tag, "params": params}), encoding="utf-8")
+    return params
 
 
 def _cv_metrics(X, y, groups, params, *, negative_subsample=None, seed=42) -> dict:
@@ -330,6 +346,23 @@ def _fit_score(X_tr, y_tr, X_te, y_te, params, *, negative_subsample=None, seed=
     return float(average_precision_score(y_te, clf.predict_proba(X_te.to_numpy(float))[:, 1]))
 
 
+def _public_folds(X, y, groups, is_public):
+    """The public held-out CV split, single-sourced so a parallel study worker and the serial paired
+    loop derive the SAME fold-k ``trainable`` mask. Returns ``(Xp, yp, [(te_idx, trainable_mask), ...])``.
+    """
+    from sklearn.model_selection import StratifiedGroupKFold
+
+    Xp, yp, gp = X[is_public], y[is_public], groups[is_public]
+    k = max(2, min(5, len(np.unique(gp))))
+    skf = StratifiedGroupKFold(n_splits=k, shuffle=True, random_state=42)
+    folds = []
+    for _fold, (_tr, te) in enumerate(skf.split(Xp, yp, gp)):
+        te_games = set(np.asarray(gp)[te].tolist())
+        trainable = ~(is_public & np.isin(groups, list(te_games)))  # drop fold-k public games from ALL arms
+        folds.append((te, trainable))
+    return Xp, yp, folds
+
+
 def _paired_data_effect(
     X,
     y,
@@ -342,6 +375,7 @@ def _paired_data_effect(
     out_dir,
     negative_subsample=None,
     seed=42,
+    study_shard_dir=None,
 ) -> dict:
     """Nested-HPO paired comparison on the common public held-out folds (spec 4.1, reviewer M4).
 
@@ -354,16 +388,10 @@ def _paired_data_effect(
       * "nested"        -- PRIMARY, decides the ship (each candidate at ITS OWN tuned params)
       * "shared_params" -- REPORTED for comparability with 4.9.0/4.18.0 (candidate at PUBLIC params)
     """
-    from sklearn.model_selection import StratifiedGroupKFold
-
-    Xp, yp, gp = X[is_public], y[is_public], groups[is_public]
-    k = max(2, min(5, len(np.unique(gp))))
-    skf = StratifiedGroupKFold(n_splits=k, shuffle=True, random_state=42)
+    Xp, yp, folds = _public_folds(X, y, groups, is_public)
     out = {name: {"nested": [], "shared_params": []} for name in candidates}
 
-    for fold, (_tr, te) in enumerate(skf.split(Xp, yp, gp)):
-        te_games = set(np.asarray(gp)[te].tolist())
-        trainable = ~(is_public & np.isin(groups, list(te_games)))  # drop fold-k public games from ALL arms
+    for fold, (te, trainable) in enumerate(folds):
         X_te, y_te = Xp.iloc[te], yp[te]  # the PUBLIC held-out fold (positional)
 
         fold_params = {
@@ -376,6 +404,7 @@ def _paired_data_effect(
                 n_trials,
                 negative_subsample=negative_subsample,
                 seed=seed,
+                study_shard_dir=study_shard_dir,
             )
             for name, mask in candidates.items()
         }
@@ -405,12 +434,319 @@ def _paired_data_effect(
     return out
 
 
+class AcceptanceGatesFailedError(RuntimeError):
+    """The shipped candidate failed a fail-closed acceptance gate. main() maps this to exit 1."""
+
+
+def _build_candidate_masks(X, providers, is_public) -> dict:
+    """The 3 paired candidates, single-sourced so main, ``run_one_study`` and ``assemble_studies``
+    build identical row masks (the ``gradientsports`` owner rows make ``full`` != ``sc_extended``)."""
+    is_sc_private = (providers == "skillcorner") & ~is_public
+    return {
+        "public": is_public,
+        "sc_extended": is_public | is_sc_private,
+        "full": np.ones(len(X), bool),
+    }
+
+
+def _fit_study_for_test(X, y, groups, tag, n_trials, seed=42):
+    """Test-only seam: run one HPO study on ``(X, y, groups)`` and return ``(params, booster)``,
+    mirroring the shipped fit path so a shared-mmap study can be proven byte-identical to an in-memory one."""
+    import tempfile
+
+    import xgboost as xgb
+
+    from silly_kicks.tracking._xcross_attempt import _pinned_params
+
+    y = np.asarray(y)
+    d = tempfile.mkdtemp(prefix="xcross_study_")
+    params = _hpo_once(X, y, np.asarray(groups), Path(d), tag, n_trials, seed=seed)
+    p_ = dict(_pinned_params(params))
+    p_["base_score"] = float(y.mean())
+    clf = xgb.XGBClassifier(**p_)
+    clf.fit(X.to_numpy(dtype=float), y)
+    booster = clf.get_booster()
+    booster.feature_names = list(X.columns)
+    return params, booster
+
+
+def enumerate_studies(shard_root) -> list[str]:
+    """The parallel study tags ``{candidate}_f{fold}`` for a run (empty for a single-candidate corpus)."""
+    from scripts._study_shared import load_study_inputs
+
+    inp = load_study_inputs(shard_root)
+    if not inp.config.get("run_paired"):
+        return []
+    masks = _build_candidate_masks(inp.X, inp.providers, inp.is_public)
+    _, _, folds = _public_folds(inp.X, inp.y, inp.groups, inp.is_public)
+    return [f"{name}_f{fold}" for fold in range(len(folds)) for name in masks]
+
+
+def run_one_study(shard_root, tag: str):
+    """Run ONE nested-HPO study ``tag`` from the shared corpus (5c worker); writes ``<root>/<tag>.study.json``."""
+    from scripts._study_shared import load_study_inputs
+
+    inp = load_study_inputs(shard_root)
+    cfg = inp.config
+    masks = _build_candidate_masks(inp.X, inp.providers, inp.is_public)
+    name, _sep, fold_s = tag.rpartition("_f")
+    fold = int(fold_s)
+    _, _, folds = _public_folds(inp.X, inp.y, inp.groups, inp.is_public)
+    trainable = folds[fold][1]
+    m = masks[name] & trainable
+    _hpo_once(
+        inp.X[m],
+        inp.y[m],
+        inp.groups[m],
+        Path(cfg["study_db_dir"]),
+        tag,
+        cfg["n_trials"],
+        negative_subsample=cfg["negative_subsample"],
+        seed=cfg["seed"],
+        study_shard_dir=shard_root,
+    )
+    return Path(shard_root) / f"{tag}.study.json"
+
+
+def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True):
+    """Reduce: ship decision + final fit (+ TF-19 probe) over the studies (5c reduce), single-sourcing
+    main's Phase 2/3. With ``study_shard_dir`` the nested studies come from the per-study cache (parallel
+    workers); with it None they are computed inline -- so serial and parallel produce byte-identical
+    weights. ``run_probe`` runs the (deterministic, model-derived) TF-19 reporting probe; the weight
+    parity test sets it False since the probe needs a real ``_probe_sample`` on disk. Returns
+    ``(metrics, model)``; raises :class:`AcceptanceGatesFailedError` instead of exiting."""
+    sys.path.insert(0, "scripts")
+    from _corpus import artifact_label
+    from _paired import fixed_sequence_ship
+
+    from scripts._study_shared import load_study_inputs
+    from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
+    from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
+    from silly_kicks.tracking._xshot_occurrence import subsample_negatives
+
+    inp = load_study_inputs(shard_root)
+    X, y, groups = inp.X, inp.y, inp.groups
+    providers, match_ids, is_public = inp.providers, inp.match_ids, inp.is_public
+    cfg = inp.config
+    ns, seed = cfg["negative_subsample"], cfg["seed"]
+    n_trials = cfg["n_trials"]
+    out = Path(cfg["study_db_dir"])
+    art = Path(cfg["artifact_dir"])
+    run_prov = cfg["run_prov"]
+    ship_variant = cfg.get("ship_variant")
+    run_paired = cfg["run_paired"]
+    provset = {str(p) for p in providers.tolist()}
+
+    # score_differential range probe (B6): guard the phantom-owngoal signature.
+    sd = X["score_differential"].to_numpy(dtype=float)
+    sd_fin = sd[np.isfinite(sd)]
+    sd_probe = {
+        "coverage": float(np.isfinite(sd).mean()),
+        "min": float(sd_fin.min()) if sd_fin.size else float("nan"),
+        "max": float(sd_fin.max()) if sd_fin.size else float("nan"),
+        "abs_ge_12_count": int((np.abs(sd_fin) >= 12).sum()),
+    }
+    if sd_probe["abs_ge_12_count"] > 0:
+        raise SystemExit(
+            f"score_differential range probe FAILED (impossible |sd|>=12): {sd_probe}. "
+            "Rebuild the feature cache on clean 4.13.0 GS events."
+        )
+    if sd_fin.size and np.abs(sd_fin).max() > 6:
+        print(f"WARN score_differential |max|>6 (legit blowout possible): {sd_probe}", file=sys.stderr)
+
+    candidates: dict = {}
+    if run_paired:
+        cand_masks = _build_candidate_masks(X, providers, is_public)
+        paired = _paired_data_effect(
+            X,
+            y,
+            groups,
+            is_public,
+            match_ids,
+            candidates=cand_masks,
+            n_trials=n_trials,
+            out_dir=out,
+            negative_subsample=ns,
+            seed=seed,
+            study_shard_dir=study_shard_dir,
+        )
+        full_vs_sc = [f - s for f, s in zip(paired["full"]["nested"], paired["sc_extended"]["nested"], strict=True)]
+        shipped, why = fixed_sequence_ship(
+            sc_extended=paired["sc_extended"]["nested"], full=paired["full"]["nested"], full_vs_sc=full_vs_sc
+        )
+        print(f"Fixed-sequence verdict: ship {shipped} -- {why}")
+        if ship_variant is not None:
+            why = f"operator --ship-variant override (fixed-sequence gate verdict was: {shipped} -- {why})"
+            shipped = ship_variant
+            print(f"Ship-variant override: forcing ship {shipped}. {why}")
+        ship_mask = cand_masks[shipped]
+        shipped_params = _hpo_once(
+            X[ship_mask],
+            y[ship_mask],
+            groups[ship_mask],
+            out,
+            shipped,
+            n_trials,
+            negative_subsample=ns,
+            seed=seed,
+            study_shard_dir=study_shard_dir,
+        )
+        candidates[shipped] = {
+            "params": shipped_params,
+            "metrics": _cv_metrics(
+                X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, negative_subsample=ns, seed=seed
+            ),
+            "providers": sorted(set(providers[ship_mask].tolist())),
+        }
+        candidates["paired"] = {
+            "nested": {n: paired[n]["nested"] for n in cand_masks},
+            "shared_params": {n: paired[n]["shared_params"] for n in cand_masks},
+            "full_vs_sc": full_vs_sc,
+            "shipped": shipped,
+            "why": why,
+        }
+    else:
+        if ship_variant is not None:
+            raise SystemExit(
+                "--ship-variant requires the multi-candidate (run_paired) corpus (public + owner "
+                "SkillCorner + gradientsports) so the variant masks and the TF-19 probe cohort exist."
+            )
+        params_all = _hpo_once(
+            X, y, groups, out, "single", n_trials, negative_subsample=ns, seed=seed, study_shard_dir=study_shard_dir
+        )
+        ship_mask = np.ones(len(X), bool)
+        ship_provs = set(providers[ship_mask].tolist())
+        shipped = artifact_label(providers=ship_provs, all_public=bool(is_public[ship_mask].all()))
+        candidates[shipped] = {
+            "params": params_all,
+            "metrics": _cv_metrics(X, y, groups, params_all, negative_subsample=ns, seed=seed),
+            "providers": sorted(provset),
+        }
+
+    shipped_metrics = candidates[shipped]["metrics"]
+    acceptance = _gates(shipped_metrics)
+    print(f"Shipped variant: {shipped}; gates: {acceptance}")
+    art.mkdir(parents=True, exist_ok=True)
+    if not all(acceptance.values()):
+        json.dump(
+            {"candidates": candidates, "acceptance": acceptance, "shipped_variant": shipped},
+            open(art / "metrics_FAILED.json", "w"),
+            indent=2,
+        )
+        print("ACCEPTANCE GATES FAILED -- refusing to write the bundled artifact.", file=sys.stderr)
+        raise AcceptanceGatesFailedError(shipped)
+
+    Xfit, yfit, _ = (
+        subsample_negatives(X[ship_mask], y[ship_mask], y[ship_mask], fraction=ns, seed=seed)
+        if ns
+        else (X[ship_mask], y[ship_mask], None)
+    )
+    model = XCrossAttemptModel(params=candidates[shipped]["params"], feature_set=cfg["feature_set"])
+    model.shipped_variant = shipped
+    model.provider_list = candidates[shipped]["providers"]
+    model.training_commit = run_prov["commit"]
+    model.fit(Xfit, pd.Series(yfit), carrier_params=DEFAULT_CARRIER_PARAMS, horizon_seconds=cfg["horizon_seconds"])
+    model.save(art)
+    reloaded = XCrossAttemptModel.load(art)
+    np.testing.assert_allclose(
+        model.predict_proba(X[ship_mask].head(50)), reloaded.predict_proba(X[ship_mask].head(50)), rtol=0, atol=0
+    )
+
+    metrics = {
+        "run_commit": run_prov["commit"],
+        "run_tree_dirty": run_prov["dirty"],
+        "run_tree_state": run_prov["tree_state"],
+        "shipped_variant": shipped,
+        "n_rows": len(X),
+        "n_positive": int(np.asarray(y).sum()),
+        "providers": sorted(provset),
+        "candidates": candidates,
+        "acceptance": acceptance,
+        "estimates_are_cv_not_shipped_fit": True,
+        "artifact_size_bytes": sum(f.stat().st_size for f in art.glob("*") if f.is_file()),
+    }
+
+    if run_probe:
+        # Headline GK validations on the SHIPPED candidate (PR-B). Deterministic given (model, sample):
+        # a parallel and a serial run produce the SAME probe. Requires the real _probe_sample on disk.
+        from silly_kicks.tracking import _xcross_eval as ev
+
+        shipped_params = candidates[shipped]["params"]
+        gk_ablation = ev.gk_block_ablation(
+            X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, seed=seed, negative_subsample=ns
+        )
+        perm_imp = ev.permutation_importance_report(
+            X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, n_repeats=10, seed=seed
+        )
+        ps = art / "_probe_sample"
+        if not (ps / "frames.parquet").exists():
+            raise SystemExit(
+                "Feature cache present but _probe_sample/ absent -> cannot run the TF-19 substitution "
+                "probe (the headline deliverable). Delete the feature cache and re-extract, or restore "
+                "the probe sample. Refusing to ship a spurious tf19_ready=False."
+            )
+        pf = pd.read_parquet(ps / "frames.parquet")
+        pa = pd.read_parquet(ps / "actions.parquet")
+        probe_meta = json.load(open(ps / "meta.json"))
+        phome = probe_meta["home_team_id"]
+        probe_matches = probe_meta.get("probe_matches", [])
+        match_groups = probe_meta.get("match_groups", {})
+        train_groups = set(groups[ship_mask].tolist())
+        in_training = {mid: bool(set(g) & train_groups) for mid, g in match_groups.items()}
+        probe_meta["in_training_folds"] = in_training
+        json.dump(probe_meta, open(ps / "meta.json", "w"), indent=2)
+        shipped_providers = set(candidates[shipped].get("providers", []))
+        probe_provs_seen = {prov for prov, _mid in probe_matches}
+        admitted = bool(run_paired and (not probe_provs_seen or probe_provs_seen & shipped_providers))
+        gated_matches = _gated_probe_matches(probe_meta, admitted)
+        if admitted:
+            held_groups = {g for _prov, mid in gated_matches for g in match_groups.get(str(mid), [])}
+            pf = pf[pf["game_id"].astype(str).isin(held_groups)]
+            pa = pa[pa["game_id"].astype(str).isin(held_groups)]
+            if pf.empty:
+                raise SystemExit(
+                    "Held-out probe matches resolved ZERO frames -- the probe sample is inconsistent "
+                    "with meta.json match_groups. Delete the feature cache + probe sample and re-extract."
+                )
+        elif probe_matches and all(in_training.get(str(m[1]), False) for m in probe_matches):
+            print(
+                "NOTE: every probe match sits in the shipped training corpus (single-candidate path) -- "
+                "the substitution-probe statistic below is NOT held-out.",
+                file=sys.stderr,
+            )
+        probe = ev.gk_substitution_probe(model, pf, actions=pa, home_team_id=phome, n_frames=200, seed=seed)
+        metrics.update(
+            {
+                "gk_block_ablation": gk_ablation,
+                "gk_substitution_probe": probe,
+                "permutation_importance": perm_imp,
+                "score_differential_range_probe": sd_probe,
+                "probe_sample_matches": probe_matches,
+                "probe_sample_in_training_folds": in_training,
+                "probe_gated_on_held_out": bool(admitted),
+                "tf19_ready": probe.get("tf19_ready", False),
+            }
+        )
+        if not probe.get("tf19_ready", False):
+            print(
+                f"NOTE: tf19_ready=False ({probe.get('tf19_reason')}) -- surface ships, but flagged "
+                "NOT TF-19-ready (loud, not silent).",
+                file=sys.stderr,
+            )
+    else:
+        metrics["score_differential_range_probe"] = sd_probe
+
+    json.dump(metrics, open(art / "metrics.json", "w"), indent=2)
+    print(f"Wrote artifact + metrics to {art}")
+    return metrics, model
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
-    src = ap.add_mutually_exclusive_group(required=True)
+    src = ap.add_mutually_exclusive_group(required=False)  # not required for --study/--assemble workers
     src.add_argument("--data-dir")
     src.add_argument("--providers")
-    ap.add_argument("--output-dir", required=True)
+    ap.add_argument("--output-dir")
     ap.add_argument("--n-trials", type=int, default=50)
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--horizon-seconds", type=float, default=1.0)
@@ -474,7 +810,43 @@ def main(argv=None) -> None:
         help="Train from a modified working tree. The run still records run_tree_dirty=true in "
         "metrics.json -- the hatch permits a dev run, it never launders the fact.",
     )
+    ap.add_argument(
+        "--shard-root",
+        default=None,
+        help="Study-shard root for the parallel study path (5c): a worker reads it via "
+        "--study, the reduce via --assemble. Written by a serial run's prep.",
+    )
+    ap.add_argument(
+        "--study",
+        default=None,
+        help="Run ONE study TAG ({candidate}_f{fold}) from --shard-root and exit (parallel worker).",
+    )
+    ap.add_argument(
+        "--assemble",
+        action="store_true",
+        help="Reduce: ship decision + final fit + TF-19 probe over the studies in --shard-root, then exit.",
+    )
     args = ap.parse_args(argv)
+
+    # Parallel study path (5c): a worker runs one study, the reduce assembles them -- both operate on an
+    # already-persisted --shard-root (the serial prep enforced clean-tree + provenance).
+    if args.study or args.assemble:
+        if not args.shard_root:
+            ap.error("--study/--assemble require --shard-root")
+        root = Path(args.shard_root)
+        if args.study:
+            run_one_study(root, args.study)
+        else:
+            try:
+                assemble_studies(root, study_shard_dir=root, run_probe=True)
+            except AcceptanceGatesFailedError:
+                sys.exit(1)
+        return
+
+    if not args.output_dir:
+        ap.error("--output-dir is required")
+    if not (args.data_dir or args.providers):
+        ap.error("one of --data-dir / --providers is required")
 
     # FIRST, before any corpus work. This trainer writes BUNDLED weights, and an artifact whose
     # provenance is unknown is one nobody can reproduce or audit later. ADR-052 enrolled all five
@@ -568,7 +940,7 @@ def main(argv=None) -> None:
     groups = np.asarray(groups).astype(str)
     provset = {str(p) for p in providers.tolist()}
     sys.path.insert(0, "scripts")
-    from _corpus import artifact_label, assert_public_corpus, is_public_row
+    from _corpus import assert_public_corpus, is_public_row
     from _loader_pining import match_visibility
 
     # Public-vs-owner is keyed on the manifest visibility field, NEVER the provider name (spec 3.2):
@@ -588,228 +960,40 @@ def main(argv=None) -> None:
     # (`run_paired` is also the `admitted`-gate input for the TF-19 held-out probe, further below.)
     run_paired = bool(is_public.any() and (~is_public).any() and "gradientsports" in provset)
 
-    # --- score_differential range probe (B6): guard the clean-4.13.0-GS rebuild prereq ---
-    sd = X["score_differential"].to_numpy(dtype=float)
-    sd_fin = sd[np.isfinite(sd)]
-    sd_probe = {
-        "coverage": float(np.isfinite(sd).mean()),
-        "min": float(sd_fin.min()) if sd_fin.size else float("nan"),
-        "max": float(sd_fin.max()) if sd_fin.size else float("nan"),
-        "abs_ge_12_count": int((np.abs(sd_fin) >= 12).sum()),
+    # --- Phase 2/3 (single-sourced with the parallel study path, 5c): persist the trial-invariant
+    # inputs (the probe sample is already on disk beside the feature cache), then assemble. A serial run
+    # computes the studies inline via the empty cache; a parallel launcher pre-fills them with
+    # run_one_study workers -- either way assemble_studies produces the SAME shipped weights + probe
+    # (studies deterministic; the reduce single-sourced). ---
+    study_root = art / "studies"
+    config = {
+        "n_trials": args.n_trials,
+        "negative_subsample": ns,
+        "seed": seed,
+        "feature_set": args.feature_set,
+        "horizon_seconds": args.horizon_seconds,
+        "study_db_dir": str(out),
+        "artifact_dir": str(art),
+        "run_paired": run_paired,
+        "run_prov": run_prov,
+        "ship_variant": args.ship_variant,
     }
-    if sd_probe["abs_ge_12_count"] > 0:  # HARD-FAIL: phantom-owngoal signature (the old +-18 bug)
-        raise SystemExit(
-            f"score_differential range probe FAILED (impossible |sd|>=12): {sd_probe}. "
-            "Rebuild the feature cache on clean 4.13.0 GS events."
-        )
-    if sd_fin.size and np.abs(sd_fin).max() > 6:  # SOFT-WARN: a real rout is legitimate
-        print(f"WARN score_differential |max|>6 (legit blowout possible): {sd_probe}", file=sys.stderr)
+    from scripts._study_shared import persist_study_inputs
 
-    # --- Phase 2/3: nested-HPO paired test (mix) or single-candidate (else); ship decision ---
-    candidates: dict = {}
-    if run_paired:
-        from _paired import fixed_sequence_ship
-
-        is_sc_private = (providers == "skillcorner") & ~is_public  # owner-tier SkillCorner rows
-        cand_masks = {
-            "public": is_public,
-            "sc_extended": is_public | is_sc_private,
-            "full": np.ones(len(X), bool),
-        }
-        paired = _paired_data_effect(
-            X,
-            y,
-            groups,
-            is_public,
-            match_ids,
-            candidates=cand_masks,
-            n_trials=args.n_trials,
-            out_dir=out,
-            negative_subsample=ns,
-            seed=seed,
-        )
-        full_vs_sc = [f - s for f, s in zip(paired["full"]["nested"], paired["sc_extended"]["nested"], strict=True)]
-        shipped, why = fixed_sequence_ship(
-            sc_extended=paired["sc_extended"]["nested"],
-            full=paired["full"]["nested"],
-            full_vs_sc=full_vs_sc,
-        )
-        print(f"Fixed-sequence verdict: ship {shipped} -- {why}")
-        if args.ship_variant is not None:
-            # Operator override: the Hub sc_extended repo is the owner-tier ARCHIVE and holds
-            # sc_extended regardless of the bundle-selection gate. The gate verdict + deltas above
-            # are still recorded in candidates["paired"], so this override is fully auditable.
-            why = f"operator --ship-variant override (fixed-sequence gate verdict was: {shipped} -- {why})"
-            shipped = args.ship_variant
-            print(f"Ship-variant override: forcing ship {shipped}. {why}")
-        ship_mask = cand_masks[shipped]
-        # The paired test DECIDED the corpus; the shipped model is tuned once on ALL of it (the
-        # per-fold params never leave the paired comparison -- they were held-out estimates).
-        shipped_params = _hpo_once(
-            X[ship_mask], y[ship_mask], groups[ship_mask], out, shipped, args.n_trials, negative_subsample=ns, seed=seed
-        )
-        candidates[shipped] = {
-            "params": shipped_params,
-            "metrics": _cv_metrics(
-                X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, negative_subsample=ns, seed=seed
-            ),
-            "providers": sorted(set(providers[ship_mask].tolist())),
-        }
-        candidates["paired"] = {
-            "nested": {n: paired[n]["nested"] for n in cand_masks},
-            "shared_params": {n: paired[n]["shared_params"] for n in cand_masks},
-            "full_vs_sc": full_vs_sc,
-            "shipped": shipped,
-            "why": why,
-        }
-    else:
-        if args.ship_variant is not None:
-            raise SystemExit(
-                "--ship-variant requires the multi-candidate (run_paired) corpus (public + owner "
-                "SkillCorner + gradientsports) so the variant masks and the TF-19 probe cohort exist. "
-                "The current corpus is single-candidate; drop --ship-variant (this path already ships "
-                "one visibility-labeled variant)."
-            )
-        params_all = _hpo_once(X, y, groups, out, "single", args.n_trials, negative_subsample=ns, seed=seed)
-        ship_mask = np.ones(len(X), bool)
-        # Label from the SHIP MASK's visibility composition (spec 3.2), never the provider name: a
-        # corpus with ANY restricted row can NEVER be labelled "public" (is_public[ship_mask].all()).
-        ship_provs = set(providers[ship_mask].tolist())
-        shipped = artifact_label(providers=ship_provs, all_public=bool(is_public[ship_mask].all()))
-        candidates[shipped] = {
-            "params": params_all,
-            "metrics": _cv_metrics(X, y, groups, params_all, negative_subsample=ns, seed=seed),
-            "providers": sorted(provset),
-        }
-
-    # --- Fail-closed acceptance gates on the SHIPPED candidate ---
-    shipped_metrics = candidates[shipped]["metrics"]
-    acceptance = _gates(shipped_metrics)
-    print(f"Shipped variant: {shipped}; gates: {acceptance}")
-    art.mkdir(parents=True, exist_ok=True)
-    if not all(acceptance.values()):
-        json.dump(
-            {"candidates": candidates, "acceptance": acceptance, "shipped_variant": shipped},
-            open(art / "metrics_FAILED.json", "w"),
-            indent=2,
-        )
-        print("ACCEPTANCE GATES FAILED -- refusing to write the bundled artifact.", file=sys.stderr)
+    persist_study_inputs(
+        study_root,
+        X=X,
+        y=y,
+        groups=groups,
+        providers=providers,
+        match_ids=match_ids,
+        is_public=is_public,
+        config=config,
+    )
+    try:
+        assemble_studies(study_root, study_shard_dir=study_root, run_probe=True)
+    except AcceptanceGatesFailedError:
         sys.exit(1)
-
-    # --- Final fit on ALL the shipped candidate's games + save ---
-    from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
-    from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
-    from silly_kicks.tracking._xshot_occurrence import subsample_negatives
-
-    Xfit, yfit, _ = (
-        subsample_negatives(X[ship_mask], y[ship_mask], y[ship_mask], fraction=ns, seed=seed)
-        if ns
-        else (X[ship_mask], y[ship_mask], None)
-    )
-    model = XCrossAttemptModel(params=candidates[shipped]["params"], feature_set=args.feature_set)
-    model.shipped_variant = shipped
-    model.provider_list = candidates[shipped]["providers"]
-    model.training_commit = run_prov["commit"]  # clean tree (require_clean_tree above); stamped into metadata
-    model.fit(Xfit, pd.Series(yfit), carrier_params=DEFAULT_CARRIER_PARAMS, horizon_seconds=args.horizon_seconds)
-    model.save(art)
-    reloaded = XCrossAttemptModel.load(art)
-    np.testing.assert_allclose(
-        model.predict_proba(X[ship_mask].head(50)), reloaded.predict_proba(X[ship_mask].head(50)), rtol=0, atol=0
-    )
-
-    metrics = {
-        # ADR-052: the artifact records WHICH CODE produced it. `--allow-dirty` permits a dev
-        # run; the flag survives into the artifact rather than living in someone's memory.
-        "run_commit": run_prov["commit"],
-        "run_tree_dirty": run_prov["dirty"],
-        "run_tree_state": run_prov["tree_state"],
-        "shipped_variant": shipped,
-        "n_rows": len(X),
-        "n_positive": int(y.sum()),
-        "providers": sorted(provset),
-        "candidates": candidates,
-        "acceptance": acceptance,
-        "estimates_are_cv_not_shipped_fit": True,
-        "artifact_size_bytes": sum(f.stat().st_size for f in art.glob("*") if f.is_file()),
-    }
-
-    # --- Headline GK validations on the SHIPPED candidate (PR-B, into metrics.json) ---
-    from silly_kicks.tracking import _xcross_eval as ev
-
-    shipped_params = candidates[shipped]["params"]
-    gk_ablation = ev.gk_block_ablation(
-        X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, seed=seed, negative_subsample=ns
-    )
-    perm_imp = ev.permutation_importance_report(
-        X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, n_repeats=10, seed=seed
-    )
-    # M1: the probe sample is REQUIRED -- refuse to ship a spurious tf19_ready=False on a missing sample.
-    ps = cache.parent / "_probe_sample"
-    if not (ps / "frames.parquet").exists():
-        raise SystemExit(
-            "Feature cache present but _probe_sample/ absent -> cannot run the TF-19 substitution "
-            "probe (the headline deliverable). Delete the feature cache and re-extract (box Task 9), "
-            "or restore the probe sample. Refusing to ship a spurious tf19_ready=False."
-        )
-    pf = pd.read_parquet(ps / "frames.parquet")
-    pa = pd.read_parquet(ps / "actions.parquet")
-    probe_meta = json.load(open(ps / "meta.json"))
-    phome = probe_meta["home_team_id"]
-
-    # --- M6: held-out gated statistic. Record each probe match's training-fold membership
-    # (its game ids vs the SHIPPED candidate's training games -- the final fit uses ALL of
-    # them) into meta.json, then gate: when the paired test admitted the probe provider to
-    # training, the probe runs on held-out matches ONLY (fail-loud when none exist).
-    # Pre-plan meta.json files lack the probe fields -> .get defaults, never a KeyError.
-    probe_matches = probe_meta.get("probe_matches", [])
-    match_groups = probe_meta.get("match_groups", {})
-    train_groups = set(groups[ship_mask].tolist())  # groups already astype(str) above
-    in_training = {mid: bool(set(g) & train_groups) for mid, g in match_groups.items()}
-    probe_meta["in_training_folds"] = in_training
-    json.dump(probe_meta, open(ps / "meta.json", "w"), indent=2)
-    shipped_providers = set(candidates[shipped].get("providers", []))
-    probe_provs_seen = {prov for prov, _mid in probe_matches}
-    # Conservative on missing provenance: a paired (mix) run cannot verify a pre-plan sample.
-    admitted = bool(run_paired and (not probe_provs_seen or probe_provs_seen & shipped_providers))
-    gated_matches = _gated_probe_matches(probe_meta, admitted)
-    if admitted:  # the GATED statistic runs on held-out matches only
-        held_groups = {g for _prov, mid in gated_matches for g in match_groups.get(str(mid), [])}
-        pf = pf[pf["game_id"].astype(str).isin(held_groups)]
-        pa = pa[pa["game_id"].astype(str).isin(held_groups)]
-        if pf.empty:
-            raise SystemExit(
-                "Held-out probe matches resolved ZERO frames -- the probe sample is inconsistent "
-                "with meta.json match_groups. Delete the feature cache + probe sample and re-extract."
-            )
-    elif probe_matches and all(in_training.get(str(m[1]), False) for m in probe_matches):
-        print(
-            "NOTE: every probe match sits in the shipped training corpus (single-candidate path) -- "
-            "the substitution-probe statistic below is NOT held-out.",
-            file=sys.stderr,
-        )
-    probe = ev.gk_substitution_probe(model, pf, actions=pa, home_team_id=phome, n_frames=200, seed=seed)
-
-    metrics.update(
-        {
-            "gk_block_ablation": gk_ablation,
-            "gk_substitution_probe": probe,
-            "permutation_importance": perm_imp,
-            "score_differential_range_probe": sd_probe,
-            "probe_sample_matches": probe_matches,
-            "probe_sample_in_training_folds": in_training,
-            "probe_gated_on_held_out": bool(admitted),
-            "tf19_ready": probe.get("tf19_ready", False),
-        }
-    )
-    if not probe.get("tf19_ready", False):
-        print(
-            f"NOTE: tf19_ready=False ({probe.get('tf19_reason')}) -- surface ships, but flagged "
-            "NOT TF-19-ready (loud, not silent).",
-            file=sys.stderr,
-        )
-
-    json.dump(metrics, open(art / "metrics.json", "w"), indent=2)
-    print(f"Wrote artifact + metrics to {art}")
 
 
 if __name__ == "__main__":

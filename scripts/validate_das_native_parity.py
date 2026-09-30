@@ -29,15 +29,21 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import functools
 import json
+import os
+import shutil
+import subprocess
+import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Literal, TypeVar, cast
 
 import numpy as np
 import pandas as pd
 
+from scripts._das_reference_leg import _check_reference_env
 from scripts._input_contract import declare_inputs
 
 # Corpus seam (owner-ratified reuse; ADR-052 D14). ``pining_source`` lists refs (resume-before-load
@@ -45,12 +51,12 @@ from scripts._input_contract import declare_inputs
 # inject a fake corpus through it (tests/scripts/_fake_corpus.install_fake_corpus patches this name).
 from scripts._loader_pining import pining_source, resolve_cache_dir
 from silly_kicks.id_compat import canonical_id
+from silly_kicks.tracking._das_pack import PackedFrames, Reason
 from silly_kicks.tracking._das_params import DAS_PARAMS
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
 
 _FRAME_KEYS = ("game_id", "period_id", "frame_id")
 _X_OFFSET = 52.5
-_Y_OFFSET = 34.0
 
 #: The velocity-bearing tracking providers scored by default (spec 7.2). ``statsbomb`` is NOT here: its
 #: SB360 freeze-frames are velocity-less (ADR-063) and structurally unscoreable, recorded in the
@@ -78,7 +84,7 @@ _REASON_COLS = {
     6: "reason_direction_unresolved",
 }
 
-_SHARD_SCHEMA_VERSION = "das-native-parity-1"
+_SHARD_SCHEMA_VERSION = "das-native-parity-3"
 _EMITTED_SHARD_COLUMNS = [
     "grain",  # "team" (per scored frame) | "player" (per player per frame) | "match" (per-match scalars)
     "provider",
@@ -95,6 +101,10 @@ _EMITTED_SHARD_COLUMNS = [
     "finite_native",
     "quad_shift_das",  # native periodic - native reference (the ADR-108 shift)
     "numba_minus_numpy_das",  # native numba - native numpy (reference quad); NaN when numba absent
+    # The frame's Reason code, so the reduce can grade / finite-mask over reason==OK rows only (a non-OK
+    # frame yields native NaN vs a fictional reference value). Present on team/player rows; OK on match
+    # rows. The per-class NaN-degrade accounting is the match rows' reason_counts (D-BALLNAN, ...).
+    "reason",
     # --- match rows: per-match scalars (NaN on team/player rows) ---
     "n_scored_frames",
     "ms_frame_ref",
@@ -112,6 +122,7 @@ def input_contract() -> dict:
         params={
             "das_params": dataclasses.asdict(DAS_PARAMS),
             "reference_quadrature": _REFERENCE_PARAMS.quadrature,
+            "reference_env_pins": {"accessible-space": "2.0.15", "pandas": "<3"},
             "thread_sweep": list(_THREAD_SWEEP),
             "schema": _SHARD_SCHEMA_VERSION,
         },
@@ -157,9 +168,11 @@ def _direction_column(frames: pd.DataFrame, *, direction_col: str | None) -> pd.
 
 def _run_native(
     frames: pd.DataFrame, params, *, engine: Literal["auto", "numpy", "numba"]
-) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray]:
+) -> tuple[pd.DataFrame, pd.DataFrame, PackedFrames]:
     """Pack ``frames`` (direction from :data:`_DIR_COL`), run ``compute_das``, return tidy team/player
-    frames sorted by key -- the driver's own copy of the test helper (scripts must not import tests)."""
+    frames sorted by key plus the ``PackedFrames`` (the reduce reads its per-frame reason + defender
+    geometry to tag divergences) -- the driver's own copy of the test helper (scripts must not import
+    tests)."""
     from silly_kicks.tracking._das_engine import compute_das
     from silly_kicks.tracking._das_pack import pack_frames
 
@@ -196,109 +209,91 @@ def _run_native(
         .sort_values([*_FRAME_KEYS, "player_id"], kind="stable")
         .reset_index(drop=True)
     )
-    return team, player, packed.reason
+    return team, player, packed
 
 
-# The ``accessible-space`` call kwargs -- byte-for-byte the golden generator's ``_COMMON``
-# (``tests/tracking/_fixtures/das_golden/_generate.py``). ``attacking_direction_col`` is :data:`_DIR_COL`
-# (the shared per-frame direction) rather than the generator's ``"dir"``, so all four legs pin the SAME
-# direction. ``test_das_native_parity_driver`` gate-checks this against the generator to catch drift.
-_REFERENCE_COMMON: dict[str, Any] = dict(
-    frame_col="frame_id",
-    player_col="player_id",
-    team_col="team_id",
-    x_col="x",
-    y_col="y",
-    vx_col="vx",
-    vy_col="vy",
-    team_in_possession_col="team_in_possession",
-    ball_player_id="ball",
-    period_col="period_id",
-    attacking_direction_col=_DIR_COL,
-    infer_attacking_direction=False,
-    use_progress_bar=False,
+def _frame_flags(packed: PackedFrames) -> pd.DataFrame:
+    """One row per scored frame: ``(game_id, period_id, frame_id, reason)`` for the reduce.
+
+    Keys carry the native dtypes (from ``packed.keys``) so the left-merge onto the parity rows aligns.
+    The ``reason`` lets the reduce grade / finite-mask over the scoreable (``reason == OK``) rows only.
+    """
+    keys = packed.keys.reset_index(drop=True)
+    return pd.DataFrame(
+        {
+            "game_id": keys["game_id"].to_numpy(),
+            "period_id": keys["period_id"].to_numpy(),
+            "frame_id": keys["frame_id"].to_numpy(),
+            "reason": packed.reason.astype(np.uint8),
+        }
+    )
+
+
+# The reference DAS leg runs ``accessible-space`` 2.0.15 in a PINNED PANDAS-2 SUBPROCESS: the library is
+# silently broken under the driver's pandas 3 (Copy-on-Write makes its internal ``PLAYER_POS`` read-only,
+# so its offside step raises a ``ValueError`` it catches and skips -- see scripts/_das_reference_leg.py
+# and ADR-107/108). The recipe (``_REFERENCE_COMMON`` / ``_reference_lib_frames``) and the fail-loud env
+# guard live in that sk-free module; the gate that pins the recipe to the golden generator's ``_COMMON``
+# is tests/scripts/test_das_reference_leg.py.
+_REFERENCE_MODULE = Path(__file__).with_name("_das_reference_leg.py")
+_PROVISION_HINT = (
+    "python3.12 -m venv ~/das-parity/py2ref && "
+    "~/das-parity/py2ref/bin/pip install 'accessible-space==2.0.15' 'pandas<3'"
+)
+_PROBE_CODE = (
+    "import importlib.metadata as m, pandas, numpy, platform, sys;"
+    "sys.stdout.write('\\n'.join([pandas.__version__, numpy.__version__, "
+    "m.version('accessible-space'), platform.python_version()]) + '\\n')"
 )
 
 
-def _reference_lib_frames(frames: pd.DataFrame) -> pd.DataFrame:
-    """Library-input copy, byte-for-byte the golden generator's ``_lib_frames``: centre coords to the
-    ``accessible-space`` origin, float64, ball ``player_id`` -> ``"ball"`` / ball team ``None``, and
-    string ``"p<id>"`` / ``"t<id>"`` ids (the recipe the frozen golden reference was produced with).
-
-    accessible-space 2.0.15 is numpy-era and does ``arr[:, np.newaxis]`` on the team array; a
-    pyarrow-backed column (real pining frames use the arrow dtype backend) raises
-    ``IndexError: too many indices``, so every arrow column is coerced to numpy first. The native
-    engine consumes arrow frames fine (``np.asarray`` at the pack boundary); this is a reference-leg
-    input requirement only.
-    """
-    out = frames.copy()
-    out["x"] = out["x"].astype("float64") - _X_OFFSET
-    out["y"] = out["y"].astype("float64") - _Y_OFFSET
-    out["vx"] = out["vx"].astype("float64")
-    out["vy"] = out["vy"].astype("float64")
-    is_ball = out["is_ball"].to_numpy(dtype=bool)
-    pid = out["player_id"].astype("object")
-    pid[is_ball] = "ball"
-    pid[~is_ball] = ["p" + str(int(v)) for v in out.loc[~is_ball, "player_id"]]
-    out["player_id"] = pid
-    tid = out["team_id"].astype("object")
-    tid[is_ball] = None
-    tid[~is_ball] = ["t" + str(int(v)) for v in out.loc[~is_ball, "team_id"]]
-    out["team_id"] = tid
-    out["team_in_possession"] = ["t" + str(int(v)) if pd.notna(v) else None for v in out["team_in_possession"]]
-    # accessible-space 2.0.15 is numpy-era and does ``team_array[:, np.newaxis]``; under pandas 3 a
-    # string-list assignment defaults to the pyarrow-backed ``str`` StringDtype, whose ArrowStringArray
-    # raises ``IndexError: too many indices``. Force the id / possession columns the library arrays to
-    # plain ``object`` (numpy-backed) -- the golden generator escapes this only because it runs on pandas 2.
-    for c in ("player_id", "team_id", "team_in_possession"):
-        out[c] = out[c].astype(object)
-    return out
+def _resolve_reference_python(arg: str | None) -> str:
+    """The pandas-2 + accessible-space==2.0.15 interpreter for the reference leg (a DOCUMENTED
+    PREREQUISITE; never auto-provisioned inside a clean-tree-gated run). Fail loud if absent."""
+    p = arg or os.environ.get("SK_DAS_REFERENCE_PYTHON")
+    if not p or not Path(p).is_file():
+        raise SystemExit(
+            "reference python not found; pass --reference-python or set SK_DAS_REFERENCE_PYTHON to a "
+            f"pandas<3 + accessible-space==2.0.15 interpreter. Provision it with:\n    {_PROVISION_HINT}"
+        )
+    return p
 
 
-def _reference_leg(frames: pd.DataFrame) -> dict[str, np.ndarray]:
-    """The ``accessible-space`` 2.0.15 leg (LAZILY imported; the ``das-reference`` dev extra).
+def _probe_reference_env(reference_python: str) -> dict[str, str]:
+    """Invoke the reference interpreter ONCE before the corpus pass; return its version strings (stamped
+    into the artifact) and raise via ``_check_reference_env`` on pandas>=3 or a wrong accessible-space."""
+    out = subprocess.run(  # noqa: S603 -- resolved documented-prerequisite interpreter + fixed probe code
+        [reference_python, "-c", _PROBE_CODE], capture_output=True, text=True, check=True
+    )
+    pv, nv, av, pyv = [s for s in out.stdout.splitlines() if s][:4]
+    _check_reference_env(pv, av)
+    return {"pandas": pv, "numpy": nv, "accessible_space": av, "python": pyv}
 
-    Prepares the library input and reads the ``ReturnValueDAS`` arrays EXACTLY as the golden generator's
-    ``_run_team_and_player`` / ``_emit_team_player`` do -- ``team.acc_space`` / ``team.das`` and
-    ``ind.player_acc_space`` / ``ind.player_das`` align to the POSSESSION-FILTERED rows in input order,
-    team values deduped per frame. Returns team/player AS/DAS keyed by ``(game, period, frame[, player])``.
-    The driver's test REPLACES this whole function with the frozen golden reference outputs, so the corpus
-    reduce path runs with no library and no network.
-    """
-    import accessible_space as asp  # pyright: ignore[reportMissingImports]  # lazy; das-reference dev extra only, absent in CI
 
-    lib = _reference_lib_frames(frames).reset_index(drop=True)
-    team = asp.get_dangerous_accessible_space(lib.copy(), **_REFERENCE_COMMON)
-    ind = asp.get_individual_dangerous_accessible_space(lib.copy(), **_REFERENCE_COMMON)
-    as_t = np.asarray(team.acc_space, dtype=float)
-    das_t = np.asarray(team.das, dtype=float)
-    as_p = np.asarray(ind.player_acc_space, dtype=float)
-    das_p = np.asarray(ind.player_das, dtype=float)
-
-    kept = lib["team_in_possession"].notna().to_numpy()
-    per_frame: dict[tuple, tuple[float, float]] = {}
-    player_rows: list[tuple] = []
-    ti = 0
-    for i in range(len(lib)):
-        if not kept[i]:
-            continue
-        r = lib.iloc[i]
-        key = (r["game_id"], r["period_id"], r["frame_id"])
-        per_frame.setdefault(key, (as_t[ti], das_t[ti]))
-        if not bool(r["is_ball"]):
-            player_rows.append((*key, int(str(r["player_id"])[1:]), as_p[ti], das_p[ti]))
-        ti += 1
-
-    team_keys = sorted(per_frame)
-    pid_sorted = sorted(player_rows, key=lambda t: (t[0], t[1], t[2], t[3]))
-    return {
-        "team_keys": np.array(team_keys, dtype=object),
-        "team_as": np.array([per_frame[k][0] for k in team_keys], dtype=float),
-        "team_das": np.array([per_frame[k][1] for k in team_keys], dtype=float),
-        "player_keys": np.array([r[:4] for r in pid_sorted], dtype=object),
-        "player_as": np.array([r[4] for r in pid_sorted], dtype=float),
-        "player_das": np.array([r[5] for r in pid_sorted], dtype=float),
-    }
+def _reference_leg_subprocess(frames: pd.DataFrame, *, reference_python: str) -> dict[str, np.ndarray]:
+    """Marshal one match's scored frames to a temp parquet OUTSIDE the repo tree (an in-tree write would
+    trip the clean-tree guard, ADR-037), run the reference module under ``reference_python``, and read
+    team/player AS+DAS back. Raise on a non-zero exit or missing output -- never a silently-empty
+    reference leg that would read as a vacuous parity pass."""
+    d = Path(tempfile.mkdtemp(prefix="das_ref_"))
+    try:
+        in_pq = d / "in.parquet"
+        frames.to_parquet(in_pq)
+        subprocess.run(  # noqa: S603 -- resolved documented-prerequisite interpreter + our own module path
+            [reference_python, str(_REFERENCE_MODULE), str(in_pq), str(d)], check=True
+        )
+        team = pd.read_parquet(d / "team.parquet")
+        player = pd.read_parquet(d / "player.parquet")
+        return {
+            "team_keys": team[list(_FRAME_KEYS)].to_numpy(),
+            "team_as": team["as"].to_numpy(dtype=float),
+            "team_das": team["das"].to_numpy(dtype=float),
+            "player_keys": player[[*_FRAME_KEYS, "player_id"]].to_numpy(),
+            "player_as": player["as"].to_numpy(dtype=float),
+            "player_das": player["das"].to_numpy(dtype=float),
+        }
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def _scored_frames(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.DataFrame:
@@ -376,7 +371,7 @@ def _numba_available() -> bool:
         return False
 
 
-def _measure_match(item, *, reference_leg=_reference_leg, direction_col: str | None = None) -> pd.DataFrame:
+def _measure_match(item, *, reference_leg, direction_col: str | None = None) -> pd.DataFrame:
     """One match -> a long shard: one ``team`` row per scored frame, one ``player`` row per player per
     scored frame, one ``match`` row of per-match scalars (timings, reason counts). EMPTY (columns
     present) when the match scores nothing -- "ran, produced nothing", never a crash that loses the pass.
@@ -397,18 +392,19 @@ def _measure_match(item, *, reference_leg=_reference_leg, direction_col: str | N
 
     # Legs, timed. Reference and native numpy are compared for parity; periodic gives the quad shift.
     (ref, t_ref) = _time_leg(lambda: reference_leg(scored))
-    ((np_team, np_player, reason), t_np) = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numpy"))
+    ((np_team, np_player, packed), t_np) = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numpy"))
     if _numba_available():
         ((nb_team, _nb_player, _r), t_nb) = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numba"))
     else:
         nb_team, t_nb = None, np.nan
     ((per_team, _pp, _r2), t_per) = _time_leg(lambda: _run_native(scored, DAS_PARAMS, engine="numpy"))
 
+    flags = _frame_flags(packed)  # per-frame reason + D-OFF, merged onto each parity row for the reduce
     rows: list[dict] = []
-    rows += _team_rows(provider, ref, np_team, nb_team, per_team)
-    rows += _player_rows(provider, ref, np_player)
+    rows += _team_rows(provider, ref, np_team, nb_team, per_team, flags)
+    rows += _player_rows(provider, ref, np_player, flags)
 
-    reason_counts = pd.Series(reason).map(_REASON_COLS).value_counts().to_dict()
+    reason_counts = pd.Series(packed.reason).map(_REASON_COLS).value_counts().to_dict()
     match_row = {
         "grain": "match",
         "provider": provider,
@@ -421,15 +417,21 @@ def _measure_match(item, *, reference_leg=_reference_leg, direction_col: str | N
     }
     for col in _REASON_COLS.values():
         match_row[col] = int(reason_counts.get(col, 0))
+    # Match rows carry no per-frame reason; set OK so the column stays a clean uint8 (a mixed uint8/NaN
+    # object column is unwritable to parquet). The reduce reads reason on team/player rows only (it
+    # filters by grain first).
+    match_row["reason"] = int(Reason.OK)
     rows.append(match_row)
 
-    return pd.DataFrame(rows).reindex(columns=_EMITTED_SHARD_COLUMNS)
+    shard = pd.DataFrame(rows).reindex(columns=_EMITTED_SHARD_COLUMNS)
+    shard["reason"] = shard["reason"].astype("uint8")
+    return shard
 
 
 def _join_on_keys(ref_keys, ref_vals: dict, native: pd.DataFrame, key_cols: list[str]) -> pd.DataFrame:
     """Align the reference arrays (keyed by ``ref_keys``) to a native tidy frame on the shared keys.
 
-    The reference keys may be an object array (production ``_reference_leg``) while native keys are
+    The reference keys may be an object array (production ``_reference_leg_subprocess``) while native keys are
     typed; cast each key column to the native dtype so the merge aligns (an int-vs-object key silently
     matches NOTHING and the parity would read as a vacuous zero-row join)."""
     ref_df = pd.DataFrame(ref_keys, columns=key_cols)
@@ -440,7 +442,7 @@ def _join_on_keys(ref_keys, ref_vals: dict, native: pd.DataFrame, key_cols: list
     return ref_df.merge(native, on=key_cols, how="inner", suffixes=("_ref", "_nat"))
 
 
-def _team_rows(provider, ref, np_team, nb_team, per_team) -> list[dict]:
+def _team_rows(provider, ref, np_team, nb_team, per_team, flags) -> list[dict]:
     merged = _join_on_keys(
         ref["team_keys"],
         {"ref_as": ref["team_as"], "ref_das": ref["team_das"]},
@@ -454,6 +456,7 @@ def _team_rows(provider, ref, np_team, nb_team, per_team) -> list[dict]:
     merged = merged.merge(
         per_team.rename(columns={"team_das": "per_das"})[[*_FRAME_KEYS, "per_das"]], on=list(_FRAME_KEYS), how="left"
     )
+    merged = merged.merge(flags, on=list(_FRAME_KEYS), how="left")
     abs_das, rel_das = _abs_rel(merged["ref_das"].to_numpy(), merged["team_das"].to_numpy())
     abs_as, rel_as = _abs_rel(merged["ref_as"].to_numpy(), merged["team_as"].to_numpy())
     nb = merged["nb_das"].to_numpy() if "nb_das" in merged.columns else np.full(len(merged), np.nan)
@@ -474,18 +477,20 @@ def _team_rows(provider, ref, np_team, nb_team, per_team) -> list[dict]:
                 "finite_native": bool(np.isfinite(merged["team_das"].iloc[i])),
                 "quad_shift_das": float(merged["per_das"].iloc[i] - merged["ref_das"].iloc[i]),
                 "numba_minus_numpy_das": float(nb[i] - merged["team_das"].iloc[i]) if np.isfinite(nb[i]) else np.nan,
+                "reason": int(merged["reason"].iloc[i]),
             }
         )
     return rows
 
 
-def _player_rows(provider, ref, np_player) -> list[dict]:
+def _player_rows(provider, ref, np_player, flags) -> list[dict]:
     merged = _join_on_keys(
         ref["player_keys"],
         {"ref_as": ref["player_as"], "ref_das": ref["player_das"]},
         np_player,
         [*_FRAME_KEYS, "player_id"],
     )
+    merged = merged.merge(flags, on=list(_FRAME_KEYS), how="left")
     abs_das, rel_das = _abs_rel(merged["ref_das"].to_numpy(), merged["player_das"].to_numpy())
     abs_as, rel_as = _abs_rel(merged["ref_as"].to_numpy(), merged["player_as"].to_numpy())
     rows = []
@@ -504,6 +509,7 @@ def _player_rows(provider, ref, np_player) -> list[dict]:
                 "rel_as": rel_as[i],
                 "finite_ref": bool(np.isfinite(merged["ref_das"].iloc[i])),
                 "finite_native": bool(np.isfinite(merged["player_das"].iloc[i])),
+                "reason": int(merged["reason"].iloc[i]),
             }
         )
     return rows
@@ -540,8 +546,30 @@ def _grade_grain(df: pd.DataFrame) -> dict:
     }
 
 
+def _clean_ok(g: pd.DataFrame) -> pd.DataFrame:
+    """The scoreable rows of a team-/player-grain slice: ``reason == Reason.OK``.
+
+    A non-OK frame yields native NaN vs a fictional reference value (a finite-mask mismatch), so the
+    headline grade and the finite-mask check run over the OK rows only; the per-class NaN-degrade
+    accounting is the match rows' ``reason_counts``. Cast through the NULLABLE ``Int64`` first: on a
+    grain-mixed ``concat`` the ``reason`` column arrives object-typed with NaN, and a plain object
+    ``.fillna`` downcast is deprecated in pandas 3.
+    """
+    if g.empty:
+        return g
+    reason = g["reason"].astype("Int64").fillna(int(Reason.OK)).astype("int64")
+    return g[reason == int(Reason.OK)]
+
+
 def reduce_parity(shards: list[pd.DataFrame]) -> dict:
-    """Corpus parity/perf statistics per provider (spec 7.2). Empty shards -> ``{}``."""
+    """Corpus parity/perf statistics per provider (spec 7.2). Empty shards -> ``{}``.
+
+    The headline ``team``/``player`` grades and the finite-mask mismatch run over the scoreable
+    (``reason == OK``) rows only (the mismatch must then read 0); the NaN-degrade classes (D-BALLNAN,
+    D-POSSABSENT, ...) are accounted for by ``reason_counts``. There is no divergence-exclusion block: the
+    reference leg respects offside (it runs faithfully in the pandas-2 subprocess) and keys frames
+    collision-free, so the former D-OFF / D-KEY classes do not arise.
+    """
     if not shards:
         return {}
     combined = pd.concat(shards, ignore_index=True)
@@ -549,9 +577,11 @@ def reduce_parity(shards: list[pd.DataFrame]) -> dict:
         return {}
     out: dict = {}
     for provider, sub in combined.groupby("provider"):
-        team = sub[sub["grain"] == "team"]
-        player = sub[sub["grain"] == "player"]
+        team = sub[sub["grain"] == "team"].copy()
+        player = sub[sub["grain"] == "player"].copy()
         match = sub[sub["grain"] == "match"]
+        team_ok = _clean_ok(team)
+        player_ok = _clean_ok(player)
 
         def _mask_mismatch(g: pd.DataFrame) -> int:
             return int((g["finite_ref"].astype("boolean") != g["finite_native"].astype("boolean")).sum())
@@ -559,9 +589,9 @@ def reduce_parity(shards: list[pd.DataFrame]) -> dict:
         quad = team["quad_shift_das"].abs()
         nbmax = team["numba_minus_numpy_das"].abs()
         out[str(provider)] = {
-            "team": _grade_grain(team) if not team.empty else {},
-            "player": _grade_grain(player) if not player.empty else {},
-            "finite_mask_mismatches": {"team": _mask_mismatch(team), "player": _mask_mismatch(player)},
+            "team": _grade_grain(team_ok) if not team_ok.empty else {},
+            "player": _grade_grain(player_ok) if not player_ok.empty else {},
+            "finite_mask_mismatches": {"team": _mask_mismatch(team_ok), "player": _mask_mismatch(player_ok)},
             "quadrature_shift_das": {"median": _pct(quad, 50), "p90": _pct(quad, 90), "max": _pct(quad, 100)},
             "numba_vs_numpy_das_max_abs": _pct(nbmax, 100),
             "timings_ms_per_frame": {
@@ -582,14 +612,28 @@ def run_corpus(
     prov: dict,
     shard_root: Path | None = None,
     direction_col: str | None = None,
-    reference_leg=_reference_leg,
+    reference_leg,
+    reference_env: dict | None = None,
+    shards_only: bool = False,
+    worker_tag: str = "serial",
 ) -> dict:
     """The map+reduce+write, factored out of ``main`` so the reduce PATH is testable offline.
 
     ``load(ref) -> (provider, match_id, actions, frames)``; ``reference_leg`` and ``direction_col`` are
     injected by the test (golden reference outputs + the golden ``dir`` column), so the full corpus
-    pass runs with no ``accessible-space`` and no network. Production passes the defaults (the lazy
-    ``accessible-space`` leg and the ``GoalMap`` direction).
+    pass runs with no ``accessible-space`` and no network. Production passes the pandas-2 subprocess leg
+    (``_reference_leg_subprocess``) and the ``GoalMap`` direction. ``reference_env`` is the reference
+    interpreter's version strings (from ``_probe_reference_env``); it rides each worker's manifest and is
+    stamped into the reduced artifact for provenance.
+
+    ``shards_only`` runs the MAP only: it writes the per-match shards plus THIS worker's
+    ``manifest_<worker_tag>.json`` (``res.manifest()`` + ``reference_env``; otherwise in-memory only),
+    then returns WITHOUT reducing. That is what lets N processes each take a ``--match-ids-json`` subset
+    against one resumable ``shard_root`` and have the launcher call :func:`reduce_parity_artifact` exactly
+    ONCE over the full population afterward -- N concurrent subset-scoped ``metrics.json`` writes would
+    each race an artifact that is NOT the full-corpus one (DPL-PLAN-03). Every worker MUST pass a UNIQUE
+    ``worker_tag`` or the manifests collide. The serial path writes its manifest too and reduces through
+    the same single-sourced :func:`reduce_parity_artifact`.
     """
     from scripts._driver import for_each
 
@@ -609,10 +653,71 @@ def run_corpus(
         },
         label="match",
     )
-    shards = [pd.read_parquet(s) for s in sorted(res.shard_dir.glob("*.parquet"))]
+    # Persist this worker's manifest so the reduce can aggregate exclusions it cannot see from shards
+    # alone (SB360 structural exclusion, `.excluded.json` markers). res.manifest() is in-memory only.
+    (res.shard_dir / f"manifest_{worker_tag}.json").write_text(
+        json.dumps({**res.manifest(), "reference_env": reference_env or {}}, default=str), encoding="utf-8"
+    )
+    if shards_only:
+        return {"shards_only": True, "shard_dir": str(res.shard_dir)}
+    root = shard_root if shard_root is not None else dest / "shards"
+    return reduce_parity_artifact(refs, root, dest, prov=prov)
+
+
+def reduce_parity_artifact(refs, shard_root: Path, dest: Path, *, prov: dict) -> dict:
+    """Reduce the shards under ``shard_root`` into the single combined ``metrics.json`` (spec 7.2).
+
+    Single-sources the reduce for both the serial ``run_corpus`` and the parallel launcher, which calls
+    this ONCE after every ``shards_only`` worker finishes. Parity VALUES come from the shard parquet;
+    the population's exclusion counters come from ``_partition.aggregate_manifests`` (summing the
+    per-worker ``manifest_*.json``), never re-derived from shards -- shards cannot see a match excluded
+    with no output row (DPL-PLAN-10). ``listed_per_provider`` comes from the FULL ``refs`` (as serial
+    ``_population`` does), so a subset worker never under-reports the corpus. The emitted schema is
+    byte-identical to the pre-split serial artifact.
+    """
+    from scripts._partition import aggregate_manifests
+
+    shard_root = Path(shard_root)
+    shard_files = sorted(shard_root.rglob("*.parquet"))
+    if not shard_files:
+        raise SystemExit(f"no parity shards under {shard_root} -- run the map (shards) first")
+    gen_dirs = {p.parent for p in shard_files}
+    if len(gen_dirs) != 1:
+        raise SystemExit(
+            f"expected ONE shard generation under {shard_root}, found {sorted(str(g) for g in gen_dirs)}; "
+            "use a fresh --shard-root per corpus run"
+        )
+    gen_dir = next(iter(gen_dirs))
+    # reference_env (the pandas-2 reference interpreter's versions) is map-time provenance carried on the
+    # per-worker manifests, so a --reduce-only invocation needs no reference interpreter (README hazard 4).
+    # Collect the DISTINCT non-empty reference_env across workers. A mixed-reference-interpreter corpus
+    # (workers run against different pandas/accessible-space versions) yields non-comparable parity
+    # numbers, so refuse rather than silently stamp one (DRR-IMPL-01). The launcher passes one
+    # --reference-python to all workers, so this fires only on operator error; the reduce is cheap to redo.
+    seen: dict[str, dict] = {}
+    for mp in sorted(gen_dir.glob("manifest_*.json")):
+        env = json.loads(mp.read_text(encoding="utf-8")).get("reference_env")
+        if env:
+            seen[json.dumps(env, sort_keys=True)] = env
+    if len(seen) > 1:
+        raise SystemExit(
+            "reference_env disagreement across workers -- a mixed-reference-interpreter corpus parity "
+            f"artifact is invalid: {sorted(seen)}. Re-run the map with one --reference-python."
+        )
+    reference_env: dict = next(iter(seen.values())) if seen else {}
+    shards = [pd.read_parquet(s) for s in shard_files]
     parity = reduce_parity(shards)
     scored_providers = {p: parity[p]["n_matches_scored"] for p in parity}
-    manifest = res.manifest()
+    # Sum the per-worker manifests, then rebuild the exact `res.manifest()` shape so the artifact's
+    # top-level fields are unchanged from the serial version (Hyrum: metrics.json is a published seam).
+    agg = aggregate_manifests(gen_dir, defaults=("n_attempted", "n_failed", "n_counters_unrecorded", "n_excluded"))
+    manifest = {
+        "generation": gen_dir.name,
+        "n_attempted": agg["n_attempted"],
+        "n_failed": agg["n_failed"],
+        "n_counters_unrecorded": agg["n_counters_unrecorded"],
+        "n_excluded": agg["n_excluded"],
+    }
     out = {
         "providers": parity,
         "population": _population(refs, scored_providers, manifest),
@@ -622,6 +727,7 @@ def run_corpus(
         "run_tree_state": prov.get("tree_state"),
         "run_platform": prov.get("platform"),
         "run_machine": prov.get("machine"),
+        "reference_env": reference_env or {},
         "input_contract": input_contract(),
     }
     dest.mkdir(parents=True, exist_ok=True)
@@ -654,16 +760,60 @@ def _population(refs, scored_providers: dict, manifest: dict) -> dict:
 # --------------------------------------------------------------------------------------------------
 
 
+def _load_match_ids(spec: list[dict]) -> dict[str, list[str]]:
+    """Group a ``--list-matches``-shaped list (``[{"provider", "match_id"}, ...]``) into the
+    ``pining_source(match_ids=)`` mapping.
+
+    Selection then flows through ``_wanted_for_provider`` -- the SAME rule ``for_each`` resumes on -- so
+    an owner can split ``--list-matches`` into N subsets and run N processes against ONE resumable shard
+    root (each does its own matches; resume-before-load skips the rest), turning the ~14 CPU-hour
+    sequential reference leg into a parallel pass.
+    """
+    out: dict[str, list[str]] = {}
+    for entry in spec:
+        out.setdefault(str(entry["provider"]), []).append(str(entry["match_id"]))
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=None, help="output dir (not needed with --list-matches)")
     ap.add_argument("--shard-root", default=None, help="shard root (default <out>/shards)")
     ap.add_argument("--providers", nargs="*", default=None, help="providers to walk (default: all velocity-bearing)")
     ap.add_argument("--token", default=None, help="pining token (else resolved from the environment)")
+    ap.add_argument(
+        "--reference-python",
+        default=None,
+        help="pandas<3 + accessible-space==2.0.15 interpreter for the reference leg (else "
+        "$SK_DAS_REFERENCE_PYTHON); a documented prerequisite -- see the module docstring",
+    )
     ap.add_argument("--max-matches", type=int, default=None)
+    ap.add_argument(
+        "--match-ids-json",
+        default=None,
+        help="restrict the run to the matches in this JSON file (the --list-matches shape: "
+        "[{provider, match_id}, ...]); split it across processes to parallelise the reference leg",
+    )
     ap.add_argument("--cache-dir", default=None)
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     ap.add_argument("--list-matches", action="store_true", help="print available match ids as JSON and exit")
+    ap.add_argument(
+        "--shards-only",
+        action="store_true",
+        help="MAP only: write shards + this worker's manifest, skip the reduce (parallel worker). "
+        "Pair with a UNIQUE --worker-tag and a shared --shard-root; the launcher reduces once at the end.",
+    )
+    ap.add_argument(
+        "--reduce-only",
+        action="store_true",
+        help="REDUCE only: assemble metrics.json from the shards already under --shard-root (or "
+        "<out>/shards), then exit. Run after all --shards-only workers finish.",
+    )
+    ap.add_argument(
+        "--worker-tag",
+        default="serial",
+        help="unique tag for this worker's manifest_<tag>.json under --shards-only (default 'serial').",
+    )
     args = ap.parse_args()
 
     from scripts._provenance import git_provenance, require_clean_tree
@@ -687,19 +837,41 @@ def main() -> None:
 
     dest = Path(args.out)
     cache_dir = resolve_cache_dir(args.cache_dir)
-    refs, base_load = pining_source(providers, token=args.token, max_per_provider=args.max_matches, cache_dir=cache_dir)
+    match_ids = (
+        _load_match_ids(json.loads(Path(args.match_ids_json).read_text("utf-8"))) if args.match_ids_json else None
+    )
+    refs, base_load = pining_source(
+        providers, token=args.token, match_ids=match_ids, max_per_provider=args.max_matches, cache_dir=cache_dir
+    )
+    if match_ids is not None and not refs:
+        raise SystemExit(f"--match-ids-json {args.match_ids_json} selected no matches from providers {providers}.")
 
     def _load(ref):
         lm = base_load(ref)
         return (lm.provider, lm.match_id, lm.actions, lm.frames)
 
-    # Production defaults: the lazy accessible-space reference leg + GoalMap direction (ADR-055).
+    # Reduce-only: assemble the combined artifact from shards already on disk (after the workers).
+    # Needs NO reference interpreter -- reference_env rides the manifests (README hazard 4).
+    if args.reduce_only:
+        root = Path(args.shard_root) if args.shard_root else dest / "shards"
+        out = reduce_parity_artifact(refs, root, dest, prov=prov)
+        print(json.dumps({k: v for k, v in out.items() if k != "input_contract"}, indent=2, default=str))
+        return
+
+    # Map (shards-only or full): the pandas-2 subprocess reference leg + GoalMap direction (ADR-055).
+    # Resolve + probe the reference interpreter BEFORE any corpus work (fail-loud on a bad/absent env).
+    reference_python = _resolve_reference_python(args.reference_python)
+    ref_env = _probe_reference_env(reference_python)
     out = run_corpus(
         refs,
         _load,
         dest,
         prov=prov,
         shard_root=Path(args.shard_root) if args.shard_root else None,
+        reference_leg=functools.partial(_reference_leg_subprocess, reference_python=reference_python),
+        reference_env=ref_env,
+        shards_only=args.shards_only,
+        worker_tag=args.worker_tag,
     )
     print(json.dumps({k: v for k, v in out.items() if k != "input_contract"}, indent=2, default=str))
 

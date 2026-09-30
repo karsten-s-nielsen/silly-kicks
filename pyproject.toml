@@ -61,8 +61,10 @@ golden-master = ["unravelsports>=1.2; python_version >= '3.11'"]
 # driver (scripts/validate_das_native_parity.py). It is NOT installed in the normal CI legs;
 # the golden regen / parity tests importorskip it and skip when absent (the committed
 # SHA256SUMS check needs no library). Pinned EXACTLY: the oracle is byte-reproducible only
-# against 2.0.15.
-das-reference = ["accessible-space==2.0.15"]
+# against 2.0.15. `pandas<3` is REQUIRED with it: accessible-space 2.0.15 silently disables
+# offside under pandas-3 Copy-on-Write (read-only PLAYER_POS; ADR-107), so the reference env
+# (the `~/das-parity/py2ref` interpreter the parity driver shells out to) must be pandas 2.
+das-reference = ["accessible-space==2.0.15", "pandas<3"]
 # PR-S95 (4.30.0, ADR-031 T3): the DFL/Sportec parse+shape port
 # (silly_kicks/providers/sportec/). The port is pure stdlib xml.etree + pandas/numpy
 # (already core deps), so this extra carries no new runtime requirement -- it is the
@@ -288,6 +290,9 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "scripts/train_xshot_occurrence.py" = ["N803", "N806", "T201"]
 # TF-17 xCross trainer: ML-style uppercase X + human-readable run summary (T201).
 "scripts/train_xcross_attempt.py" = ["N803", "N806", "T201"]
+# DGX parallel launcher shared-corpus helpers: ML-style uppercase X design matrices.
+"scripts/_corpus_mmap.py" = ["N803", "N806"]
+"scripts/_study_shared.py" = ["N803", "N806"]
 # xT-GK GK-distribution completion: ML-style uppercase X feature matrices (logistic model).
 "silly_kicks/tracking/_gk_completion.py" = ["N803", "N806"]
 # TF-54b expected-passing pass-completion model: ML-style uppercase X/Z feature matrices (logistic model).
