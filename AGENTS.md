@@ -69,6 +69,14 @@ Hexagonal: all core functions are pure (pandas in, pandas out), zero I/O, zero g
 | Specs and plans | `docs/superpowers/specs/`, `plans/` |
 | Downstream pins on private modules | `docs/PRIVATE_CONSUMERS.md` |
 
+## How-to runbooks
+
+Procedural checklists in `docs/howto/` (class-2, sibling to `docs/context`) — read the one the task hits:
+
+- **Authoring a metric** — `docs/howto/authoring-a-metric.md`: the `add_*`/`compute_*` checklist (metric_contracts, purity, liveness, `*_xfns`, glossary, release).
+- **Construct validity** — `docs/howto/construct-validity.md`: the three validity gates + GO/NO-GO memo shape + the "what it does NOT measure" caveat.
+- **Corpus drivers** — `docs/howto/corpus-drivers-runbook.md`: build a `build_*`/`validate_*`/`measure_*` on the `scripts/_driver.py` seam (resume, shards, provenance).
+
 ## Key conventions
 
 - **Version single-sourced** in `silly_kicks/_version.py` (ADR-079); `pyproject` `dynamic`, `hatch.version` reads it. Bump that one file. (`docs/context/conventions-core.md`)

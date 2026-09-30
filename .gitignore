@@ -43,8 +43,11 @@ tests/datasets/statsbomb/raw/.cache/
 # Training artifacts (full model + feature cache — bundled weights are in silly_kicks/)
 models/
 
-# Claude Code
-.claude/
+# Claude Code — ignore local state (settings.local.json, .headroom_*) but TRACK the
+# tool-agnostic activation shims (thin pointers into docs/howto/; substance lives there).
+.claude/*
+!.claude/skills/
+!.claude/commands/
 
 # Serena MCP index (per-clone symbol cache + memories; regenerable, never committed)
 .serena/
