@@ -13,13 +13,15 @@ leg is disabled here for speed/determinism (engine parity is test_das_engine_par
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import _loader_pining as lp
 import numpy as np
 import pandas as pd
 import pytest
 
 from scripts import validate_das_native_parity as D
-from silly_kicks.tracking._das_pack import Reason, pack_frames
+from silly_kicks.tracking._das_pack import Reason
 from tests.tracking._das_golden import load_golden
 
 _CLEAN_PROV = {
@@ -107,18 +109,9 @@ def test_full_reduce_path_is_schema_complete_and_counts_reconcile(tmp_path, monk
     assert set(prov["timings_ms_per_frame"]) == {"ref", "numpy", "numba", "periodic"}
     assert set(prov["finite_mask_mismatches"]) == {"team", "player"}
     assert set(prov["reason_counts"]) == set(D._REASON_COLS.values())
-    # Divergence accounting block (spec 6.8 / 7.2): a count per documented D-* class + exclusion tally.
-    div = prov["divergences"]
-    assert set(div) == {
-        "d_off_frames",
-        "d_key_frames",
-        "d_ballnan_frames",
-        "d_possabsent_frames",
-        "excluded_rows",
-        "max_abs_das_divergent",
-    }
-    assert set(div["excluded_rows"]) == {"team", "player"}
-    assert set(div["max_abs_das_divergent"]) == {"team", "player"}
+    # No divergence-exclusion block: the reference respects offside + keys frames collision-free, so the
+    # per-class NaN-degrade accounting is reason_counts (asserted above) and the headline is reason==OK.
+    assert "divergences" not in prov
 
     # Population block: listed / scored / excluded.
     pop = out["population"]
@@ -134,10 +127,9 @@ def test_native_reproduces_the_reference_leg_within_parity(tmp_path, monkeypatch
     assert prov["team"]["das"]["abs"]["max"] < 1e-6
     assert prov["player"]["das"]["abs"]["max"] < 1e-6
     assert prov["finite_mask_mismatches"] == {"team": 0, "player": 0}
-    # S01/S05 are normal full-team scenes: no D-* divergence fires, so the headline is the whole corpus.
-    assert prov["divergences"]["d_off_frames"] == 0
-    assert prov["divergences"]["d_key_frames"] == 0
-    assert prov["divergences"]["excluded_rows"] == {"team": 0, "player": 0}
+    # S01/S05 are normal full-team single-period scenes: every frame is reason==OK, so the headline is
+    # the whole corpus.
+    assert prov["n_matches_scored"] == 2
     # The quadrature shift (periodic - reference) is a REAL, non-zero corpus figure (ADR-108).
     assert np.isfinite(prov["quadrature_shift_das"]["max"])
 
@@ -163,7 +155,9 @@ def test_reduce_parity_empty_is_empty():
 
 
 def test_measure_match_empty_frames_returns_columns():
-    shard = D._measure_match(("skillcorner", "1", None, pd.DataFrame()))
+    # reference_leg is now a required kwarg; empty frames return early (before the leg is called), so the
+    # stub is unused -- but it must be passed.
+    shard = D._measure_match(("skillcorner", "1", None, pd.DataFrame()), reference_leg=lambda f: {})
     assert list(shard.columns) == D._EMITTED_SHARD_COLUMNS
     assert shard.empty
 
@@ -216,75 +210,8 @@ def test_prepare_possession_derives_only_when_absent(monkeypatch):
 
 
 # --------------------------------------------------------------------------------------------------
-# Divergence exclusion (spec 6.8 / 7.2): documented D-* frames leave the headline and are counted.
+# Reduce accounting: headline + finite-mask over reason==OK; reason_counts is the per-class accounting.
 # --------------------------------------------------------------------------------------------------
-
-
-def _off_frame(n_defenders: int) -> pd.DataFrame:
-    """One OK frame: a ball, one attacker (team H), and ``n_defenders`` defenders (team A), dir=+1.
-
-    Fewer than two finite defenders is the D-OFF condition (the reference applies an arbitrary offside
-    line; native does not), so ``n_defenders=1`` must flag and ``n_defenders=2`` must not.
-    """
-    rows = [
-        dict(
-            game_id=1,
-            period_id=1,
-            frame_id=1,
-            player_id="ball",
-            team_id=None,
-            is_ball=True,
-            is_goalkeeper=False,
-            x=52.5,
-            y=34.0,
-            vx=0.0,
-            vy=0.0,
-            team_in_possession="H",
-            dir=1.0,
-        ),
-        dict(
-            game_id=1,
-            period_id=1,
-            frame_id=1,
-            player_id=1,
-            team_id="H",
-            is_ball=False,
-            is_goalkeeper=False,
-            x=60.0,
-            y=34.0,
-            vx=1.0,
-            vy=0.0,
-            team_in_possession="H",
-            dir=1.0,
-        ),
-    ]
-    for j in range(n_defenders):
-        rows.append(
-            dict(
-                game_id=1,
-                period_id=1,
-                frame_id=1,
-                player_id=100 + j,
-                team_id="A",
-                is_ball=False,
-                is_goalkeeper=False,
-                x=70.0 + j,
-                y=34.0,
-                vx=-1.0,
-                vy=0.0,
-                team_in_possession="H",
-                dir=1.0,
-            )
-        )
-    return pd.DataFrame(rows)
-
-
-def test_d_off_per_frame_flags_frames_with_fewer_than_two_defenders():
-    one = pack_frames(_off_frame(1), attacking_direction_col="dir")
-    two = pack_frames(_off_frame(2), attacking_direction_col="dir")
-    assert one.reason.tolist() == [int(Reason.OK)] and two.reason.tolist() == [int(Reason.OK)]
-    assert D._d_off_per_frame(one).tolist() == [True], "one finite defender -> D-OFF"
-    assert D._d_off_per_frame(two).tolist() == [False], "two finite defenders -> offside is determinable"
 
 
 def _mk_row(grain: str, **kw) -> dict:
@@ -294,15 +221,11 @@ def _mk_row(grain: str, **kw) -> dict:
     return row
 
 
-def _match_row() -> dict:
-    return _mk_row("match", n_scored_frames=1, **{c: 0 for c in D._REASON_COLS.values()})
-
-
 def _shard(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows).reindex(columns=D._EMITTED_SHARD_COLUMNS)
 
 
-def test_reduce_excludes_d_off_rows_from_headline_and_counts_them():
+def test_reduce_headline_and_finite_mask_are_over_reason_ok_rows():
     rows = [
         _mk_row(
             "team",
@@ -316,100 +239,10 @@ def test_reduce_excludes_d_off_rows_from_headline_and_counts_them():
             finite_native=True,
             quad_shift_das=0.0,
             reason=int(Reason.OK),
-            is_d_off=False,
         ),
-        # a D-OFF frame with a large reference gap: excluded from the headline, surfaced in the block.
-        _mk_row(
-            "team",
-            period_id=1,
-            frame_id=2,
-            abs_das=15.0,
-            rel_das=1.0,
-            abs_as=15.0,
-            rel_as=1.0,
-            finite_ref=True,
-            finite_native=True,
-            quad_shift_das=0.0,
-            reason=int(Reason.OK),
-            is_d_off=True,
-        ),
-        _match_row(),
-    ]
-    prov = D.reduce_parity([_shard(rows)])["skillcorner"]
-    assert prov["team"]["das"]["abs"]["max"] == pytest.approx(1e-9), "the 15.0 D-OFF gap must not enter the headline"
-    assert prov["divergences"]["d_off_frames"] == 1
-    assert prov["divergences"]["excluded_rows"]["team"] == 1
-    assert prov["divergences"]["max_abs_das_divergent"]["team"] == pytest.approx(15.0), "accounting shows the gap"
-
-
-def test_reduce_counts_and_excludes_d_key_frames_colliding_across_periods():
-    rows = [
-        _mk_row(
-            "team",
-            period_id=1,
-            frame_id=5,
-            abs_das=9.0,
-            rel_das=1.0,
-            abs_as=9.0,
-            rel_as=1.0,
-            finite_ref=True,
-            finite_native=True,
-            quad_shift_das=0.0,
-            reason=int(Reason.OK),
-            is_d_off=False,
-        ),
-        _mk_row(
-            "team",
-            period_id=2,
-            frame_id=5,
-            abs_das=9.0,
-            rel_das=1.0,
-            abs_as=9.0,
-            rel_as=1.0,
-            finite_ref=True,
-            finite_native=True,
-            quad_shift_das=0.0,
-            reason=int(Reason.OK),
-            is_d_off=False,
-        ),
-        _mk_row(
-            "team",
-            period_id=1,
-            frame_id=6,
-            abs_das=1e-9,
-            rel_das=1e-9,
-            abs_as=1e-9,
-            rel_as=1e-9,
-            finite_ref=True,
-            finite_native=True,
-            quad_shift_das=0.0,
-            reason=int(Reason.OK),
-            is_d_off=False,
-        ),
-        _match_row(),
-    ]
-    prov = D.reduce_parity([_shard(rows)])["skillcorner"]
-    assert prov["divergences"]["d_key_frames"] == 2, "frame_id 5 under two periods -> both rows are D-KEY"
-    assert prov["team"]["das"]["abs"]["max"] == pytest.approx(1e-9), "only the unique-key frame is in the headline"
-
-
-def test_reduce_headline_finite_mask_excludes_degrade_reason_frames():
-    rows = [
-        _mk_row(
-            "team",
-            period_id=1,
-            frame_id=1,
-            abs_das=1e-9,
-            rel_das=1e-9,
-            abs_as=1e-9,
-            rel_as=1e-9,
-            finite_ref=True,
-            finite_native=True,
-            quad_shift_das=0.0,
-            reason=int(Reason.OK),
-            is_d_off=False,
-        ),
-        # native NaNs a NaN-ball frame while the reference recorded a fictional 0.0 (D-BALLNAN).
+        # native NaNs a NaN-ball frame while the reference recorded a fictional value (D-BALLNAN): a
+        # finite-mask mismatch that must NOT count -- the frame is reason != OK, so it is excluded from
+        # the headline and the finite-mask, and tallied by reason_counts (on the match row).
         _mk_row(
             "team",
             period_id=1,
@@ -422,15 +255,13 @@ def test_reduce_headline_finite_mask_excludes_degrade_reason_frames():
             finite_native=False,
             quad_shift_das=np.nan,
             reason=int(Reason.BALL_NAN),
-            is_d_off=False,
         ),
-        _match_row(),
+        _mk_row("match", n_scored_frames=2, **{**{c: 0 for c in D._REASON_COLS.values()}, "reason_ball_nan": 1}),
     ]
     prov = D.reduce_parity([_shard(rows)])["skillcorner"]
-    assert prov["finite_mask_mismatches"]["team"] == 0, (
-        "the BALL_NAN mismatch is a divergence class, not a headline miss"
-    )
-    assert prov["divergences"]["d_ballnan_frames"] == 1
+    assert prov["finite_mask_mismatches"]["team"] == 0, "the BALL_NAN mismatch is excluded by the reason==OK filter"
+    assert prov["reason_counts"]["reason_ball_nan"] == 1, "the NaN-degrade class is counted by reason_counts"
+    assert "divergences" not in prov
 
 
 def test_load_match_ids_groups_the_list_matches_shape_by_provider():
@@ -441,3 +272,105 @@ def test_load_match_ids_groups_the_list_matches_shape_by_provider():
     ]
     got = D._load_match_ids(spec)
     assert got == {"skillcorner": ["111", "333"], "gradientsports": ["222"]}
+
+
+# --------------------------------------------------------------------------------------------------
+# Reference-leg pandas-2 subprocess: locate / probe / marshalling (monkeypatched subprocess, no venv).
+# --------------------------------------------------------------------------------------------------
+
+
+def test_resolve_reference_python_missing_is_fatal(monkeypatch):
+    monkeypatch.delenv("SK_DAS_REFERENCE_PYTHON", raising=False)
+    with pytest.raises(SystemExit) as ei:
+        D._resolve_reference_python(None)
+    assert "accessible-space==2.0.15" in str(ei.value) and "pandas<3" in str(ei.value)
+
+
+def test_resolve_reference_python_accepts_existing_file(tmp_path, monkeypatch):
+    fake = tmp_path / "python"
+    fake.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("SK_DAS_REFERENCE_PYTHON", str(fake))
+    assert D._resolve_reference_python(None) == str(fake)
+    assert D._resolve_reference_python(str(fake)) == str(fake)  # explicit arg wins
+
+
+def test_probe_reference_env_rejects_pandas3(monkeypatch):
+    class R:
+        stdout = "3.0.6\n2.5.3\n2.0.15\n3.12.0\n"  # pandas / numpy / accessible-space / python
+
+    monkeypatch.setattr(D.subprocess, "run", lambda *a, **k: R())
+    with pytest.raises(RuntimeError):
+        D._probe_reference_env("pyx")
+
+
+def test_probe_reference_env_returns_versions(monkeypatch):
+    class R:
+        stdout = "2.3.3\n2.5.3\n2.0.15\n3.12.0\n"
+
+    monkeypatch.setattr(D.subprocess, "run", lambda *a, **k: R())
+    assert D._probe_reference_env("pyx") == {
+        "pandas": "2.3.3",
+        "numpy": "2.5.3",
+        "accessible_space": "2.0.15",
+        "python": "3.12.0",
+    }
+
+
+def test_reference_leg_subprocess_round_trips(monkeypatch):
+    frames = pd.DataFrame(
+        {
+            "game_id": [1],
+            "period_id": [1],
+            "frame_id": [7],
+            "is_ball": [True],
+            "player_id": ["ball"],
+            "team_id": [None],
+            "x": [0.0],
+            "y": [0.0],
+            "vx": [0.0],
+            "vy": [0.0],
+            "team_in_possession": ["t1"],
+            "_das_parity_dir": [1.0],
+        }
+    )
+
+    def fake_run(cmd, **kw):
+        out = Path(cmd[-1])  # out_dir is the last arg
+        pd.DataFrame({"game_id": [1], "period_id": [1], "frame_id": [7], "as": [3.0], "das": [1.5]}).to_parquet(
+            out / "team.parquet"
+        )
+        pd.DataFrame(
+            {"game_id": [1], "period_id": [1], "frame_id": [7], "player_id": [9], "as": [2.0], "das": [1.0]}
+        ).to_parquet(out / "player.parquet")
+
+        class R:
+            returncode = 0
+
+        return R()
+
+    monkeypatch.setattr(D.subprocess, "run", fake_run)
+    got = D._reference_leg_subprocess(frames, reference_python="pyx")
+    assert got["team_das"].tolist() == [1.5]
+    assert got["team_keys"][0].tolist() == [1, 1, 7]
+    assert got["player_keys"][0].tolist() == [1, 1, 7, 9]
+    assert got["player_das"].tolist() == [1.0]
+
+
+def test_input_contract_declares_reference_env_pins():
+    ic = D.input_contract()
+    assert ic["params"]["reference_env_pins"] == {"accessible-space": "2.0.15", "pandas": "<3"}
+
+
+def test_run_corpus_stamps_reference_env(tmp_path, monkeypatch):
+    monkeypatch.setattr(D, "_numba_available", lambda: False)
+    refs, load, stub_ref = _corpus()
+    out = D.run_corpus(
+        refs,
+        load,
+        tmp_path / "out",
+        prov=_CLEAN_PROV,
+        direction_col="dir",
+        reference_leg=stub_ref,
+        reference_env={"pandas": "2.3.3", "accessible_space": "2.0.15"},
+    )
+    assert out["reference_env"] == {"pandas": "2.3.3", "accessible_space": "2.0.15"}

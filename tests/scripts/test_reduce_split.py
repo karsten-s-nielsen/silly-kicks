@@ -7,6 +7,7 @@ shards, so an excluded match (no output row) is counted correctly across MULTIPL
 import json
 
 import _loader_pining as lp
+import pytest
 
 from scripts import validate_das_native_parity as D
 from scripts._item_outcome import ItemExcluded
@@ -29,6 +30,7 @@ def _split_corpus():
 def test_das_reduce_only_equals_serial_with_excluded_and_two_manifests(tmp_path, monkeypatch):
     monkeypatch.setattr(D, "_numba_available", lambda: False)  # skip the numba compile in a unit test
     refs, load, stub_ref = _split_corpus()  # [g1, g2, excluded-999]
+    ref_env = {"accessible-space": "2.0.15", "pandas": "2.3.3"}  # NON-empty env, exercised both paths (DRR-IMPL-02)
 
     # Parallel: worker A scores g1; worker B scores g2 AND hits the excluded ref -> two manifests.
     par = tmp_path / "par"
@@ -41,6 +43,7 @@ def test_das_reduce_only_equals_serial_with_excluded_and_two_manifests(tmp_path,
         shard_root=shard_root,
         direction_col="dir",
         reference_leg=stub_ref,
+        reference_env=ref_env,
         shards_only=True,
         worker_tag="A",
     )
@@ -52,6 +55,7 @@ def test_das_reduce_only_equals_serial_with_excluded_and_two_manifests(tmp_path,
         shard_root=shard_root,
         direction_col="dir",
         reference_leg=stub_ref,
+        reference_env=ref_env,
         shards_only=True,
         worker_tag="B",
     )
@@ -61,7 +65,14 @@ def test_das_reduce_only_equals_serial_with_excluded_and_two_manifests(tmp_path,
     # Serial reference over the identical corpus.
     ser = tmp_path / "ser"
     D.run_corpus(
-        refs, load, ser, prov=_CLEAN_PROV, shard_root=ser / "shards", direction_col="dir", reference_leg=stub_ref
+        refs,
+        load,
+        ser,
+        prov=_CLEAN_PROV,
+        shard_root=ser / "shards",
+        direction_col="dir",
+        reference_leg=stub_ref,
+        reference_env=ref_env,
     )
 
     par_m = json.loads((par / "metrics.json").read_text(encoding="utf-8"))
@@ -72,10 +83,46 @@ def test_das_reduce_only_equals_serial_with_excluded_and_two_manifests(tmp_path,
     _drop_timings(par_m)
     _drop_timings(ser_m)
     assert par_m == ser_m  # identical parity result + population, summed identically across workers
+    # NON-empty reference_env round-trips map->manifest->reduce identically on BOTH paths (DRR-IMPL-02).
+    assert par_m["reference_env"] == ser_m["reference_env"] == ref_env
     assert par_m["n_attempted"] == 3  # all three items reached (attempt is counted before exclusion)
     assert par_m["n_excluded"] == 1  # aggregated from the manifests, invisible to the shards
     assert par_m["providers"]["skillcorner"]["n_matches_scored"] == 2  # only g1 + g2 produced rows
     assert par_m["population"]["listed_per_provider"]["skillcorner"] == 3  # listed from the FULL refs
+
+
+def test_reduce_refuses_mixed_reference_env(tmp_path, monkeypatch):
+    """DRR-IMPL-01 (guard is not decorative): two workers with DIFFERENT reference_env -> the reduce
+    refuses, rather than silently stamping one non-comparable oracle."""
+    monkeypatch.setattr(D, "_numba_available", lambda: False)
+    refs, load, stub_ref = _split_corpus()
+    shard_root = tmp_path / "shards"
+    D.run_corpus(
+        [refs[0]],
+        load,
+        tmp_path,
+        prov=_CLEAN_PROV,
+        shard_root=shard_root,
+        direction_col="dir",
+        reference_leg=stub_ref,
+        reference_env={"pandas": "2.3.3"},
+        shards_only=True,
+        worker_tag="A",
+    )
+    D.run_corpus(
+        refs[1:],
+        load,
+        tmp_path,
+        prov=_CLEAN_PROV,
+        shard_root=shard_root,
+        direction_col="dir",
+        reference_leg=stub_ref,
+        reference_env={"pandas": "2.2.9"},
+        shards_only=True,
+        worker_tag="B",
+    )
+    with pytest.raises(SystemExit, match="reference_env disagreement"):
+        D.reduce_parity_artifact(refs, shard_root, tmp_path, prov=_CLEAN_PROV)
 
 
 def _drop_timings(metrics: dict) -> None:
