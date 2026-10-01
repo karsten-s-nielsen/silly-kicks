@@ -1245,7 +1245,7 @@ def pressure_on_actor(
             )
         # No whole-batch ball-row guard: _pressure_bekkers falls back per-action to
         # the base model (pressure-on-player only) when ball rows are missing.
-        # ball-carrier-max is an improvement, not a requirement (Bekkers 2024 section 2.4). (3.30.0)
+        # ball-carrier-max is an improvement, not a requirement (Bekkers 2025 section 2.4). (3.30.0)
         ctx = _resolve_action_frame_context(actions, frames, links=links)
         from silly_kicks.tracking.features import _build_ball_xy_v_per_action
 

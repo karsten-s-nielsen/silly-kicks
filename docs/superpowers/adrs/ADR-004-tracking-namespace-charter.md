@@ -18,7 +18,7 @@ Tracking unlocks analytical capabilities events fundamentally cannot:
 off-ball player positions, per-frame velocity / acceleration, pre/post-event
 context windows, pitch-control / Voronoi / Spearman models, and refined
 GK / pre-shot context. Tracking-aware VAEP is known to materially improve
-calibration (Bekkers 2024; Decroos & Davis 2020).
+calibration (Bekkers 2025; Decroos & Davis 2020).
 
 This ADR captures the namespace charter so PR-2+ inherits architectural
 invariants without re-litigation. PR-1 (`feat/tracking-namespace-pr1`,

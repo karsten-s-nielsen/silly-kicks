@@ -1073,7 +1073,7 @@ def pressure_on_actor(
       pressure; sum across opposing defenders. Output range [0, ~200%].
     - ``"link_zones"`` - Link et al. 2016 piecewise-zone pressure;
       saturating exponential aggregation. Output [0, 1].
-    - ``"bekkers_pi"`` - Bekkers 2024 Pressing Intensity probabilistic TTI;
+    - ``"bekkers_pi"`` - Bekkers 2025 Pressing Intensity probabilistic TTI;
       requires velocity columns vx/vy in frames. Output [0, 1].
 
     Returns Series named ``pressure_on_actor__<method>`` (suffix-naming
@@ -1131,7 +1131,7 @@ def pressure_on_actor(
         # No whole-batch ball-row guard: when ball rows are missing (entirely or per
         # action), _pressure_bekkers falls back per-action to the base model
         # (pressure-on-player only). ball-carrier-max is an improvement, not a
-        # requirement (Bekkers 2024 section 2.4). (3.30.0)
+        # requirement (Bekkers 2025 section 2.4). (3.30.0)
         ctx = _resolve_action_frame_context(actions, frames, links=links)
         ball_xy_v_per_action = _build_ball_xy_v_per_action(actions, frames, ctx)
         s = _kernels._pressure_bekkers(

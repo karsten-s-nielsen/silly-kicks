@@ -630,7 +630,7 @@ def _pressure_bekkers(
     params: BekkersParams,
     ball_xy_v_per_action: pd.DataFrame,
 ) -> pd.Series:
-    """Bekkers 2024 Pressing Intensity probabilistic model.
+    """Bekkers 2025 Pressing Intensity probabilistic model.
 
     Per defender: TTI -> p via logistic. Optional ball-carrier-max
     (max of p_to_player and p_to_ball per defender). Aggregation:
@@ -709,7 +709,7 @@ def _pressure_bekkers(
 
         p_per_defender = p_to_actor.copy()
 
-        # ball-carrier-max (Bekkers 2024 section 2.4): per defender, take
+        # ball-carrier-max (Bekkers 2025 section 2.4): per defender, take
         # max(p_to_actor, p_to_ball) when this action's linked frame has a finite ball
         # position. When the ball is missing or NaN at the linked frame (e.g. Metrica
         # windows where kloppy returned no ball_coordinates), fall back PER ACTION to

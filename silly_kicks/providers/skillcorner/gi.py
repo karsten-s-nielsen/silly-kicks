@@ -3,8 +3,9 @@
 Extracts the pre-computed option set the GK-decision metric's native tier consumes, from the 294-column
 SkillCorner GI possession model. Raw loading (pining/parquet) stays scripts-side; this is pure shaping.
 
-Imports ``id_compat`` (none needed yet) + pandas ONLY -- never ``silly_kicks.tracking`` (pinned by
-``tests/providers/test_appearances_import_allowlist.py``, which sweeps ``providers/skillcorner/*.py``).
+Imports ``id_compat`` (none needed yet) + pandas ONLY -- never ``silly_kicks.tracking``. (This import
+boundary is NOT yet gated: ``tests/providers/test_appearances_import_allowlist.py`` sweeps
+``providers/*/appearances.py``, NOT this module.)
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Bekkers 2024 Pressing Intensity kernel (probabilistic time-to-intercept).
+"""Bekkers 2025 Pressing Intensity kernel (probabilistic time-to-intercept).
 
 References (see NOTICE):
 - Bekkers, J. (2025), arXiv:2501.04712.
@@ -271,7 +271,7 @@ def test_bekkers_no_ball_rows_anywhere_falls_back_to_player_only() -> None:
     """3.30.0 (supersedes the pre-3.30.0 hard-fail): use_ball_carrier_max=True with
     ZERO ball rows in the entire batch no longer raises. Every action falls back
     per-action to the Bekkers base model (pressure-on-player only). ball-carrier-max
-    is a documented improvement (Bekkers 2024 section 2.4), NOT a requirement; provider
+    is a documented improvement (Bekkers 2025 section 2.4), NOT a requirement; provider
     gaps (e.g. Metrica windows with no ball coordinates) degrade gracefully — never
     crash, never NaN. Guards the graceful-fallback decision against silent reversal.
     """

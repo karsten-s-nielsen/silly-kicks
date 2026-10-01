@@ -239,7 +239,7 @@ does not go vacuous.
 
 This ADR deferred `add_pressure_on_actor(method="bekkers_pi")`'s tier ("opt-in method … its tier is a
 separate decision"). It is decided here: **Tier-3 (honest-NaN), not Tier-1 (lift).** bekkers_pi
-(Bekkers 2024 probabilistic TTI) is velocity-derived, but unlike the pitch-control family it does NOT
+(Bekkers 2025 probabilistic TTI) is velocity-derived, but unlike the pitch-control family it does NOT
 lift cleanly, and the reason is a reusable tier-assignment discriminator.
 
 **The discriminator (the durable contribution).** A velocity-derived aggregator whose zero-velocity

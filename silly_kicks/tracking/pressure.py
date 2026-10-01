@@ -3,7 +3,7 @@
 Three published methodologies, each with a frozen parameter dataclass:
   - andrienko_oval -- Andrienko et al. 2017 directional oval (default)
   - link_zones    -- Link, Lang & Seidenschwarz 2016 piecewise zones
-  - bekkers_pi    -- Bekkers 2024 Pressing Intensity (probabilistic TTI)
+  - bekkers_pi    -- Bekkers 2025 Pressing Intensity (probabilistic TTI)
 
 See:
   - docs/superpowers/specs/2026-05-03-tf3-tf2-design.md sections 4.1, 4.6
@@ -63,7 +63,7 @@ class LinkParams:
 
 @dataclass(frozen=True)
 class BekkersParams:
-    """Parameters for Bekkers 2024 Pressing Intensity (probabilistic TTI model).
+    """Parameters for Bekkers 2025 Pressing Intensity (probabilistic TTI model).
 
     All defaults verified against canonical UnravelSports BSD-3-Clause source
     at the SHA pinned in NOTICE:
