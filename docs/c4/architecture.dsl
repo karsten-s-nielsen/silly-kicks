@@ -5,8 +5,8 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         analyst = person "Soccer Analytics Practitioner" "Data scientist or analyst who classifies and values football actions"
         pipeline = person "Downstream Pipeline" "Production data pipeline that calls silly-kicks inside Spark UDFs"
         maintainer = person "Library Maintainer" "Runs the TF-24 calibration sweep to recommend tuned tracking defaults"
-        // Agent-support tooling actor (Phase 2 MCP consumer; PLANNED/unbuilt — tagged "Planned").
-        agent = person "AI Coding Agent" "An agent or contributor session that runs read-only tripwires mid-work before trusting orientation / provider / construct-validity results" "Planned"
+        // Agent-support tooling actor: consumes the Phase-2 MCP tripwire server.
+        agent = person "AI Coding Agent" "An agent or contributor session that runs the read-only MCP tripwires mid-work before trusting orientation / provider / construct-validity results"
 
         // --- External Systems ---
         kloppy = softwareSystem "kloppy" "PySport event/tracking data normalization library" "External"
@@ -44,10 +44,8 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
             positioning = container "silly_kicks.positioning" "TF-56 prescriptive positioning optimiser: SA solver (optimise_positions) for the best REACHABLE shape + measured positioning_gap = threat(actual) - threat(optimum). compute_*; xt injected." "Python" "Library"
 
-            // PLANNED (Phase 2, unbuilt): silly_kicks/mcp/ does NOT exist yet. Approved design
-            // docs/superpowers/specs/2026-09-30-silly-kicks-agent-support-phase2-mcp-design.md.
-            // Tagged "Planned" so the diagram does not imply shipped code (C4 pinned to reality).
-            mcp = container "silly_kicks.mcp (Planned, Phase 2)" "Read-only tripwire MCP server (stdio): check_orientation / diagnose_provider / validate_construct_validity — each binds a PURE read-only seam, never a driver run()/main(); ids via id_compat." "Python (optional [mcp] extra)" "Planned"
+            // Phase-2 agent-support server (shipped). Opt-in [mcp] extra; the core lib never imports it.
+            mcp = container "silly_kicks.mcp" "Read-only tripwire MCP server (FastMCP, stdio): check_orientation / diagnose_provider / validate_construct_validity — binds pure read-only seams / committed memos, never run()/main()." "Python (optional [mcp] extra)" "Library"
         }
 
         // --- Relationships: Context level ---
@@ -167,11 +165,11 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         territorial_defense -> keeper_identity "Stamps the acting player's real id onto the SB360 actor row via" "apply_actor_identities_to_frames"
         territorial_defense -> xthreat "Values suppressed threat with an injected fitted xT via" "compute_threat_pc"
 
-        // --- Relationships: Agent-support tooling (Phase 1 docs+shims shipped; Phase 2 MCP server PLANNED/unbuilt) ---
-        agent -> mcp "Runs orientation / provider / construct-validity tripwires mid-work (read-only; safe on a dirty tree) via" "stdio MCP tools" "Planned"
-        mcp -> calibration "Binds the read-only measure()/probe/validate seams of scripts/ drivers (measure_rc4_orientation.measure, diag_* probes, validate_*); never run()/main()" "Python import" "Planned"
-        mcp -> tracking "Binds library read-only diagnostics (GkClampDiagnosis / validate_gk_position_clamp) via" "Python import" "Planned"
-        mcp -> spadl "Binds library read-only input-convention diagnostics (detect_input_convention) via" "Python import" "Planned"
+        // --- Relationships: Agent-support tooling (Phase 1 docs+shims + Phase 2 MCP server, both shipped) ---
+        agent -> mcp "Runs the read-only orientation / provider / construct-validity tripwires mid-work (safe on a dirty tree) via" "stdio MCP tools"
+        mcp -> calibration "Binds scripts/measure_rc4_orientation.measure() (check_orientation) + reads committed docs/research validity memos (validate_construct_validity); never run()/main()" "Python import / file read"
+        mcp -> tracking "Binds read-only lib diagnostics validate_gk_position_clamp + validate_id_dtypes (diagnose_provider keeper/id_dtype) via" "Python import"
+        mcp -> spadl "Binds read-only lib diagnostic detect_input_convention (diagnose_provider convention) via" "Python import"
     }
 
     views {
@@ -215,15 +213,6 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             }
             relationship "Relationship" {
                 color #707070
-            }
-            element "Planned" {
-                background #8a8aa8
-                color #ffffff
-                border Dashed
-            }
-            relationship "Planned" {
-                color #8a8aa8
-                style dashed
             }
         }
     }
