@@ -38,13 +38,13 @@ artifacts too, not just the bundled defaults — confirmed by file mtimes: `mode
 `SHA256SUMS` were rewritten after the original `metadata.json`/`metrics.json`):
 
 ```
-C:\Users\Karsten\AppData\Local\Temp\claude\D--Development-karstenskyt--silly-kicks-part-deux\e14c809d-84c7-4487-992d-d7b587dcaed0\scratchpad\weights\xs_sc_extended\
+<scratchpad>\weights\xs_sc_extended\
     SHA256SUMS
     metadata.json
     metrics.json
     model.json
 
-C:\Users\Karsten\AppData\Local\Temp\claude\D--Development-karstenskyt--silly-kicks-part-deux\e14c809d-84c7-4487-992d-d7b587dcaed0\scratchpad\weights\xcross_sc_extended\
+<scratchpad>\weights\xcross_sc_extended\
     SHA256SUMS
     metadata.json
     metrics.json
@@ -94,14 +94,14 @@ for repo_id in (
 # the top level — so each repo serves exactly ONE variant, at its root (see the note below).
 api.upload_folder(
     repo_id="silly-kicks/xshot-occurrence-v1",
-    folder_path=r"C:\...\scratchpad\weights\xs_sc_extended",
+    folder_path=r"<scratchpad>\weights\xs_sc_extended",
     repo_type="model",
     commit_message="TF-19 PR-2: sc_extended xS weights (98 owner SkillCorner matches admitted)",
 )
 
 api.upload_folder(
     repo_id="silly-kicks/xcross-attempt-v1",
-    folder_path=r"C:\...\scratchpad\weights\xcross_sc_extended",
+    folder_path=r"<scratchpad>\weights\xcross_sc_extended",
     repo_type="model",
     commit_message="TF-19 PR-2: sc_extended xCross weights (98 owner SkillCorner matches admitted)",
 )

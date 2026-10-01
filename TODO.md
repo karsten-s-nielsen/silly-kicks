@@ -121,6 +121,50 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   hard to enter rather than merely documented. **Deferred because it perturbs the exact fit seams
   whose byte-identity licenses "the deep-zone gate need not be re-run"** (ADR-036 non-goal #1); do it
   in a cycle where that gate is being re-run anyway.
+- **TF-64 — GK detection-gate wiring (close the E7 keeper-position hole on SkillCorner); APPROVED
+  spec, PARKED.** Wires the shipped ADR-109 `detected_mask` primitive into the 14
+  keeper-position-dependent outputs (8 restdefense GK cols + `gk_decision` reconstruction-tier + gkdv +
+  4 `gk_influence`) so they honest-NaN/drop on an undetected SkillCorner keeper (detection ≈17.6% of
+  live frames) instead of consuming ~80%-extrapolated positions. Public keeper-row wrappers over
+  `detected_mask`; **mechanical test 8 DERIVES the keeper-position-reader population from code (ADR-056)**
+  and fails on any member neither detection-gated nor in a reasoned out-of-scope allowlist. Spec:
+  [docs/superpowers/specs/2026-10-01-gk-detection-gate-design.md](docs/superpowers/specs/2026-10-01-gk-detection-gate-design.md)
+  (approved over 3 `/review-spec` rounds, two reviewers/round, ≥3 passes each; file:line pinned
+  `main@949730e` — re-anchor at plan time). ADR-109 primitive design:
+  `docs/superpowers/specs/2026-09-27-detection-primitive-design.md`. **Gated:** chain is
+  **TF-58 → TF-64 → TF-66** (all touch `providers/`+`tracking/`; no hard order vs TF-58 — whichever lands
+  second rebases `_provider_visibility.py`; TF-58 is a parked branch, NOT on main). **`pre_shot_gk_*` =
+  GATE (owner decision 2026-10-01)** — `add_pre_shot_gk_position`/`add_pre_shot_gk_angle` join the wiring
+  scope. Remaining plan-time dispositions (owner call each): the sweep-floor candidates
+  `tracking/_gk_geometry.py`, `shot_stopping/_compute.py`, `positioning/_compute.py`,
+  `tracking/_cover_shadows.py`. `gk_decision` native-tier = caveat-only (owner signed off; reads the
+  opaque GI feed, not a frame keeper row). No plan
+  yet — written at cycle-start, travels with the impl.
+- **TF-66 — pressure-metric conditioning (P0 GI keys → P1 phase×block z-score → P1b de-pooled KPIs);
+  APPROVED spec, PARKED.** Makes `pressure_on_actor` phase/block-dependent (closes anti-patterns
+  E6/E2) + de-pools the team-pressing KPIs (E2/E5), all ADDITIVE above the primitive dispatch (no
+  retrain, no default-xfn change). Spec:
+  [docs/superpowers/specs/2026-10-01-pressure-conditioning-p0-p1-p1b-design.md](docs/superpowers/specs/2026-10-01-pressure-conditioning-p0-p1-p1b-design.md)
+  (approved over 3 `/review-spec` rounds, ≥3 passes; file:line pinned `main@517c200` — re-anchor at
+  plan time). **Gated:** (1) **sequence after TF-64 (GK detection-gate wiring)** — itself gated after
+  TF-58, so the provider/tracking chain is **TF-58 → TF-64 → TF-66**; all touch `providers/`+`tracking/`,
+  one branch per cycle, no collision. (TF-64 refs: its TODO row + spec
+  `docs/superpowers/specs/2026-10-01-gk-detection-gate-design.md`.) **§7 pre-plan owner decisions are all
+  RESOLVED (2026-10-01):** P1b E5 denominator = per opponent-possession (primary) + per-minute
+  (secondary); `link_zones`/`bekkers_pi` glossary backfill = in-scope for P1; the Bekkers-2024 ADR
+  citation item was resolved in `949730e`. **So the ONLY remaining gate is (1) GK-observability
+  sequencing.** No plan yet —
+  the plan is written at cycle-start and travels with the impl. Provenance: a research handoff →
+  multi-pass `/review-spec` (3 rounds, ≥3 passes). P2 (pitch-control / Narizuka
+  primitives) / P3 (value-linked pressing model) / P4 (full validation ladder) are further-future cycles.
+- **TF-67 — MCP tripwire extensions (read-only; additive to `silly_kicks/mcp/server.py`); CAPTURED, no
+  spec.** Two follow-ons once their metrics exist: (a) a `check_gk_observability` tripwire (keeper
+  detection rate + whether GK outputs are honest-NaN'd) — consumes TF-64; (b) extend
+  `validate_construct_validity` to the pressure-conditioning family — consumes TF-66. Both read-only and
+  additive: they do NOT change what the existing 3 tools (`check_orientation`/`diagnose_provider`/
+  `validate_construct_validity`) report, so nothing goes stale. **Gated:** after TF-64 + TF-66 (needs
+  those outputs live). No spec yet — written at cycle-start per "spec only when about to build."
+  Provenance: analytics-session long-term plan, 2026-10-01.
 
 ---
 

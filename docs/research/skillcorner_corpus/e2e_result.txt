@@ -1,5 +1,5 @@
 === 1. FULL kloppy load + convert_to_frames (mirrors build_skillcorner_frames) ===
-C:\Users\Karsten\AppData\Local\Temp\claude\D--Development-karstenskyt--silly-kicks-part-deux\e14c809d-84c7-4487-992d-d7b587dcaed0\scratchpad\sc_new_schema\test_e2e.py:32: DeprecationWarning: tracking.kloppy.convert_to_frames called without explicit output_convention. Defaulting to 'absolute_frame' (current behaviour). Pass output_convention='absolute_frame' to silence this warning, or 'ltr' to opt into SPADL LTR output. See ADR-006 (silly-kicks 3.0.0).
+<scratchpad>\sc_new_schema\test_e2e.py:32: DeprecationWarning: tracking.kloppy.convert_to_frames called without explicit output_convention. Defaulting to 'absolute_frame' (current behaviour). Pass output_convention='absolute_frame' to silence this warning, or 'ltr' to opt into SPADL LTR output. See ADR-006 (silly-kicks 3.0.0).
   frames, trep = tk.convert_to_frames(ds)
   frames: (1051215, 25)  periods=[np.int64(1), np.int64(2)]
   distinct frame_id: 45,705   frame_rate=[10.]

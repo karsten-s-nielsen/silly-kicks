@@ -1,5 +1,5 @@
 # xT-GK v2 construct-validity — gradientsports (FAITHFUL V_opp)
-- rho variant: `C:/Users/Karsten/AppData/Local/Temp/claude/D--Development-karstenskyt--silly-kicks/f8334e52-8c05-466e-8cc5-3158a9eb1c6a/scratchpad/rho_prefix/default` * GK-distribution test rows: **1902** * V_opp = faithful observed-post-turnover, possession-bound, TRAIN-fit
+- rho variant: `<scratchpad>/rho_prefix/default` * GK-distribution test rows: **1902** * V_opp = faithful observed-post-turnover, possession-bound, TRAIN-fit
 
 | metric | AUC | n |
 |---|---|---|

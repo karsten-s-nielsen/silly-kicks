@@ -45,7 +45,7 @@
 
 ---
 # xT-GK v2 keeper discrimination — gradientsports (FAITHFUL V_opp)
-- rho variant: `C:/Users/Karsten/AppData/Local/Temp/claude/D--Development-karstenskyt--silly-kicks/f8334e52-8c05-466e-8cc5-3158a9eb1c6a/scratchpad/rho_prefix/default` * GK-distribution actions: **3874** * min 20 dist/keeper * V_opp fit on FULL cohort (descriptive spread)
+- rho variant: `<scratchpad>/rho_prefix/default` * GK-distribution actions: **3874** * min 20 dist/keeper * V_opp fit on FULL cohort (descriptive spread)
 
 | metric | ICC (action-level) | CV (means, unstable) | n keepers |
 |---|---|---|---|
@@ -68,7 +68,7 @@
 
 ---
 # xT-GK v2 keeper discrimination — skillcorner (FAITHFUL V_opp)
-- rho variant: `C:/Users/Karsten/AppData/Local/Temp/claude/D--Development-karstenskyt--silly-kicks/f8334e52-8c05-466e-8cc5-3158a9eb1c6a/scratchpad/rho_prefix/skillcorner` * GK-distribution actions: **5487** * min 20 dist/keeper * V_opp fit on FULL cohort (descriptive spread)
+- rho variant: `<scratchpad>/rho_prefix/skillcorner` * GK-distribution actions: **5487** * min 20 dist/keeper * V_opp fit on FULL cohort (descriptive spread)
 
 | metric | ICC (action-level) | CV (means, unstable) | n keepers |
 |---|---|---|---|
