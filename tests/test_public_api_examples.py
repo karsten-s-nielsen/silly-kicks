@@ -141,6 +141,10 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/reporting.py",
     "silly_kicks/feature_glossary.py",
     "silly_kicks/metric_contracts.py",
+    # Phase-2 MCP server (opt-in entrypoint). Its three @app.tool functions + tool_names need a loaded
+    # match or a live MCP client, so they are exercised by tests/mcp/ and deferred per-symbol in
+    # _EXAMPLES_DEBT below; registered here so the derived public surface stays accounted (no doctest).
+    "silly_kicks/mcp/server.py",
     "silly_kicks/spadl/utils.py",
     "silly_kicks/spadl/base.py",
     "silly_kicks/spadl/orientation.py",
@@ -436,6 +440,24 @@ _PUBLIC_MODULE_FILES = (
 #: are skipped by the walker, because a stub whose body is `...` cannot carry an example and
 #: so could never let its own entry burn down.
 _EXAMPLES_DEBT: dict[str, str] = {
+    # --- Phase 2: silly_kicks.mcp.server is an opt-in MCP entrypoint; its public symbols need a loaded
+    # match or a live MCP client, so they are exercised by tests/mcp/ (verdict-shape, thin-wrapper,
+    # fail-loud) rather than a module doctest. Deferred per-symbol.
+    "silly_kicks/mcp/server.py::check_orientation": (
+        "MCP tool: loads a match (fail-loud) then binds measure() + orient_frames_to_ltr_by_geometry. "
+        "Needs a loaded match / live MCP; covered by tests/mcp/test_check_orientation.py."
+    ),
+    "silly_kicks/mcp/server.py::diagnose_provider": (
+        "MCP tool: loads a match then binds a lib diagnostic (keeper/convention/id_dtype). Needs a "
+        "loaded match / live MCP; covered by tests/mcp/test_diagnose_provider.py."
+    ),
+    "silly_kicks/mcp/server.py::validate_construct_validity": (
+        "MCP tool: reads a committed validity memo (fail-loud). Covered by "
+        "tests/mcp/test_validate_construct_validity.py."
+    ),
+    "silly_kicks/mcp/server.py::tool_names": (
+        "Server introspection accessor over FastMCP's registry; covered by tests/mcp/test_registration.py."
+    ),
     # --- TF-60 PR2: _velocity_availability.py became a public module (zero_velocity_if_unavailable
     # exported for restdefense._danger). These three are INTERNAL ADR-063/067 helpers, in no __all__ --
     # they ride the module's discovery. Deferred rather than documented; the module is public only via

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "silly-kicks": {
+      "command": "python",
+      "args": ["-m", "silly_kicks.mcp.server"],
+      "cwd": "."
+    }
+  }
+}

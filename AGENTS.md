@@ -76,6 +76,7 @@ Procedural checklists in `docs/howto/` (class-2, sibling to `docs/context`) — 
 - **Authoring a metric** — `docs/howto/authoring-a-metric.md`: the `add_*`/`compute_*` checklist (metric_contracts, purity, liveness, `*_xfns`, glossary, release).
 - **Construct validity** — `docs/howto/construct-validity.md`: the three validity gates + GO/NO-GO memo shape + the "what it does NOT measure" caveat.
 - **Corpus drivers** — `docs/howto/corpus-drivers-runbook.md`: build a `build_*`/`validate_*`/`measure_*` on the `scripts/_driver.py` seam (resume, shards, provenance).
+- **MCP tripwire server** — `docs/howto/mcp.md`: the opt-in `silly_kicks.mcp` read-only server (`check_orientation`/`diagnose_provider`/`validate_construct_validity`) — install + per-client registration.
 
 ## Key conventions
 
