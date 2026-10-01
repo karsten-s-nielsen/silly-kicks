@@ -5,6 +5,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # accessible-space is pinned ==2.0.15 as the dev-only das-reference golden-parity ORACLE for the
+      # native DAS engine (ADR-107/108): native DAS is validated byte-for-byte against exactly 2.0.15,
+      # and the pandas<3 constraint is tied to 2.0.15's offside-under-CoW behavior the pandas-2 reference
+      # leg depends on. A bump is an owner-gated DGX re-validation + golden regen, never an auto-update.
+      - dependency-name: "accessible-space"
 
   - package-ecosystem: "github-actions"
     directory: "/"
