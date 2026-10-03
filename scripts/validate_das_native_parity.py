@@ -30,10 +30,12 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import functools
+import hashlib
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -43,7 +45,7 @@ from typing import Literal, TypeVar, cast
 import numpy as np
 import pandas as pd
 
-from scripts._das_reference_leg import _check_reference_env
+from scripts._das_reference_leg import _check_reference_env, _id_key
 from scripts._input_contract import declare_inputs
 
 # Corpus seam (owner-ratified reuse; ADR-052 D14). ``pining_source`` lists refs (resume-before-load
@@ -73,6 +75,10 @@ _DIR_COL = "_das_parity_dir"
 #: numba thread counts profiled for the ms/frame table (spec 7.2). Only the ones <= os.cpu_count() run.
 _THREAD_SWEEP = (1, 2, 4, 8, 16, 20)
 
+#: das-native spec 4.1 golden-fixture bounds, applied PER ROW on the corpus (np.allclose, rtol = atol).
+_GOLDEN_TOL_NUMPY = 1e-12
+_GOLDEN_TOL_NUMBA = 1e-10
+
 #: Pack reason -> shard column, so the reduce reports each divergence / degrade class (spec 7.2).
 _REASON_COLS = {
     0: "reason_ok",
@@ -84,7 +90,7 @@ _REASON_COLS = {
     6: "reason_direction_unresolved",
 }
 
-_SHARD_SCHEMA_VERSION = "das-native-parity-3"
+_SHARD_SCHEMA_VERSION = "das-native-parity-4"
 _EMITTED_SHARD_COLUMNS = [
     "grain",  # "team" (per scored frame) | "player" (per player per frame) | "match" (per-match scalars)
     "provider",
@@ -101,6 +107,7 @@ _EMITTED_SHARD_COLUMNS = [
     "finite_native",
     "quad_shift_das",  # native periodic - native reference (the ADR-108 shift)
     "numba_minus_numpy_das",  # native numba - native numpy (reference quad); NaN when numba absent
+    "numba_minus_numpy_as",  # the same for AS (team + player rows): all four numba cells are measured
     # The frame's Reason code, so the reduce can grade / finite-mask over reason==OK rows only (a non-OK
     # frame yields native NaN vs a fictional reference value). Present on team/player rows; OK on match
     # rows. The per-class NaN-degrade accounting is the match rows' reason_counts (D-BALLNAN, ...).
@@ -111,6 +118,9 @@ _EMITTED_SHARD_COLUMNS = [
     "ms_frame_numpy",
     "ms_frame_numba",
     "ms_frame_periodic",
+    "n_dkey_frames",  # frames whose (game, frame_id) recurs in another period (the D-KEY figure)
+    "n_dir_compared",  # frames compared against the library's OWN direction inference
+    "n_dir_disagree",  # ... of which the team DAS disagrees
     *(_REASON_COLS[k] for k in sorted(_REASON_COLS)),
 ]
 
@@ -125,6 +135,7 @@ def input_contract() -> dict:
             "reference_env_pins": {"accessible-space": "2.0.15", "pandas": "<3"},
             "thread_sweep": list(_THREAD_SWEEP),
             "schema": _SHARD_SCHEMA_VERSION,
+            "golden_tolerances": {"numpy": _GOLDEN_TOL_NUMPY, "numba": _GOLDEN_TOL_NUMBA},
         },
         extractors=["silly_kicks.tracking._das_pack", "silly_kicks.tracking._das_engine"],
         models=["silly_kicks.tracking._das_params"],
@@ -166,6 +177,15 @@ def _direction_column(frames: pd.DataFrame, *, direction_col: str | None) -> pd.
     return out
 
 
+def _native_player_key(v) -> int | str:
+    """The native leg's player join key: the reference leg's own rule (``_id_key``) over ``canonical_id``.
+
+    Integral ids (SkillCorner, GS) key as ints, as before; string ids (IDSSE ``DFL-OBJ-*``) key as the
+    string. Player rows never carry an NA id.
+    """
+    return _id_key(str(canonical_id(v)))
+
+
 def _run_native(
     frames: pd.DataFrame, params, *, engine: Literal["auto", "numpy", "numba"]
 ) -> tuple[pd.DataFrame, pd.DataFrame, PackedFrames]:
@@ -201,7 +221,7 @@ def _run_native(
                 "game_id": rep["game_id"].to_numpy(),
                 "period_id": rep["period_id"].to_numpy(),
                 "frame_id": rep["frame_id"].to_numpy(),
-                "player_id": [int(canonical_id(v)) for v in pids],  # type: ignore[arg-type]  # player rows: never NA
+                "player_id": [_native_player_key(v) for v in pids],
                 "player_as": res.player_as,
                 "player_das": res.player_das,
             }
@@ -247,6 +267,15 @@ _PROBE_CODE = (
 )
 
 
+def _n_dkey_frames(frames: pd.DataFrame) -> int:
+    """Distinct (game, period, frame) keys whose (game, frame_id) recurs in ANOTHER period of the same game:
+    the frames the old accessible-space keying (frame_id alone) conflated -- the D-KEY production figure."""
+    keys = frames[list(_FRAME_KEYS)].drop_duplicates()
+    per = keys.groupby(["game_id", "frame_id"])["period_id"].nunique()
+    collide = per[per > 1].index
+    return int(keys.set_index(["game_id", "frame_id"]).index.isin(collide).sum())
+
+
 def _resolve_reference_python(arg: str | None) -> str:
     """The pandas-2 + accessible-space==2.0.15 interpreter for the reference leg (a DOCUMENTED
     PREREQUISITE; never auto-provisioned inside a clean-tree-gated run). Fail loud if absent."""
@@ -270,7 +299,9 @@ def _probe_reference_env(reference_python: str) -> dict[str, str]:
     return {"pandas": pv, "numpy": nv, "accessible_space": av, "python": pyv}
 
 
-def _reference_leg_subprocess(frames: pd.DataFrame, *, reference_python: str) -> dict[str, np.ndarray]:
+def _reference_leg_subprocess(
+    frames: pd.DataFrame, *, reference_python: str, repeat: int = 1, infer_direction: bool = False
+) -> dict[str, np.ndarray]:
     """Marshal one match's scored frames to a temp parquet OUTSIDE the repo tree (an in-tree write would
     trip the clean-tree guard, ADR-037), run the reference module under ``reference_python``, and read
     team/player AS+DAS back. Raise on a non-zero exit or missing output -- never a silently-empty
@@ -280,7 +311,15 @@ def _reference_leg_subprocess(frames: pd.DataFrame, *, reference_python: str) ->
         in_pq = d / "in.parquet"
         frames.to_parquet(in_pq)
         subprocess.run(  # noqa: S603 -- resolved documented-prerequisite interpreter + our own module path
-            [reference_python, str(_REFERENCE_MODULE), str(in_pq), str(d)], check=True
+            [
+                reference_python,
+                str(_REFERENCE_MODULE),
+                str(in_pq),
+                str(d),
+                str(repeat),
+                "1" if infer_direction else "0",
+            ],
+            check=True,
         )
         team = pd.read_parquet(d / "team.parquet")
         player = pd.read_parquet(d / "player.parquet")
@@ -291,6 +330,10 @@ def _reference_leg_subprocess(frames: pd.DataFrame, *, reference_python: str) ->
             "player_keys": player[[*_FRAME_KEYS, "player_id"]].to_numpy(),
             "player_as": player["as"].to_numpy(dtype=float),
             "player_das": player["das"].to_numpy(dtype=float),
+            # the reference library's in-process compute time (a 0-d array keeps the annotation true)
+            "compute_s": np.asarray(
+                json.loads((d / "timing.json").read_text(encoding="utf-8"))["compute_s"], dtype=float
+            ),
         }
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -371,7 +414,7 @@ def _numba_available() -> bool:
         return False
 
 
-def _measure_match(item, *, reference_leg, direction_col: str | None = None) -> pd.DataFrame:
+def _measure_match(item, *, reference_leg, inferred_leg=None, direction_col: str | None = None) -> pd.DataFrame:
     """One match -> a long shard: one ``team`` row per scored frame, one ``player`` row per player per
     scored frame, one ``match`` row of per-match scalars (timings, reason counts). EMPTY (columns
     present) when the match scores nothing -- "ran, produced nothing", never a crash that loses the pass.
@@ -394,15 +437,16 @@ def _measure_match(item, *, reference_leg, direction_col: str | None = None) -> 
     (ref, t_ref) = _time_leg(lambda: reference_leg(scored))
     ((np_team, np_player, packed), t_np) = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numpy"))
     if _numba_available():
-        ((nb_team, _nb_player, _r), t_nb) = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numba"))
+        ((nb_team, nb_player, _r), t_nb) = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numba"))
     else:
-        nb_team, t_nb = None, np.nan
+        nb_team = nb_player = None
+        t_nb = np.nan
     ((per_team, _pp, _r2), t_per) = _time_leg(lambda: _run_native(scored, DAS_PARAMS, engine="numpy"))
 
     flags = _frame_flags(packed)  # per-frame reason + D-OFF, merged onto each parity row for the reduce
     rows: list[dict] = []
     rows += _team_rows(provider, ref, np_team, nb_team, per_team, flags)
-    rows += _player_rows(provider, ref, np_player, flags)
+    rows += _player_rows(provider, ref, np_player, nb_player, flags)
 
     reason_counts = pd.Series(packed.reason).map(_REASON_COLS).value_counts().to_dict()
     match_row = {
@@ -420,6 +464,33 @@ def _measure_match(item, *, reference_leg, direction_col: str | None = None) -> 
     # Match rows carry no per-frame reason; set OK so the column stays a clean uint8 (a mixed uint8/NaN
     # object column is unwritable to parquet). The reduce reads reason on team/player rows only (it
     # filters by grain first).
+    n_dkey = _n_dkey_frames(scored)
+    n_cmp = n_dis = 0
+    if inferred_leg is not None:
+        inf = inferred_leg(scored)
+        a = _join_on_keys(
+            ref["team_keys"],
+            {"r": ref["team_das"]},
+            pd.DataFrame(
+                {
+                    "game_id": inf["team_keys"][:, 0],
+                    "period_id": inf["team_keys"][:, 1],
+                    "frame_id": inf["team_keys"][:, 2],
+                    "i": inf["team_das"],
+                }
+            ),
+            list(_FRAME_KEYS),
+        )
+        both = np.isfinite(a["r"].to_numpy(float)) & np.isfinite(a["i"].to_numpy(float))
+        r, i = a["r"].to_numpy(float)[both], a["i"].to_numpy(float)[both]
+        n_cmp, n_dis = int(both.sum()), int((np.abs(i - r) > 1e-9 * np.maximum(1.0, np.abs(r))).sum())
+    match_row.update(
+        {
+            "n_dkey_frames": n_dkey,
+            "n_dir_compared": n_cmp if inferred_leg is not None else np.nan,
+            "n_dir_disagree": n_dis if inferred_leg is not None else np.nan,
+        }
+    )
     match_row["reason"] = int(Reason.OK)
     rows.append(match_row)
 
@@ -451,7 +522,9 @@ def _team_rows(provider, ref, np_team, nb_team, per_team, flags) -> list[dict]:
     )
     if nb_team is not None:
         merged = merged.merge(
-            nb_team.rename(columns={"team_das": "nb_das"})[[*_FRAME_KEYS, "nb_das"]], on=list(_FRAME_KEYS), how="left"
+            nb_team.rename(columns={"team_das": "nb_das", "team_as": "nb_as"})[[*_FRAME_KEYS, "nb_das", "nb_as"]],
+            on=list(_FRAME_KEYS),
+            how="left",
         )
     merged = merged.merge(
         per_team.rename(columns={"team_das": "per_das"})[[*_FRAME_KEYS, "per_das"]], on=list(_FRAME_KEYS), how="left"
@@ -460,6 +533,7 @@ def _team_rows(provider, ref, np_team, nb_team, per_team, flags) -> list[dict]:
     abs_das, rel_das = _abs_rel(merged["ref_das"].to_numpy(), merged["team_das"].to_numpy())
     abs_as, rel_as = _abs_rel(merged["ref_as"].to_numpy(), merged["team_as"].to_numpy())
     nb = merged["nb_das"].to_numpy() if "nb_das" in merged.columns else np.full(len(merged), np.nan)
+    nb_as = merged["nb_as"].to_numpy() if "nb_as" in merged.columns else np.full(len(merged), np.nan)
     rows = []
     for i in range(len(merged)):
         rows.append(
@@ -477,19 +551,29 @@ def _team_rows(provider, ref, np_team, nb_team, per_team, flags) -> list[dict]:
                 "finite_native": bool(np.isfinite(merged["team_das"].iloc[i])),
                 "quad_shift_das": float(merged["per_das"].iloc[i] - merged["ref_das"].iloc[i]),
                 "numba_minus_numpy_das": float(nb[i] - merged["team_das"].iloc[i]) if np.isfinite(nb[i]) else np.nan,
+                "numba_minus_numpy_as": (
+                    float(nb_as[i] - merged["team_as"].iloc[i]) if np.isfinite(nb_as[i]) else np.nan
+                ),
                 "reason": int(merged["reason"].iloc[i]),
             }
         )
     return rows
 
 
-def _player_rows(provider, ref, np_player, flags) -> list[dict]:
+def _player_rows(provider, ref, np_player, nb_player, flags) -> list[dict]:
     merged = _join_on_keys(
         ref["player_keys"],
         {"ref_as": ref["player_as"], "ref_das": ref["player_das"]},
         np_player,
         [*_FRAME_KEYS, "player_id"],
     )
+    if nb_player is not None:
+        nb_cols = nb_player.rename(columns={"player_das": "nb_das", "player_as": "nb_as"})
+        merged = merged.merge(
+            nb_cols[[*_FRAME_KEYS, "player_id", "nb_das", "nb_as"]], on=[*_FRAME_KEYS, "player_id"], how="left"
+        )
+    nb_d = merged["nb_das"].to_numpy(float) if "nb_das" in merged.columns else np.full(len(merged), np.nan)
+    nb_a = merged["nb_as"].to_numpy(float) if "nb_as" in merged.columns else np.full(len(merged), np.nan)
     merged = merged.merge(flags, on=list(_FRAME_KEYS), how="left")
     abs_das, rel_das = _abs_rel(merged["ref_das"].to_numpy(), merged["player_das"].to_numpy())
     abs_as, rel_as = _abs_rel(merged["ref_as"].to_numpy(), merged["player_as"].to_numpy())
@@ -509,6 +593,12 @@ def _player_rows(provider, ref, np_player, flags) -> list[dict]:
                 "rel_as": rel_as[i],
                 "finite_ref": bool(np.isfinite(merged["ref_das"].iloc[i])),
                 "finite_native": bool(np.isfinite(merged["player_das"].iloc[i])),
+                "numba_minus_numpy_das": (
+                    float(nb_d[i] - merged["player_das"].iloc[i]) if np.isfinite(nb_d[i]) else np.nan
+                ),
+                "numba_minus_numpy_as": (
+                    float(nb_a[i] - merged["player_as"].iloc[i]) if np.isfinite(nb_a[i]) else np.nan
+                ),
                 "reason": int(merged["reason"].iloc[i]),
             }
         )
@@ -544,6 +634,22 @@ def _grade_grain(df: pd.DataFrame) -> dict:
         }
         for out in ("das", "as")
     }
+
+
+def _n_outside_golden_bound(abs_d, rel_d, tol: float, extra=None) -> int:
+    """Rows violating ``|native - ref| <= tol + tol * |ref|`` (np.allclose with rtol = atol = tol).
+
+    ``|ref|`` is recovered from the shard pair (``rel = abs / |ref|``; NaN when ``ref == 0``, where the
+    bound is ``atol`` alone). ``extra`` adds ``|numba - numpy|``, so ``abs + extra`` bounds
+    ``|numba - ref|`` by the triangle inequality (a conservative count). Non-finite rows are
+    finite-mask cases, counted by ``finite_mask_mismatches``.
+    """
+    a = np.asarray(abs_d, dtype=float)
+    r = np.asarray(rel_d, dtype=float)
+    dist = a + np.abs(np.asarray(extra, dtype=float)) if extra is not None else a
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ref_mag = np.where(np.isfinite(r) & (r > 0), a / r, 0.0)
+    return int((np.isfinite(dist) & (dist > tol + tol * ref_mag)).sum())
 
 
 def _clean_ok(g: pd.DataFrame) -> pd.DataFrame:
@@ -594,6 +700,44 @@ def reduce_parity(shards: list[pd.DataFrame]) -> dict:
             "finite_mask_mismatches": {"team": _mask_mismatch(team_ok), "player": _mask_mismatch(player_ok)},
             "quadrature_shift_das": {"median": _pct(quad, 50), "p90": _pct(quad, 90), "max": _pct(quad, 100)},
             "numba_vs_numpy_das_max_abs": _pct(nbmax, 100),
+            "numba_vs_numpy_max_abs": {
+                grain: {o: _pct(g[f"numba_minus_numpy_{o}"].abs(), 100) for o in ("das", "as")}
+                for grain, g in (("team", team_ok), ("player", player_ok))
+            },
+            "n_outside_golden_bound": {
+                eng: {
+                    grain: {
+                        o: _n_outside_golden_bound(
+                            g[f"abs_{o}"],
+                            g[f"rel_{o}"],
+                            tol,
+                            extra=(g[f"numba_minus_numpy_{o}"] if eng == "numba" else None),
+                        )
+                        for o in ("das", "as")
+                    }
+                    for grain, g in (("team", team_ok), ("player", player_ok))
+                }
+                for eng, tol in (("numpy", _GOLDEN_TOL_NUMPY), ("numba", _GOLDEN_TOL_NUMBA))
+            },
+            # CCC-PLAN-23: how many FINITE numba comparisons each cell actually made -- a NaN diff (empty or
+            # misaligned numba merge) is "not compared", so a vacuous cell reads 0 here, never "clean".
+            "numba_compared": {
+                grain: {o: int(np.isfinite(g[f"numba_minus_numpy_{o}"].to_numpy(float)).sum()) for o in ("das", "as")}
+                for grain, g in (("team", team_ok), ("player", player_ok))
+            },
+            "finite_counts": {
+                grain: {
+                    "ref": int(g["finite_ref"].astype(bool).sum()),
+                    "native": int(g["finite_native"].astype(bool).sum()),
+                    "rows": len(g),
+                }
+                for grain, g in (("team", team), ("player", player))
+            },
+            "d_key_frames": int(match["n_dkey_frames"].fillna(0).sum()),
+            "direction": {
+                "n_compared": int(match["n_dir_compared"].fillna(0).sum()),
+                "n_disagree": int(match["n_dir_disagree"].fillna(0).sum()),
+            },
             "timings_ms_per_frame": {
                 leg: _pct(match[f"ms_frame_{leg}"], 50) for leg in ("ref", "numpy", "numba", "periodic")
             },
@@ -602,6 +746,24 @@ def reduce_parity(shards: list[pd.DataFrame]) -> dict:
             "n_matches_scored": int(match["game_id"].nunique()),
         }
     return out
+
+
+def _map_token(direction_col: str | None, commit: str) -> dict:
+    """The map's shard-generation token inputs. The RUN COMMIT is one of them (combined-cycle spec 2):
+    shards are attributable to the commit that built them even if a worker dies before its manifest."""
+    return {
+        "metric": "das_native_parity",
+        "schema": _SHARD_SCHEMA_VERSION,
+        "direction": direction_col or "goal_map",
+        "commit": commit,
+    }
+
+
+def _map_generation(commit: str, direction_col: str | None = None) -> str:
+    """The shard-generation directory name the map writes for ``commit`` (and the reduce expects)."""
+    from scripts._driver import _token
+
+    return _token(_map_token(direction_col, commit), None)
 
 
 def run_corpus(
@@ -616,6 +778,7 @@ def run_corpus(
     reference_env: dict | None = None,
     shards_only: bool = False,
     worker_tag: str = "serial",
+    inferred_leg=None,
 ) -> dict:
     """The map+reduce+write, factored out of ``main`` so the reduce PATH is testable offline.
 
@@ -638,7 +801,7 @@ def run_corpus(
     from scripts._driver import for_each
 
     def _work(item):
-        return _measure_match(item, reference_leg=reference_leg, direction_col=direction_col)
+        return _measure_match(item, reference_leg=reference_leg, inferred_leg=inferred_leg, direction_col=direction_col)
 
     res = for_each(
         refs,
@@ -646,25 +809,30 @@ def run_corpus(
         load=load,
         work=_work,
         shard_root=shard_root if shard_root is not None else dest / "shards",
-        token_inputs={
-            "metric": "das_native_parity",
-            "schema": _SHARD_SCHEMA_VERSION,
-            "direction": direction_col or "goal_map",
-        },
+        token_inputs=_map_token(direction_col, prov["commit"]),
         label="match",
     )
     # Persist this worker's manifest so the reduce can aggregate exclusions it cannot see from shards
     # alone (SB360 structural exclusion, `.excluded.json` markers). res.manifest() is in-memory only.
     (res.shard_dir / f"manifest_{worker_tag}.json").write_text(
-        json.dumps({**res.manifest(), "reference_env": reference_env or {}}, default=str), encoding="utf-8"
+        json.dumps(
+            {
+                **res.manifest(),
+                "reference_env": reference_env or {},
+                "run_commit": prov["commit"],
+                "run_tree_dirty": prov["dirty"],
+            },
+            default=str,
+        ),
+        encoding="utf-8",
     )
     if shards_only:
         return {"shards_only": True, "shard_dir": str(res.shard_dir)}
     root = shard_root if shard_root is not None else dest / "shards"
-    return reduce_parity_artifact(refs, root, dest, prov=prov)
+    return reduce_parity_artifact(refs, root, dest, prov=prov, direction_col=direction_col)
 
 
-def reduce_parity_artifact(refs, shard_root: Path, dest: Path, *, prov: dict) -> dict:
+def reduce_parity_artifact(refs, shard_root: Path, dest: Path, *, prov: dict, direction_col: str | None = None) -> dict:
     """Reduce the shards under ``shard_root`` into the single combined ``metrics.json`` (spec 7.2).
 
     Single-sources the reduce for both the serial ``run_corpus`` and the parallel launcher, which calls
@@ -688,6 +856,24 @@ def reduce_parity_artifact(refs, shard_root: Path, dest: Path, *, prov: dict) ->
             "use a fresh --shard-root per corpus run"
         )
     gen_dir = next(iter(gen_dirs))
+    from scripts._driver import exclusion_path, shard_path
+
+    expected = _map_generation(prov["commit"], direction_col)
+    if gen_dir.name != expected:
+        # The token covers the commit AND every other map input (B r3 CCC-PLAN-26): name them all.
+        raise SystemExit(
+            f"the shard generation {gen_dir.name} does not match this reduce's token {expected} "
+            f"(commit {prov['commit']}, direction_col {direction_col!r}); "
+            "reduce at the build commit with the build's flags"
+        )
+    missing = [
+        r.key for r in refs if not shard_path(gen_dir, r.key).is_file() and not exclusion_path(gen_dir, r.key).is_file()
+    ]
+    if missing:
+        raise SystemExit(
+            f"{len(missing)} of {len(refs)} listed matches have no shard (first: {missing[:3]}); "
+            "re-run that worker (it resumes)"
+        )
     # reference_env (the pandas-2 reference interpreter's versions) is map-time provenance carried on the
     # per-worker manifests, so a --reduce-only invocation needs no reference interpreter (README hazard 4).
     # Collect the DISTINCT non-empty reference_env across workers. A mixed-reference-interpreter corpus
@@ -711,6 +897,11 @@ def reduce_parity_artifact(refs, shard_root: Path, dest: Path, *, prov: dict) ->
     # Sum the per-worker manifests, then rebuild the exact `res.manifest()` shape so the artifact's
     # top-level fields are unchanged from the serial version (Hyrum: metrics.json is a published seam).
     agg = aggregate_manifests(gen_dir, defaults=("n_attempted", "n_failed", "n_counters_unrecorded", "n_excluded"))
+    # Defence in depth (CCC-PLAN-21): the commit-keyed generation already refuses a worker built at another
+    # commit, so this fires only for a foreign manifest inside THIS generation (test_a_planted_foreign_manifest...).
+    foreign = sorted(set(agg["commits_seen"]) - {prov["commit"]})
+    if foreign:
+        raise SystemExit(f"worker manifest(s) from another commit {foreign}")
     manifest = {
         "generation": gen_dir.name,
         "n_attempted": agg["n_attempted"],
@@ -720,10 +911,12 @@ def reduce_parity_artifact(refs, shard_root: Path, dest: Path, *, prov: dict) ->
     }
     out = {
         "providers": parity,
-        "population": _population(refs, scored_providers, manifest),
+        "population": _population(refs, scored_providers, manifest, accounted=len(refs)),
         **manifest,
         "run_commit": prov["commit"],
-        "run_tree_dirty": prov["dirty"],
+        "run_tree_dirty": bool(prov["dirty"] or agg["run_tree_dirty"]),
+        "commit_consistent": agg["commit_consistent"],
+        "commits_seen": agg["commits_seen"],
         "run_tree_state": prov.get("tree_state"),
         "run_platform": prov.get("platform"),
         "run_machine": prov.get("machine"),
@@ -735,7 +928,7 @@ def reduce_parity_artifact(refs, shard_root: Path, dest: Path, *, prov: dict) ->
     return out
 
 
-def _population(refs, scored_providers: dict, manifest: dict) -> dict:
+def _population(refs, scored_providers: dict, manifest: dict, *, accounted: int) -> dict:
     """Matches listed / scored / excluded per provider (spec 7.2). SB360 is structurally unscoreable
     (velocity-less freeze-frames, ADR-063): recorded, not silently dropped."""
     listed: dict[str, int] = {}
@@ -743,6 +936,8 @@ def _population(refs, scored_providers: dict, manifest: dict) -> dict:
         listed[ref.provider] = listed.get(ref.provider, 0) + 1
     return {
         "listed_per_provider": listed,
+        # every listed key has a shard or an exclusion marker (else the reduce refused before this point)
+        "accounted": accounted,
         "scored_per_provider": scored_providers,
         "excluded": {
             "attempted": manifest.get("n_attempted"),
@@ -753,6 +948,295 @@ def _population(refs, scored_providers: dict, manifest: dict) -> dict:
             ),
         },
     }
+
+
+_PATH_TIMING_MODULE = Path(__file__).resolve().parent / "_das_path_timing.py"
+#: The per-run memory ceiling (GiB) for the add_das / das_xfns path legs. The OLD path's das_xfns needed
+#: 113.4 GiB on an IDSSE match and was OOM-killed inside a 110G cap on a GS match (combined-cycle Phase B);
+#: a run that hits the ceiling is recorded as not fitting, never allowed to take the box down.
+_PATH_MEMORY_LIMIT_GIB = 100.0
+_COORD_COLS = ("x", "y", "z", "vx", "vy", "speed", "x_smoothed", "y_smoothed")
+_FOREIGN_CPU_MAX = 0.05  # contention gate: other processes' CPU over the whole benchmark
+
+
+def _sweep_counts() -> list[int]:
+    """The `_THREAD_SWEEP` counts this box can run (numba refuses more threads than CPUs)."""
+    return [k for k in _THREAD_SWEEP if k <= (os.cpu_count() or 1)]
+
+
+def _benchmark_match_ids(sample_path: Path) -> dict[str, list[str]]:
+    """The benchmark population IS the sample file whose SHA-256 the artifact records (list-matches shape)."""
+    return _load_match_ids(json.loads(Path(sample_path).read_text(encoding="utf-8")))
+
+
+def _old_path_frames(frames: pd.DataFrame) -> pd.DataFrame:
+    """The frames as the pre-F1b (4.127.0) path stored them: float64 coords, no category ids."""
+    out = frames.copy()
+    for c in _COORD_COLS:
+        if c in out.columns:
+            out[c] = out[c].astype("float64")
+    for c in ("team_id", "player_id"):
+        if c in out.columns and isinstance(out[c].dtype, pd.CategoricalDtype):
+            integer = pd.api.types.is_integer_dtype(out[c].cat.categories.dtype)
+            out[c] = out[c].astype(object).astype("Int64") if integer else out[c].astype(object)
+    return out
+
+
+def _path_subprocess(
+    frames,
+    actions,
+    *,
+    python: str,
+    repeat: int,
+    expect_native: bool,
+    memory_limit_gib: float = _PATH_MEMORY_LIMIT_GIB,
+) -> dict:
+    """Time add_das / das_xfns in a pandas-2 interpreter; refuse unless it ran the expected engine.
+
+    The timing module enforces ``memory_limit_gib`` on itself and, above it, returns what finished plus an
+    ``over_memory`` record (a result, not a failure).
+    """
+    d = Path(tempfile.mkdtemp(prefix="das_path_"))
+    try:
+        frames.to_parquet(d / "frames.parquet")
+        actions.to_parquet(d / "actions.parquet")
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        subprocess.run(  # noqa: S603 -- resolved prerequisite interpreter + our own module path
+            [python, str(_PATH_TIMING_MODULE), str(d), str(d), str(repeat), str(float(memory_limit_gib))],
+            check=True,
+            env=env,
+        )
+        timing = json.loads((d / "timing.json").read_text(encoding="utf-8"))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    if bool(timing.get("native")) is not expect_native:
+        which = "new" if expect_native else "old"
+        raise SystemExit(
+            f"the {which} path interpreter ran native={timing.get('native')} (silly-kicks {timing.get('silly_kicks')})"
+        )
+    return timing
+
+
+def _keeper_counterfactual(scored: pd.DataFrame, shift_m: float = 1.0) -> tuple[pd.DataFrame, bool]:
+    """The gkdv-shaped pair leg: every defending keeper moved +shift_m in x (kinematics only)."""
+    from silly_kicks.id_compat import ids_differ
+
+    cf = scored.copy()
+    tip = cf["team_in_possession"]
+    moved = (
+        cf["is_goalkeeper"].fillna(False).astype(bool).to_numpy()
+        & ~cf["is_ball"].astype(bool).to_numpy()
+        & tip.notna().to_numpy()
+        & ids_differ(cf["team_id"], tip).to_numpy()
+    )
+    if moved.any():
+        cf.loc[moved, "x"] = (cf.loc[moved, "x"].astype("float64") + shift_m).astype(cf["x"].dtype)
+    return cf, bool(moved.any())
+
+
+def _bench_match(
+    item,
+    *,
+    reference_python: str,
+    old_path_python: str,
+    new_path_python: str,
+    repeat: int,
+    memory_limit_gib: float = _PATH_MEMORY_LIMIT_GIB,
+) -> dict:
+    """One match's spec 4.2 legs, best-of-``repeat`` after a warm-up. No match id is recorded.
+
+    A path leg that hits ``memory_limit_gib`` records what finished plus ``<new|old>_path_over_memory``
+    (phase, limit, peak); its missing time drops that match from that speedup only.
+    """
+    from silly_kicks.tracking._das import get_individual_das, individual_das_paired
+    from silly_kicks.tracking._das_engine import compute_das
+    from silly_kicks.tracking._das_pack import pack_frames
+
+    provider, _match_id, actions, frames = item
+    scored = _direction_column(_prepare_possession(_scored_frames(actions, frames)), direction_col=None)
+    n = int(scored[list(_FRAME_KEYS)].drop_duplicates().shape[0])
+    row: dict = {"provider": provider, "n_scored_frames": n}
+    if n == 0:
+        return row
+    ref = _reference_leg_subprocess(scored, reference_python=reference_python, repeat=repeat)
+    row["ms_frame_ref"] = 1e3 * ref["compute_s"] / n
+    _, t = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numpy"), repeat=repeat)
+    row["ms_frame_numpy"] = 1e3 * t / n
+    _run_native(scored, _REFERENCE_PARAMS, engine="numba")  # JIT warm-up, untimed
+    _, t = _time_leg(lambda: _run_native(scored, _REFERENCE_PARAMS, engine="numba"), repeat=repeat)
+    row["ms_frame_numba_serial"] = 1e3 * t / n
+    packed = pack_frames(scored, attacking_direction_col=_DIR_COL)
+    _, t = _time_leg(lambda: compute_das(packed, DAS_PARAMS, engine="numpy"), repeat=repeat)
+    row["ms_frame_numpy_periodic"] = 1e3 * t / n
+    threads = {}
+    for k in _sweep_counts():
+        compute_das(packed, DAS_PARAMS, engine="numba", n_threads=k)  # prange compiles separately
+        _, t = _time_leg(lambda k=k: compute_das(packed, DAS_PARAMS, engine="numba", n_threads=k), repeat=repeat)
+        threads[str(k)] = 1e3 * t / n
+    row["numba_threads_ms_frame"] = threads
+    # add_das refuses frames without team_in_possession and raw pining frames lack it: derive it (the caller
+    # prerequisite, untimed) once, so both path legs time the same input.
+    old_frames = _old_path_frames(_prepare_possession(frames))
+    for which, python, native in (("new", new_path_python, True), ("old", old_path_python, False)):
+        t = _path_subprocess(
+            old_frames, actions, python=python, repeat=repeat, expect_native=native, memory_limit_gib=memory_limit_gib
+        )
+        for leg in ("add_das", "das_xfns"):
+            if f"{leg}_s" in t:
+                row[f"{leg}_{which}_s"] = t[f"{leg}_s"]
+        if t.get("over_memory"):
+            row[f"{which}_path_over_memory"] = {k: t.get(k) for k in ("phase", "limit_gib", "peak_gib")}
+        row[f"pandas_{which}"] = t["pandas"]
+    cf, any_moved = _keeper_counterfactual(scored)
+    if any_moved:
+        _, row["paired_s"] = _time_leg(
+            lambda: individual_das_paired(scored, cf, attacking_direction_col=_DIR_COL), repeat=repeat
+        )
+        _, row["independent_s"] = _time_leg(
+            lambda: (
+                get_individual_das(scored, attacking_direction_col=_DIR_COL),
+                get_individual_das(cf, attacking_direction_col=_DIR_COL),
+            ),
+            repeat=repeat,
+        )
+    return row
+
+
+def summarize_benchmark(rows: list[dict]) -> dict:
+    """The spec 4.2 figures (pure). ms/frame legs: ratio of medians; per-match legs: median ratio.
+
+    A path-leg speedup uses the matches where BOTH paths finished that call; ``speedup_n`` says how many,
+    and ``<old|new>_path_over_memory`` counts per provider the matches whose path leg hit the ceiling.
+    """
+    ok = [r for r in rows if r.get("n_scored_frames")]
+
+    def med(key):
+        return float(np.median([r[key] for r in ok]))
+
+    def speedup(leg: str) -> tuple[float | None, int]:
+        both = [r[f"{leg}_old_s"] / r[f"{leg}_new_s"] for r in ok if f"{leg}_old_s" in r and f"{leg}_new_s" in r]
+        return (float(np.median(both)) if both else None), len(both)
+
+    def over_memory(which: str) -> dict[str, int]:
+        hits: dict[str, int] = {}
+        for r in ok:
+            if f"{which}_path_over_memory" in r:
+                hits[str(r["provider"])] = hits.get(str(r["provider"]), 0) + 1
+        return hits
+
+    ref, npy, nb = med("ms_frame_ref"), med("ms_frame_numpy"), med("ms_frame_numba_serial")
+    counts = sorted({k for r in ok for k in r["numba_threads_ms_frame"]}, key=int)  # those the box could run
+    tk = {k: float(np.median([r["numba_threads_ms_frame"][k] for r in ok])) for k in counts}
+    paired = [r["paired_s"] / r["independent_s"] for r in ok if "paired_s" in r]
+    (add_sp, add_n), (xfn_sp, xfn_n) = speedup("add_das"), speedup("das_xfns")
+    return {
+        "ref_over_numba_serial": ref / nb,
+        "ref_over_numpy": ref / npy,
+        "prange_efficiency": {k: tk["1"] / (int(k) * v) for k, v in tk.items()},
+        "add_das_speedup": add_sp,
+        "das_xfns_speedup": xfn_sp,
+        "speedup_n": {"add_das": add_n, "das_xfns": xfn_n},
+        "old_path_over_memory": over_memory("old"),
+        "new_path_over_memory": over_memory("new"),
+        "paired_over_independent": float(np.median(paired)) if paired else None,
+        "ms_frame_median": {"ref": ref, "numpy": npy, "numba_serial": nb},
+        "seconds_per_frame": {"numba_serial": tk["1"] / 1e3, "numpy": med("ms_frame_numpy_periodic") / 1e3},
+        "n_matches": len(ok),
+    }
+
+
+def _foreign_cpu_fraction(*, busy0: float, busy1: float, own0: float, own1: float, elapsed: float, ncpu: int) -> float:
+    """Other processes' share of the machine over the run: (machine busy - own) / (elapsed * ncpu)."""
+    return max(0.0, (busy1 - busy0) - (own1 - own0)) / (elapsed * ncpu)
+
+
+def _cpu_snapshot() -> tuple[float, float] | None:
+    """(machine busy cpu-seconds from /proc/stat, own+children cpu-seconds); None off Linux."""
+    if sys.platform == "win32":
+        return None
+    import resource
+
+    fields = Path("/proc/stat").read_text(encoding="ascii").splitlines()[0].split()[1:]
+    vals = [int(v) for v in fields]
+    idle = vals[3] + (vals[4] if len(vals) > 4 else 0)  # idle + iowait
+    busy = (sum(vals) - idle) / os.sysconf("SC_CLK_TCK")
+    me, kids = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
+    return busy, me.ru_utime + me.ru_stime + kids.ru_utime + kids.ru_stime
+
+
+def _peak_rss_bytes() -> dict | None:
+    if sys.platform == "win32":
+        return None
+    import resource
+
+    return {
+        "self": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
+        "children": resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * 1024,
+    }
+
+
+def _loadavg() -> float | None:
+    return None if sys.platform == "win32" else os.getloadavg()[0]
+
+
+def run_benchmark(
+    refs,
+    load,
+    dest: Path,
+    *,
+    prov: dict,
+    reference_python: str,
+    old_path_python: str,
+    new_path_python: str,
+    repeat: int,
+    sample_sha256: str,
+    memory_limit_gib: float = _PATH_MEMORY_LIMIT_GIB,
+) -> dict:
+    """The benchmark artifact (spec 12 D1): run ALONE after every other process. Provider-only rows."""
+    snap0, t0, load0 = _cpu_snapshot(), time.perf_counter(), _loadavg()
+    rows = [
+        _bench_match(
+            load(ref),
+            reference_python=reference_python,
+            old_path_python=old_path_python,
+            new_path_python=new_path_python,
+            repeat=repeat,
+            memory_limit_gib=memory_limit_gib,
+        )
+        for ref in refs
+    ]
+    snap1, elapsed = _cpu_snapshot(), time.perf_counter() - t0
+    foreign = (
+        _foreign_cpu_fraction(
+            busy0=snap0[0], busy1=snap1[0], own0=snap0[1], own1=snap1[1], elapsed=elapsed, ncpu=os.cpu_count() or 1
+        )
+        if snap0 and snap1
+        else None
+    )
+    out = {
+        "summary": summarize_benchmark(rows),
+        "path_memory_limit_gib": float(memory_limit_gib),
+        "per_match": rows,
+        "sample_sha256": sample_sha256,
+        "repeat": repeat,
+        "thread_sweep": _sweep_counts(),
+        "peak_rss_bytes": _peak_rss_bytes(),
+        "contention": {
+            "foreign_cpu_fraction": foreign,
+            "max": _FOREIGN_CPU_MAX,
+            "loadavg_1m": {"before": load0, "after": _loadavg()},
+        },
+        "reference_env": _probe_reference_env(reference_python),
+        "run_commit": prov["commit"],
+        "run_tree_dirty": prov["dirty"],
+        "run_tree_state": prov.get("tree_state"),
+        "run_platform": prov.get("platform"),
+        "run_machine": prov.get("machine"),
+        "input_contract": input_contract(),
+    }
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "performance.json").write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
+    return out
 
 
 # --------------------------------------------------------------------------------------------------
@@ -814,7 +1298,38 @@ def main() -> None:
         default="serial",
         help="unique tag for this worker's manifest_<tag>.json under --shards-only (default 'serial').",
     )
+    ap.add_argument(
+        "--benchmark", action="store_true", help="write performance.json over --benchmark-sample-json (run ALONE)"
+    )
+    ap.add_argument("--benchmark-sample-json", default=None, help="the fixed sample ([{provider, match_id}, ...])")
+    ap.add_argument(
+        "--old-path-python",
+        default=None,
+        help="silly-kicks 4.127.0 + accessible-space 2.0.15 + pandas<3 (else $SK_DAS_OLDPATH_PYTHON)",
+    )
+    ap.add_argument(
+        "--new-path-python", default=None, help="this checkout installed with pandas<3 (else $SK_DAS_NEWPATH_PYTHON)"
+    )
+    ap.add_argument("--repeat", type=int, default=3, help="best-of-N timing repeats (benchmark only)")
+    ap.add_argument(
+        "--path-memory-limit-gib",
+        type=float,
+        default=_PATH_MEMORY_LIMIT_GIB,
+        help="memory ceiling per add_das/das_xfns path run (benchmark only); a run above it is recorded as "
+        "not fitting (default %(default)s)",
+    )
+    ap.add_argument(
+        "--print-generation",
+        action="store_true",
+        help="print the shard generation a map at THIS commit writes (the launcher's --das-generation) and exit",
+    )
     args = ap.parse_args()
+
+    if args.print_generation:
+        from scripts._provenance import git_provenance as _git_provenance
+
+        print(_map_generation(_git_provenance()["commit"]))
+        return
 
     from scripts._provenance import git_provenance, require_clean_tree
 
@@ -840,8 +1355,22 @@ def main() -> None:
     match_ids = (
         _load_match_ids(json.loads(Path(args.match_ids_json).read_text("utf-8"))) if args.match_ids_json else None
     )
+    if args.benchmark:
+        if args.match_ids_json:
+            raise SystemExit(
+                "--benchmark takes its population from --benchmark-sample-json only; drop --match-ids-json"
+            )
+        if not args.benchmark_sample_json:
+            raise SystemExit("--benchmark needs --benchmark-sample-json (a fixed, seeded sample)")
+        match_ids = _benchmark_match_ids(Path(args.benchmark_sample_json))
+    from scripts._partition import providers_for_slice
+
     refs, base_load = pining_source(
-        providers, token=args.token, match_ids=match_ids, max_per_provider=args.max_matches, cache_dir=cache_dir
+        providers_for_slice(providers, match_ids),
+        token=args.token,
+        match_ids=match_ids,
+        max_per_provider=args.max_matches,
+        cache_dir=cache_dir,
     )
     if match_ids is not None and not refs:
         raise SystemExit(f"--match-ids-json {args.match_ids_json} selected no matches from providers {providers}.")
@@ -850,11 +1379,33 @@ def main() -> None:
         lm = base_load(ref)
         return (lm.provider, lm.match_id, lm.actions, lm.frames)
 
+    if args.benchmark:
+        if not args.benchmark_sample_json:
+            raise SystemExit("--benchmark needs --benchmark-sample-json (a fixed, seeded sample)")
+        old_python = args.old_path_python or os.environ.get("SK_DAS_OLDPATH_PYTHON")
+        new_python = args.new_path_python or os.environ.get("SK_DAS_NEWPATH_PYTHON")
+        if not old_python or not new_python:
+            raise SystemExit("--benchmark needs both pandas-2 path interpreters (old 4.127.0, new = this checkout)")
+        out = run_benchmark(
+            refs,
+            _load,
+            dest,
+            prov=prov,
+            reference_python=_resolve_reference_python(args.reference_python),
+            old_path_python=old_python,
+            new_path_python=new_python,
+            repeat=args.repeat,
+            sample_sha256=hashlib.sha256(Path(args.benchmark_sample_json).read_bytes()).hexdigest(),
+            memory_limit_gib=args.path_memory_limit_gib,
+        )
+        print(json.dumps(out["summary"], indent=2, default=str))
+        return
+
     # Reduce-only: assemble the combined artifact from shards already on disk (after the workers).
     # Needs NO reference interpreter -- reference_env rides the manifests (README hazard 4).
     if args.reduce_only:
         root = Path(args.shard_root) if args.shard_root else dest / "shards"
-        out = reduce_parity_artifact(refs, root, dest, prov=prov)
+        out = reduce_parity_artifact(refs, root, dest, prov=prov, direction_col=None)
         print(json.dumps({k: v for k, v in out.items() if k != "input_contract"}, indent=2, default=str))
         return
 
@@ -869,6 +1420,10 @@ def main() -> None:
         prov=prov,
         shard_root=Path(args.shard_root) if args.shard_root else None,
         reference_leg=functools.partial(_reference_leg_subprocess, reference_python=reference_python),
+        # das-native 7.2: the library's OWN direction inference vs the GoalMap direction (team DAS)
+        inferred_leg=functools.partial(
+            _reference_leg_subprocess, reference_python=reference_python, infer_direction=True
+        ),
         reference_env=ref_env,
         shards_only=args.shards_only,
         worker_tag=args.worker_tag,

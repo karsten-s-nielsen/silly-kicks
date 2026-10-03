@@ -356,3 +356,197 @@ def test_main_refuses_a_float32_corpus(tmp_path, monkeypatch):
     )
     with pytest.raises(SystemExit, match="float64"):
         main()
+
+
+def _write_tc3_match(cache, gid: int, *, frame0: int) -> None:
+    from silly_kicks.spadl import config as spc
+    from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
+
+    frames = pd.concat(
+        [
+            _make_ghost_gk_frames(frame_id=frame0, timestamp=float(frame0)),
+            _make_ghost_gk_frames(frame_id=frame0 + 1, timestamp=float(frame0 + 1)),
+        ],
+        ignore_index=True,
+    )
+    frames.to_parquet(cache / "shards" / "tok" / f"gradientsports__{gid}.parquet")
+    pd.DataFrame(
+        {
+            "game_id": [str(gid)],
+            "period_id": [1],
+            "team_id": [2],
+            "time_seconds": [float(frame0)],
+            "type_id": [spc.actiontype_id["pass"]],
+            "result_id": [spc.result_id["success"]],
+        }
+    ).to_parquet(cache / "_actions" / f"gradientsports__{gid}.parquet")
+    (cache / "_home" / f"gradientsports__{gid}.json").write_text(json.dumps({"home_team_id": 1}))
+
+
+def _tc3_cache(tmp_path):
+    cache = tmp_path / "cache"
+    (cache / "shards" / "tok").mkdir(parents=True)
+    (cache / "_actions").mkdir()
+    (cache / "_home").mkdir()
+    _write_tc3_match(cache, 100, frame0=1)
+    _write_tc3_match(cache, 101, frame0=3)
+    return cache
+
+
+def _t10(monkeypatch, *args):
+    from scripts.measure_f1b_feature_delta import main
+
+    monkeypatch.setattr(sys, "argv", ["measure_f1b_feature_delta.py", *map(str, args)])
+    main()
+
+
+_KEYS = ["shards__tok__gradientsports__100", "shards__tok__gradientsports__101"]
+
+
+def _worker(monkeypatch, tmp_path, cache, out, i, keys):
+    kj = tmp_path / f"k{i}.json"
+    kj.write_text(json.dumps(keys))
+    _t10(
+        monkeypatch,
+        "--data-dir",
+        cache,
+        "--out",
+        out,
+        "--shards-only",
+        "--worker-tag",
+        f"w{i}",
+        "--match-keys-json",
+        kj,
+        "--allow-dirty",
+    )
+
+
+def _assert_same_artifact(serial, sharded):
+    s = json.loads((serial / "metrics.json").read_text())
+    p = json.loads((sharded / "metrics.json").read_text())
+    assert p["models"] == s["models"]
+    assert p["n_matches"] == s["n_matches"] == 2 and p["n_accounted"] == 2
+    assert p["generation"] == s["generation"] and p["run_commit"] == s["run_commit"]
+    a = pd.read_parquet(serial / "f1b_feature_delta.parquet")
+    b = pd.read_parquet(sharded / "f1b_feature_delta.parquet")
+    cols = list(a.columns)
+    pd.testing.assert_frame_equal(
+        a.sort_values(cols).reset_index(drop=True), b[cols].sort_values(cols).reset_index(drop=True)
+    )
+
+
+def test_sharded_run_reduces_to_the_serial_artifact(tmp_path, monkeypatch, capsys):
+    cache = _tc3_cache(tmp_path)
+    serial, sharded = tmp_path / "serial", tmp_path / "sharded"
+    _t10(monkeypatch, "--data-dir", cache, "--out", serial, "--allow-dirty")
+    capsys.readouterr()
+    _t10(monkeypatch, "--data-dir", cache, "--list-match-keys")
+    assert json.loads(capsys.readouterr().out) == _KEYS
+    _worker(monkeypatch, tmp_path, cache, sharded, 0, _KEYS[:1])
+    _worker(monkeypatch, tmp_path, cache, sharded, 1, _KEYS[1:])
+    assert not (sharded / "metrics.json").exists()  # a worker never writes the corpus artifact
+    _t10(monkeypatch, "--data-dir", cache, "--out", sharded, "--reduce-only", "--allow-dirty")
+    _assert_same_artifact(serial, sharded)
+
+
+def test_a_worker_killed_before_its_manifest_still_reduces(tmp_path, monkeypatch):
+    """Killed after its last shard but before writing manifest_<tag>.json: the commit-keyed generation
+    still attributes the shards, so the reduce succeeds and matches serial (CCC-PLAN-11)."""
+    cache = _tc3_cache(tmp_path)
+    serial, sharded = tmp_path / "serial", tmp_path / "sharded"
+    _t10(monkeypatch, "--data-dir", cache, "--out", serial, "--allow-dirty")
+    _worker(monkeypatch, tmp_path, cache, sharded, 0, _KEYS)
+    for mf in (sharded / "_shards").glob("*/manifest_*.json"):
+        mf.unlink()  # simulate the kill
+    _t10(monkeypatch, "--data-dir", cache, "--out", sharded, "--reduce-only", "--allow-dirty")
+    _assert_same_artifact(serial, sharded)
+
+
+def test_a_worker_resumed_with_the_same_tag_reduces_identically(tmp_path, monkeypatch):
+    cache = _tc3_cache(tmp_path)
+    serial, sharded = tmp_path / "serial", tmp_path / "sharded"
+    _t10(monkeypatch, "--data-dir", cache, "--out", serial, "--allow-dirty")
+    _worker(monkeypatch, tmp_path, cache, sharded, 0, _KEYS[:1])  # "killed" after one item
+    _worker(monkeypatch, tmp_path, cache, sharded, 0, _KEYS)  # relaunched: resumes, attempts only the rest
+    _t10(monkeypatch, "--data-dir", cache, "--out", sharded, "--reduce-only", "--allow-dirty")
+    _assert_same_artifact(serial, sharded)
+
+
+def test_reduce_refuses_an_unfinished_corpus(tmp_path, monkeypatch):
+    cache = _tc3_cache(tmp_path)
+    out = tmp_path / "o"
+    _worker(monkeypatch, tmp_path, cache, out, 0, _KEYS[:1])
+    with pytest.raises(SystemExit, match="have no shard"):
+        _t10(monkeypatch, "--data-dir", cache, "--out", out, "--reduce-only", "--allow-dirty")
+
+
+def test_reduce_refuses_a_manifest_from_another_commit(tmp_path, monkeypatch):
+    cache = _tc3_cache(tmp_path)
+    out = tmp_path / "o"
+    _worker(monkeypatch, tmp_path, cache, out, 0, _KEYS)
+    (mf,) = list((out / "_shards").glob("*/manifest_w0.json"))
+    m = json.loads(mf.read_text())
+    m["run_commit"] = "deadbeef"
+    mf.write_text(json.dumps(m))
+    with pytest.raises(SystemExit, match="another commit"):
+        _t10(monkeypatch, "--data-dir", cache, "--out", out, "--reduce-only", "--allow-dirty")
+
+
+def test_the_generation_is_keyed_on_the_commit(tmp_path, monkeypatch):
+    """B r4 CCC-PLAN-31: a worker at commit A that died before its manifest is refused by a reduce at commit
+    B. No manifest is left, so the commit-keyed GENERATION is what refuses (the CCC-SPEC-04 mechanism); the
+    same reduce at commit A succeeds, so the commit is the only difference."""
+    import scripts.measure_f1b_feature_delta as t10
+
+    def _at(commit):
+        monkeypatch.setattr(
+            t10, "git_provenance", lambda: {"commit": commit * 40, "dirty": False, "tree_state": "clean"}
+        )
+
+    cache = _tc3_cache(tmp_path)
+    out = tmp_path / "o"
+    _at("a")
+    _worker(monkeypatch, tmp_path, cache, out, 0, _KEYS)
+    for mf in (out / "_shards").glob("*/manifest_*.json"):
+        mf.unlink()  # killed before its manifest
+    _at("b")
+    with pytest.raises(SystemExit, match="expected exactly the generation"):
+        _t10(monkeypatch, "--data-dir", cache, "--out", out, "--reduce-only", "--allow-dirty")
+    _at("a")
+    _t10(monkeypatch, "--data-dir", cache, "--out", out, "--reduce-only", "--allow-dirty")
+    assert json.loads((out / "metrics.json").read_text())["run_commit"] == "a" * 40
+
+
+def test_shards_only_requires_a_worker_tag(tmp_path, monkeypatch):
+    """Must FAIL before the change for the right reason: assert the message, not just SystemExit."""
+    cache = _tc3_cache(tmp_path)
+    with pytest.raises(SystemExit):
+        _t10(monkeypatch, "--data-dir", cache, "--out", tmp_path / "o", "--shards-only", "--allow-dirty")
+    # argparse prints its error; the plan's message is the discriminator
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf), pytest.raises(SystemExit):
+        _t10(monkeypatch, "--data-dir", cache, "--out", tmp_path / "o", "--shards-only", "--allow-dirty")
+    assert "--shards-only needs a unique --worker-tag" in buf.getvalue()
+
+
+def test_unknown_match_key_is_refused(tmp_path, monkeypatch):
+    cache = _tc3_cache(tmp_path)
+    kj = tmp_path / "k.json"
+    kj.write_text(json.dumps(["nope"]))
+    with pytest.raises(SystemExit, match="absent from --data-dir"):
+        _t10(
+            monkeypatch,
+            "--data-dir",
+            cache,
+            "--out",
+            tmp_path / "o",
+            "--shards-only",
+            "--worker-tag",
+            "w0",
+            "--match-keys-json",
+            kj,
+            "--allow-dirty",
+        )

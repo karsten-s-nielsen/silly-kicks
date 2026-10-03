@@ -111,6 +111,25 @@ weights (the version + CHANGELOG are claimed at the weights commit, not the sche
   provenance-guard tested). The `ruthless-efficiency[optuna]` pin gained a `<0.7.0` ceiling (0.7.0 made
   `StoreConfig.objective_id` required, breaking every call site at pyright + runtime); the native-DAS cycle
   lifts the ceiling in lockstep with wiring `objective_id`.
+- **Amendment (2026-10-02) — final anchors, the corpus incident, the receiver decision.**
+  - **Anchors.** The ghost-GK `default` / `sweeper` / `sweeper_position_only`, both ghost-outfield variants
+    and the gk_completion `default` rebundle are the F1b re-fits made at `3ca609f` (reachable from `main`
+    through the non-squash #261 merge) and are reused unchanged. Every other re-fit — xshot / xcross
+    (both variants), gk_completion `skillcorner`, ghost-GK `position_only` and the receiver — is made at
+    commit 1 of the combined completion cycle, together with T10 and the DAS corpus parity.
+  - **The corpus incident.** The first DGX F1b wave sourced the OWNER pining token for every run, so the
+    xshot / xcross re-fits trained on the owner-tier corpus and shipped `sc_extended`, and the gk_completion
+    `skillcorner` rebundle pulled 64 owner matches instead of the 10-match public arm. Those artifacts were
+    discarded, not bundled. The completion cycle pins the original 17 public matches (`BUNDLED_PUBLIC_ARM`),
+    refuses a non-public request before extraction (`--expect-variant public`, G1) and gates the bundled
+    corpus policy in CI (G2).
+  - **Ghost `position_only`.** Re-fit at commit 1 so its trainer emits the ADR-067 M4 `reproducibility`
+    caveat itself (a `--data-dir` corpus carries no public-visibility proof, so `restricted`), instead of the
+    caveat being hand-added at bundling.
+  - **Receiver.** The bundle's `corpus_visibility` is now derived from the pining MANIFEST, not the provider
+    name: the statsbomb SB360 corpus is licensed and manifest-private, so the receiver is `restricted` (D7).
+    The 30 -> 327 widening ships only if it passes the pre-registered gate (point estimate >= 0 AND 95%
+    bootstrap lower bound > -0.01, D8). The gate outcome is recorded here at commit 2.
 
 ## References
 

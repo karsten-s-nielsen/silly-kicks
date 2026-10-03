@@ -52,11 +52,16 @@ _DEFAULT_PLAYER_IN_POSSESSION_COL = "ball_carrier_player_id"
 _OFFSIDE_WARNED = False
 
 # Advisory cost guardrail (ADR-107/108 §6.14): reported-not-gated; DAS values are unchanged by it.
-# Commit-1 constants from the local L1 benchmark; commit-2 re-derives them from the corpus artifact.
-_DAS_SECONDS_PER_FRAME = 0.02
-#: prange scaling efficiency (numba parallel): effective throughput ~= n_threads * this. Placeholder
-#: (commit-2 re-derives from the corpus artifact); < 1 because of the per-frame serial residue.
-_PRANGE_EFFICIENCY = 0.8
+# Per-engine constants from the ADR-107 chunk table (20 000 frames, best of 3), rounded
+# conservatively; re-derived from the corpus performance.json at release.
+#: numba serial kernel, seconds per distinct frame (1.17 ms measured, rounded up to 2 significant figures).
+_DAS_SECONDS_PER_FRAME = 0.0012
+#: numpy engine at the default chunk, seconds per distinct frame (6.06 ms measured, rounded up) --
+#: used when numba is absent (numpy has no prange path).
+_DAS_SECONDS_PER_FRAME_NUMPY = 0.0061
+#: prange scaling efficiency (numba parallel): effective throughput ~= n_threads * this. Measured at
+#: 16 threads (0.498, rounded down); < 1 because of the per-frame serial residue.
+_PRANGE_EFFICIENCY = 0.49
 #: seconds budget for DasCostWarning (replaces the old 5000-frame count = 5000 x 0.02 s = 100 s).
 _DAS_COST_WARN_SECONDS = 100.0
 
@@ -103,13 +108,14 @@ def _n_distinct_frames(frames: pd.DataFrame) -> int:
 
 
 def estimate_das_cost(frames: pd.DataFrame, *, n_threads: int | None = None) -> float:
-    """Rough wall-time (seconds) to run DAS over ``frames`` — engine/thread-aware (§6.14).
+    """Rough wall-time (seconds) to run DAS over ``frames`` — engine- and thread-aware (§6.14).
 
-    Distinct scored frames x a per-frame constant, divided by the effective thread count
-    (``n_threads > 1`` selects the ``prange`` kernel, scaled by ``_PRANGE_EFFICIENCY``; ``None`` /
-    1 is the serial kernel). A pure, side-effect-free order-of-magnitude estimate (advisory, not a
-    guarantee). Used by :func:`get_das` / :func:`get_individual_das` to emit a :class:`DasCostWarning`
-    before a large run.
+    Distinct scored frames x the per-frame constant of the engine that will run: the numpy
+    constant when numba is absent (numpy has no ``prange`` path), else the numba serial constant
+    divided by the effective thread count (``n_threads > 1`` selects the ``prange`` kernel, scaled by
+    ``_PRANGE_EFFICIENCY``; ``None`` / 1 is the serial kernel). A pure, side-effect-free
+    order-of-magnitude estimate (advisory, not a guarantee). Used by :func:`get_das` /
+    :func:`get_individual_das` to emit a :class:`DasCostWarning` before a large run.
 
     Examples
     --------
@@ -118,6 +124,10 @@ def estimate_das_cost(frames: pd.DataFrame, *, n_threads: int | None = None) -> 
     >>> estimate_das_cost(pd.DataFrame({"game_id": 1, "period_id": 1, "frame_id": range(100)})) > 0
     True
     """
+    from silly_kicks.tracking import _das_engine
+
+    if not _das_engine._numba_available():
+        return _n_distinct_frames(frames) * _DAS_SECONDS_PER_FRAME_NUMPY  # numpy has no prange path
     serial = _n_distinct_frames(frames) * _DAS_SECONDS_PER_FRAME
     if n_threads is not None and n_threads > 1:
         return serial / (n_threads * _PRANGE_EFFICIENCY)

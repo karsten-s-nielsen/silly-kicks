@@ -210,3 +210,132 @@ def test_parser_accepts_the_documented_flags():
         ]
     )
     assert args.mode == "das" and args.peak_rss_gib == 10.0
+
+
+def test_worker_token_is_substituted(tmp_path):
+    driver = tmp_path / "d.py"
+    driver.write_text(
+        "import sys, pathlib, json\n"
+        "root = pathlib.Path(sys.argv[1]); worker = sys.argv[3]\n"
+        "for i in json.loads(pathlib.Path(sys.argv[2]).read_text()):\n"
+        "    (root / (i + '.done')).write_text(worker)\n",
+        encoding="utf-8",
+    )
+    root = tmp_path / "s"
+    root.mkdir()
+    pl.run_parallel(
+        cmd_template=[sys.executable, str(driver), str(root), "{subset}", "{worker}"],
+        subsets={"w0": ["a"], "w1": ["b"]},
+        cap_bytes=1 << 40,
+        backend="none",
+        peak_rss_bytes=1,
+        headroom_bytes=0,
+        done_marker=lambda i: root / (i + ".done"),
+        shard_root=root,
+        poll_interval=0.1,
+        mem_available_bytes=10**12,
+    )
+    assert (root / "a.done").read_text() == "w0" and (root / "b.done").read_text() == "w1"
+
+
+def test_das_done_marker_takes_list_matches_items_and_exclusions_in_the_expected_generation_only(tmp_path):
+    gen, stale = tmp_path / "gen1", tmp_path / "gen0"
+    gen.mkdir()
+    stale.mkdir()
+    (gen / "skillcorner__1.parquet").write_bytes(b"x")
+    (gen / "idsse__DFL-MAT-J03WMX.excluded.json").write_text("{}")
+    (stale / "skillcorner__2.parquet").write_bytes(b"x")  # another commit's / token's generation
+    done = pl._done_marker_for("das", tmp_path, das_generation="gen1")
+    assert done({"provider": "skillcorner", "match_id": "1"}).exists()
+    assert done({"provider": "idsse", "match_id": "DFL-MAT-J03WMX"}).exists()  # an exclusion is done
+    # B r3 CCC-PLAN-28: a shard in a stale generation is NOT done -- the reduce would refuse it after the wave.
+    assert not done({"provider": "skillcorner", "match_id": "2"}).exists()
+
+
+def test_das_mode_requires_the_generation(tmp_path):
+    with pytest.raises(SystemExit):
+        pl._done_marker_for("das", tmp_path)
+
+
+def test_das_subset_file_is_written_in_list_matches_shape(tmp_path):
+    driver = tmp_path / "d.py"
+    driver.write_text(
+        "import sys, pathlib, json\n"
+        "gen = pathlib.Path(sys.argv[1]) / 'g'\n"
+        "gen.mkdir(exist_ok=True)\n"
+        "for e in json.loads(pathlib.Path(sys.argv[2]).read_text()):\n"
+        "    (gen / f\"{e['provider']}__{e['match_id']}.parquet\").write_bytes(b'x')\n",
+        encoding="utf-8",
+    )
+    root = tmp_path / "s"
+    root.mkdir()
+    items = [{"provider": "skillcorner", "match_id": "1"}, {"provider": "idsse", "match_id": "X"}]
+    res = pl.run_parallel(
+        cmd_template=[sys.executable, str(driver), str(root), "{subset}"],
+        subsets=pl.split_round_robin(items, 2),
+        cap_bytes=1 << 40,
+        backend="none",
+        peak_rss_bytes=1,
+        headroom_bytes=0,
+        done_marker=pl._done_marker_for("das", root, das_generation="g"),
+        shard_root=root,
+        poll_interval=0.1,
+        mem_available_bytes=10**12,
+    )
+    assert res.completed == 2
+
+
+def test_cli_refuses_before_any_worker_when_the_cap_cannot_start(tmp_path, monkeypatch, capsys):
+    # A cgroup scope that cannot start must stop the launcher ONCE, up front -- not fail every worker
+    # and burn every relaunch (the DGX smoke: "worker w0 failed 4x", combined-cycle Task 17).
+    import subprocess
+
+    from scripts import _mem_cap
+
+    def refused(argv, **kw):
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr="Interactive authentication required.")
+
+    monkeypatch.setattr(_mem_cap.subprocess, "run", refused)
+    monkeypatch.setattr(pl, "run_parallel", lambda **kw: pytest.fail("no worker may launch"))
+    corpus = tmp_path / "c.json"
+    corpus.write_text('["t0", "t1"]')
+    rc = pl.main(
+        [
+            "--mode",
+            "f1b",
+            "--driver",
+            "x {subset}",
+            "--corpus-json",
+            str(corpus),
+            "--shard-root",
+            str(tmp_path),
+            "--peak-rss-gib",
+            "1",
+            "--mem-available-gib",
+            "100",
+            "--mem-backend",
+            "cgroup",
+        ]
+    )
+    assert rc == 2
+    assert "REFUSED" in capsys.readouterr().out
+
+
+def test_cli_das_mode_without_a_generation_is_refused(tmp_path):
+    corpus = tmp_path / "c.json"
+    corpus.write_text("[]")
+    with pytest.raises(SystemExit):
+        pl.main(
+            [
+                "--mode",
+                "das",
+                "--driver",
+                "x {subset}",
+                "--corpus-json",
+                str(corpus),
+                "--shard-root",
+                str(tmp_path),
+                "--peak-rss-gib",
+                "1",
+            ]
+        )

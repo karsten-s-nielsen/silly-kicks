@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from scripts.build_tf19_instrument_responsiveness import (
     _PLACEBO_COLS,
@@ -192,3 +193,94 @@ def test_driver_exposes_main_and_reduce_seams():
     assert hasattr(d, "main")
     assert callable(d.pool_shards) and callable(d.reduce_layer_verdicts)
     assert callable(d._named_keeper_signs) and callable(d._provider_support_matrix)
+
+
+def _full_shard(nrows, *, game, keeper=7):
+    """A shard with the FULL driver schema (`_SHARD_COLUMNS`): the authoritative reduce reads `keeper_key`,
+    the frame keys, `realistic_signed` and `keeper_gr_depth`, which `_shard` (pooling-only) omits."""
+    from scripts.build_tf19_instrument_responsiveness import _FRAME_KEYS, _SHARD_COLUMNS
+
+    df = _shard(nrows)
+    df["keeper_key"] = keeper
+    for k in _FRAME_KEYS:
+        df[k] = np.arange(nrows) if k == "frame_id" else (game if k == "game_id" else 1)
+    df["realistic_signed"] = -0.05
+    df["keeper_gr_depth"] = 5.0
+    return df[_SHARD_COLUMNS]
+
+
+def test_reduce_only_over_an_allowlist_equals_an_unpartitioned_serial_run(tmp_path, monkeypatch):
+    """Workers on slices + --reduce-only over the whole allowlist == one unpartitioned run (CCC-SPEC-03)."""
+    import json
+    import sys
+
+    import scripts._loader_pining as lp
+    import scripts.build_tf19_instrument_responsiveness as D
+
+    pop = {"gradientsports": ["1", "2"]}
+    refs_all = [lp.MatchRef("gradientsports", m, {}) for m in pop["gradientsports"]]
+
+    def fake_pining_source(providers, match_ids=None, **kw):
+        wanted = (match_ids or {}).get("gradientsports") or pop["gradientsports"]
+        return [r for r in refs_all if r.match_id in wanted], (lambda ref: ("gradientsports", ref.match_id, None, None))
+
+    monkeypatch.setattr(lp, "pining_source", fake_pining_source)
+    counts = {"n_keeper_teams": 2, "n_keeper_teams_resolved": 2, "n_keeper_teams_unresolved": 0}
+    monkeypatch.setattr(D, "_measure_match", lambda item, rng_seed: (_full_shard(300, game=int(item[1])), counts))
+
+    def run(out, *extra):
+        monkeypatch.setattr(
+            sys, "argv", ["d", "--out", str(out), "--providers", "gradientsports", "--allow-dirty", *map(str, extra)]
+        )
+        D.main()
+
+    serial, sharded = tmp_path / "serial", tmp_path / "sharded"
+    run(serial)
+    for i, m in enumerate(pop["gradientsports"]):
+        sl = tmp_path / f"s{i}.json"
+        sl.write_text(json.dumps({"gradientsports": [m]}))
+        run(sharded, "--match-ids-json", sl)
+    assert not (sharded / "metrics.json").exists()
+    popf = tmp_path / "pop.json"
+    popf.write_text(json.dumps(pop))
+    run(sharded, "--match-ids-json", popf, "--reduce-only")
+    s = json.loads((serial / "metrics.json").read_text())
+    p = json.loads((sharded / "metrics.json").read_text())
+    assert p["verdicts"] == s["verdicts"] and p["n_frames_scored"] == s["n_frames_scored"]
+    assert p["keeper_identity"]["n_keeper_teams"] == s["keeper_identity"]["n_keeper_teams"] == 4
+    assert p["reduce_mode"] == "driver-reduce-only" and p["population_size"] == 2
+
+
+def test_reduce_only_refuses_a_missing_population_shard(tmp_path, monkeypatch):
+    import json
+    import sys
+
+    import scripts._loader_pining as lp
+    import scripts.build_tf19_instrument_responsiveness as D
+
+    refs_all = [lp.MatchRef("gradientsports", m, {}) for m in ("1", "2")]
+    monkeypatch.setattr(
+        lp,
+        "pining_source",
+        lambda providers, match_ids=None, **kw: (refs_all, (lambda ref: ("gradientsports", ref.match_id, None, None))),
+    )
+    monkeypatch.setattr(D, "_measure_match", lambda item, rng_seed: (_full_shard(300, game=int(item[1])), {}))
+    popf = tmp_path / "pop.json"
+    popf.write_text(json.dumps({"gradientsports": ["1", "2"]}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "d",
+            "--out",
+            str(tmp_path / "o"),
+            "--providers",
+            "gradientsports",
+            "--allow-dirty",
+            "--match-ids-json",
+            str(popf),
+            "--reduce-only",
+        ],
+    )
+    with pytest.raises(SystemExit, match="have no shard"):
+        D.main()

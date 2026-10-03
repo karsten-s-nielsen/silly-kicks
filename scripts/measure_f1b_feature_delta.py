@@ -40,6 +40,7 @@ delta exactly, so measuring the superset covers both.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 
@@ -477,41 +478,166 @@ def _aggregate(combined: pd.DataFrame) -> dict:
     return models
 
 
+def _token_inputs(paths: list[pathlib.Path], data_dir: pathlib.Path, commit: str) -> dict:
+    """The for_each generation key: driver schema + the RUN COMMIT + the corpus identity (a digest of
+    the FULL sorted key list, never a worker's subset). Shards are therefore attributable to a commit
+    even when a worker dies before writing its manifest, and a worker resumed at another commit lands
+    in another generation (combined-cycle spec section 6)."""
+    keys = sorted(_match_key(p, data_dir) for p in paths)
+    return {
+        "schema": _SHARD_SCHEMA_VERSION,
+        "driver": "f1b-feature-delta",
+        "atol": _ATOL,
+        "commit": commit,
+        "corpus": hashlib.sha256("\n".join(keys).encode("utf-8")).hexdigest(),
+    }
+
+
+def _select(paths: list[pathlib.Path], data_dir: pathlib.Path, keys_json: str | None) -> list[pathlib.Path]:
+    """The worker's subset: ``paths`` filtered to the keys in ``keys_json`` (a JSON list), corpus order."""
+    if keys_json is None:
+        return paths
+    wanted = set(json.loads(pathlib.Path(keys_json).read_text(encoding="utf-8")))
+    known = {_match_key(p, data_dir) for p in paths}
+    unknown = sorted(wanted - known)
+    if unknown:
+        raise SystemExit(f"--match-keys-json names {len(unknown)} key(s) absent from --data-dir: {unknown[:5]}")
+    return [p for p in paths if _match_key(p, data_dir) in wanted]
+
+
+def _map(paths: list[pathlib.Path], data_dir: pathlib.Path, out: pathlib.Path, *, token: dict):
+    return for_each(
+        paths,
+        key=lambda fp: _match_key(fp, data_dir),
+        work=lambda fp: _measure_one_match(fp, data_dir),
+        shard_root=out / "_shards",
+        token_inputs=token,
+        label="match",
+    )
+
+
+def _write_worker_manifest(res, *, prov: dict, worker_tag: str) -> None:
+    """Persist THIS worker's manifest beside its shards; the reduce reads every worker's."""
+    (res.shard_dir / f"manifest_{worker_tag}.json").write_text(
+        json.dumps({**res.manifest(), "run_commit": prov["commit"], "run_tree_dirty": prov["dirty"]}, default=str),
+        encoding="utf-8",
+    )
+
+
+def _artifact(
+    combined: pd.DataFrame, *, n_matches: int, manifest: dict, prov: dict, dirty: bool, n_accounted: int
+) -> dict:
+    """The metrics.json body -- ONE schema for the serial run and the sharded reduce (+ n_accounted)."""
+    out: dict[str, object] = {"atol": _ATOL, "n_matches": n_matches, "models": _aggregate(combined)}
+    out.update(manifest)
+    out["n_accounted"] = n_accounted  # keys with a shard or exclusion marker; n_attempted counts only this pass
+    out["run_commit"] = prov["commit"]
+    out["run_tree_dirty"] = dirty
+    return out
+
+
+def reduce_t10(paths: list[pathlib.Path], data_dir: pathlib.Path, out: pathlib.Path, *, prov: dict) -> dict:
+    """Reduce every worker's shards into the corpus artifact (combined-cycle spec section 6).
+
+    Completeness is by ACCOUNTED KEYS (shard or exclusion marker for every listed key) in the ONE
+    generation this commit's token inputs produce; every worker manifest present must name this commit.
+    """
+    from scripts._driver import _token, exclusion_path, shard_path
+    from scripts._partition import aggregate_manifests
+
+    root = out / "_shards"
+    gens = sorted(p for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
+    expected = _token(_token_inputs(paths, data_dir, prov["commit"]), None)
+    if [g.name for g in gens] != [expected]:
+        raise SystemExit(
+            f"expected exactly the generation {expected} (this commit + this corpus) under {root}, found "
+            f"{[g.name for g in gens]}; a worker ran at another commit or on another corpus -- use a fresh --out"
+        )
+    gen = gens[0]
+    keys = [_match_key(p, data_dir) for p in paths]
+    missing = [k for k in keys if not shard_path(gen, k).is_file() and not exclusion_path(gen, k).is_file()]
+    if missing:
+        raise SystemExit(
+            f"{len(missing)} of {len(keys)} listed matches have no shard (first: {missing[:3]}); a worker has "
+            "not finished -- re-run it with the same --worker-tag (it resumes)."
+        )
+    agg = aggregate_manifests(gen, defaults=("n_attempted", "n_failed", "n_counters_unrecorded", "n_excluded"))
+    foreign = sorted(set(agg["commits_seen"]) - {prov["commit"]})
+    if foreign:
+        raise SystemExit(f"worker manifest(s) from another commit {foreign}; this reduce runs at {prov['commit']}")
+    combined = reconcile(gen, out / "f1b_feature_delta.parquet", tag="all")
+    if not len(combined):
+        raise SystemExit("every shard was empty -- the corpus yielded no measurable frames.")
+    manifest = {
+        "generation": gen.name,
+        "n_attempted": agg["n_attempted"],
+        "n_failed": agg["n_failed"],
+        "n_counters_unrecorded": agg["n_counters_unrecorded"],
+        "n_excluded": agg["n_excluded"],
+    }
+    return _artifact(
+        combined,
+        n_matches=len(paths),
+        manifest=manifest,
+        prov=prov,
+        dirty=bool(prov["dirty"] or agg["run_tree_dirty"]),
+        n_accounted=len(keys) - len(missing),
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Measure the F1b float32-storage per-feature delta by model.")
     ap.add_argument("--data-dir", type=pathlib.Path, required=True, help="float64-stored tracking-frame corpus")
-    ap.add_argument("--out", type=pathlib.Path, required=True, help="artifact directory (metrics.json written here)")
+    ap.add_argument("--out", type=pathlib.Path, default=None, help="artifact directory (metrics.json written here)")
     ap.add_argument("--allow-dirty", action="store_true")
+    ap.add_argument("--list-match-keys", action="store_true", help="print the corpus match keys as JSON and exit")
+    ap.add_argument("--match-keys-json", default=None, help="JSON list of match keys this --shards-only worker handles")
+    ap.add_argument(
+        "--shards-only", action="store_true", help="MAP only: shards + manifest_<worker-tag>.json, no metrics.json"
+    )
+    ap.add_argument("--worker-tag", default=None, help="unique per-worker manifest tag (required with --shards-only)")
+    ap.add_argument("--reduce-only", action="store_true", help="REDUCE only: metrics.json from every worker's shards")
     args = ap.parse_args()
-
-    prov = git_provenance()
-    require_clean_tree(prov, allow_dirty=args.allow_dirty)
 
     paths = frame_parquets(args.data_dir)
     if not paths:
         raise SystemExit(f"no frame parquets under {args.data_dir}. Point --data-dir at a float64 frame corpus.")
+    if args.list_match_keys:
+        print(json.dumps(sorted(_match_key(p, args.data_dir) for p in paths), indent=2))
+        return
+    if args.out is None:
+        ap.error("--out is required unless --list-match-keys is given")
+    if args.shards_only and args.reduce_only:
+        ap.error("--shards-only and --reduce-only are mutually exclusive")
+    if args.shards_only and not args.worker_tag:
+        ap.error("--shards-only needs a unique --worker-tag")
+    if args.match_keys_json and not args.shards_only:
+        ap.error("--match-keys-json is a --shards-only worker flag; the reduce always covers the whole corpus")
 
+    prov = git_provenance()
+    require_clean_tree(prov, allow_dirty=args.allow_dirty)
     args.out.mkdir(parents=True, exist_ok=True)
-    res = for_each(
-        paths,
-        key=lambda fp: _match_key(fp, args.data_dir),
-        work=lambda fp: _measure_one_match(fp, args.data_dir),
-        shard_root=args.out / "_shards",
-        token_inputs={"schema": _SHARD_SCHEMA_VERSION, "driver": "f1b-feature-delta", "atol": _ATOL},
-        label="match",
-    )
-    combined = reconcile(res.shard_dir, args.out / "f1b_feature_delta.parquet", tag="all")
-    if not len(combined):
-        raise SystemExit("every shard was empty -- the corpus yielded no measurable frames.")
 
-    out: dict[str, object] = {
-        "atol": _ATOL,
-        "n_matches": len(paths),
-        "models": _aggregate(combined),
-    }
-    out.update(res.manifest())
-    out["run_commit"] = prov["commit"]
-    out["run_tree_dirty"] = prov["dirty"]
+    if args.reduce_only:
+        out = reduce_t10(paths, args.data_dir, args.out, prov=prov)
+    else:
+        token = _token_inputs(paths, args.data_dir, prov["commit"])
+        res = _map(_select(paths, args.data_dir, args.match_keys_json), args.data_dir, args.out, token=token)
+        _write_worker_manifest(res, prov=prov, worker_tag=args.worker_tag or "serial")
+        if args.shards_only:
+            print(json.dumps({"shards_only": True, "worker_tag": args.worker_tag, **res.manifest()}, default=str))
+            return
+        combined = reconcile(res.shard_dir, args.out / "f1b_feature_delta.parquet", tag="all")
+        if not len(combined):
+            raise SystemExit("every shard was empty -- the corpus yielded no measurable frames.")
+        out = _artifact(
+            combined,
+            n_matches=len(paths),
+            manifest=res.manifest(),
+            prov=prov,
+            dirty=bool(prov["dirty"]),
+            n_accounted=len(paths),
+        )
 
     (args.out / "metrics.json").write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(out, indent=2))

@@ -430,6 +430,7 @@ def main() -> None:
     # (the CV per-provider MAE, and the metrics aggregation), and the first CLI run after this was
     # written died on `TypeError: string indices must be integers` -- the loop had rebound it to a
     # provider name by the time the metrics dict was built.
+    from scripts._corpus import reproducibility
     from scripts._provenance import git_provenance, require_clean_tree
 
     run_prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
@@ -1131,6 +1132,9 @@ def main() -> None:
         "run_commit": run_prov["commit"],
         "run_tree_dirty": run_prov["dirty"],
         "run_tree_state": run_prov["tree_state"],
+        # ADR-067 M4, emitted by the trainer, never hand-added at bundling: a --data-dir corpus carries
+        # no public-visibility proof, so it is restricted (fail-closed, like is_public_row's default).
+        **reproducibility("restricted", provider_labels.tolist(), training_commit=training_commit),
         "hyperparameters": {
             "n_estimators": args.n_estimators,
             "max_depth": args.max_depth,

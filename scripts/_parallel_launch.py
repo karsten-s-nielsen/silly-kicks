@@ -56,10 +56,16 @@ import time  # noqa: E402
 from collections.abc import Callable, Mapping, Sequence  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import TypeVar  # noqa: E402
 
 from scripts._mem_cap import detect_backend as _detect_backend  # noqa: E402
+from scripts._mem_cap import preflight as _preflight  # noqa: E402
 from scripts._mem_cap import wrap as _wrap  # noqa: E402
 from scripts._thread_pin import thread_pin_env  # noqa: E402
+
+#: A corpus item: a str key (f1b study tag) or a --list-matches dict (das). The launcher only splits,
+#: serializes and done-checks items, so it is generic over their type.
+_ItemT = TypeVar("_ItemT")
 
 
 @dataclass
@@ -97,12 +103,12 @@ def available_ram_bytes() -> int:
 def run_parallel(
     *,
     cmd_template: Sequence[str],
-    subsets: Mapping[str, list[str]],
+    subsets: Mapping[str, Sequence[_ItemT]],
     cap_bytes: int,
     backend: str,
     peak_rss_bytes: int,
     headroom_bytes: int,
-    done_marker: Callable[[str], Path],
+    done_marker: Callable[[_ItemT], Path],
     shard_root: Path,
     nproc: int | None = None,
     max_relaunch: int = 3,
@@ -138,18 +144,18 @@ def run_parallel(
     env = thread_pin_env()
     shard_root = Path(shard_root)
 
-    todo: list[tuple[str, list[str]]] = [(w, list(items)) for w, items in subsets.items()]
+    todo: list[tuple[str, list[_ItemT]]] = [(w, list(items)) for w, items in subsets.items()]
     attempts: dict[str, int] = {w: 0 for w, _ in todo}
     running: dict[str, subprocess.Popen] = {}
     relaunched = 0
 
-    def _remaining(items: Sequence[str]) -> list[str]:
+    def _remaining(items: Sequence[_ItemT]) -> list[_ItemT]:
         return [i for i in items if not done_marker(i).exists()]
 
-    def _launch(w: str, items: list[str]) -> None:
+    def _launch(w: str, items: list[_ItemT]) -> None:
         subset_file = shard_root / f"_subset_{w}.json"
         subset_file.write_text(json.dumps(items), encoding="utf-8")
-        argv = [a.replace("{subset}", str(subset_file)) for a in cmd_template]
+        argv = [a.replace("{subset}", str(subset_file)).replace("{worker}", w) for a in cmd_template]
         argv, preexec = _wrap(backend, argv, cap_bytes=cap_bytes)
         # argv is the operator's own --driver template + an internal subset file, not untrusted input.
         running[w] = subprocess.Popen(argv, env=env, preexec_fn=preexec)  # noqa: S603  (preexec None off-POSIX)
@@ -185,10 +191,10 @@ def run_parallel(
     return ResultSummary(completed=completed, relaunched=relaunched)
 
 
-def split_round_robin(keys: Sequence[str], n: int) -> dict[str, list[str]]:
+def split_round_robin(keys: Sequence[_ItemT], n: int) -> dict[str, list[_ItemT]]:
     """Deal ``keys`` round-robin into ``n`` worker subsets ``w0..w{n-1}`` (empty ones dropped)."""
     n = max(1, n)
-    buckets: dict[str, list[str]] = {f"w{i}": [] for i in range(n)}
+    buckets: dict[str, list[_ItemT]] = {f"w{i}": [] for i in range(n)}
     for idx, key in enumerate(keys):
         buckets[f"w{idx % n}"].append(key)
     return {w: items for w, items in buckets.items() if items}
@@ -205,10 +211,15 @@ def _build_parser():
         help="selects how a done item is detected: das = a <key>.parquet shard, f1b = a <tag>.study.json study shard",
     )
     p.add_argument(
-        "--driver", required=True, help="worker command template; use {subset} for the per-worker JSON id list"
+        "--driver",
+        required=True,
+        help="worker command template; {subset} = the per-worker JSON item list, {worker} = the worker id w<i>",
     )
     p.add_argument(
-        "--corpus-json", required=True, type=Path, help="JSON list of corpus item keys to split across workers"
+        "--corpus-json",
+        required=True,
+        type=Path,
+        help="JSON list of corpus items (das: the driver's --list-matches output; f1b: study tags)",
     )
     p.add_argument("--shard-root", required=True, type=Path)
     p.add_argument(
@@ -231,6 +242,12 @@ def _build_parser():
         "/proc/meminfo (Linux) nor psutil (backpressure then reflects only this static budget).",
     )
     p.add_argument(
+        "--das-generation",
+        default=None,
+        help="the shard generation the DAS driver writes, from validate_das_native_parity.py "
+        "--print-generation; required with --mode das",
+    )
+    p.add_argument(
         "--mem-backend",
         default=None,
         choices=("cgroup", "rlimit", "none"),
@@ -241,7 +258,10 @@ def _build_parser():
 
 def main(argv: Sequence[str] | None = None) -> int:
     gib = 1024**3
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.mode == "das" and not args.das_generation:
+        parser.error("--mode das needs --das-generation")
     keys = json.loads(Path(args.corpus_json).read_text(encoding="utf-8"))
     shard_root = Path(args.shard_root)
     shard_root.mkdir(parents=True, exist_ok=True)
@@ -256,6 +276,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         n = size_workers(peak, mem_budget if mem_budget is not None else available_ram_bytes(), nproc, headroom)
     except RefusalError as exc:
+        print(f"REFUSED: {exc}")
+        return 2
+    try:
+        _preflight(backend, cap_bytes=cap)  # a cap that cannot start refuses ONCE, before any worker
+    except RuntimeError as exc:
         print(f"REFUSED: {exc}")
         return 2
     subsets = split_round_robin(keys, n)
@@ -277,7 +302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         reconcile = None
 
-    done_marker = _done_marker_for(args.mode, shard_root)
+    done_marker = _done_marker_for(args.mode, shard_root, das_generation=args.das_generation)
     res = run_parallel(
         cmd_template=_driver_template(args.driver),
         subsets=subsets,
@@ -303,21 +328,28 @@ def _driver_template(driver: str) -> list[str]:
     return shlex.split(driver, posix=(__import__("os").name != "nt"))
 
 
-def _done_marker_for(mode: str, shard_root: Path) -> Callable[[str], Path]:
-    """Map a corpus key to the path whose existence means 'done' for that driver.
+def _done_marker_for(mode: str, shard_root: Path, *, das_generation: str | None = None) -> Callable[[object], Path]:
+    """Map a corpus item to the path whose existence means 'done' for that driver.
 
-    f1b: the study shard ``<tag>.study.json`` (exact). das: the match shard ``<key>.parquet`` under the
-    generation dir -- returned via a sentinel-or-hit so ``run_parallel`` can test ``.exists()``; a hit is
-    only an optimisation because relaunch is failure-gated (a clean worker is never relaunched).
+    f1b: the study shard ``<tag>.study.json`` (exact). das: an item is a ``--list-matches`` entry
+    (``{"provider", "match_id"}``) or an already-joined key; done = its ``<key>.parquet`` shard OR its
+    ``<key>.excluded.json`` marker (a decided exclusion is done, ADR-052 D13) inside the ONE generation the
+    driver will write, ``das_generation`` (``validate_das_native_parity.py --print-generation``). A shard in
+    any other generation is not done: the commit-keyed reduce would refuse it (B r3 CCC-PLAN-28).
     """
     if mode == "f1b":
         return lambda i: shard_root / f"{i}.study.json"
+    if not das_generation:
+        raise SystemExit("--mode das needs --das-generation (validate_das_native_parity.py --print-generation)")
 
-    _missing = shard_root / "__never__"
+    from scripts._driver import exclusion_path, join_key, shard_path
 
-    def _das(i: str) -> Path:
-        hits = list(shard_root.rglob(f"{i}.parquet"))
-        return hits[0] if hits else _missing
+    gen = shard_root / das_generation
+
+    def _das(i) -> Path:
+        key = join_key((i["provider"], i["match_id"])) if isinstance(i, dict) else str(i)
+        shard = shard_path(gen, key)
+        return shard if shard.is_file() else exclusion_path(gen, key)
 
     return _das
 

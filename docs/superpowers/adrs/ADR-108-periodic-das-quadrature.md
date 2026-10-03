@@ -81,6 +81,17 @@ DAS is mirror-invariant (`rtol=1e-6`, the `arccos` float floor — F1, §6.4) wh
   grid. The residual is the `arccos`-limited float floor (~1e-7 relative), which scales with the DAS
   magnitude, not a quadrature asymmetry. `add_das` also joins Gate C now (`call_with_map` /
   `gate_c_must_move`), since direction comes from a `GoalMap` (ADR-055) the entry can vary.
+- **The parity oracle runs in a pinned pandas-2 subprocess, and must keep doing so.** The owner-corpus
+  shift above is measured against `accessible-space==2.0.15`, which is a pandas-2-era library: under
+  pandas-3 Copy-on-Write its internal `PLAYER_POS` array is read-only, so its in-place offside step raises
+  a `ValueError` the library catches ("Ignoring offside"), silently keeping offside attackers and inflating
+  team DAS; and it pivots on `frame_id` alone, conflating frames that reuse a `frame_id` across periods.
+  `scripts/_das_reference_leg.py` therefore runs the library under a separately provisioned pandas-2
+  interpreter (`SK_DAS_REFERENCE_PYTHON`, the dev-only `das-reference` extra pins `pandas<3`) and feeds it a
+  collision-free frame key (a dense rank over `game_id`/`period_id`/`frame_id`). The native engine is immune
+  to both. Do not "simplify" the subprocess away: that silently restores the broken comparison
+  (pandas-2 reference spec §7). The leg also reads player results by input row and forwards the ball
+  carrier, as native uses it (ADR-107).
 
 ## References
 

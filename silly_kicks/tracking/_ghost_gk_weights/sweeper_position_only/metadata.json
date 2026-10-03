@@ -39,7 +39,7 @@
     "gamma": 0.25
   },
   "sklearn_version": "1.9.0",
-  "training_commit": "4bda048b898669227a648a5f853c4314f7fdebe3",
+  "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
   "training_platform": "dgx-spark-aarch64",
   "corpus_provenance": {
     "providers": [
@@ -60,8 +60,8 @@
     "version": "chirality-probe-1",
     "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
     "outputs": [
-      2.0563470343,
-      35.6271370213
+      2.0065497566,
+      35.473687177
     ]
   },
   "feature_contract": {

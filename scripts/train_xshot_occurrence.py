@@ -496,7 +496,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
     :class:`AcceptanceGatesFailedError` instead of exiting so it is safe to call as a library.
     """
     sys.path.insert(0, "scripts")
-    from _corpus import artifact_label
+    from _corpus import artifact_label, check_shipped_variant, corpus_identity, reproducibility
     from _paired import fixed_sequence_ship
 
     from scripts._study_shared import load_study_inputs
@@ -535,6 +535,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
             sc_extended=paired["sc_extended"]["nested"], full=paired["full"]["nested"], full_vs_sc=full_vs_sc
         )
         print(f"Fixed-sequence verdict: ship {shipped} -- {why}")
+        check_shipped_variant(cfg.get("expect_variant"), shipped)
         ship_mask = cand_masks[shipped]
         shipped_params = _hpo_once(
             X[ship_mask],
@@ -562,12 +563,13 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
             "why": why,
         }
     else:
-        params_all = _hpo_once(
-            X, y, groups, out, "single", n_trials, negative_subsample=ns, seed=seed, study_shard_dir=study_shard_dir
-        )
         ship_mask = np.ones(len(X), bool)
         ship_provs = set(providers[ship_mask].tolist())
         shipped = artifact_label(providers=ship_provs, all_public=bool(is_public[ship_mask].all()))
+        check_shipped_variant(cfg.get("expect_variant"), shipped)  # before the study: a refusal costs no fit
+        params_all = _hpo_once(
+            X, y, groups, out, "single", n_trials, negative_subsample=ns, seed=seed, study_shard_dir=study_shard_dir
+        )
         candidates[shipped] = {
             "params": params_all,
             "metrics": _cv_metrics(X, y, groups, params_all, negative_subsample=ns, seed=seed),
@@ -610,6 +612,11 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
         "n_rows": len(X),
         "n_positive": int(np.asarray(y).sum()),
         "providers": sorted(provset),
+        # Corpus IDENTITY (spec section 5): exact ids only for an all-public corpus, else a digest
+        # (Hub publishes copy metrics.json). n_rows alone could not tell 17 public matches from 27.
+        **corpus_identity(providers.tolist(), match_ids.tolist(), all_public=bool(is_public.all())),
+        # ADR-067 M4 caveat, emitted here -- never hand-added at bundling (spec 0.11).
+        **reproducibility(shipped, candidates[shipped]["providers"], training_commit=run_prov["commit"]),
         "candidates": candidates,
         "acceptance": acceptance,
         "estimates_are_cv_not_shipped_fit": True,
@@ -666,6 +673,14 @@ def main(argv=None) -> None:
         "metrics.json -- the hatch permits a dev run, it never launders the fact.",
     )
     ap.add_argument(
+        "--expect-variant",
+        choices=["public", "sc_extended", "full"],
+        default=None,
+        help="G1 guard: refuse BEFORE extraction unless the requested corpus can ship this variant "
+        "(public => every requested match is public), and refuse at ship time if the shipped variant "
+        "differs. Default off (unchanged behaviour).",
+    )
+    ap.add_argument(
         "--shard-root",
         default=None,
         help="Study-shard root for the parallel study path (5c). Written by a serial run's prep; a "
@@ -682,16 +697,30 @@ def main(argv=None) -> None:
         action="store_true",
         help="Reduce: ship decision + final fit over the studies in --shard-root, then exit.",
     )
+    ap.add_argument(
+        "--prep-only",
+        action="store_true",
+        help="extract + persist the study inputs, print {study_root, studies}, exit (launcher f1b mode)",
+    )
+    ap.add_argument("--list-studies", action="store_true", help="print the study tags under --shard-root as JSON")
+    ap.add_argument(
+        "--study-list", default=None, help="JSON list of study tags to run from --shard-root (launcher worker)"
+    )
     args = ap.parse_args(argv)
 
     # Parallel study path (5c): a worker runs one study, the reduce assembles them. Both operate on an
     # already-persisted --shard-root (the serial prep enforced clean-tree + provenance), so they skip
     # the extraction pipeline entirely.
-    if args.study or args.assemble:
+    if args.study or args.assemble or args.study_list or args.list_studies:
         if not args.shard_root:
-            ap.error("--study/--assemble require --shard-root")
+            ap.error("--study/--study-list/--list-studies/--assemble require --shard-root")
         root = Path(args.shard_root)
-        if args.study:
+        if args.list_studies:
+            print(json.dumps(enumerate_studies(root)))
+        elif args.study_list:
+            for tag in json.loads(Path(args.study_list).read_text(encoding="utf-8")):
+                run_one_study(root, tag)
+        elif args.study:
             run_one_study(root, args.study)
         else:
             try:
@@ -718,6 +747,21 @@ def main(argv=None) -> None:
     cache = art / "_feature_cache"
     sys.path.insert(0, "scripts")
     from _cache import cache_is_valid, write_cache_meta
+
+    # G1 launch preflight (combined-cycle-completion spec section 5): BEFORE any corpus work, so a run
+    # that would train a public bundle on owner-tier data never starts.
+    if args.expect_variant is not None:
+        if not args.providers:
+            ap.error("--expect-variant needs --providers (only the pining path lists a requested corpus)")
+        from _corpus import check_expected_variant, requested_is_all_public
+        from _loader_pining import match_visibility, select_match_ids
+
+        _provs = args.providers.split(",")
+        _allow = json.load(open(args.match_ids_json)) if args.match_ids_json else None
+        _pairs = select_match_ids(providers=_provs, match_ids=_allow, max_per_provider=args.max_per_provider)
+        check_expected_variant(
+            args.expect_variant, all_public=requested_is_all_public(_pairs, match_visibility(_provs))
+        )
 
     # --- Phase 1: stream + extract + cache ---
     # Cache-validity guard: a pre-schema cache (no cache_meta.json, no match_ids.npy) MISSES, so the
@@ -804,6 +848,7 @@ def main(argv=None) -> None:
         "artifact_dir": str(art),
         "run_paired": run_paired,
         "run_prov": run_prov,
+        "expect_variant": args.expect_variant,
     }
     from scripts._study_shared import persist_study_inputs
 
@@ -817,6 +862,9 @@ def main(argv=None) -> None:
         is_public=is_public,
         config=config,
     )
+    if args.prep_only:
+        print(json.dumps({"study_root": str(study_root), "studies": enumerate_studies(study_root)}))
+        return
     try:
         assemble_studies(study_root, study_shard_dir=study_root)
     except AcceptanceGatesFailedError:

@@ -5,9 +5,12 @@ per-process ceiling, one worker's peak RSS can drive the box into the OOM killer
 which on the DGX has silently killed sibling workers before. This module wraps a
 child command with the strongest cap the host actually supports:
 
-- ``cgroup`` (Linux + systemd): ``systemd-run --scope -p MemoryMax=<bytes>`` puts a
+- ``cgroup`` (Linux + systemd): ``systemd-run [--user] --scope -p MemoryMax=<bytes>`` puts a
   hard ceiling on the child *and its descendants* -- the correct bound because the
-  trainers themselves fork/spawn. This is the DGX path.
+  trainers themselves fork/spawn. This is the DGX path. A non-root user must go through
+  the user manager (``--user``; detached runs need ``loginctl enable-linger``): the system
+  manager refuses it ("Interactive authentication required"). :func:`preflight` proves a
+  scope can start before any worker launches.
 - ``rlimit`` (POSIX without systemd, e.g. macOS): a best-effort ``RLIMIT_AS`` set in
   a pre-exec hook. Bounds address space of the direct child only, not descendants.
 - ``none`` (Windows, or when nothing is available): no cap; the launcher relies on
@@ -20,6 +23,7 @@ cleanly on Windows (where the launcher's unit tests run).
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from typing import Literal
@@ -73,7 +77,9 @@ def wrap(backend: str, argv: Sequence[str], *, cap_bytes: int) -> WrapResult:
     """
     cmd = list(argv)
     if backend == "cgroup":
-        prefix = ["systemd-run", "--scope", "-p", f"MemoryMax={int(cap_bytes)}", "--"]
+        # geteuid is POSIX-only; the cgroup backend is only ever detected on Linux.
+        manager = [] if getattr(os, "geteuid", lambda: 0)() == 0 else ["--user"]
+        prefix = ["systemd-run", *manager, "--scope", "-p", f"MemoryMax={int(cap_bytes)}", "--"]
         return prefix + cmd, None
     if backend == "rlimit":
         import resource
@@ -86,3 +92,29 @@ def wrap(backend: str, argv: Sequence[str], *, cap_bytes: int) -> WrapResult:
     if backend == "none":
         return cmd, None
     raise ValueError(f"unknown memory-cap backend: {backend!r}")
+
+
+#: How long the one-off scope probe may take before it counts as a failure to start (a hung user manager).
+_PREFLIGHT_TIMEOUT_S = 30
+
+
+def preflight(backend: str, *, cap_bytes: int) -> None:
+    """Prove the backend can start a capped child, ONCE, before any worker launches.
+
+    A cgroup scope that cannot start would otherwise fail every worker at launch and burn every
+    relaunch. Runs the wrapped no-op ``true`` and raises ``RuntimeError`` with its stderr on failure.
+    The other backends need no probe.
+    """
+    if backend != "cgroup":
+        return
+    argv, _ = wrap(backend, ["true"], cap_bytes=cap_bytes)
+    hint = "-- enable the user manager (loginctl enable-linger) or pass --mem-backend rlimit|none"
+    try:
+        # argv is our own fixed probe (systemd-run + `true`), not untrusted input.
+        res = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=_PREFLIGHT_TIMEOUT_S)  # noqa: S603
+    except (OSError, subprocess.TimeoutExpired) as exc:  # no systemd-run on PATH, or a probe that hangs
+        raise RuntimeError(f"memory-cap backend 'cgroup' cannot start a scope ({argv[0]}): {exc} {hint}") from exc
+    if res.returncode != 0:
+        raise RuntimeError(
+            f"memory-cap backend 'cgroup' cannot start a scope ({' '.join(argv[:-2])}): {res.stderr.strip()} {hint}"
+        )
