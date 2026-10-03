@@ -112,7 +112,10 @@ A driver's result lands as `docs/research/<topic>/README.md` + `metrics.json`, e
 3. Declare `_EMITTED_SHARD_COLUMNS` + `_SHARD_SCHEMA_VERSION`; set `token_inputs` (reference the schema
    constant + the real staleness inputs).
 4. `main()`: `require_clean_tree` first, offer `--allow-dirty` + `--match-ids-json`/`--list-matches`
-   for N-process partitioning, run `for_each`, then `reconcile` + land the memo with provenance.
+   for N-process partitioning, run `for_each`, then `reconcile` + land the memo with provenance. If
+   the corpus artifact SUMS worker manifests, write `**partition_keys(res)` into each one and offer
+   `--reduce-only` for the combine after a wave -- never a second counting pass over the same `--out`
+   (`aggregate_manifests` refuses the overlap; ADR-052 amendment).
 5. Route every id through `id_compat`; add a `tests/scripts/test_*` guard.
 
 Full field-level API and the measured failure histories are in `scripts/_driver.py`'s docstring and

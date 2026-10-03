@@ -1,15 +1,19 @@
 {
-  "mode": "retrain",
-  "reason": "ADR-051 RC2+RC5 (4.71.0): _gk_geometry frame-coordinate reprojection and the cross-team next-event borrow moved the GK-completion design matrix (prepare_gk_completion_training_data -> resolve_gk_geometry). NOT RC4, which is SkillCorner-only and cannot touch a gradientsports fit. This run ALSO widens the corpus from the committed ~30 GS matches (n_rows 1666) to all 64 now in the pining manifest, so the weight change is geometry AND corpus, not geometry alone.",
+  "mode": "rebundle",
+  "reason": "ADR-106 F1b float32 retrain: float32-invariant per T10 (max abs delta 4.1e-06 on length/dy_abs ~2pct rows; dest_defender_density/dest_x/is_ =0); rebundle reproduces committed weights",
+  "max_per_provider": 64,
+  "tracking_limit": null,
+  "feature_space": null,
+  "probe_old": null,
   "superseded_coef": {
-    "length": -1.289990444747856,
-    "forwardness": 0.12140490427573006,
-    "dy_abs": 0.800334734023125,
-    "dest_x": -0.40319944872413904,
-    "dest_y_off": -0.21959692780230097,
-    "dest_defender_density": -0.0777295664120578,
-    "is_goalkick": 0.1858083197017299,
-    "is_throw_in": 0.07843763707309707
+    "length": -1.0395159175625266,
+    "forwardness": 0.2359600409915717,
+    "dy_abs": 0.7710401073435684,
+    "dest_x": -0.6880046272807695,
+    "dest_y_off": -0.23192252125490673,
+    "dest_defender_density": -0.190389921570588,
+    "is_goalkick": 0.1815213025642453,
+    "is_throw_in": 0.09118654095202862
   },
   "n_rows": 3491,
   "n_native": 2953,
@@ -19,7 +23,7 @@
     0.8376737021923979,
     0.871651206706956
   ],
-  "native_brier": 0.11946461231064857,
+  "native_brier": 0.11946461229564692,
   "base_rate_brier": 0.17559464457789944,
   "density_finite_rate": 0.9908335720423948,
   "label_split": {
@@ -29,17 +33,19 @@
   "providers": [
     "gradientsports"
   ],
-  "run_commit": "4b153655f2388c4c1f4009d5abb0955b114222f1",
+  "artifact_label": "full",
+  "all_public": false,
+  "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
   "coef": {
-    "length": -1.0395159175625266,
-    "forwardness": 0.2359600409915717,
-    "dy_abs": 0.7710401073435684,
-    "dest_x": -0.6880046272807695,
-    "dest_y_off": -0.23192252125490673,
-    "dest_defender_density": -0.190389921570588,
-    "is_goalkick": 0.1815213025642453,
-    "is_throw_in": 0.09118654095202862
+    "length": -1.0395159200510793,
+    "forwardness": 0.2359600420325388,
+    "dy_abs": 0.7710401043354005,
+    "dest_x": -0.6880046256949414,
+    "dest_y_off": -0.23192251896518282,
+    "dest_defender_density": -0.19038992217375392,
+    "is_goalkick": 0.18152130248378956,
+    "is_throw_in": 0.09118654094026707
   }
 }

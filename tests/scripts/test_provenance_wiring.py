@@ -31,6 +31,14 @@ ARTIFACT_DRIVERS = (
     # periodic production) and writes docs/research/das_native_parity/metrics.json -- the parity
     # percentiles + quadrature shift the ADR/CHANGELOG quote, over external corpus data, so provenance.
     "validate_das_native_parity",
+    # Receiver 30 -> 327 widening gate (combined-cycle-completion spec section 7, D8). Reads the receiver
+    # trainer's candidate rows + the committed bundle and writes receiver_gate.json, whose decision ships
+    # (or blocks) the widened bundled receiver -- a cited number over the licensed SB360 corpus.
+    "validate_receiver_widening",
+    # Hub smoke over the org's whole model population (combined-cycle-completion spec section 9). Loads every
+    # registered Hub repo anonymously, scores the canonical float32 frame and compares each README with its
+    # in-repo card; writes hub_smoke.json, the cited C1 record and the post-release D9 gate.
+    "validate_hub_variants",
     # Enrolled with the SB360 coverage audit. Measures real StatsBomb 360 freeze-frame
     # coverage, and its keeper-visibility numbers go in front of a club -- exactly the
     # "cited, uncheckable" shape the rule below exists to prevent.

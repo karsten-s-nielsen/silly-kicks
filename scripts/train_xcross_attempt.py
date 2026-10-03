@@ -516,7 +516,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
     parity test sets it False since the probe needs a real ``_probe_sample`` on disk. Returns
     ``(metrics, model)``; raises :class:`AcceptanceGatesFailedError` instead of exiting."""
     sys.path.insert(0, "scripts")
-    from _corpus import artifact_label
+    from _corpus import artifact_label, check_shipped_variant, corpus_identity, reproducibility
     from _paired import fixed_sequence_ship
 
     from scripts._study_shared import load_study_inputs
@@ -579,6 +579,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
             why = f"operator --ship-variant override (fixed-sequence gate verdict was: {shipped} -- {why})"
             shipped = ship_variant
             print(f"Ship-variant override: forcing ship {shipped}. {why}")
+        check_shipped_variant(cfg.get("expect_variant"), shipped)
         ship_mask = cand_masks[shipped]
         shipped_params = _hpo_once(
             X[ship_mask],
@@ -611,12 +612,13 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
                 "--ship-variant requires the multi-candidate (run_paired) corpus (public + owner "
                 "SkillCorner + gradientsports) so the variant masks and the TF-19 probe cohort exist."
             )
-        params_all = _hpo_once(
-            X, y, groups, out, "single", n_trials, negative_subsample=ns, seed=seed, study_shard_dir=study_shard_dir
-        )
         ship_mask = np.ones(len(X), bool)
         ship_provs = set(providers[ship_mask].tolist())
         shipped = artifact_label(providers=ship_provs, all_public=bool(is_public[ship_mask].all()))
+        check_shipped_variant(cfg.get("expect_variant"), shipped)  # before the study: a refusal costs no fit
+        params_all = _hpo_once(
+            X, y, groups, out, "single", n_trials, negative_subsample=ns, seed=seed, study_shard_dir=study_shard_dir
+        )
         candidates[shipped] = {
             "params": params_all,
             "metrics": _cv_metrics(X, y, groups, params_all, negative_subsample=ns, seed=seed),
@@ -660,6 +662,11 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
         "n_rows": len(X),
         "n_positive": int(np.asarray(y).sum()),
         "providers": sorted(provset),
+        # Corpus IDENTITY (spec section 5): exact ids only for an all-public corpus, else a digest
+        # (Hub publishes copy metrics.json). n_rows alone could not tell 17 public matches from 27.
+        **corpus_identity(providers.tolist(), match_ids.tolist(), all_public=bool(is_public.all())),
+        # ADR-067 M4 caveat, emitted here -- never hand-added at bundling (spec 0.11).
+        **reproducibility(shipped, candidates[shipped]["providers"], training_commit=run_prov["commit"]),
         "candidates": candidates,
         "acceptance": acceptance,
         "estimates_are_cv_not_shipped_fit": True,
@@ -771,6 +778,12 @@ def main(argv=None) -> None:
         "same-population comparison leg (M5).",
     )
     ap.add_argument(
+        "--probe-match-ids-json",
+        default=None,
+        help='JSON {"gradientsports": ["10502", ...]}: matches loaded ONLY for the TF-19 substitution probe, in '
+        "a separate pass whose rows are discarded -- a held-out probe for a public-only fit (combined-cycle D5c).",
+    )
+    ap.add_argument(
         "--match-ids-json",
         default=None,
         help="JSON file mapping {provider: [match_id, ...]} -- a per-provider allowlist threaded to "
@@ -811,6 +824,14 @@ def main(argv=None) -> None:
         "metrics.json -- the hatch permits a dev run, it never launders the fact.",
     )
     ap.add_argument(
+        "--expect-variant",
+        choices=["public", "sc_extended", "full"],
+        default=None,
+        help="G1 guard: refuse BEFORE extraction unless the requested corpus can ship this variant "
+        "(public => every requested match is public), and refuse at ship time if the shipped variant "
+        "differs. Default off (unchanged behaviour).",
+    )
+    ap.add_argument(
         "--shard-root",
         default=None,
         help="Study-shard root for the parallel study path (5c): a worker reads it via "
@@ -826,15 +847,29 @@ def main(argv=None) -> None:
         action="store_true",
         help="Reduce: ship decision + final fit + TF-19 probe over the studies in --shard-root, then exit.",
     )
+    ap.add_argument(
+        "--prep-only",
+        action="store_true",
+        help="extract + persist the study inputs, print {study_root, studies}, exit (launcher f1b mode)",
+    )
+    ap.add_argument("--list-studies", action="store_true", help="print the study tags under --shard-root as JSON")
+    ap.add_argument(
+        "--study-list", default=None, help="JSON list of study tags to run from --shard-root (launcher worker)"
+    )
     args = ap.parse_args(argv)
 
     # Parallel study path (5c): a worker runs one study, the reduce assembles them -- both operate on an
     # already-persisted --shard-root (the serial prep enforced clean-tree + provenance).
-    if args.study or args.assemble:
+    if args.study or args.assemble or args.study_list or args.list_studies:
         if not args.shard_root:
-            ap.error("--study/--assemble require --shard-root")
+            ap.error("--study/--study-list/--list-studies/--assemble require --shard-root")
         root = Path(args.shard_root)
-        if args.study:
+        if args.list_studies:
+            print(json.dumps(enumerate_studies(root)))
+        elif args.study_list:
+            for tag in json.loads(Path(args.study_list).read_text(encoding="utf-8")):
+                run_one_study(root, tag)
+        elif args.study:
             run_one_study(root, args.study)
         else:
             try:
@@ -859,12 +894,49 @@ def main(argv=None) -> None:
     comparison_provs = [p for p in args.probe_comparison_providers.split(",") if p]
     if set(probe_provs) & set(comparison_provs):
         raise SystemExit("--probe-providers and --probe-comparison-providers must be disjoint.")
+    if args.probe_match_ids_json:
+        if not args.providers:
+            ap.error("--probe-match-ids-json needs --providers (probe matches are listed via pining)")
+        _probe = json.load(open(args.probe_match_ids_json))
+        _pkeys = set(_probe)
+        if not _pkeys <= set(probe_provs):
+            ap.error(f"--probe-match-ids-json providers {sorted(_pkeys)} must all be in --probe-providers")
+        # Held out by construction (B r4 CCC-PLAN-39): refuse any probe match the TRAINING pass could also load
+        # -- a training provider with no allowlist loads its whole manifest, so every probe id under it overlaps.
+        _train_provs = {p for p in args.providers.split(",") if p}
+        _train_allow = json.load(open(args.match_ids_json)) if args.match_ids_json else None
+        _overlap = [
+            (p, str(m))
+            for p, ids in _probe.items()
+            for m in ids
+            if p in _train_provs and (_train_allow is None or str(m) in {str(x) for x in _train_allow.get(p, [])})
+        ]
+        if _overlap:
+            ap.error(
+                f"--probe-match-ids-json names {len(_overlap)} match(es) the training corpus can also load; "
+                "a held-out probe must be disjoint from training"
+            )
 
     out = Path(args.output_dir)
     art = out / "xcross_attempt_v1"
     cache = art / "_feature_cache"
     sys.path.insert(0, "scripts")
     from _cache import cache_is_valid, write_cache_meta
+
+    # G1 launch preflight (combined-cycle-completion spec section 5): BEFORE any corpus work, so a run
+    # that would train a public bundle on owner-tier data never starts.
+    if args.expect_variant is not None:
+        if not args.providers:
+            ap.error("--expect-variant needs --providers (only the pining path lists a requested corpus)")
+        from _corpus import check_expected_variant, requested_is_all_public
+        from _loader_pining import match_visibility, select_match_ids
+
+        _provs = args.providers.split(",")
+        _allow = json.load(open(args.match_ids_json)) if args.match_ids_json else None
+        _pairs = select_match_ids(providers=_provs, match_ids=_allow, max_per_provider=args.max_per_provider)
+        check_expected_variant(
+            args.expect_variant, all_public=requested_is_all_public(_pairs, match_visibility(_provs))
+        )
 
     # --- Phase 1: stream + extract + cache ---
     # M1: bound on BOTH branches (cache-hit never calls _extract).
@@ -881,6 +953,17 @@ def main(argv=None) -> None:
         groups = np.load(cache / "groups.npy", allow_pickle=True)
         providers = np.load(cache / "providers.npy", allow_pickle=True)
         match_ids = np.load(cache / "match_ids.npy", allow_pickle=True)
+        if args.probe_match_ids_json:
+            _meta_path = cache.parent / "_probe_sample" / "meta.json"
+            if not _meta_path.is_file():
+                raise SystemExit(
+                    "no cached _probe_sample/meta.json for --probe-match-ids-json; use a fresh --output-dir"
+                )
+            _meta = json.load(open(_meta_path))
+            _probe = json.load(open(args.probe_match_ids_json))
+            _want = sorted([p, m] for p, ids in _probe.items() for m in ids)
+            if sorted(_meta.get("probe_matches", [])) != _want:
+                raise SystemExit("cached _probe_sample does not match --probe-match-ids-json; use a fresh --output-dir")
     else:
         if args.providers:
             allowlist = json.load(open(args.match_ids_json)) if args.match_ids_json else None
@@ -904,9 +987,26 @@ def main(argv=None) -> None:
             # Shards live BESIDE the feature cache, under the same per-corpus `--output-dir`, so
             # the "fresh --output-dir per corpus" discipline the fingerprint enforces covers them.
             shard_root=art / "shards",
-            probe_providers=tuple(probe_provs),
+            probe_providers=() if args.probe_match_ids_json else tuple(probe_provs),
             probe_comparison_providers=tuple(comparison_provs),
         )
+        if args.probe_match_ids_json:
+            # D5(c): the TF-19 probe cohort comes from a SEPARATE pass over probe-only matches (e.g. GS
+            # 10502/10503) whose feature rows are discarded -- they can never enter training.
+            from _loader_pining import pining_source
+
+            probe_allow = json.load(open(args.probe_match_ids_json))
+            p_refs, p_load = pining_source(sorted(probe_allow), match_ids=probe_allow, cache_dir=args.cache_dir)
+            *_discarded, p_bundle = _extract(
+                p_refs,
+                args.horizon_seconds,
+                feature_set=args.feature_set,
+                load=p_load,
+                shard_root=art / "probe_shards",
+                probe_providers=tuple(probe_provs),
+                probe_comparison_providers=(),
+            )
+            probe_bundle = (p_bundle[0], probe_bundle[1], probe_bundle[2] + p_bundle[2])
         print(f"Extracted {len(X)} rows ({int(y.sum())} positives) in {time.time() - t0:.0f}s")
         cache.mkdir(parents=True, exist_ok=True)
         X.to_parquet(cache / "features.parquet")
@@ -977,6 +1077,7 @@ def main(argv=None) -> None:
         "run_paired": run_paired,
         "run_prov": run_prov,
         "ship_variant": args.ship_variant,
+        "expect_variant": args.expect_variant,
     }
     from scripts._study_shared import persist_study_inputs
 
@@ -990,6 +1091,9 @@ def main(argv=None) -> None:
         is_public=is_public,
         config=config,
     )
+    if args.prep_only:
+        print(json.dumps({"study_root": str(study_root), "studies": enumerate_studies(study_root)}))
+        return
     try:
         assemble_studies(study_root, study_shard_dir=study_root, run_probe=True)
     except AcceptanceGatesFailedError:

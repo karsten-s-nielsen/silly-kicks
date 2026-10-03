@@ -279,3 +279,109 @@ def test_aggregate_of_an_empty_dir_is_empty_not_a_crash(tmp_path):
     got = mod._aggregate_manifests(tmp_path)
     assert got["n_partitions"] == 0
     assert got["n_matches"] == 0
+
+
+def _install_gkdv_corpus(monkeypatch, keys):
+    """The real `main()` control flow over a fake corpus; the per-frame science is stubbed to a report
+    of 10 frames all dropped for `no_possession` (counts are the point here, not arm values)."""
+    import types
+
+    from _fake_corpus import SpyLoader, install_fake_corpus, make_loaded, make_ref
+
+    import scripts._loader_pining as loader
+    import silly_kicks.gkdv as gkdv
+    import silly_kicks.tracking as trk
+
+    frames = pd.DataFrame({"game_id": [1], "period_id": [1], "frame_id": [1]})
+    refs = [make_ref(p, m) for p, m in keys]
+    served = {(p, m): make_loaded(p, m, frames=frames, home_team_id=5) for p, m in keys}
+    install_fake_corpus(monkeypatch, loader, refs=refs, loader=SpyLoader(served))
+    report = types.SimpleNamespace(n_frames_in=10, n_frames_scored=0, drop_reasons={"no_possession": 10})
+    provenance = pd.DataFrame(
+        {
+            "drop_reason": ["no_possession"],
+            "gk_team_id": [5],
+            "defending_team_id": [5],
+            "game_id": [1],
+            "period_id": [1],
+            "frame_id": [1],
+            "player_id": [9],
+        }
+    )
+    monkeypatch.setattr(trk, "infer_ball_carrier", lambda f: None)
+    monkeypatch.setattr(trk, "derive_team_in_possession", lambda f, c: f)
+    monkeypatch.setattr(trk, "resolve_defended_goals", lambda f: None)
+    monkeypatch.setattr(gkdv, "build_ghost_frames", lambda f, **k: (f, provenance, report))
+
+
+def _gkdv_run(monkeypatch, tmp_path, out, keys, *extra):
+    import json
+    import sys
+
+    _install_gkdv_corpus(monkeypatch, keys)
+    name = f"{extra[0] if extra else 'w'}_{'_'.join(m for _p, m in keys)}"
+    slice_json = tmp_path / f"{name}.json"
+    ids: dict = {}
+    for p, m in keys:
+        ids.setdefault(p, []).append(m)
+    slice_json.write_text(json.dumps(ids), encoding="utf-8")
+    argv = ["build_gkdv_arm_values.py", "--out", str(out), "--match-ids-json", str(slice_json), "--allow-dirty"]
+    monkeypatch.setattr(sys, "argv", argv + [a for a in extra if a.startswith("--")])
+    mod.main()
+    return slice_json.stem
+
+
+_GS = (("gradientsports", "m1"), ("gradientsports", "m2"))
+
+
+def test_a_worker_manifest_records_the_keys_it_covered(tmp_path, monkeypatch):
+    import json
+
+    out = tmp_path / "out"
+    tag = _gkdv_run(monkeypatch, tmp_path, out, _GS[:1])
+    assert json.loads((out / f"manifest_{tag}.json").read_text(encoding="utf-8"))["partition_keys"] == [
+        "gradientsports__m1"
+    ]
+
+
+def test_reduce_only_after_two_workers_counts_each_match_ONCE(tmp_path, monkeypatch):
+    """MEASURED (combined-cycle Phase B): two 32-match workers plus a counting full-population pass
+    reported `n_matches: 128` and doubled frame counts. --reduce-only counts each match once."""
+    import json
+
+    out = tmp_path / "out"
+    _gkdv_run(monkeypatch, tmp_path, out, _GS[:1])
+    _gkdv_run(monkeypatch, tmp_path, out, _GS[1:])
+    tag = _gkdv_run(monkeypatch, tmp_path, out, _GS, "pop", "--reduce-only")
+    assert not (out / f"manifest_{tag}.json").exists(), "a reduce writes no per-worker manifest"
+    corpus = json.loads((out / "arm_values_manifest.json").read_text(encoding="utf-8"))
+    assert corpus["n_matches"] == 2 and corpus["n_frames_in"] == 20
+    assert corpus["drop_reasons"] == {"no_possession": 20}
+    assert corpus["conservation_holds"] is True
+    assert corpus["reduce_mode"] == "driver-reduce-only" and corpus["population_size"] == 2
+    assert corpus["commit_consistent"] is True and "partition_keys" not in corpus
+
+
+def test_reduce_only_refuses_an_incomplete_population(tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    _gkdv_run(monkeypatch, tmp_path, out, _GS[:1])
+    with pytest.raises(SystemExit, match="1 of 2 population matches have no shard"):
+        _gkdv_run(monkeypatch, tmp_path, out, _GS, "pop", "--reduce-only")
+
+
+def test_reduce_only_needs_the_population(tmp_path, monkeypatch, capsys):
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["build_gkdv_arm_values.py", "--out", str(tmp_path), "--reduce-only"])
+    with pytest.raises(SystemExit):
+        mod.main()
+    assert "--reduce-only needs --match-ids-json" in capsys.readouterr().err
+
+
+def test_a_COUNTING_pass_over_finished_partitions_is_refused(tmp_path, monkeypatch):
+    """The measured double count, reproduced end to end: refused, not reported as twice the corpus."""
+    out = tmp_path / "out"
+    _gkdv_run(monkeypatch, tmp_path, out, _GS[:1])
+    _gkdv_run(monkeypatch, tmp_path, out, _GS[1:])
+    with pytest.raises(ValueError, match="overlap"):
+        _gkdv_run(monkeypatch, tmp_path, out, _GS, "pop")

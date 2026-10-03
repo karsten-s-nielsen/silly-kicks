@@ -13,7 +13,7 @@ import scripts.train_receiver_model as TRM
 from scripts.train_receiver_model import _R, _T
 
 
-def _install_corpus(monkeypatch, matches):
+def _install_corpus(monkeypatch, matches, *, visibility="public"):
     """Wire the refs+load seam (spec section 4.5): list refs per provider, load one match at a time.
 
     ``matches`` are the old loader tuples ``(provider, mid, actions, frames, home[, visible_area])``.
@@ -41,6 +41,9 @@ def _install_corpus(monkeypatch, matches):
     monkeypatch.setattr(lp, "list_match_refs", _list)
     monkeypatch.setattr(lp, "load_match", lambda ref, **kw: by_key[(str(ref.provider), str(ref.match_id))])
     monkeypatch.setattr(lp, "resolve_cache_dir", lambda c=None: c)
+    # main() labels the bundle from the MANIFEST (D7): stub the visibility listing too, so no test that
+    # reaches main() can call the live pining API (B r4, outside its round).
+    monkeypatch.setattr(lp, "match_visibility", lambda providers, **kw: {k: visibility for k in by_key})
 
 
 _ACT_COLS = [
@@ -513,6 +516,8 @@ def test_owner_rows_skips_the_training_reparse(tmp_path, monkeypatch):
         return iter([])
 
     monkeypatch.setattr("scripts._loader_pining.load_matches", _boom)
+    monkeypatch.setattr("scripts._loader_pining.list_match_refs", lambda **kw: [])
+    monkeypatch.setattr("scripts._loader_pining.match_visibility", lambda providers, **kw: {})
     monkeypatch.setattr(TRM, "_resolve_deployment", lambda *a, **k: {"decisive": False, "margin": float("nan")})
     monkeypatch.setattr(
         sys,
@@ -553,3 +558,53 @@ def test_help_exits_zero():
         finally:
             sys.argv = old
     assert exc.value.code == 0
+
+
+def test_corpus_visibility_is_keyed_on_the_manifest_not_the_provider_name():
+    """ADR-038: statsbomb is not public BY NAME. The pining statsbomb manifest marks every match private
+    (licensed, ADR-062), so a statsbomb-trained receiver is `restricted` (combined-cycle spec D7)."""
+    from scripts.train_receiver_model import _corpus_visibility
+
+    assert _corpus_visibility([("statsbomb", "1"), ("statsbomb", "2")], {("statsbomb", "1"): "private"}) == "restricted"
+    assert _corpus_visibility([("statsbomb", "1")], {("statsbomb", "1"): "public"}) == "public"
+    assert _corpus_visibility([], {}) == "restricted"  # fail-closed
+
+
+def test_corpus_source_threads_the_allowlist(monkeypatch):
+    import scripts._loader_pining as lp
+    from scripts.train_receiver_model import _corpus_source
+
+    seen = {}
+
+    def fake_pining_source(providers, **kw):
+        seen.update(kw, providers=providers)
+        return [], (lambda ref: None)
+
+    monkeypatch.setattr(lp, "pining_source", fake_pining_source)
+    _corpus_source("statsbomb", None, match_ids={"statsbomb": ["7"]})
+    assert seen["providers"] == ["statsbomb"] and seen["match_ids"] == {"statsbomb": ["7"]}
+
+
+@pytest.mark.parametrize(("vis", "want"), [("public", "public"), ("private", "restricted")])
+def test_main_labels_the_bundle_from_the_manifest_visibility(tmp_path, monkeypatch, vis, want):
+    """D7 through main(): the same statsbomb corpus is `public` or `restricted` by its MANIFEST alone."""
+    _install_corpus(monkeypatch, [_match(1), _match(2)], visibility=vis)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_receiver_model.py",
+            "--out",
+            str(tmp_path / "out"),
+            "--shard-root",
+            str(tmp_path / "sh"),
+            "--allow-dirty",
+            "--min-rows",
+            "1",
+            "--min-passes",
+            "1",
+        ],
+    )
+    TRM.main()
+    man = json.loads((tmp_path / "out" / "metrics.json").read_text())
+    assert man["corpus_visibility"] == want and man["corpus_n_matches"] == 2

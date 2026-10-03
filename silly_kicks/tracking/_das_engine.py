@@ -32,6 +32,11 @@ _DANGER_INTERCEPT = -0.52156283
 _DANGER_C_DIST = -0.14447723
 _DANGER_C_ANGLE = 0.40579492
 
+#: numpy-engine frames per vectorised block when the caller passes no ``chunk_size``: the fastest
+#: size whose working peak stays under 256 MB in the ADR-107 chunk table. Value-neutral
+#: (``test_chunk_size_is_byte_identical``); the numba engine ignores ``chunk_size``.
+_DEFAULT_NUMPY_CHUNK = 16
+
 
 @dataclass(frozen=True)
 class DasResult:
@@ -301,7 +306,7 @@ def _compute_das_numpy(packed: PackedFrames, params: PassSimParams, *, chunk_siz
     if len(ok) == 0:
         return DasResult(team_as, team_das, player_as, player_das, packed.reason.copy())
 
-    cs = chunk_size if (chunk_size is not None and chunk_size > 0) else 32
+    cs = chunk_size if (chunk_size is not None and chunk_size > 0) else _DEFAULT_NUMPY_CHUNK
     for start in range(0, len(ok), cs):
         f_idx = ok[start : start + cs]
         apd, ppd, x_grid, y_grid, _counts = _simulate_chunk(packed, params, grids, f_idx)

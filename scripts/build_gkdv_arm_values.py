@@ -22,6 +22,7 @@ TWO CORRECTNESS CONSTRAINTS, both load-bearing:
 Usage (on the box, scripts/ on sys.path, pining token in env):
   python scripts/build_gkdv_arm_values.py --out <DIR> [--providers gradientsports] \
       [--arm das|threat|both] [--max-per-provider N] [--tracking-limit N]
+  python scripts/build_gkdv_arm_values.py --out <DIR> --match-ids-json <POPULATION.json> --reduce-only
 
 The `threat` arm is REFUSED, not defaulted: it needs a fitted ExpectedThreat, and this driver
 deliberately wires NO xT loader -- it exposes no xT input and never fits one in-process.
@@ -71,12 +72,43 @@ def _aggregate_manifests(dest) -> dict:
     """
     from scripts._partition import aggregate_manifests
 
-    corpus = aggregate_manifests(dest, defaults=("n_frames_in", "n_frames_scored", "n_matches"))
+    return _with_conservation(aggregate_manifests(dest, defaults=("n_frames_in", "n_frames_scored", "n_matches")))
+
+
+def _with_conservation(corpus: dict) -> dict:
+    """``conservation_holds``: every input frame scored or dropped for a named reason, corpus-wide."""
     corpus.setdefault("drop_reasons", {})
     scored, dropped = corpus["n_frames_scored"], sum(corpus["drop_reasons"].values())
     # Conservation across the WHOLE corpus, not merely within one worker.
     corpus["conservation_holds"] = scored + dropped == corpus["n_frames_in"]
     return corpus
+
+
+def _write_arm_tables(combined, dest: Path, *, tag: str) -> dict:
+    """One ``arm_values_<arm>.parquet`` per arm present in ``combined``; returns their descriptors."""
+    from scripts._partition import write_table_atomically
+
+    written = {}
+    for arm in ("delta_das", "delta_threat"):
+        df = combined[combined["arm"] == arm] if len(combined) else combined
+        if not len(df):
+            continue
+        path = dest / f"arm_values_{arm}.parquet"
+        # Atomic: N parallel workers all rebuild this from the SHARED shard dir and write the same
+        # path, so a plain to_parquet has N concurrent writers on one file and can be read -- or
+        # left -- half-written. The 64-match corpus pass got away with it; that is luck, not safety.
+        write_table_atomically(df, path, tag=tag)
+        # Reported so a structurally-degenerate ICC input is visible BEFORE the power run:
+        # a keeper appearing in one match makes the block permutation a pure relabelling.
+        spanning = df.groupby("keeper_key")["game_id"].nunique()
+        written[arm] = {
+            "path": str(path),
+            "n_rows": len(df),
+            "n_keepers": len(spanning),
+            "n_single_match_keepers": int((spanning <= 1).sum()),
+            "n_nonzero": int((df["arm_value"] != 0).sum()),
+        }
+    return written
 
 
 def _frame_slice(frames, gid, per, fid):
@@ -122,7 +154,18 @@ def main() -> None:
         action="store_true",
         help="print the available match ids as JSON and exit (build the parallel split from this)",
     )
+    ap.add_argument(
+        "--reduce-only",
+        action="store_true",
+        help=(
+            "AUTHORITATIVE combine after a partitioned run, over exactly the --match-ids-json POPULATION "
+            "(every match needs a shard or an exclusion marker). Counts each match once and writes no "
+            "per-worker manifest: a counting pass over finished partitions counts every match twice."
+        ),
+    )
     args = ap.parse_args()
+    if args.reduce_only and not args.match_ids_json:
+        ap.error("--reduce-only needs --match-ids-json (the population)")
 
     # The threat arm is REFUSED here as a DRIVER policy, and the reason is correctness, not taste.
     #
@@ -290,10 +333,10 @@ def main() -> None:
 
     # `reconcile` is deliberately NOT used here: this driver writes TWO per-arm tables
     # (`arm_values_delta_das` / `_delta_threat`) from one shard set, and `reconcile` writes a
-    # single combined path. Its own per-arm loop below stays, on `write_table_atomically`.
+    # single combined path. Its own per-arm writer (`_write_arm_tables`) stays, on `write_table_atomically`.
     from scripts._driver import for_each
+    from scripts._partition import partition_keys
     from scripts._partition import worker_tag as _worker_tag
-    from scripts._partition import write_table_atomically
 
     worker_tag = _worker_tag(args.match_ids_json)
     refs, load = pining_source(
@@ -303,6 +346,30 @@ def main() -> None:
         tracking_limit=args.tracking_limit,
         cache_dir=cache_dir,
     )
+    # What determines an arm VALUE: the ghost model that positions the counterfactual keeper,
+    # the pitch-control method the arms integrate over, and the carrier parameters that pin the
+    # domain. The downstream ICC/power analysis is NOT declared -- it re-reads these shards on
+    # every invocation, so it consumes the content rather than determining it.
+    token = {
+        # `ghost_model` is the BUNDLED default: this driver exposes no --ghost-model flag, so
+        # `build_ghost_frames` resolves it internally. Declared as a literal rather than read
+        # off `args` (an earlier draft wrote `args.ghost_model`, which does not exist and would
+        # have raised AttributeError on the first real run). If a variant flag is ever added,
+        # thread it here -- that is exactly the kind of change the token has to see.
+        "ghost_model": "default",
+        "pitch_control_method": "spearman",
+        "arms": sorted(a for a, want in (("delta_das", want_das), ("delta_threat", want_threat)) if want),
+        # `--tracking-limit` TRUNCATES the frames every downstream computation sees, so a
+        # capped smoke run and a full run are DIFFERENT corpora and must never share a
+        # generation. Omitting it let a smoke pass poison the real one: every match reports
+        # "skip (shard exists)", the combined table is rebuilt from truncated shards, and the
+        # replayed counters make `conservation_holds` corroborate a corpus never walked.
+        "tracking_limit": args.tracking_limit,
+    }
+    if args.reduce_only:
+        from scripts._partition import require_population_shards
+
+        require_population_shards(dest / "shards", token, refs)
     res = for_each(
         refs,
         key=lambda ref: ref.key,
@@ -310,54 +377,37 @@ def main() -> None:
         work=_work,
         counters=lambda _item, _frame: dict(_last_report),
         shard_root=dest / "shards",
-        # What determines an arm VALUE: the ghost model that positions the counterfactual keeper,
-        # the pitch-control method the arms integrate over, and the carrier parameters that pin the
-        # domain. The downstream ICC/power analysis is NOT declared -- it re-reads these shards on
-        # every invocation, so it consumes the content rather than determining it.
-        token_inputs={
-            # `ghost_model` is the BUNDLED default: this driver exposes no --ghost-model flag, so
-            # `build_ghost_frames` resolves it internally. Declared as a literal rather than read
-            # off `args` (an earlier draft wrote `args.ghost_model`, which does not exist and would
-            # have raised AttributeError on the first real run). If a variant flag is ever added,
-            # thread it here -- that is exactly the kind of change the token has to see.
-            "ghost_model": "default",
-            "pitch_control_method": "spearman",
-            "arms": sorted(a for a, want in (("delta_das", want_das), ("delta_threat", want_threat)) if want),
-            # `--tracking-limit` TRUNCATES the frames every downstream computation sees, so a
-            # capped smoke run and a full run are DIFFERENT corpora and must never share a
-            # generation. Omitting it let a smoke pass poison the real one: every match reports
-            # "skip (shard exists)", the combined table is rebuilt from truncated shards, and the
-            # replayed counters make `conservation_holds` corroborate a corpus never walked.
-            "tracking_limit": args.tracking_limit,
-        },
+        token_inputs=token,
         tag=worker_tag,
         label="match",
     )
     totals.update(res.counters)
 
+    if args.reduce_only:
+        # The authoritative combine: counts from THIS pass's replayed per-match counters (each
+        # population match once), tables from exactly the population's shards, no per-worker manifest.
+        from scripts._partition import population_table, worker_lineage
+
+        lineage = worker_lineage(dest, prov=prov, generation=res.shard_dir.name)  # refuses before any write
+        written = _write_arm_tables(population_table(res), dest, tag=worker_tag)
+        corpus = _with_conservation(dict(totals))
+        corpus.update(
+            **res.manifest(),
+            **lineage,
+            reduce_mode="driver-reduce-only",
+            population_size=len(refs),
+            arms_written=written,
+            arm_requested=args.arm,
+            input_contract=input_contract(),
+        )
+        (dest / "arm_values_manifest.json").write_text(json.dumps(corpus, indent=2, default=str), encoding="utf-8")
+        print(json.dumps(corpus, indent=2, default=str))
+        return
+
     shard_dir = res.shard_dir
     shards = sorted(shard_dir.glob("*.parquet"))
     combined = pd.concat([pd.read_parquet(s) for s in shards], ignore_index=True) if shards else pd.DataFrame()
-    written = {}
-    for arm in ("delta_das", "delta_threat"):
-        df = combined[combined["arm"] == arm] if len(combined) else combined
-        if not len(df):
-            continue
-        path = dest / f"arm_values_{arm}.parquet"
-        # Atomic: N parallel workers all rebuild this from the SHARED shard dir and write the same
-        # path, so a plain to_parquet has N concurrent writers on one file and can be read -- or
-        # left -- half-written. The 64-match corpus pass got away with it; that is luck, not safety.
-        write_table_atomically(df, path, tag=worker_tag)
-        # Reported so a structurally-degenerate ICC input is visible BEFORE the power run:
-        # a keeper appearing in one match makes the block permutation a pure relabelling.
-        spanning = df.groupby("keeper_key")["game_id"].nunique()
-        written[arm] = {
-            "path": str(path),
-            "n_rows": len(df),
-            "n_keepers": len(spanning),
-            "n_single_match_keepers": int((spanning <= 1).sum()),
-            "n_nonzero": int((df["arm_value"] != 0).sum()),
-        }
+    written = _write_arm_tables(combined, dest, tag=worker_tag)
 
     # The arm-values table is what the S6.1 ICC number derives from, so it carries its own
     # provenance -- a clean SHA on the power metrics would otherwise launder a dirty input.
@@ -389,6 +439,8 @@ def main() -> None:
         "run_tree_dirty": prov["dirty"],
         "run_tree_state": prov["tree_state"],
         "partition": worker_tag,
+        # The keys this pass covered (overlap guard, combined-cycle Phase B).
+        **partition_keys(res),
     }
     (dest / f"manifest_{worker_tag}.json").write_text(
         json.dumps(worker_manifest, indent=2, default=str), encoding="utf-8"

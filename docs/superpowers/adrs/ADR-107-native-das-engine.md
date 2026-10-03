@@ -58,14 +58,48 @@ corrects). gkdv reaches native DAS through exactly this one confined seam.
 constant within a frame (NaN-aware) or `ValueError` — the reference silently took the first row in input
 order (the D-PASSER defect class).
 
-**Dispatch / chunking.** The numpy engine vectorises over a block of frames (default `chunk_size = 32`,
-memory-bounded — `tests/tracking/test_das_scale_memory.py` proves the working peak is bounded by
+**Dispatch / chunking.** The numpy engine vectorises over a block of frames (default `chunk_size = 16`,
+`_das_engine._DEFAULT_NUMPY_CHUNK`, chosen from the table below; memory-bounded — `tests/tracking/test_das_scale_memory.py` proves the working peak is bounded by
 `chunk_size`, not the total frame count). The numba engine loops per frame with O(P·T) scratch allocated
 once per frame (serial by default; `prange` over frames when `n_threads > 1`, byte-identical to serial).
 Frames whose `Reason` is not `OK` get NaN without being simulated.
 
-`estimate_das_cost` keeps the ADR-105 advisory frame-count guardrail (`DasCostWarning` when the distinct
-frame count crosses a threshold; reported, never gating; DAS values are unchanged by it).
+`estimate_das_cost` is an advisory, estimated-SECONDS guardrail: distinct scored frames x a per-frame
+constant for the engine that will actually run (`_DAS_SECONDS_PER_FRAME_NUMPY` when numba is absent; the
+numba-serial `_DAS_SECONDS_PER_FRAME`, divided by `n_threads x _PRANGE_EFFICIENCY` on the `prange` path),
+warned past `_DAS_COST_WARN_SECONDS` (`DasCostWarning`). The constants are measured as in the table below
+and re-derived from the corpus `performance.json` at release. Reported, never gating; DAS values are
+unchanged by it.
+
+**Chunk-size and thread table (2026-10-02).** 20 000 synthetic `single_frame` frames, best of 3 wall-clock
+runs, `tracemalloc` working peak (peak minus the output arrays), on an otherwise idle 16-core Intel Core
+Ultra 9 285H (Linux / WSL2, Python 3.12.3, numpy 2.5.3, pandas 3.0.6, numba 0.68.0):
+
+| Engine | Setting | ms / frame | Working peak |
+|---|---|---|---|
+| numpy | `chunk_size=16` | 6.06 | 46 MB |
+| numpy | `chunk_size=32` | 6.70 | 92 MB |
+| numpy | `chunk_size=64` | 8.44 | 183 MB |
+| numpy | `chunk_size=128` | 8.88 | 366 MB |
+| numba | serial (`n_threads=None`) | 1.17 | — |
+| numba | `n_threads=2` | 0.61 (efficiency 0.97) | — |
+| numba | `n_threads=4` | 0.33 (0.90) | — |
+| numba | `n_threads=8` | 0.19 (0.77) | — |
+| numba | `n_threads=16` | 0.15 (0.50) | — |
+
+- **numpy default:** the fastest size whose working peak stays under 256 MB is 16, so the default moved
+  32 → 16 (value-neutral, `test_chunk_size_is_byte_identical`).
+- **numba ignores `chunk_size`:** the fused per-frame kernel has no block loop; `chunk_size` 512 / 1024 /
+  4096 / 8192 measured 1.19 / 1.16 / 1.18 / 1.16 ms per frame, flat within noise.
+- **Constants:** `_DAS_SECONDS_PER_FRAME = 0.0012` (numba serial, rounded up),
+  `_DAS_SECONDS_PER_FRAME_NUMPY = 0.0061` (numpy at the default chunk, rounded up),
+  `_PRANGE_EFFICIENCY = 0.49` (at 16 threads, rounded down). The 16-thread efficiency makes the
+  estimate conservative at lower thread counts, which are more efficient on this hybrid
+  performance/efficiency-core CPU.
+- **Platform matters more than chunk size:** an earlier run on Windows (Python 3.10, numpy 2.2.6) with
+  two test suites running concurrently measured numpy at 28–30 ms per frame, with `chunk_size` 32
+  marginally ahead of 16 (28.0 vs 29.9). Absolute numbers move about 5x across platform and load, so the
+  constants are order-of-magnitude advisories; the corpus `performance.json` re-derives them at release.
 
 ### Unknown-extra behaviour
 
@@ -135,6 +169,15 @@ package — it is not an error. Downstream pins on `[das]` therefore degrade to 
   (`_reference_leg_subprocess`, `SK_DAS_REFERENCE_PYTHON`) and feeds it a globally-unique frame key
   (dense-rank over `game_id`/`period_id`/`frame_id`, since accessible-space pivots on `frame_id` alone).
   The `das-reference` extra pins `pandas<3`. Native DAS owns its arrays and is immune.
+- The reference leg must also match the library's result shapes and native's inputs (measured on the
+  owner corpus, combined-cycle Phase B): team results cover only the rows with possession, but player
+  results cover every row, so player values are read by input row (a possession-row counter scrambled the
+  player grain); the ball carrier is forwarded as `player_in_possession_col` whenever the frames carry
+  `ball_carrier_player_id`, as native excludes the carrier from offside (without it the library marks a
+  carrier beyond the defensive line offside); and string provider ids (IDSSE) pass through as ids.
+  The rows also reach the library sorted by that frame key: it takes the per-frame carrier in the
+  caller's row order but builds the positions from a frame-sorted copy, so unsorted rows (the corpus
+  scored rows are not frame-sorted) pair a frame with another frame's carrier.
 
 ## References
 

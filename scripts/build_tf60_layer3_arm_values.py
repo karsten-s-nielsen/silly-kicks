@@ -450,8 +450,8 @@ def main() -> None:
         return shard
 
     from scripts._driver import for_each
+    from scripts._partition import partition_keys, write_table_atomically
     from scripts._partition import worker_tag as _worker_tag
-    from scripts._partition import write_table_atomically
 
     worker_tag = _worker_tag(args.match_ids_json)
     dest = Path(args.out)
@@ -503,6 +503,7 @@ def main() -> None:
         "run_tree_dirty": prov["dirty"],
         "run_tree_state": prov["tree_state"],
         "partition": worker_tag,
+        **partition_keys(res),  # the keys this pass covered (overlap guard, combined-cycle Phase B)
     }
     (dest / f"manifest_{worker_tag}.json").write_text(
         json.dumps(worker_manifest, indent=2, default=str), encoding="utf-8"

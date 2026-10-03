@@ -259,7 +259,7 @@ def build_shards(
     from _loader_pining import pining_source, resolve_cache_dir
 
     from scripts._driver import for_each
-    from scripts._partition import providers_for_slice
+    from scripts._partition import partition_keys, providers_for_slice
     from scripts._provenance import git_provenance
     from silly_kicks.causal.opportunities import build_opportunities, shot_arm_config
 
@@ -333,6 +333,7 @@ def build_shards(
                 "run_tree_dirty": prov["dirty"],
                 "run_tree_state": prov["tree_state"],
                 "partition": tag,
+                **partition_keys(res),  # the keys this pass covered (overlap guard, combined-cycle Phase B)
             },
             indent=2,
             default=str,

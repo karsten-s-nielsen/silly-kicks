@@ -21,6 +21,7 @@ and cannot be handed an observed one. Do not add a "report the observed ATT" fla
 Usage (on the box, scripts/ on sys.path, pining token in env):
   python scripts/build_layer2_spells.py --list-matches
   python scripts/build_layer2_spells.py --out <DIR> --match-ids-json <SLICE.json>
+  python scripts/build_layer2_spells.py --out <DIR> --match-ids-json <POPULATION.json> --reduce-only
 """
 
 from __future__ import annotations
@@ -40,7 +41,11 @@ def _aggregate_manifests(dest) -> dict:
     """
     from scripts._partition import aggregate_manifests
 
-    corpus = aggregate_manifests(dest, defaults=("n_matches", "n_spells", "n_treated"))
+    return _with_prevalence(aggregate_manifests(dest, defaults=("n_matches", "n_spells", "n_treated")))
+
+
+def _with_prevalence(corpus: dict) -> dict:
+    """``treated_prevalence`` from the corpus counts: ``None`` when no spell was built, never 0/0."""
     n, k = corpus["n_spells"], corpus["n_treated"]
     corpus["treated_prevalence"] = (k / n) if n else None
     return corpus
@@ -72,7 +77,18 @@ def main() -> None:
         action="store_true",
         help="print the available match ids as JSON and exit (build the parallel split from this)",
     )
+    ap.add_argument(
+        "--reduce-only",
+        action="store_true",
+        help=(
+            "AUTHORITATIVE combine after a partitioned run, over exactly the --match-ids-json POPULATION "
+            "(every match needs a shard or an exclusion marker). Counts each match once and writes no "
+            "per-worker manifest: a counting pass over finished partitions counts every match twice."
+        ),
+    )
     args = ap.parse_args()
+    if args.reduce_only and not args.match_ids_json:
+        ap.error("--reduce-only needs --match-ids-json (the population)")
 
     if not args.list_matches and not args.out:
         raise SystemExit("--out is required unless --list-matches is given")
@@ -94,7 +110,7 @@ def main() -> None:
 
     from scripts._driver import for_each, reconcile
     from scripts._loader_pining import pining_source, resolve_cache_dir
-    from scripts._partition import providers_for_slice, worker_tag
+    from scripts._partition import partition_keys, providers_for_slice, worker_tag
     from silly_kicks.causal import build_opportunities, layer2_config
     from silly_kicks.causal._confounders import join_layer2_confounders
 
@@ -133,6 +149,24 @@ def main() -> None:
         tracking_limit=args.tracking_limit,
         cache_dir=cache_dir,
     )
+    # Layer 2 spells are produced by the opportunity builder and its config. `matching.py` is
+    # NOT declared: it runs in the downstream analysis, which re-reads these shards on every
+    # invocation. Declare what determines the CONTENT, not what consumes it.
+    token = {
+        "layer2_config": "v1",
+        "build_opportunities": "v1",
+        "join_layer2_confounders": "v1",
+        # Declared for the same reason `run_signoff_power`'s inline twin declares it (its
+        # comment says it "Mirrors `build_layer2_spells`' declaration" -- it did not, until
+        # now): the frame cap changes which spells exist AND what their confounders are.
+        # Worse here than elsewhere because this driver combines with `reconcile`, a
+        # WHOLE-GENERATION read, so one capped worker's shards reach every worker's table.
+        "tracking_limit": args.tracking_limit,
+    }
+    if args.reduce_only:
+        from scripts._partition import require_population_shards
+
+        require_population_shards(dest / "shards", token, refs)
     res = for_each(
         refs,
         key=lambda ref: ref.key,
@@ -140,23 +174,14 @@ def main() -> None:
         work=_work,
         counters=_counters,
         shard_root=dest / "shards",
-        # Layer 2 spells are produced by the opportunity builder and its config. `matching.py` is
-        # NOT declared: it runs in the downstream analysis, which re-reads these shards on every
-        # invocation. Declare what determines the CONTENT, not what consumes it.
-        token_inputs={
-            "layer2_config": "v1",
-            "build_opportunities": "v1",
-            "join_layer2_confounders": "v1",
-            # Declared for the same reason `run_signoff_power`'s inline twin declares it (its
-            # comment says it "Mirrors `build_layer2_spells`' declaration" -- it did not, until
-            # now): the frame cap changes which spells exist AND what their confounders are.
-            # Worse here than elsewhere because this driver combines with `reconcile`, a
-            # WHOLE-GENERATION read, so one capped worker's shards reach every worker's table.
-            "tracking_limit": args.tracking_limit,
-        },
+        token_inputs=token,
         tag=tag,
         label="match",
     )
+
+    if args.reduce_only:
+        _write_reduce(res, dest, tag=tag, prov=prov, population_size=len(refs))
+        return
 
     combined = reconcile(res.shard_dir, dest / "layer2_spells.parquet", tag=tag)
     (dest / f"manifest_{tag}.json").write_text(
@@ -171,6 +196,8 @@ def main() -> None:
                 "run_tree_dirty": prov["dirty"],
                 "run_tree_state": prov["tree_state"],
                 "partition": tag,
+                # The keys this pass covered (overlap guard, combined-cycle Phase B).
+                **partition_keys(res),
             },
             indent=2,
             default=str,
@@ -181,6 +208,32 @@ def main() -> None:
     corpus = _aggregate_manifests(dest)
     corpus["spells_path"] = str(dest / "layer2_spells.parquet") if len(combined) else None
     corpus["n_rows_written"] = len(combined)
+    (dest / "layer2_spells_manifest.json").write_text(json.dumps(corpus, indent=2, default=str), encoding="utf-8")
+    print(json.dumps(corpus, indent=2, default=str))
+
+
+def _write_reduce(res, dest: Path, *, tag: str, prov: dict, population_size: int) -> None:
+    """The authoritative combine: the table and the corpus counts over exactly the population.
+
+    Counts come from THIS pass's replayed per-match counters (each population match once), never from
+    summing worker manifests a second time; no per-worker manifest is written. The workers' manifests
+    are still read, for the commit lineage of the shards and the overlap refusal.
+    """
+    from scripts._partition import population_table, worker_lineage, write_table_atomically
+
+    lineage = worker_lineage(dest, prov=prov, generation=res.shard_dir.name)  # refuses before any write
+    combined = population_table(res)
+    if len(combined):
+        write_table_atomically(combined, dest / "layer2_spells.parquet", tag=tag)
+    corpus = _with_prevalence({"n_matches": 0, "n_spells": 0, "n_treated": 0, **res.counters})
+    corpus.update(
+        **res.manifest(),
+        **lineage,
+        reduce_mode="driver-reduce-only",
+        population_size=population_size,
+        spells_path=str(dest / "layer2_spells.parquet") if len(combined) else None,
+        n_rows_written=len(combined),
+    )
     (dest / "layer2_spells_manifest.json").write_text(json.dumps(corpus, indent=2, default=str), encoding="utf-8")
     print(json.dumps(corpus, indent=2, default=str))
 

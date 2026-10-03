@@ -272,3 +272,13 @@ def test_download_to_temp_cache_hit_skips_network(tmp_path, monkeypatch):
     got = L._download_to_temp("skillcorner", "m1", "events", "tok", "http://api", tmp_path, use_cache=True)
     assert got == dest
     assert got.read_text() == "cached-bytes"
+
+
+def test_partial_download_name_is_unique_per_call(tmp_path):
+    """Concurrent workers fetching the same artifact must never share a temp file (spec 0.12)."""
+    from scripts._loader_pining import _partial_path
+
+    dest = tmp_path / "tracking.xml"
+    a, b = _partial_path(dest), _partial_path(dest)
+    assert a != b and a.parent == b.parent == dest.parent
+    assert a.name.startswith("tracking.xml.") and a.name.endswith(".partial")

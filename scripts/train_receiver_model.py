@@ -22,7 +22,6 @@ import pathlib
 import numpy as np
 import pandas as pd
 
-from scripts._corpus import artifact_label
 from scripts._cover_shadow_thresholds import MIN_RECEIVER_MARGIN
 from scripts._driver import for_each, reconcile
 from scripts._provenance import git_provenance, require_clean_tree
@@ -363,7 +362,7 @@ def _candidate_count_distribution(rows: pd.DataFrame) -> dict:
     }
 
 
-def _corpus_source(provider: str, cache_dir):
+def _corpus_source(provider: str, cache_dir, match_ids: dict | None = None):
     """The trained provider's corpus as ``(refs, load)`` (spec section 4.5): a cheap ref list plus a
     single-match loader that yields ``(match_id, actions, frames)``. ``statsbomb`` -> SB360 freeze
     frames (positions-only, public variant); any tracking provider (e.g. ``gradientsports``) -> real
@@ -371,7 +370,7 @@ def _corpus_source(provider: str, cache_dir):
     whose per-provider dispatch builds the right frames."""
     from scripts._loader_pining import pining_source
 
-    refs, base_load = pining_source([provider], cache_dir=cache_dir)
+    refs, base_load = pining_source([provider], cache_dir=cache_dir, match_ids=match_ids)
 
     def load(ref):
         lm = base_load(ref)
@@ -413,12 +412,12 @@ def _namespace_game_ids(rows, provider):
     return rows.assign(game_id=f"{provider}:" + rows["game_id"].astype(str))
 
 
-def _extract_provider_rows(provider, feature_set, shard_root, cache_dir, out_path, tag):
+def _extract_provider_rows(provider, feature_set, shard_root, cache_dir, out_path, tag, match_ids=None):
     """Shard + reconcile one provider's candidate rows with ITS per-provider labeling strategy (Q4), and
     return ``(rows, coverage_counters)``. Primary and pool providers get DISTINCT generations (the token
     keys on ``provider``), so they never collide under one ``shard_root``."""
     strategy = labeling_strategy_for_provider(provider)
-    refs, load = _corpus_source(provider, cache_dir)
+    refs, load = _corpus_source(provider, cache_dir, match_ids)
     res = for_each(
         refs,
         key=lambda ref: ref.match_id,  # pre-migration key was the match_id; _KEY_EXCEPTIONS
@@ -441,6 +440,14 @@ def _extract_provider_rows(provider, feature_set, shard_root, cache_dir, out_pat
     return rows, dict(res.counters)
 
 
+def _corpus_visibility(pairs, visibility: dict) -> str:
+    """ADR-038: visibility from the MANIFEST, never the provider name (the rule this trainer kept at :529
+    after ADR-038 deleted it elsewhere). Fail-closed: empty or any non-public match -> restricted."""
+    from scripts._corpus import requested_is_all_public
+
+    return "public" if requested_is_all_public(list(pairs), visibility) else "restricted"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Train the public (SB360) / owner (GS) receiver model.")
     ap.add_argument("--out", type=pathlib.Path, required=True)
@@ -454,6 +461,12 @@ def main() -> None:
         "(Q3) -- e.g. --provider statsbomb --pool-provider gradientsports. The primary is the serve target.",
     )
     ap.add_argument("--cache-dir", default=None, help="pining cache dir for a tracking provider (owner variant)")
+    ap.add_argument(
+        "--match-ids-json",
+        default=None,
+        help='JSON {"statsbomb": [id, ...]} restricting the PRIMARY provider\'s corpus (e.g. the 30-match '
+        "fallback re-fit, combined-cycle spec 7). Default: the whole manifest.",
+    )
     ap.add_argument(
         "--public-bundle",
         type=pathlib.Path,
@@ -489,7 +502,15 @@ def main() -> None:
     else:
         # PRIMARY corpus (the serve target; SB360 -> trajectory labels, a tracking provider -> id labels).
         rows, coverage = _extract_provider_rows(
-            args.provider, args.feature_set, args.shard_root, args.cache_dir, args.out / "candidate_rows.parquet", "all"
+            args.provider,
+            args.feature_set,
+            args.shard_root,
+            args.cache_dir,
+            args.out / "candidate_rows.parquet",
+            "all",
+            match_ids=json.loads(pathlib.Path(args.match_ids_json).read_text(encoding="utf-8"))
+            if args.match_ids_json
+            else None,
         )
 
     # `reconcile` returns a COLUMN-LESS frame when no shard is non-empty, so guard `both_classes` on
@@ -526,7 +547,16 @@ def main() -> None:
     top1, fold_top1 = cv_top1(rows, args.feature_set)
     model.save(args.out / "model")
 
-    corpus_label = artifact_label(providers=providers, all_public=providers.issubset({"statsbomb"}))
+    from scripts._corpus import reproducibility
+    from scripts._loader_pining import match_visibility, select_match_ids
+
+    _primary_ids = (
+        json.loads(pathlib.Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
+    )
+    _pairs = list(select_match_ids(providers=[args.provider], match_ids=_primary_ids))
+    if args.pool_provider and args.pool_provider in providers:  # the pool earned inclusion -> its matches count too
+        _pairs += list(select_match_ids(providers=[args.pool_provider]))
+    corpus_label = _corpus_visibility(_pairs, match_visibility(sorted(providers)))
     manifest = {
         "schema": _SHARD_SCHEMA_VERSION,
         "feature_set": args.feature_set,
@@ -542,6 +572,10 @@ def main() -> None:
         "label_coverage": coverage,  # kept vs completed passes -> drop-on-ambiguous thinning is visible
         "visible_area_caveat": "SB360 truncates the negative candidate set; see the train-vs-serve shift (M2).",
         "corpus_visibility": corpus_label,
+        "corpus_n_matches": len(_pairs),
+        **reproducibility(
+            "public" if corpus_label == "public" else "restricted", sorted(providers), training_commit=prov["commit"]
+        ),
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
     }

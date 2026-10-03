@@ -17,6 +17,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 import warnings
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
@@ -118,6 +119,12 @@ def match_visibility(
     return out
 
 
+def _partial_path(dest: Path) -> Path:
+    """A per-call temp name beside ``dest``: two processes fetching the same artifact never interleave
+    writes into one file; each atomically replaces ``dest`` with identical bytes (spec 0.12)."""
+    return dest.with_name(f"{dest.name}.{os.getpid()}.{uuid.uuid4().hex}.partial")
+
+
 def _download_to_temp(
     provider: str,
     match_id: str,
@@ -157,7 +164,7 @@ def _download_to_temp(
             raise
     if not location:
         raise RuntimeError(f"pining {provider}/{match_id}/{artifact_key}: expected a 302 redirect")
-    partial = dest.with_name(dest.name + ".partial")
+    partial = _partial_path(dest)
     with urllib.request.urlopen(location, timeout=600) as resp, open(partial, "wb") as fh:  # noqa: S310
         while True:
             chunk = resp.read(1 << 20)  # 1 MiB

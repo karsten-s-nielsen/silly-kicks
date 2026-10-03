@@ -1,6 +1,6 @@
 # ADR-052 — The shared corpus-driver seam: resume, staleness, progress
 
-**Status:** Accepted (4.72.0, PR-S140). Amended 4.73.0 (PR-S141) — `probe_old` row-alignment + the re-bundle gate's non-finite/shape fail-closed; see the Amendment at the end.
+**Status:** Accepted (4.72.0, PR-S140). Amended 4.73.0 (PR-S141) — `probe_old` row-alignment + the re-bundle gate's non-finite/shape fail-closed; see the Amendment at the end. Amended again in the combined provenance cycle (Phase B, unversioned) — summed manifests must not overlap; see the last Amendment.
 **Spec:** `docs/superpowers/specs/2026-07-29-corpus-driver-resilience-design.md`
 **Plan:** `docs/superpowers/plans/2026-07-29-corpus-driver-resilience.md`
 
@@ -543,3 +543,27 @@ un-sharded LOADING loop), Rule D (unadmitted `events_only` only in the allowlist
 `_RULE_A_PENDING` / `_RULE_C_PENDING` ledgers seeded from the live violations at `4ac26d0` and drained
 to EMPTY as each driver migrated (`tests/scripts/_corpus_load_rules.py`). The population is DERIVED by
 enumeration over the loader modules, not a hand-maintained list (the ADR-056 completeness idiom).
+
+## Amendment (combined provenance cycle, Phase B) — summed manifests must not OVERLAP
+
+D6 replays a skipped item's counters into its pass's manifest, so a manifest describes every key its pass
+COVERED, not only the ones it computed. That is right for a worker resumed over its own slice, and wrong
+for any second pass whose keys overlap a first: `aggregate_manifests` sums both, and every shared key is
+counted twice. MEASURED: two 32-match GKDV / spells wave workers plus a later 64-match full-population
+pass over the same `--out` aggregated to `n_matches: 128` and doubled frame counts (the tables, rebuilt
+from shards, were correct; only the manifests over-counted).
+
+- **Every worker manifest that is summed records `partition_keys`** (`_partition.partition_keys`): the keys
+  it COUNTS — shards and exclusions, never failures, which carry no counters, so a launcher relaunch that
+  completes a failed key under another worker tag is not an overlap. A derived gate pins every such writer.
+  The field is an integrity record only: it never reaches an aggregate or any cited artifact (it is a
+  match-id list).
+- **`aggregate_manifests` REFUSES overlapping coverage**, naming the manifests and the shared-key count.
+- **The combine after a partitioned wave is the producer's `--reduce-only`** (GKDV arm values, layer-2
+  spells; TF-19 already had one): it refuses an unfinished population, takes its counts from its own pass's
+  replayed counters (each match once), rebuilds the table from exactly the population's shards, writes no
+  worker manifest, and refuses a worker at another commit or generation or a shard set no worker vouches for.
+- **A corpus-scoped count that a launcher relaunch can lose is taken from per-key state.** `_parallel_launch`
+  relaunches a killed worker with only its remaining items, and the killed attempt never wrote its manifest,
+  so the DAS parity reduce counts `n_excluded` from the exclusion markers over the population rather than
+  from the summed manifests.

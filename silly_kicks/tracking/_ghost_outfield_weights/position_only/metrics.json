@@ -1,0 +1,31 @@
+{
+  "variant": "position_only",
+  "feature_set": "position_only",
+  "subsample_fps": 1.0,
+  "n_games": 179,
+  "n_rows": 4170920,
+  "cv_mae": 6.0672012084891875,
+  "cv_mae_by_slot": {
+    "1": 6.028530592934045,
+    "2": 6.1119756208617035,
+    "3": 6.086648193143182,
+    "4": 6.041650427017818
+  },
+  "cv_mae_by_provider": {
+    "gradientsports": 6.199795601603389,
+    "skillcorner": 5.986299692188448,
+    "sportec": 6.392991280301763
+  },
+  "cv_mae_by_possession": {
+    "in_possession": 7.0345455155058065,
+    "out_of_possession": 5.0998569014725685
+  },
+  "coherence": {
+    "n_groups": 1042730,
+    "ordering_fraction": 1.0,
+    "min_pairwise_distance_m": 0.37111465158185203
+  },
+  "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+  "run_tree_dirty": false,
+  "training_platform": "dgx-spark-aarch64"
+}

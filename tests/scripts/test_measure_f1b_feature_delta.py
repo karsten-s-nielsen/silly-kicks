@@ -290,6 +290,59 @@ def test_prepare_xcross_default_return_is_three_tuple():
     assert len(out) == 3
 
 
+def test_ghost_gk_adapter_returns_row_aligned_identity_keys():
+    """The ghost_gk adapter must hand back ``(features, keys)`` with the identity columns the key-aligned
+    delta joins on. MEASURED (combined-cycle Phase B): unpacking the DEFAULT 2-tuple as ``(feats, meta)``
+    made ``meta`` the LABELS frame, so every corpus match raised KeyError and the per-model status row
+    silently read ``error:KeyError`` x 179 -- ghost_gk was never measured. Real extractor, no stub.
+    """
+    from scripts.measure_f1b_feature_delta import _feat_ghost_gk
+    from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES
+    from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
+
+    frames = pd.concat(
+        [_make_ghost_gk_frames(frame_id=1, timestamp=1.0), _make_ghost_gk_frames(frame_id=2, timestamp=2.0)],
+        ignore_index=True,
+    )
+    out = _feat_ghost_gk(frames, None, 1)
+    assert out is not None
+    feats, keys = out
+    assert len(feats) > 0  # non-vacuous: the fixture yields ghost-GK rows
+    assert list(feats.columns) == list(GHOST_GK_FEATURE_NAMES)
+    assert list(keys.columns) == ["game_id", "period_id", "frame_id", "gk_team_id"]
+    assert len(keys) == len(feats)
+
+
+def _keeper_pass_actions(game_id: str, t0: float) -> pd.DataFrame:
+    """Two full SPADL keeper passes (one completed, one not) by the ghost-GK scene's team-1 keeper ``p1``.
+
+    Realistic enough that every model is MEASURED (or legitimately empty) on the fixture: an action without
+    `action_id`/`player_id`, or a keeper-pass set with one outcome class, makes gk_completion and receiver
+    error on every match, which the unmeasured-model guard (rightly) refuses.
+    """
+    from silly_kicks.spadl import config as spc
+
+    actions = pd.DataFrame(
+        {
+            "game_id": [game_id] * 2,
+            "original_event_id": ["e0", "e1"],
+            "action_id": [0, 1],
+            "period_id": [1, 1],
+            "time_seconds": [t0, t0 + 1.0],
+            "team_id": [1, 1],
+            "player_id": ["p1", "p1"],
+            "start_x": [5.0, 5.0],
+            "start_y": [34.0, 34.0],
+            "end_x": [40.0, 45.0],
+            "end_y": [30.0, 40.0],
+            "bodypart_id": [spc.bodypart_id["foot"]] * 2,
+            "type_id": [spc.actiontype_id["pass"]] * 2,
+            "result_id": [spc.result_id["success"], spc.result_id["fail"]],
+        }
+    )
+    return actions
+
+
 def test_main_writes_provenance_stamped_metrics(tmp_path, monkeypatch):
     """End-to-end main() on a tc3-shaped cache: metrics.json carries models + provenance +
     the selection_instability block.
@@ -298,7 +351,6 @@ def test_main_writes_provenance_stamped_metrics(tmp_path, monkeypatch):
     plumbing (for_each shard + reconcile + key-aligned aggregate + provenance stamp), not the science.
     """
     from scripts.measure_f1b_feature_delta import main
-    from silly_kicks.spadl import config as spc
     from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
 
     cache = tmp_path / "cache"
@@ -311,16 +363,7 @@ def test_main_writes_provenance_stamped_metrics(tmp_path, monkeypatch):
     )
     assert frames["x"].dtype == np.float64  # the driver refuses a float32-stored corpus
     frames.to_parquet(cache / "shards" / "tok" / "gradientsports__100.parquet")
-    pd.DataFrame(
-        {
-            "game_id": ["100"],
-            "period_id": [1],
-            "team_id": [2],
-            "time_seconds": [1.0],
-            "type_id": [spc.actiontype_id["pass"]],
-            "result_id": [spc.result_id["success"]],
-        }
-    ).to_parquet(cache / "_actions" / "gradientsports__100.parquet")
+    _keeper_pass_actions("100", 1.0).to_parquet(cache / "_actions" / "gradientsports__100.parquet")
     (cache / "_home" / "gradientsports__100.json").write_text(json.dumps({"home_team_id": 1}))
 
     out = tmp_path / "out"
@@ -337,6 +380,12 @@ def test_main_writes_provenance_stamped_metrics(tmp_path, monkeypatch):
     # every model carries the selection-instability block (the key-alignment fix's reported quantity)
     for m in metrics["models"].values():
         assert set(m["selection_instability"]) == {"n_only_f64", "n_only_f32", "n_common", "frac"}
+    # ghost_gk must actually be MEASURED: an extractor failure is recorded as a status row, so the run
+    # still "succeeds" -- this is the assertion that would have caught the KeyError x 179. (The fixture is
+    # a ghost-GK scene; other models' statuses on it are not the point and are not asserted.)
+    gk_status = metrics["models"]["ghost_gk"]["match_status_counts"]
+    assert not any(s.startswith("error:") for s in gk_status), gk_status
+    assert gk_status.get("ok", 0) > 0, gk_status
 
 
 def test_main_refuses_a_float32_corpus(tmp_path, monkeypatch):
@@ -356,3 +405,241 @@ def test_main_refuses_a_float32_corpus(tmp_path, monkeypatch):
     )
     with pytest.raises(SystemExit, match="float64"):
         main()
+
+
+def _write_tc3_match(cache, gid: int, *, frame0: int) -> None:
+    from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
+
+    frames = pd.concat(
+        [
+            _make_ghost_gk_frames(frame_id=frame0, timestamp=float(frame0)),
+            _make_ghost_gk_frames(frame_id=frame0 + 1, timestamp=float(frame0 + 1)),
+        ],
+        ignore_index=True,
+    )
+    frames.to_parquet(cache / "shards" / "tok" / f"gradientsports__{gid}.parquet")
+    _keeper_pass_actions(str(gid), float(frame0)).to_parquet(cache / "_actions" / f"gradientsports__{gid}.parquet")
+    (cache / "_home" / f"gradientsports__{gid}.json").write_text(json.dumps({"home_team_id": 1}))
+
+
+def _tc3_cache(tmp_path):
+    cache = tmp_path / "cache"
+    (cache / "shards" / "tok").mkdir(parents=True)
+    (cache / "_actions").mkdir()
+    (cache / "_home").mkdir()
+    _write_tc3_match(cache, 100, frame0=1)
+    _write_tc3_match(cache, 101, frame0=3)
+    return cache
+
+
+def _t10(monkeypatch, *args):
+    from scripts.measure_f1b_feature_delta import main
+
+    monkeypatch.setattr(sys, "argv", ["measure_f1b_feature_delta.py", *map(str, args)])
+    main()
+
+
+_KEYS = ["shards__tok__gradientsports__100", "shards__tok__gradientsports__101"]
+
+
+def _worker(monkeypatch, tmp_path, cache, out, i, keys):
+    kj = tmp_path / f"k{i}.json"
+    kj.write_text(json.dumps(keys))
+    _t10(
+        monkeypatch,
+        "--data-dir",
+        cache,
+        "--out",
+        out,
+        "--shards-only",
+        "--worker-tag",
+        f"w{i}",
+        "--match-keys-json",
+        kj,
+        "--allow-dirty",
+    )
+
+
+def _assert_same_artifact(serial, sharded):
+    s = json.loads((serial / "metrics.json").read_text())
+    p = json.loads((sharded / "metrics.json").read_text())
+    assert p["models"] == s["models"]
+    assert p["n_matches"] == s["n_matches"] == 2 and p["n_accounted"] == 2
+    assert p["generation"] == s["generation"] and p["run_commit"] == s["run_commit"]
+    a = pd.read_parquet(serial / "f1b_feature_delta.parquet")
+    b = pd.read_parquet(sharded / "f1b_feature_delta.parquet")
+    cols = list(a.columns)
+    pd.testing.assert_frame_equal(
+        a.sort_values(cols).reset_index(drop=True), b[cols].sort_values(cols).reset_index(drop=True)
+    )
+
+
+def test_sharded_run_reduces_to_the_serial_artifact(tmp_path, monkeypatch, capsys):
+    cache = _tc3_cache(tmp_path)
+    serial, sharded = tmp_path / "serial", tmp_path / "sharded"
+    _t10(monkeypatch, "--data-dir", cache, "--out", serial, "--allow-dirty")
+    capsys.readouterr()
+    _t10(monkeypatch, "--data-dir", cache, "--list-match-keys")
+    assert json.loads(capsys.readouterr().out) == _KEYS
+    _worker(monkeypatch, tmp_path, cache, sharded, 0, _KEYS[:1])
+    _worker(monkeypatch, tmp_path, cache, sharded, 1, _KEYS[1:])
+    assert not (sharded / "metrics.json").exists()  # a worker never writes the corpus artifact
+    _t10(monkeypatch, "--data-dir", cache, "--out", sharded, "--reduce-only", "--allow-dirty")
+    _assert_same_artifact(serial, sharded)
+
+
+def test_a_worker_killed_before_its_manifest_still_reduces(tmp_path, monkeypatch):
+    """Killed after its last shard but before writing manifest_<tag>.json: the commit-keyed generation
+    still attributes the shards, so the reduce succeeds and matches serial (CCC-PLAN-11)."""
+    cache = _tc3_cache(tmp_path)
+    serial, sharded = tmp_path / "serial", tmp_path / "sharded"
+    _t10(monkeypatch, "--data-dir", cache, "--out", serial, "--allow-dirty")
+    _worker(monkeypatch, tmp_path, cache, sharded, 0, _KEYS)
+    for mf in (sharded / "_shards").glob("*/manifest_*.json"):
+        mf.unlink()  # simulate the kill
+    _t10(monkeypatch, "--data-dir", cache, "--out", sharded, "--reduce-only", "--allow-dirty")
+    _assert_same_artifact(serial, sharded)
+
+
+def test_a_worker_resumed_with_the_same_tag_reduces_identically(tmp_path, monkeypatch):
+    cache = _tc3_cache(tmp_path)
+    serial, sharded = tmp_path / "serial", tmp_path / "sharded"
+    _t10(monkeypatch, "--data-dir", cache, "--out", serial, "--allow-dirty")
+    _worker(monkeypatch, tmp_path, cache, sharded, 0, _KEYS[:1])  # "killed" after one item
+    _worker(monkeypatch, tmp_path, cache, sharded, 0, _KEYS)  # relaunched: resumes, attempts only the rest
+    _t10(monkeypatch, "--data-dir", cache, "--out", sharded, "--reduce-only", "--allow-dirty")
+    _assert_same_artifact(serial, sharded)
+
+
+def test_reduce_refuses_an_unfinished_corpus(tmp_path, monkeypatch):
+    cache = _tc3_cache(tmp_path)
+    out = tmp_path / "o"
+    _worker(monkeypatch, tmp_path, cache, out, 0, _KEYS[:1])
+    with pytest.raises(SystemExit, match="have no shard"):
+        _t10(monkeypatch, "--data-dir", cache, "--out", out, "--reduce-only", "--allow-dirty")
+
+
+def test_reduce_refuses_a_manifest_from_another_commit(tmp_path, monkeypatch):
+    cache = _tc3_cache(tmp_path)
+    out = tmp_path / "o"
+    _worker(monkeypatch, tmp_path, cache, out, 0, _KEYS)
+    (mf,) = list((out / "_shards").glob("*/manifest_w0.json"))
+    m = json.loads(mf.read_text())
+    m["run_commit"] = "deadbeef"
+    mf.write_text(json.dumps(m))
+    with pytest.raises(SystemExit, match="another commit"):
+        _t10(monkeypatch, "--data-dir", cache, "--out", out, "--reduce-only", "--allow-dirty")
+
+
+def test_the_generation_is_keyed_on_the_commit(tmp_path, monkeypatch):
+    """B r4 CCC-PLAN-31: a worker at commit A that died before its manifest is refused by a reduce at commit
+    B. No manifest is left, so the commit-keyed GENERATION is what refuses (the CCC-SPEC-04 mechanism); the
+    same reduce at commit A succeeds, so the commit is the only difference."""
+    import scripts.measure_f1b_feature_delta as t10
+
+    def _at(commit):
+        monkeypatch.setattr(
+            t10, "git_provenance", lambda: {"commit": commit * 40, "dirty": False, "tree_state": "clean"}
+        )
+
+    cache = _tc3_cache(tmp_path)
+    out = tmp_path / "o"
+    _at("a")
+    _worker(monkeypatch, tmp_path, cache, out, 0, _KEYS)
+    for mf in (out / "_shards").glob("*/manifest_*.json"):
+        mf.unlink()  # killed before its manifest
+    _at("b")
+    with pytest.raises(SystemExit, match="expected exactly the generation"):
+        _t10(monkeypatch, "--data-dir", cache, "--out", out, "--reduce-only", "--allow-dirty")
+    _at("a")
+    _t10(monkeypatch, "--data-dir", cache, "--out", out, "--reduce-only", "--allow-dirty")
+    assert json.loads((out / "metrics.json").read_text())["run_commit"] == "a" * 40
+
+
+def test_shards_only_requires_a_worker_tag(tmp_path, monkeypatch):
+    """Must FAIL before the change for the right reason: assert the message, not just SystemExit."""
+    cache = _tc3_cache(tmp_path)
+    with pytest.raises(SystemExit):
+        _t10(monkeypatch, "--data-dir", cache, "--out", tmp_path / "o", "--shards-only", "--allow-dirty")
+    # argparse prints its error; the plan's message is the discriminator
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf), pytest.raises(SystemExit):
+        _t10(monkeypatch, "--data-dir", cache, "--out", tmp_path / "o", "--shards-only", "--allow-dirty")
+    assert "--shards-only needs a unique --worker-tag" in buf.getvalue()
+
+
+def test_unknown_match_key_is_refused(tmp_path, monkeypatch):
+    cache = _tc3_cache(tmp_path)
+    kj = tmp_path / "k.json"
+    kj.write_text(json.dumps(["nope"]))
+    with pytest.raises(SystemExit, match="absent from --data-dir"):
+        _t10(
+            monkeypatch,
+            "--data-dir",
+            cache,
+            "--out",
+            tmp_path / "o",
+            "--shards-only",
+            "--worker-tag",
+            "w0",
+            "--match-keys-json",
+            kj,
+            "--allow-dirty",
+        )
+
+
+def test_a_worker_manifest_records_its_partition_keys(tmp_path, monkeypatch):
+    cache = _tc3_cache(tmp_path)
+    sharded = tmp_path / "sharded"
+    _worker(monkeypatch, tmp_path, cache, sharded, 0, _KEYS[:1])
+    (mf,) = list((sharded / "_shards").glob("*/manifest_w0.json"))
+    assert json.loads(mf.read_text(encoding="utf-8"))["partition_keys"] == _KEYS[:1]
+
+
+def test_overlapping_workers_are_refused_at_the_reduce(tmp_path, monkeypatch):
+    """Two workers covering one key would sum its REPLAYED counters (n_excluded, ...) twice
+    (combined-cycle Phase B, the GKDV/spells n_matches 128): the reduce refuses instead."""
+    cache = _tc3_cache(tmp_path)
+    sharded = tmp_path / "sharded"
+    _worker(monkeypatch, tmp_path, cache, sharded, 0, _KEYS)
+    _worker(monkeypatch, tmp_path, cache, sharded, 1, _KEYS[1:])
+    with pytest.raises(ValueError, match="overlap"):
+        _t10(monkeypatch, "--data-dir", cache, "--out", sharded, "--reduce-only", "--allow-dirty")
+
+
+def test_a_model_that_errored_on_EVERY_match_refuses_the_artifact():
+    """MEASURED (combined-cycle Phase B, owner-approved guard 2026-10-04): ghost_gk errored on all 179
+    matches, the per-model status rows recorded it, and the run still reported n_failed 0 with a
+    metrics.json that "covered" six models. A model that was never measured must fail the run."""
+    from scripts.measure_f1b_feature_delta import _refuse_unmeasured_models
+
+    with pytest.raises(SystemExit, match=r"ghost_gk.*error:KeyError"):
+        _refuse_unmeasured_models(
+            {"ghost_gk": {"match_status_counts": {"error:KeyError": 179}}, "xshot": {"match_status_counts": {"ok": 5}}}
+        )
+
+
+def test_a_model_with_SOME_measured_matches_is_kept():
+    """The other side: a per-match failure stays a recorded status, never a refusal of the whole run."""
+    from scripts.measure_f1b_feature_delta import _refuse_unmeasured_models
+
+    _refuse_unmeasured_models({"xcross": {"match_status_counts": {"ok": 26, "selection": 1, "error:ValueError": 1}}})
+    _refuse_unmeasured_models({"receiver": {"match_status_counts": {"empty": 3}}})  # ran, nothing to measure
+
+
+def test_main_refuses_to_write_metrics_when_a_model_errors_everywhere(tmp_path, monkeypatch):
+    """End to end: the guard runs before metrics.json is written, on the serial path."""
+    import scripts.measure_f1b_feature_delta as T
+
+    def boom(*_a, **_k):
+        raise KeyError("planted")
+
+    monkeypatch.setitem(T._MODEL_ADAPTERS, "ghost_gk", boom)
+    cache = _tc3_cache(tmp_path)
+    out = tmp_path / "out"
+    with pytest.raises(SystemExit, match="ghost_gk"):
+        _t10(monkeypatch, "--data-dir", cache, "--out", out, "--allow-dirty")
+    assert not (out / "metrics.json").exists()
