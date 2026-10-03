@@ -202,6 +202,10 @@ def test_trainer_main_smoke_threads_grid_and_metrics(tmp_path, monkeypatch):
     meta = json.loads((out / "ghost_gk_v1" / "metadata.json").read_text())
     assert meta["grid_spec"]["x_max"] == 52.5  # the CLI ceiling reached the SAVED model
     metrics = json.loads((out / "ghost_gk_v1" / "metrics.json").read_text())
+    # ADR-067 M4 caveat emitted by the trainer (combined-cycle-completion spec 0.11): a --data-dir corpus
+    # carries no public-visibility proof, so it is restricted, and the note names its own commit.
+    assert metrics["reproducibility"] == "restricted"
+    assert metrics["training_commit"] in metrics["reproducibility_note"]
     assert metrics["grid_x_max"] == 52.5
     assert "high_sweeper_stratum_mae_mean" in metrics
     assert "per_provider_high_sweeper_coverage" in metrics

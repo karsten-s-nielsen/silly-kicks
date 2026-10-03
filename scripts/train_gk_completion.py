@@ -436,6 +436,22 @@ def _train_skillcorner(args) -> int:
 
     run_prov = git_provenance()
 
+    # G1 (combined-cycle-completion spec section 5): `skillcorner` is the wheel-bundled PUBLIC arm.
+    # Refuse BEFORE extraction when the requested SkillCorner corpus is not all-public. Previously only
+    # the rebundle tolerance stopped a 64-match owner-token run from bundling restricted data.
+    sc_label, sc_all_public = _corpus_taxonomy(["skillcorner"], args.max_per_provider)
+    if not sc_all_public:
+        raise SystemExit(
+            f"gk_completion `skillcorner` is the wheel-bundled PUBLIC arm, but the requested SkillCorner "
+            f"corpus is {sc_label!r}, not all-public (is the OWNER pining token set?). Use the public "
+            "token and --max-per-provider 10 (MODEL_CARD). Refusing before extraction."
+        )
+    from _loader_pining import select_match_ids
+
+    requested_match_ids = [
+        [p, m] for p, m in select_match_ids(providers=["skillcorner"], max_per_provider=args.max_per_provider)
+    ]
+
     from sklearn.metrics import roc_auc_score
     from sklearn.model_selection import GroupKFold
 
@@ -583,7 +599,6 @@ def _train_skillcorner(args) -> int:
             flush=True,
         )
 
-    sc_label, sc_all_public = _corpus_taxonomy(["skillcorner"], args.max_per_provider)
     metrics = {
         "variant": "skillcorner",
         # ADR-038: the tier this artifact was fit on, derived from the manifest ship mask rather
@@ -592,6 +607,8 @@ def _train_skillcorner(args) -> int:
         # distributable artifact with nothing refusing it or labelling the result.
         "artifact_label": sc_label,
         "all_public": sc_all_public,
+        # The requested corpus IDENTITY (spec section 5) -- always all-public here (refused otherwise).
+        "requested_match_ids": requested_match_ids,
         # ADR-052: the artifact records WHICH CODE produced it. `--allow-dirty` permits a dev
         # run; the flag survives into the artifact rather than living in someone's memory.
         "run_commit": run_prov["commit"],

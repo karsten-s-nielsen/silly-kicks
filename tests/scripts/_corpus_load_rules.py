@@ -66,6 +66,17 @@ _UNSHARDED_LOOP_EXEMPT: dict[str, str] = {
     "_loader_pining.load_statsbomb_matches": "the stream wrapper Rule A bans from drivers",
     "_sb_open_data.load_open_data_matches": "the stream wrapper Rule A bans from drivers",
     "calibrate_tracking_defaults._load_fold": "the documented X item (also in _STREAM_LOADER_EXEMPT)",
+    "validate_hub_variants.run": (
+        "loops over the registered Hub repos and loads published MODELS via the injected load_model "
+        "(from_hub), never a corpus match -- at most 9 small downloads, nothing to shard (combined-cycle "
+        "spec 9)"
+    ),
+    "validate_das_native_parity.run_benchmark": (
+        "the D1 timing benchmark: one serial pass over the small sample file whose SHA-256 the artifact "
+        "records, run ALONE after every other process; its contention block (foreign_cpu_fraction) spans "
+        "the whole loop, so sharding or resuming it would split the timing and invalidate that measurement "
+        "(combined-cycle spec 12 D1)"
+    ),
 }
 
 #: Rule D allowlist -- the only functions that may call load_match with events_only != literal False

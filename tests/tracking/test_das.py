@@ -256,10 +256,13 @@ class TestDasCostGuardrail:
         big = estimate_das_cost(_keeper_frames(tuple(range(1, 6))))
         assert small > 0 and big > small
 
-    def test_estimate_das_cost_is_thread_aware(self) -> None:
-        """n_threads>1 selects the prange kernel -> a lower estimate (§6.14)."""
+    def test_estimate_das_cost_is_thread_aware(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """n_threads>1 selects the prange kernel -> a lower estimate (§6.14). Pins the numba probe:
+        numpy has no prange path, so the claim only holds where numba runs."""
+        import silly_kicks.tracking._das_engine as eng
         from silly_kicks.tracking._das import estimate_das_cost
 
+        monkeypatch.setattr(eng, "_numba_available", lambda: True)
         frames = _keeper_frames(tuple(range(1, 6)))
         serial = estimate_das_cost(frames)
         parallel = estimate_das_cost(frames, n_threads=4)
@@ -269,9 +272,11 @@ class TestDasCostGuardrail:
         import silly_kicks.tracking._das as das_mod
         from silly_kicks.tracking._warnings import DasCostWarning
 
-        monkeypatch.setattr(das_mod, "_DAS_COST_WARN_SECONDS", 0.01)  # 3 frames x 0.02 s = 0.06 s > 0.01
+        frames = _keeper_frames((1, 2, 3))
+        # a budget just under this run's own estimate, so the test holds whatever the per-frame constant
+        monkeypatch.setattr(das_mod, "_DAS_COST_WARN_SECONDS", das_mod.estimate_das_cost(frames) / 2)
         with pytest.warns(DasCostWarning):
-            das_mod.get_das(_keeper_frames((1, 2, 3)))
+            das_mod.get_das(frames)
 
     def test_warn_cost_false_silences(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import silly_kicks.tracking._das as das_mod

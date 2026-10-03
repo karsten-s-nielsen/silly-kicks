@@ -11,6 +11,9 @@ silly_kicks/tracking/_ghost_gk_weights/** binary
 # bundle as ghost-GK, so it gets the same whole-directory pin. load() normalizes CRLF before hashing,
 # so this is churn prevention (keeps the committed SHA byte-exact across OS), not a bug fix.
 silly_kicks/tracking/_ghost_outfield_weights/** binary
+# metrics.json in these dirs is not in SHA256SUMS: show it as text in diffs (binary stays for EOL)
+silly_kicks/tracking/_ghost_gk_weights/*/metrics.json diff
+silly_kicks/tracking/_ghost_outfield_weights/*/metrics.json diff
 # xSuccess (TF-61) bundled weights: model.json (SHA-verified) + metadata.json (37KB feature-contract
 # + chirality) + SHA256SUMS + MODEL_CARD.md. Whole-directory pin like the four above, so Windows
 # autocrlf cannot flip the checksummed model.json or bloat the large metadata.json diff on checkout.

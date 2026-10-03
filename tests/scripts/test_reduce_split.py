@@ -60,7 +60,9 @@ def test_das_reduce_only_equals_serial_with_excluded_and_two_manifests(tmp_path,
         worker_tag="B",
     )
     assert not (par / "metrics.json").exists()  # workers write NO combined artifact
-    D.reduce_parity_artifact(refs, shard_root, par, prov=_CLEAN_PROV)  # ONE reduce: all refs + all manifests
+    D.reduce_parity_artifact(
+        refs, shard_root, par, prov=_CLEAN_PROV, direction_col="dir"
+    )  # ONE reduce: all refs + all manifests
 
     # Serial reference over the identical corpus.
     ser = tmp_path / "ser"
@@ -122,7 +124,7 @@ def test_reduce_refuses_mixed_reference_env(tmp_path, monkeypatch):
         worker_tag="B",
     )
     with pytest.raises(SystemExit, match="reference_env disagreement"):
-        D.reduce_parity_artifact(refs, shard_root, tmp_path, prov=_CLEAN_PROV)
+        D.reduce_parity_artifact(refs, shard_root, tmp_path, prov=_CLEAN_PROV, direction_col="dir")
 
 
 def _drop_timings(metrics: dict) -> None:
