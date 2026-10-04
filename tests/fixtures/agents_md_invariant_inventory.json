@@ -1386,6 +1386,7 @@
     "key": "raw-primitives-consumer-side",
     "domain": "conventions-core.md",
     "adr_refs": [
+      "ADR-110",
       "ADR-009"
     ],
     "required_tokens": [

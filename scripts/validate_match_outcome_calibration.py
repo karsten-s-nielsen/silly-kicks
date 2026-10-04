@@ -1,10 +1,11 @@
 """TF-53 Rung-2 match-outcome calibration study (owner-run, reported-not-gated, PUBLIC corpus).
 
 Scores the win/draw/loss simplex against realized results on the StatsBomb open-data corpus and writes
-a report -- it changes NO library default (the bundled rho stays an opt-in method; ADR-009). Per method
-config (``independent`` / ``collapse`` / ``dixon_coles`` / ``both``) it emits the predicted simplex +
-realized outcome per ``(game_id, team_id)``, then reduces to a 3-way Brier score, a calibration slope,
-and an xPoints-vs-points bias. The two dependence arms (``dixon_coles`` / ``both``) use a PER-FOLD rho
+a report -- it changes NO library default (reported-not-gated, ADR-009; since ADR-097 the default compute
+path uses the bundled rho, which this study never reads). Per method config (``independent`` /
+``collapse`` / ``dixon_coles`` / ``both``) it emits the predicted simplex + realized outcome per
+``(game_id, team_id)``, then reduces to a 3-way Brier score, a calibration slope, and an
+xPoints-vs-points bias. The two dependence arms (``dixon_coles`` / ``both``) use a PER-FOLD rho
 fitted by :func:`cv_rho_by_fold` grouped by ``game_id`` -- evaluated held-out, NEVER on the fit data and
 NEVER from the bundled weights, so the study stays a clean commit-2 producer.
 

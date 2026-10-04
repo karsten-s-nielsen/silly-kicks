@@ -324,7 +324,8 @@ def summarize_positioning_gap(samples: pd.DataFrame) -> pd.DataFrame:
 
         samples, _ = compute_positioning_gap(frames, xt=fitted_xt)
         summary = summarize_positioning_gap(samples)  # one row per (game_id, team_id)
-        worst = summary.sort_values("mean_positioning_gap", ascending=False)
+        summary[["game_id", "team_id", "mean_positioning_gap", "n_scored"]]
+        # Rows are per-match rollups, not a ranking; ordering teams is a consumer choice (ADR-110).
     """
     cols = ["game_id", "team_id", "mean_positioning_gap", "n_scored", *_summary_drop_columns()]
     if len(samples) == 0:

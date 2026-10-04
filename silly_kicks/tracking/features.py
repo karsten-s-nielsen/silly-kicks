@@ -555,7 +555,7 @@ def add_action_context(
     three region-based counts -- reporting how much of each count's region-of-interest the provider
     actually observed. This is OPT-IN and additive: the four primary columns are byte-identical
     with and without ``visible_area``, and the per-Series functions / ``tracking_default_xfns`` are
-    untouched, so no VAEP feature changes (ADR-009: the library ships the raw coverage, the consumer
+    untouched, so no VAEP feature changes (ADR-110: the library ships the raw coverage, the consumer
     decides what a partial observation means).
 
     See NOTICE for full bibliographic citations.
@@ -1222,7 +1222,7 @@ def add_pressure_on_actor(
     how much of the Andrienko directional-oval region the provider actually observed (ADR-077).
     Opt-in and additive: the ``pressure_on_actor__*`` columns are byte-identical with and without
     ``visible_area``, and ``pressure_on_actor`` / ``pressure_default_xfns`` are untouched, so no
-    VAEP feature changes (ADR-009). The companion is emitted only for ``andrienko_oval`` because
+    VAEP feature changes (ADR-077). The companion is emitted only for ``andrienko_oval`` because
     the other methods do not produce that column.
 
     Examples
@@ -1468,7 +1468,7 @@ def add_defensive_line(
     much of the defending team's defended-third band (a FIXED action-LTR pitch zone; ADR-077) the
     provider observed. Opt-in and additive: the six primary columns are byte-identical with and
     without ``visible_area``, and ``defensive_line_xfns`` is untouched, so no VAEP feature changes
-    (ADR-009).
+    (ADR-077).
 
     See NOTICE for full bibliographic citations.
 
@@ -1671,7 +1671,7 @@ def add_packing(
     region-COUNT columns (``packing_made`` / ``packing_net`` / ``packing_goal_threat``) --
     reporting how much of the passer->receiver x-band the provider observed (ADR-077). Opt-in and
     additive: the primary columns are byte-identical with and without ``visible_area``, and
-    ``packing_xfns`` is untouched, so no VAEP feature changes (ADR-009). ``packing_receiver_
+    ``packing_xfns`` is untouched, so no VAEP feature changes (ADR-077). ``packing_receiver_
     player_id`` / ``packing_secured`` are not counts and ``line_x`` is a position, so none is
     companioned.
 
@@ -2399,7 +2399,7 @@ def add_team_shape(
     companions annotate the ``team_shape_centroid_{x,y}_{attacking,defending}`` centroid pairs (the
     acting team's LOW-end half and the opponent's HIGH-end half). Opt-in and additive: the 20
     primary columns are byte-identical with and without ``visible_area``, and ``team_shape_xfns``
-    is untouched, so no VAEP feature changes (ADR-009).
+    is untouched, so no VAEP feature changes (ADR-077).
 
     See NOTICE for full bibliographic citations.
 
@@ -4859,7 +4859,7 @@ def add_player_influence(
     ADR-077) the provider observed. Only ``off_ball_xt_team`` is companioned; the other columns are
     not region-based counts. Opt-in and additive: the seven primary columns are byte-identical with
     and without ``visible_area``, and ``player_influence_xfns`` is untouched, so no VAEP feature
-    changes (ADR-009).
+    changes (ADR-077).
 
     Examples
     --------
@@ -7023,7 +7023,7 @@ def add_xt_gk(
     The composite ``xt_gk`` gets NO companion (it mixes a region-dependent term with the
     GK-geometry base/rav/dzv -- no honest single fraction, M1). Opt-in and additive: the six
     xt_gk value columns are byte-identical with and without ``visible_area``, and ``xt_gk_xfns`` is
-    untouched, so no VAEP feature changes (ADR-009).
+    untouched, so no VAEP feature changes (ADR-077).
 
     See NOTICE for full bibliographic citations (Eyestone xT-GK).
     """
@@ -7325,7 +7325,7 @@ def add_defensive_credit(
     is the proximity DISK / shot->goal CORRIDOR it searched (an ``anchor_actor`` credit has no
     region), and the per-action fraction is the credit-magnitude-weighted mean over the region-bearing
     OBSERVED credits. OPT-IN and additive: the primary net/plus/minus/n columns are byte-identical
-    with and without ``visible_area``, and this is NOT an xfns factory (ADR-009).
+    with and without ``visible_area``, and this is NOT an xfns factory (ADR-077).
 
     Examples
     --------

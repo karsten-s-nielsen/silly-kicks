@@ -525,7 +525,7 @@ def test_xt_gk_companion_absent_without_visible_area():
 
 
 def test_xt_gk_primary_byte_identical():
-    """The companion path never touches the six xt_gk value columns (ADR-009, no VAEP retrain)."""
+    """The companion path never touches the six xt_gk value columns (ADR-077, no VAEP retrain)."""
     a, f = tiny_actions(), tiny_frames()
     ids = list(a["action_id"])
     base = add_xt_gk(a, f, _fitted_xt_gk_grid())
