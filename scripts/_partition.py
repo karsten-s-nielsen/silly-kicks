@@ -112,9 +112,19 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
     ``run_commit``. ``commits_seen`` reports every commit encountered including non-contributors, so
     an all-zero-contribution aggregate (a full resume) is visibly vacuous rather than quietly
     ``true``.
+
+    **Overlapping partitions are REFUSED.** A worker records the shard keys its pass covered in
+    ``partition_keys``; a resumed pass REPLAYS each skipped key's counters, so two manifests covering
+    one key count it twice. MEASURED (combined-cycle Phase B): two 32-match wave workers plus a later
+    64-match full-population pass over one ``--out`` aggregated to ``n_matches: 128`` and doubled frame
+    counts. The authoritative combine after a partitioned wave is the producer's ``--reduce-only``, which
+    writes no manifest. ``partition_keys`` is an integrity field only: it never reaches the output (it is
+    a match-id list, and the aggregate is a cited artifact). A manifest without it is not checked.
     """
     totals: dict[str, int] = {k: 0 for k in defaults}
     counters: dict[str, dict[str, int]] = {}
+    key_owner: dict[str, str] = {}  # partition key -> the manifest file that first covered it
+    overlaps: dict[tuple[str, str], int] = {}  # (earlier file, later file) -> n shared keys
     partitions: list[str] = []
     commits: set[str] = set()  # contributors only -- these decide `commit_consistent`
     commits_seen: set[str] = set()  # every manifest, contributor or not
@@ -125,6 +135,10 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
     for f in sorted(pathlib.Path(dest).glob("manifest_*.json")):
         m = json.loads(f.read_text(encoding="utf-8"))
         partitions.append(str(m.get("partition", f.stem)))
+        for pk in m.get("partition_keys") or ():
+            first = key_owner.setdefault(str(pk), f.name)
+            if first != f.name:
+                overlaps[(first, f.name)] = overlaps.get((first, f.name), 0) + 1
         # A manifest loses its vote ONLY by positively declaring that it built nothing. Computed
         # before the field loop so key ordering cannot change the verdict.
         #
@@ -137,7 +151,7 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
         # `generation` joins the meta list so a future widening of `countable` cannot let a
         # staleness token vote on whether this manifest contributed. A no-op today: a `str`
         # already fails both isinstance checks below.
-        _meta = ("run_commit", "run_tree_dirty", "partition", "generation")
+        _meta = ("run_commit", "run_tree_dirty", "partition", "generation", "partition_keys")
         # `n_excluded` is corpus-scoped and REPLAYED on resume (ADR-052 D13): a fully resumed pass
         # reports n_excluded>0 while genuinely building nothing. It is summed below like any int, but
         # it must NOT count as contribution, or a resumed worker regains its commit vote and re-arms
@@ -150,7 +164,7 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
         ]
         contributed = not countable or any((v > 0 if isinstance(v, int) else bool(v)) for v in countable)
         for k, v in m.items():
-            if k == "partition":
+            if k in ("partition", "partition_keys"):
                 continue
             if k == "run_commit":
                 commits_seen.add(str(v))
@@ -187,6 +201,14 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
                 # was missing.
                 dropped.add(k)
 
+    if overlaps:
+        detail = "; ".join(f"{a} and {b} share {n} key(s)" for (a, b), n in sorted(overlaps.items()))
+        raise ValueError(
+            f"partition manifests in {dest} overlap ({detail}): every shared key would be counted twice. "
+            "Combine a partitioned run with the producer's --reduce-only (it writes no manifest), not with "
+            "another counting pass over the same --out."
+        )
+
     return {
         **totals,
         **counters,
@@ -210,3 +232,74 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
         "dropped_fields": sorted(dropped),
         "run_tree_dirty": dirty,
     }
+
+
+def require_population_shards(shard_root, token_inputs, refs) -> None:
+    """Refuse a reduce whose population is not finished: every ref needs a shard or an exclusion marker.
+
+    Checked BEFORE the reduce's own pass, which would otherwise COMPUTE the missing matches in-process
+    and present a reduce as a quiet extra worker (the generation is the one the workers wrote).
+    """
+    from scripts._driver import exclusion_path, generation_dir, shard_path
+
+    gen = generation_dir(shard_root, token_inputs=token_inputs)
+    missing = [r.key for r in refs if not shard_path(gen, r.key).is_file() and not exclusion_path(gen, r.key).is_file()]
+    if missing:
+        raise SystemExit(f"{len(missing)} of {len(refs)} population matches have no shard; finish the workers first")
+
+
+def population_table(res):
+    """The population's shards (``res.shard_keys``, pass order) concatenated; empty when none hold rows.
+
+    Exactly the population, unlike ``_driver.reconcile``'s whole-generation read: a reduce describes the
+    corpus it was asked for, and a shared ``--out`` may hold other runs' matches.
+    """
+    import pandas as pd
+
+    from scripts._driver import shard_path
+
+    frames = [pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys]
+    non_empty = [f for f in frames if len(f)]
+    return pd.concat(non_empty, ignore_index=True) if non_empty else pd.DataFrame()
+
+
+def worker_lineage(dest, *, prov: dict, generation: str) -> dict:
+    """The provenance of the shards a reduce combines, read from the workers' manifests in ``dest``.
+
+    Fail-closed: no worker manifest means the shards' lineage is unknown; a manifest from another commit
+    or another generation means the combine would blend runs; overlapping partitions are refused by
+    :func:`aggregate_manifests`. The returned fields go on the reduce's corpus artifact.
+    """
+    agg = aggregate_manifests(dest)
+    if not agg["partitions"]:
+        raise SystemExit(f"no worker manifest in {dest}: the shards' lineage is unknown, so the reduce refuses")
+    foreign = sorted(set(agg["commits_seen"]) - {prov["commit"]})
+    if foreign:
+        raise SystemExit(f"worker manifest(s) from another commit {foreign}; this reduce runs at {prov['commit']}")
+    other_gen = sorted(set(agg["generations_seen"]) - {generation})
+    if other_gen:
+        raise SystemExit(f"worker manifest(s) from another generation {other_gen}; this reduce reads {generation}")
+    return {
+        "run_commit": prov["commit"],
+        "run_tree_dirty": bool(prov["dirty"]) or bool(agg["run_tree_dirty"]),
+        "run_tree_state": prov.get("tree_state"),
+        "commit_consistent": True,  # every worker manifest names this commit (checked above)
+        "commits_seen": agg["commits_seen"],
+        "generations_seen": agg["generations_seen"],
+        "n_partitions": agg["n_partitions"],
+        "partitions": agg["partitions"],
+    }
+
+
+def partition_keys(res) -> dict:
+    """``{"partition_keys": [...]}`` -- the keys whose results a pass's manifest COUNTS, for its PER-WORKER
+    manifest only: shards (fresh or resumed, whose counters are replayed) and exclusions.
+
+    :func:`aggregate_manifests` refuses two manifests sharing a key, because a resumed pass replays its
+    skipped keys' counters (so an overlap counts each shared key twice). FAILED keys are left out: they
+    carry no counters, and ``_parallel_launch`` can deal a failed key to another worker tag on a later
+    pass, which completes it without any double count. Never spread this into a cited artifact: it is a
+    match-id list. ``tests/scripts/test_partition.py`` derives every worker-manifest writer that
+    aggregates and asserts each one records it.
+    """
+    return {"partition_keys": sorted(k for k in res.keys if k not in res.failures)}

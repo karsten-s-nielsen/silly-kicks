@@ -94,7 +94,7 @@ jobs:
       # their numerics are pinned against the committed golden oracle
       # (tests/tracking/_fixtures/das_golden/, checksummed with no library needed). The dev-only
       # `das-reference` extra (pinned accessible-space==2.0.15) is installed only where the oracle is
-      # regenerated or the corpus parity driver runs -- not here.
+      # regenerated, where the corpus parity driver runs, and in the `das-reference-contract` job -- not here.
       - run: pip install -e ".[kloppy,xgboost,test]"
       # Bulk suite, DURATION-SHARDED across parallel jobs. xdist `-n auto` was reverted: on the
       # 4-core/7GB CI runners it regressed py3.12 to a memory/JIT-pressure kill (4x heavy ML imports +
@@ -257,6 +257,24 @@ jobs:
           cache: pip
       - run: pip install -e ".[kloppy,xgboost,test]"
       - run: pytest tests/ -m "not e2e" --benchmark-only --tb=short
+
+  # The DAS reference leg's CONTRACT with its pinned oracle (combined-cycle Phase B, F1/F5/F6): the REAL
+  # accessible-space 2.0.15, on small synthetic scenes, must reproduce native DAS through
+  # scripts/_das_reference_leg.py. The library is the dev-only `das-reference` extra, so it is installed in
+  # THIS job only -- never in the test matrix, never in the wheel. SK_REQUIRE_DAS_REFERENCE=1 turns a missing
+  # library into a failure, never a silent skip. Pinned by tests/test_ci_das_reference_contract_wired.py.
+  das-reference-contract:
+    runs-on: ubuntu-latest
+    env:
+      SK_REQUIRE_DAS_REFERENCE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[test,das-reference]"
+      - run: python -m pytest tests/scripts/test_das_reference_contract.py -p no:randomly --tb=short -q -rs
 
   # Runtime PARTITION proof (the enumerate-and-conserve guard this repo wants): the shards must cover
   # each leg's suite EXACTLY -- union(shard node-ID sets) == full set AND pairwise-disjoint, per leg.

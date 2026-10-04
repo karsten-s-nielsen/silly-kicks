@@ -118,3 +118,19 @@ def test_nested_path_after_upload_fails_closed(leaked):
         upload_model_only(api, "artifact-dir", "silly-kicks/ghost-gk-v1")
     assert "PUBLISH LEAK GUARD" in str(exc.value)
     assert leaked in str(exc.value)
+
+
+def test_publish_model_with_card_stages_the_card_with_lf_line_endings(tmp_path):
+    art = tmp_path / "art"
+    art.mkdir()
+    (art / "model.npz").write_bytes(b"\x00")
+    card = tmp_path / "the-card.md"
+    card.write_bytes(b"---\r\nlicense: mit\r\n---\r\n# card\r\n")
+    staged: dict = {}
+
+    class _Capture(_FakeApi):
+        def upload_folder(self, **kwargs) -> None:
+            staged["readme"] = (Path(kwargs["folder_path"]) / "README.md").read_bytes()
+
+    publish_model_with_card(_Capture(["model.npz", "README.md"]), str(art), "silly-kicks/x", model_card=str(card))
+    assert staged["readme"] == b"---\nlicense: mit\n---\n# card\n"

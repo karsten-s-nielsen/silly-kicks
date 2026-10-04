@@ -61,3 +61,39 @@ or missing-repo publish is now unrepresentable. `model.npz` is added to the allo
 ## Related
 - **ADRs:** builds on ADR-072 (model-only leak guard); the card-in-release-commit principle is ADR-087 / the PR3 lesson.
 - **Issues / PRs:** PR-S181.
+
+## Amendment (combined-cycle completion, 2026-10-02): the card-only seam
+
+The decision above covers **model** publishes. Card-only pushes, which refresh a Hub README without
+re-uploading weights, had no seam: the two earlier ones (`1b56ad8`, `aae6fdb`) were ad-hoc README
+uploads with no guard and no read-back. This amendment closes that gap. Status stays **Accepted**.
+
+- **One card-only seam**, `scripts/_hub_publish.publish_card_only`, driven by `scripts/publish_model_card.py`.
+- **Registered cards only.** `CARD_SOURCE` maps every repo of the `silly-kicks` org to its in-repo card
+  (the nine `docs/huggingface/model-cards/*-model-card.md` files and `silly_kicks/xsuccess/weights/MODEL_CARD.md`).
+  The CLI accepts only a registered `--repo-id` and never a free card path, so a card cannot reach the wrong repo.
+- **Existing repos only.** The seam reads `model_info` first and never calls `create_repo`.
+- **LF bytes in both seams.** `card_bytes` normalizes CRLF to LF. A Windows checkout with `core.autocrlf=true`
+  holds CRLF, while every Hub README is LF (measured 2026-10-02). `publish_model_with_card` stages its card
+  through the same function, so both seams publish identical bytes for the same card.
+- **No-op when unchanged.** An unchanged card is not re-uploaded.
+- **Read-back.** After an upload the README is re-downloaded and must be byte-identical, else the push
+  fails loudly.
+- `--verify-only` reports changed / unchanged and the two SHA-256s without uploading.
+
+`scripts/validate_hub_variants.py` checks the result: per repo, whether the Hub README equals its
+registered card (`--require-cards-match` gates it after a push). Tests use a fake Hub API
+(`tests/scripts/test_publish_model_card.py`).
+
+The same driver also loads every frame-geometry repo through `from_hub` (anonymously) and scores a
+canonical frame. A load the library itself refuses (its fail-closed integrity checks) is recorded per
+repo under `load_refused`, not raised, so one bad repo cannot hide every other repo's result:
+
+- a refused Hub-only repo always fails the run, because no planned push would replace it;
+- a refused mirror fails only under `--require-mirrors-match-wheel`, the post-push check, because the
+  republish is what replaces it;
+- any other exception still propagates.
+
+Measured 2026-10-02: `ghost-gk-sweeper-v1` and `ghost-gk-sweeper-position-only-v1` (Hub
+`training_commit` `adafb72`, pre-ADR-089) are refused on chirality; the post-release mirror republish
+replaces them.

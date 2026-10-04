@@ -1,0 +1,61 @@
+{
+  "n_games": 179,
+  "n_samples": 36000,
+  "n_providers": 3,
+  "providers": [
+    "gradientsports",
+    "skillcorner",
+    "sportec"
+  ],
+  "cv_folds": 5,
+  "subsample_fps": 1.0,
+  "variant": "default",
+  "carrier_params": {
+    "tolerance_m": 3.0,
+    "beta": 0.0,
+    "gamma": 0.25
+  },
+  "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+  "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "hyperparameters": {
+    "n_estimators": 500,
+    "max_depth": 8
+  },
+  "cv_mae_x_mean": 0.22240016908317858,
+  "cv_mae_x_std": 0.005449637863204398,
+  "cv_mae_y_mean": 1.1260274663650474,
+  "cv_mae_y_std": 0.0327205490002249,
+  "cv_mae_euclidean_mean": 1.2003468634938175,
+  "cv_mae_euclidean_std": 0.0321323182151463,
+  "per_provider_mae_euclidean": {
+    "gradientsports": 1.1211397167680013,
+    "skillcorner": 1.3022779383803378,
+    "sportec": 1.8515507341020896
+  },
+  "grid_x_max": 30.0,
+  "high_sweeper_stratum_mae_mean": NaN,
+  "per_provider_high_sweeper_coverage": {
+    "gradientsports": 0.0,
+    "skillcorner": 0.0,
+    "sportec": 0.0
+  },
+  "acceptance": {
+    "overall_mae_lt_2m": true,
+    "per_provider_mae_lt_3m": true,
+    "cross_fold_std_lt_05m": true,
+    "artifact_size_lt_15mb": true
+  },
+  "artifact_size_bytes": 753805,
+  "detection_selection_bias": {
+    "keeper_depth_detected_mean": 5.05032336584333,
+    "keeper_depth_undetected_mean": 15.526409788919468,
+    "ball_to_keeper_dist_detected_mean": 23.268318334326782,
+    "ball_to_keeper_dist_undetected_mean": 47.98931663400538,
+    "n_detected": 184277,
+    "n_undetected": 735727,
+    "n_games_counters_unrecorded": 0,
+    "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
+  }
+}

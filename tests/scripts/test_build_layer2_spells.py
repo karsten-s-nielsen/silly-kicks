@@ -113,3 +113,74 @@ def test_resume_does_not_reload_a_finished_match(tmp_path, monkeypatch):
 # The ASCII contract for this driver is enforced at SOURCE level (stricter than docstrings alone)
 # by the derived gate in test_build_gkdv_arm_values.py, which also asserts this module is NOT on the
 # pre-existing-debt list. Duplicating a weaker check here would just be a second thing to maintain.
+
+
+def _spells_run(monkeypatch, tmp_path, out, keys, *extra):
+    """One driver invocation over ``keys`` with its own --match-ids-json slice (named by the first key)."""
+    import sys
+
+    _install_spells_corpus(monkeypatch, keys=keys)
+    slice_json = tmp_path / f"{extra[0] if extra else 'w'}_{'_'.join(m for _p, m in keys)}.json"
+    ids: dict = {}
+    for p, m in keys:
+        ids.setdefault(p, []).append(m)
+    slice_json.write_text(json.dumps(ids), encoding="utf-8")
+    argv = ["build_layer2_spells.py", "--out", str(out), "--match-ids-json", str(slice_json), "--allow-dirty"]
+    monkeypatch.setattr(sys, "argv", argv + [a for a in extra if a.startswith("--")])
+    mod.main()
+    return slice_json.stem
+
+
+_GS = (("gradientsports", "m1"), ("gradientsports", "m2"))
+
+
+def test_a_worker_manifest_records_the_keys_it_covered(tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    tag = _spells_run(monkeypatch, tmp_path, out, _GS[:1])
+    manifest = json.loads((out / f"manifest_{tag}.json").read_text(encoding="utf-8"))
+    assert manifest["partition_keys"] == ["gradientsports__m1"]
+
+
+def test_reduce_only_after_two_workers_counts_each_match_ONCE(tmp_path, monkeypatch):
+    """MEASURED (combined-cycle Phase B): a counting full-population pass over two finished workers
+    reported ``n_matches: 128`` for a 64-match corpus. --reduce-only writes no manifest and takes its
+    counts from the population pass alone, so every match is counted exactly once."""
+    out = tmp_path / "out"
+    _spells_run(monkeypatch, tmp_path, out, _GS[:1])
+    _spells_run(monkeypatch, tmp_path, out, _GS[1:])
+    n_manifests = len(list(out.glob("manifest_*.json")))
+    tag = _spells_run(monkeypatch, tmp_path, out, _GS, "pop", "--reduce-only")
+    assert not (out / f"manifest_{tag}.json").exists(), "a reduce writes no per-worker manifest"
+    assert len(list(out.glob("manifest_*.json"))) == n_manifests == 2
+    corpus = json.loads((out / "layer2_spells_manifest.json").read_text(encoding="utf-8"))
+    assert corpus["n_matches"] == 2 and corpus["n_spells"] == 4 and corpus["n_treated"] == 2
+    assert corpus["reduce_mode"] == "driver-reduce-only"
+    assert corpus["population_size"] == 2
+    assert corpus["commit_consistent"] is True
+    assert "partition_keys" not in corpus
+
+
+def test_reduce_only_refuses_an_incomplete_population(tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    _spells_run(monkeypatch, tmp_path, out, _GS[:1])
+    with pytest.raises(SystemExit, match="1 of 2 population matches have no shard"):
+        _spells_run(monkeypatch, tmp_path, out, _GS, "pop", "--reduce-only")
+
+
+def test_reduce_only_needs_the_population(tmp_path, monkeypatch, capsys):
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["build_layer2_spells.py", "--out", str(tmp_path), "--reduce-only"])
+    with pytest.raises(SystemExit):
+        mod.main()
+    assert "--reduce-only needs --match-ids-json" in capsys.readouterr().err
+
+
+def test_a_COUNTING_pass_over_finished_partitions_is_refused(tmp_path, monkeypatch):
+    """The measured double count, reproduced: a full-population pass WITHOUT --reduce-only writes a third
+    manifest covering both workers' keys, and the aggregate refuses rather than report 2x the corpus."""
+    out = tmp_path / "out"
+    _spells_run(monkeypatch, tmp_path, out, _GS[:1])
+    _spells_run(monkeypatch, tmp_path, out, _GS[1:])
+    with pytest.raises(ValueError, match="overlap"):
+        _spells_run(monkeypatch, tmp_path, out, _GS, "pop")

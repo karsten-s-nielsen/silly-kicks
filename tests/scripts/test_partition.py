@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 import scripts._partition as mod  # bare import: tests/scripts/ has NO __init__.py
 
 
@@ -283,3 +285,126 @@ def test_a_FULL_RESUME_pass_does_not_re_arm_the_commit_false_alarm(tmp_path):
     assert got["commit_consistent"] is True, "a pass that built nothing must not vote"
     assert got["commits_seen"] == ["AAA", "BBB"], "but its commit is still recorded"
     assert got["run_commit"] == "AAA"
+
+
+def test_OVERLAPPING_partitions_are_refused_not_double_counted(tmp_path):
+    """MEASURED (combined-cycle Phase B): two wave workers (32 + 32 matches) and a later full-population
+    pass (64, every shard resumed and its counters REPLAYED) over one --out summed to ``n_matches: 128``
+    and doubled frame counts. A key counted by two manifests is counted twice, so the aggregate refuses."""
+    _write(tmp_path, "w0", {"n_matches": 2, "partition_keys": ["gs__1", "gs__2"]})
+    _write(tmp_path, "w1", {"n_matches": 2, "partition_keys": ["gs__3", "gs__4"]})
+    _write(tmp_path, "gs64", {"n_matches": 4, "partition_keys": ["gs__1", "gs__2", "gs__3", "gs__4"]})
+    with pytest.raises(ValueError, match=r"overlap.*manifest_gs64\.json"):
+        mod.aggregate_manifests(tmp_path, defaults=("n_matches",))
+
+
+def test_DISJOINT_partition_keys_sum_and_never_reach_the_output(tmp_path):
+    """The keys are a per-worker integrity field only: the aggregate is a cited artifact, and a match-id
+    list must not ride into it (nor be reported as a dropped field)."""
+    _write(tmp_path, "w0", {"n_matches": 2, "partition_keys": ["gs__1", "gs__2"]})
+    _write(tmp_path, "w1", {"n_matches": 2, "partition_keys": ["gs__3", "gs__4"]})
+    got = mod.aggregate_manifests(tmp_path, defaults=("n_matches",))
+    assert got["n_matches"] == 4
+    assert "partition_keys" not in got
+    assert got["dropped_fields"] == []
+
+
+def test_a_manifest_WITHOUT_partition_keys_still_aggregates(tmp_path):
+    """Manifests written before the field existed carry no keys; they aggregate exactly as before."""
+    _write(tmp_path, "old", {"n_matches": 2})
+    _write(tmp_path, "w1", {"n_matches": 2, "partition_keys": ["gs__3", "gs__4"]})
+    assert mod.aggregate_manifests(tmp_path, defaults=("n_matches",))["n_matches"] == 4
+
+
+_PROV = {"commit": "C1", "dirty": False, "tree_state": "clean"}
+
+
+def test_worker_lineage_REFUSES_shards_with_no_worker_manifest(tmp_path):
+    """Fail-closed: shards nobody vouches for have unknown lineage."""
+    with pytest.raises(SystemExit, match="no worker manifest"):
+        mod.worker_lineage(tmp_path, prov=_PROV, generation="g1")
+
+
+def test_worker_lineage_REFUSES_a_worker_at_another_commit(tmp_path):
+    _write(tmp_path, "w0", {"n_matches": 1, "run_commit": "C1", "generation": "g1"})
+    _write(tmp_path, "w1", {"n_matches": 1, "run_commit": "C0", "generation": "g1"})
+    with pytest.raises(SystemExit, match=r"another commit \['C0'\]"):
+        mod.worker_lineage(tmp_path, prov=_PROV, generation="g1")
+
+
+def test_worker_lineage_REFUSES_a_worker_from_another_generation(tmp_path):
+    _write(tmp_path, "w0", {"n_matches": 1, "run_commit": "C1", "generation": "g0"})
+    with pytest.raises(SystemExit, match=r"another generation \['g0'\]"):
+        mod.worker_lineage(tmp_path, prov=_PROV, generation="g1")
+
+
+def test_worker_lineage_reports_the_workers_and_ORs_dirtiness(tmp_path):
+    for tag, dirty in (("w0", False), ("w1", True)):
+        _write(
+            tmp_path,
+            tag,
+            {"n_matches": 1, "run_commit": "C1", "generation": "g1", "run_tree_dirty": dirty, "partition": tag},
+        )
+    got = mod.worker_lineage(tmp_path, prov=_PROV, generation="g1")
+    assert got["run_commit"] == "C1" and got["commit_consistent"] is True
+    assert got["run_tree_dirty"] is True  # one dirty worker makes the corpus dirty
+    assert got["partitions"] == ["w0", "w1"] and got["n_partitions"] == 2
+
+
+def _worker_manifest_aggregators() -> set[str]:
+    """DERIVED: every script that writes a per-worker ``manifest_<tag>.json`` AND sums such manifests with
+    ``aggregate_manifests`` -- the drivers exposed to the overlap double count."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "scripts"
+    found = set()
+    for p in sorted(root.glob("*.py")):
+        if p.name in ("_partition.py", "_driver.py"):
+            continue
+        src = p.read_text(encoding="utf-8")
+        if "manifest_{" in src and "aggregate_manifests(" in src:
+            found.add(p.name)
+    return found
+
+
+def test_every_worker_manifest_aggregator_records_its_partition_keys():
+    """A producer whose worker manifests omit ``partition_keys`` is silently outside the overlap guard."""
+    import pathlib
+
+    population = _worker_manifest_aggregators()
+    # Anti-rot: the derivation must find the producers it exists for (a broken glob would pass vacuously).
+    assert population == {
+        "build_gkdv_arm_values.py",
+        "build_layer2_spells.py",
+        "build_tf19_instrument_responsiveness.py",
+        "build_tf60_layer3_arm_values.py",
+        "measure_f1b_feature_delta.py",
+        "validate_das_native_parity.py",
+        "validate_xshot_causal.py",
+    }
+    root = pathlib.Path(__file__).resolve().parents[2] / "scripts"
+    missing = sorted(n for n in population if "**partition_keys(res)" not in (root / n).read_text(encoding="utf-8"))
+    assert not missing, f"worker manifests without partition_keys: {missing}"
+
+
+def test_partition_keys_EXCLUDE_failed_keys():
+    """A failed key carries no counters in its manifest, so a later pass that completes it (a launcher
+    relaunch can deal it to another worker tag) is not an overlap -- listing it would make the guard
+    refuse a legitimate resume. Shards and exclusions ARE listed: both are counted."""
+    import types
+
+    res = types.SimpleNamespace(
+        keys=("gs__3", "gs__1", "gs__2"), failures={"gs__2": "RuntimeError: x"}, exclusions={"gs__3": "s1"}
+    )
+    assert mod.partition_keys(res) == {"partition_keys": ["gs__1", "gs__3"]}
+
+
+def test_a_failed_key_completed_by_ANOTHER_worker_is_not_an_overlap(tmp_path):
+    """End to end over two manifests: w1 failed gs__2; w0 later completed it."""
+    import types
+
+    w1 = types.SimpleNamespace(keys=("gs__1", "gs__2"), failures={"gs__2": "OOM"}, exclusions={})
+    w0 = types.SimpleNamespace(keys=("gs__2",), failures={}, exclusions={})
+    _write(tmp_path, "w1", {"n_matches": 1, **mod.partition_keys(w1)})
+    _write(tmp_path, "w0", {"n_matches": 1, **mod.partition_keys(w0)})
+    assert mod.aggregate_manifests(tmp_path, defaults=("n_matches",))["n_matches"] == 2

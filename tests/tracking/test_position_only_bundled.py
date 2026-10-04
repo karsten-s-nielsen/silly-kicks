@@ -8,8 +8,9 @@ exercises the REAL bundled artifacts:
 * the ``add_*`` / serve path produces a VALUE + provenance ``"position_only"`` on a declared
   velocity-less frame (the SB360 unlock -- it was honest-NaN in 4.90.0);
 * the RESTRICTED ghost bundle carries a machine-checkable reproducibility caveat (M4);
-* the ghost ``default`` bundle is the ADR-089 both-axes re-fit (``training_commit=_C3``), superseding
-  the ADR-067 native-SkillCorner re-fit (``_C2=a0fc9f9``).
+* the ghost ``default`` bundle is the F1b float32-frame re-fit (``training_commit=_C4``, ADR-106),
+  superseding the ADR-089 both-axes re-fit (``_C3``) and the ADR-067 native-SkillCorner re-fit
+  (``_C2=a0fc9f9``).
 
 The bundled artifacts were fingerprinted on the DGX (pandas 3), so on a pandas-2 runtime their
 ``probe_sha256`` mismatches and ``load()`` emits a TOLERATED ``UnverifiableFeatureContractWarning``
@@ -40,6 +41,7 @@ _WEIGHTS_ROOT = pathlib.Path(_gg.__file__).parent
 _C1 = "0ce2c2187e09212440063f15494915f0f4a5f2ba"  # ADR-067 commit (xshot/xcross position-only training_commit)
 _C2 = "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a"  # ADR-067 native-SkillCorner ghost re-fit (SUPERSEDED by _C3)
 _C3 = "4bda048b898669227a648a5f853c4314f7fdebe3"  # ADR-089 both-axes ghost re-fit (TF-60 Layer-3; all 5 GK variants)
+_C4 = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"  # F1b float32-frame ghost default re-fit (ADR-106)
 
 
 def _declare_unavailable(frames: pd.DataFrame) -> pd.DataFrame:
@@ -90,17 +92,17 @@ def test_bundled_position_only_carry_training_provenance():
         assert meta.get("training_commit") == want, f"{root}/position_only training_commit"
 
 
-def test_bundled_ghost_default_is_the_both_axes_refit():
-    # The bundled ghost `default` was last re-fit under the ADR-089 both-axes convention unification
-    # (TF-60 Layer-3), at commit _C3 -- superseding the ADR-067 native-SkillCorner re-fit (_C2). Still
-    # the same 179-match corpus (incl. skillcorner), still faithful/26-feature. A velocity-bearing
+def test_bundled_ghost_default_is_the_f1b_refit():
+    # The bundled ghost `default` was last re-fit on float32-STORED frames (F1b, ADR-106) at commit _C4,
+    # superseding the ADR-089 both-axes re-fit (_C3) and the ADR-067 native-SkillCorner re-fit (_C2).
+    # Still the same 179-match corpus (incl. skillcorner), still faithful/26-feature. A velocity-bearing
     # retrain trigger (the velocity-path golden was re-captured; see
     # test_ghost_gk_velocity_path_unchanged, whose docstring records the measured move).
     _clear_variant_caches()
     m = _gg.GhostGkModel.from_variant("default")
     assert m.feature_set == "faithful"
     meta = json.loads((_WEIGHTS_ROOT / "_ghost_gk_weights" / "default" / "metadata.json").read_text(encoding="utf-8"))
-    assert meta["training_commit"] == _C3
+    assert meta["training_commit"] == _C4
     assert meta["feature_set"] == "faithful"
     assert len(meta["feature_names"]) == 26
     assert "skillcorner" in meta["corpus_provenance"]["providers"]

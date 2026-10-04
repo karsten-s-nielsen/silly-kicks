@@ -481,7 +481,15 @@ def main() -> None:
     )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     ap.add_argument("--list-matches", action="store_true", help="print available match ids as JSON and exit")
+    ap.add_argument(
+        "--reduce-only",
+        action="store_true",
+        help="AUTHORITATIVE reduce over exactly the --match-ids-json POPULATION (every shard must exist): "
+        "the allowlist-honouring replacement for the unpartitioned pass, which lists whole manifests.",
+    )
     args = ap.parse_args()
+    if args.reduce_only and not args.match_ids_json:
+        ap.error("--reduce-only needs --match-ids-json (the population)")
 
     from scripts._provenance import git_provenance, require_clean_tree
 
@@ -503,7 +511,7 @@ def main() -> None:
 
     from scripts._driver import for_each
     from scripts._loader_pining import pining_source, resolve_cache_dir
-    from scripts._partition import providers_for_slice, worker_tag
+    from scripts._partition import partition_keys, providers_for_slice, worker_tag
 
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
     dest = Path(args.out)
@@ -530,6 +538,30 @@ def main() -> None:
         tracking_limit=args.tracking_limit,
         cache_dir=cache_dir,
     )
+    _token = {
+        "ghost_model": "default",
+        "pitch_control_method": "spearman",
+        "arm": _DAS_ARM,
+        "doses": ["realistic", "saturating_goalline", "ladder"],
+        "regime_i_ladder_m": REGIME_I_LADDER_M,
+        # --tracking-limit truncates the frames every downstream computation sees, so a capped
+        # smoke run and a full run are DIFFERENT corpora and must never share a generation.
+        "tracking_limit": args.tracking_limit,
+        # The run commit keys the generation (combined-cycle spec section 2): shards are attributable to
+        # the commit that built them even when a worker died before writing its manifest.
+        "commit": prov["commit"],
+    }
+    if args.reduce_only:
+        from scripts._driver import exclusion_path, generation_dir, shard_path
+
+        gen = generation_dir(dest / "shards", token_inputs=_token)  # the same dict passed to for_each below
+        missing = [
+            r.key for r in refs if not shard_path(gen, r.key).is_file() and not exclusion_path(gen, r.key).is_file()
+        ]
+        if missing:
+            raise SystemExit(
+                f"{len(missing)} of {len(refs)} population matches have no shard; finish the workers first"
+            )
     res = for_each(
         refs,
         key=lambda ref: ref.key,
@@ -537,16 +569,7 @@ def main() -> None:
         work=_work,
         counters=lambda _item, _frame: dict(_last_keeper),  # keeper-identity totals, summed by for_each (S4.3)
         shard_root=dest / "shards",
-        token_inputs={
-            "ghost_model": "default",
-            "pitch_control_method": "spearman",
-            "arm": _DAS_ARM,
-            "doses": ["realistic", "saturating_goalline", "ladder"],
-            "regime_i_ladder_m": REGIME_I_LADDER_M,
-            # --tracking-limit truncates the frames every downstream computation sees, so a capped
-            # smoke run and a full run are DIFFERENT corpora and must never share a generation.
-            "tracking_limit": args.tracking_limit,
-        },
+        token_inputs=_token,
         tag=worker,
         label="match",
     )
@@ -556,13 +579,14 @@ def main() -> None:
     # shards (already done by for_each) + a per-worker manifest ONLY; the authoritative verdict comes
     # from a final UNPARTITIONED pass (which resumes, skips existing shards, and reduces over ALL of
     # them). Mirrors build_gkdv_arm_values' per-worker-manifest + final-aggregate split.
-    if args.match_ids_json is not None:
+    if args.match_ids_json is not None and not args.reduce_only:
         worker_manifest = {
             **res.manifest(),
             "run_commit": prov["commit"],
             "run_tree_dirty": prov["dirty"],
             "run_tree_state": prov.get("tree_state"),
             "partition": worker,
+            **partition_keys(res),  # the keys this pass covered (overlap guard, combined-cycle Phase B)
             "note": "partition worker: shards written; run an UNPARTITIONED pass for the authoritative verdicts.",
         }
         (dest / f"manifest_{worker}.json").write_text(
@@ -573,7 +597,16 @@ def main() -> None:
 
     # AUTHORITATIVE reduce over ALL shards -- pooled Layer-0/1 verdicts are corpus statistics, never
     # per shard, so they are computed only on the unpartitioned pass (which sees the full shard set).
-    shard_files = sorted(res.shard_dir.glob("*.parquet"))
+    from scripts._driver import shard_path as _shard_path
+    from scripts._partition import aggregate_manifests
+
+    # Exactly the POPULATION's shards (the generation may hold others' items when --out is shared).
+    shard_files = [_shard_path(res.shard_dir, r.key) for r in refs if _shard_path(res.shard_dir, r.key).is_file()]
+    # Every worker manifest in --out must name THIS commit (spec section 2); the commit-keyed generation
+    # already isolates the shards, so this catches a foreign manifest dropped into --out.
+    _foreign = sorted(set(aggregate_manifests(dest)["commits_seen"]) - {prov["commit"]})
+    if _foreign:
+        raise SystemExit(f"worker manifest(s) from another commit {_foreign}; this reduce runs at {prov['commit']}")
     shards = [pd.read_parquet(s) for s in shard_files]
     combined = pd.concat(shards, ignore_index=True) if shards else pd.DataFrame(columns=_SHARD_COLUMNS)
 
@@ -630,6 +663,8 @@ def main() -> None:
         },
         "provider_support": _provider_support_matrix(args.providers.split(",")),  # S4.5
         "n_frames_scored": len(combined),
+        "reduce_mode": "driver-reduce-only" if args.reduce_only else "driver-unpartitioned",
+        "population_size": len(refs),
         **res.manifest(),
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],

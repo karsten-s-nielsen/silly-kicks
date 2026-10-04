@@ -120,6 +120,18 @@ must stay on all legs (OS + interpreter axes), as must cheap behavioral-contract
 `tests/test_ci_slow_gating_wired.py`, and the `non-slow ⊎ slow == not-e2e` conservation cross-check
 (the proof decoupling dropped nothing) by `tests/test_ci_slow_reconcile_wired.py`. Decision: ADR-023.
 
+**The DAS reference leg has a contract job against its pinned oracle** (`das-reference-contract`). The
+parity driver's reference leg (`scripts/_das_reference_leg.py`) depends on facts about accessible-space
+2.0.15 that the unit tests can only fake: its result shapes, its carrier offside, its pairing of carriers
+with frames by row order, and its id handling.
+The job installs the dev-only `das-reference` extra (in THIS job only; the native engine needs no
+library, ADR-107) and runs `tests/scripts/test_das_reference_contract.py`: the real library on small
+synthetic scenes must reproduce native DAS within the golden bound, with negative controls showing the
+carrier scene really exercises offside and the out-of-order scene really mispairs carriers unsorted. The module skips everywhere else; the job's
+`SK_REQUIRE_DAS_REFERENCE=1` turns a missing library into a failure, and
+`tests/test_ci_das_reference_contract_wired.py` pins the job, the flag, and the oracle's absence from
+every other job. It runs in parallel, off the critical path.
+
 **Claims about a gate's behaviour must quote the assertion body, not its registration.**
 A gate's registry (`ENTRIES`, `PURITY_ENTRIES`, `AGGREGATORS`, `_PUBLIC_MODULE_FILES`,
 `_EXHAUSTIVE_EMITTED`) tells you *whether* a helper is exercised — never *what is asserted
