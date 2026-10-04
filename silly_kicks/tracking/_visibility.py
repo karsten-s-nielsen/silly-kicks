@@ -8,7 +8,7 @@ and "nobody VISIBLE there" as the same observation, and they are not.
 This module ships the two primitives that let a consumer tell them apart, plus one aggregator
 that answers the only question needing no consumer choice (how much of the PITCH was observed).
 Wiring coverage INTO the count features is deliberately not here: it would change existing values
-and decide, on the consumer's behalf, what a partial observation means (ADR-009).
+and decide, on the consumer's behalf, what a partial observation means (ADR-110).
 
 Provider-agnostic on arrival: ``polygon_to_spadl`` already yields SPADL coordinates, so these
 take SPADL vertices and know nothing about StatsBomb. They live in ``tracking/`` rather than
@@ -249,7 +249,7 @@ def add_visible_area_coverage(
     needs no consumer choice. "Which region?" -- the triangle to goal, a radius, the pass lane --
     is a different feature's question each time, so the library ships
     :func:`region_observed_fraction` for the consumer's own region instead of picking one
-    (ADR-009).
+    (ADR-110).
 
     Parameters
     ----------

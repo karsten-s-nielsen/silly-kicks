@@ -21,7 +21,7 @@ This page quotes no restricted numbers and names no private data. TODO line numb
 8. The seven batch decisions, ruled 2026-10-03 (see "Owner decisions — RULED").
 
 Rows were screened against:
-- the **raw-primitives convention** (`AGENTS.md`; `docs/context/conventions-core.md:66` — their "ADR-009" citation names the precedent the rule was modelled on, not a record of the rule itself; see the end);
+- the **raw-primitives convention** (`AGENTS.md`; `docs/context/conventions-core.md:66`; recorded as ADR-110 on 2026-10-04 — it was cited as ADR-009, the precedent TF-45 modelled it on; see the end);
 - the injected-xG boundary (`docs/context/xt-gk.md:17`, `ADR-097:14`);
 - E1–E7 and the validity ladder (`docs/research/README.md`).
 
@@ -298,7 +298,7 @@ SkillCorner's `physical.parquet` has no metabolic field.
 
 ## Outside this batch (pre-existing; owner's call)
 
-- `AGENTS.md:124` / `conventions-core.md:66` cite ADR-009 (the TF-24 Optuna harness) for the raw-primitives rule. Traced in revision 8: the rule's only decision record is the TF-45 spec, D4 (`docs/superpowers/specs/2026-06-07-tf45-structural-pass-design.md:24-29`), which keeps composites consumer-side as a mirror of ADR-009's frozen-exogenous-xT decision. The 2026-08-01 context-budget cut (`ebc5dab`) moved that analogy cite onto the rule itself. No ADR records the rule. Revisions 1–7 called this a "mis-reference"; it is an analogy cite standing in for a missing ADR. The new rows cite the convention by name.
+- `AGENTS.md:124` / `conventions-core.md:66` cited ADR-009 (the TF-24 Optuna harness) for the raw-primitives rule. Traced: the rule's only decision record is the TF-45 spec (`docs/superpowers/specs/2026-06-07-tf45-structural-pass-design.md`: rationale `:24-30`, scope `:90-95`, D4 `:149`), which keeps composites consumer-side as a mirror of ADR-009's frozen-exogenous-xT decision. The TF-45 commit (`da23a3f`) wrote it into `CLAUDE.md` with "(frozen-exogenous, ADR-009)"; the 2026-08-01 context-budget cut (`ebc5dab`) promoted it to a Key-conventions bullet and dropped the "frozen-exogenous" qualifier. No ADR recorded the rule. Revisions 1–7 called this a "mis-reference"; it is an analogy cite standing in for a missing ADR. The new rows cite the convention by name. **Addressed by ADR-110 (2026-10-04; see its Status):** it records the rule and its boundary, and the live docs now cite it.
 - The `TODO.md` header said MCP Phase 2 was "in independent impl review"; it merged at `6cf8d82`. Fixed in revision 8 (owner-approved).
 - The combined-cycle G2 test (`0cdcf05`) discovers only `tracking/` bundles; five non-tracking bundles are outside it. The author of this batch also reviewed that C1 and did not catch it. Ruling 6 makes the widening a TF-73 prerequisite, which closes this gap too.
 

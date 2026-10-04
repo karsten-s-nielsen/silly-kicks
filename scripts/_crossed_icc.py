@@ -1,10 +1,10 @@
 """Pure-numpy crossed random-effects variance components + bootstrap ICC CI.
 
 Scripts-side ANALYSIS tooling for the TF-54b defender-ranking census (spec Sec.8 SPEC-03), NOT a
-library API -- ADR-009 keeps rankings and identifiability verdicts consumer-side. ``causal.power``
-ships only :func:`att_power_curve` (an ATT estimator) and ``silly_kicks._group_metrics`` ships only a
-ONE-WAY ICC (:func:`icc_one_way`, a single grouping factor). Neither separates a defender effect from
-a team effect, so both functions here are new work.
+library API -- under ADR-110 a ranking, and the identifiability verdict that licenses it, are
+reported artifacts. ``causal.power`` ships only :func:`att_power_curve` (an ATT estimator) and
+``silly_kicks._group_metrics`` ships only a ONE-WAY ICC (:func:`icc_one_way`, a single grouping
+factor). Neither separates a defender effect from a team effect, so both functions here are new work.
 
 WHY A CROSSED MODEL. A per-defender territorial-defense number is *team-conditioned by construction*
 (the marginal-removal delta re-partitions vacated space to teammates), so a raw one-way ICC over

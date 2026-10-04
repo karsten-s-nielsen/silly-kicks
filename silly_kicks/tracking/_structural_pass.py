@@ -3,8 +3,9 @@ Structural Disruption Index.
 
 Quantifies how a pass deforms the opponent's defensive structure, independent of
 outcome value. Library ships RAW primitives only; the TIV z-norm composite,
-K-means archetypes, and passer/receiver rankings are corpus-level and live with
-consumers (mirrors the frozen-exogenous-xT decision, ADR-009).
+K-means archetypes, and passer/receiver rankings depend on the consumer's own
+population and choices, and live with consumers (ADR-110; TF-45 drew the
+analogy with the frozen-exogenous-xT decision, ADR-009).
 
 INVARIANT: post-normalization SPADL action coords (start_x/start_y, end_x/end_y;
 acting team attacks +x) and LTR tracking coords (home attacks +x) share the
