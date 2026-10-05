@@ -818,7 +818,7 @@ def test_unknown_role_and_suffix_raises():
 def test_dest_name_preserves_the_extension():
     """kloppy sniffs the first byte: a gzip magic 0x1f under an extensionless name raises
     DeserializationError. The manifest's FILENAME must reach the temp file."""
-    assert _dest_name("skillcorner", "1021404", "tracking", "tracking.json.gz").endswith(".json.gz")
+    assert _dest_name("skillcorner", "scp_b3dba76cf74d", "tracking", "tracking.json.gz").endswith(".json.gz")
     assert _dest_name("skillcorner", "1886347", "1886347_match", "1886347_match.json").endswith(".json")
 ```
 
@@ -1230,7 +1230,7 @@ they are the reason this step is written out in full:
    | corpus | temp filename | `split("_")[-2]` |
    |---|---|---|
    | canonical 10 | `skillcorner_1886347_1886347_tracking_extrapolated.jsonl` | **`"tracking"`** |
-   | private 98 | `skillcorner_1021404_tracking.json.gz` | `"1021404"` |
+   | private 98 | `skillcorner_scp_b3dba76cf74d_tracking.json.gz` | `"scp_b3dba76cf74d"` |
 
    `match_id` becomes `game_id`, and `game_id` is the **`StratifiedGroupKFold` grouping key**. Deriving
    it from a path would collapse all ten public matches into one CV group called `"tracking"` —
@@ -1396,13 +1396,13 @@ def test_match_visibility_reads_the_manifest_field(monkeypatch):
         "_list_matches",
         lambda provider, token, base_url: [
             {"id": "1886347", "visibility": "public", "artifacts": {}},
-            {"id": "1021404", "visibility": "private", "artifacts": {}},
+            {"id": "scp_b3dba76cf74d", "visibility": "private", "artifacts": {}},
             {"id": "9999999", "artifacts": {}},  # field ABSENT
         ],
     )
     vis = lp.match_visibility(["skillcorner"], token="t", base_url="b")
     assert vis[("skillcorner", "1886347")] == "public"
-    assert vis[("skillcorner", "1021404")] == "private"
+    assert vis[("skillcorner", "scp_b3dba76cf74d")] == "private"
     assert vis[("skillcorner", "9999999")] == "private"  # FAIL-CLOSED on an absent field
 ```
 
@@ -1473,9 +1473,9 @@ def test_absent_visibility_is_restricted():
 
 
 def test_a_restricted_skillcorner_match_is_not_public():
-    vis = {("skillcorner", "1021404"): "private"}
+    vis = {("skillcorner", "scp_b3dba76cf74d"): "private"}
     got = is_public_row(
-        providers=np.array(["skillcorner"]), match_ids=np.array(["1021404"]), visibility=vis
+        providers=np.array(["skillcorner"]), match_ids=np.array(["scp_b3dba76cf74d"]), visibility=vis
     )
     assert list(got) == [False]
 
@@ -1534,7 +1534,7 @@ def test_a_restricted_corpus_NEVER_ships_a_public_label(tmp_path, monkeypatch):
         "_loader_pining.match_visibility",
         lambda providers, **k: {
             ("skillcorner", "1886347"): "public",     # the real public one
-            ("skillcorner", "1021404"): "private",    # a restricted one
+            ("skillcorner", "scp_b3dba76cf74d"): "private",    # a restricted one
         },
     )
     out = tmp_path / "run"
@@ -2461,9 +2461,9 @@ The pin file selects *which* matches load; `visibility` decides *which arm* they
 def test_the_corpus_pin_and_the_visibility_arm_are_orthogonal():
     """The pin says WHICH matches load; visibility says WHICH ARM they join. A pinned private
     match is still private."""
-    vis = {("skillcorner", "1021404"): "private"}
+    vis = {("skillcorner", "scp_b3dba76cf74d"): "private"}
     got = is_public_row(
-        providers=np.array(["skillcorner"]), match_ids=np.array(["1021404"]), visibility=vis
+        providers=np.array(["skillcorner"]), match_ids=np.array(["scp_b3dba76cf74d"]), visibility=vis
     )
     assert list(got) == [False]
 ```

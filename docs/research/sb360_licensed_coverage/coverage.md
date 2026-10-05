@@ -14,6 +14,11 @@ What the library produces on the **licensed** StatsBomb 360 corpus (30 matches).
 
 Rendered from the committed `coverage.parquet`; licensed data is never committed.
 
+> **ID verifiability (owner ruling 2026-10-05).** All 30 `match_id`s in `coverage.parquet` are
+> StatsBomb **licensed** and **cannot be verified with public-only access** — they are absent from the
+> StatsBomb open-data catalogue. Only the ids, not any tracking data, are committed (derived coverage
+> metrics); the raw licensed data is never redistributed.
+
 ## Frame-existence coverage (per GK-domain type)
 
 | Type | matches | actions | frame-existence |
