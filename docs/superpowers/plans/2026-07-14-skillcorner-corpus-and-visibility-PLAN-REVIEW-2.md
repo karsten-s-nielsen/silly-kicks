@@ -43,7 +43,7 @@ schemas:
 | corpus | temp filename | `split("_")[-2]` |
 |---|---|---|
 | **canonical 10** (suffix-resolved key = the file stem) | `skillcorner_1886347_1886347_tracking_extrapolated.jsonl` | **`"tracking"`** ❌ |
-| private 98 (role key) | `skillcorner_1021404_tracking.json.gz` | `"1021404"` ✅ |
+| private 98 (role key) | `skillcorner_scp_b3dba76cf74d_tracking.json.gz` | `"scp_b3dba76cf74d"` ✅ |
 
 `match_id` becomes `game_id` for every frame (`skillcorner.py:138`), and **`game_id` is the grouping
 key for `StratifiedGroupKFold`**. So all ten public SkillCorner matches collapse into a **single CV

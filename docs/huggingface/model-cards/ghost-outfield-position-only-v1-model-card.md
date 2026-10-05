@@ -60,9 +60,10 @@ on velocity-less input.
 
 | Metric | Value |
 |---|---|
-| Held-out CV euclidean MAE | **6.07 m** (per-provider: Gradient Sports 6.20 / SkillCorner 5.99 / Sportec 6.40) |
+| Held-out CV euclidean MAE | **6.07 m** (per-provider: Gradient Sports 6.20 / SkillCorner 5.99 / Sportec 6.39) |
 | Per-possession CV MAE | in-possession 7.03 m / out-of-possession 5.10 m |
 | Per-slot CV MAE (slots 1&ndash;4) | 6.03 / 6.11 / 6.09 / 6.04 m |
+| Training corpus | 179 games / 4170920 rows |
 | Rearguard coherence (slot ordering) | `ordering_fraction = 1.0` |
 | Boosted-reconstruction parity vs sklearn | exact (round-trip verified &mdash; safe to publish) |
 
@@ -105,3 +106,7 @@ ghosting concept (no density estimation). See the silly-kicks `NOTICE` for the f
 - **License:** [MIT](https://opensource.org/licenses/MIT) &middot; **Library:**
   [silly-kicks](https://pypi.org/project/silly-kicks/) (v4.109.0+) &middot;
   [GitHub](https://github.com/karsten-s-nielsen/silly-kicks) &middot; ADR-087.
+
+## F1b re-fit (4.128.0)
+
+**F1b float32-frame re-fit (silly-kicks 4.128.0 / ADR-106; `training_commit=3ca609f`).** Re-fit on float32-stored frames (the storage rounding exceeds the trained-model feature-contract atol); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.

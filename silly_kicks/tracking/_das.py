@@ -52,16 +52,17 @@ _DEFAULT_PLAYER_IN_POSSESSION_COL = "ball_carrier_player_id"
 _OFFSIDE_WARNED = False
 
 # Advisory cost guardrail (ADR-107/108 §6.14): reported-not-gated; DAS values are unchanged by it.
-# Per-engine constants from the ADR-107 chunk table (20 000 frames, best of 3), rounded
-# conservatively; re-derived from the corpus performance.json at release.
-#: numba serial kernel, seconds per distinct frame (1.17 ms measured, rounded up to 2 significant figures).
-_DAS_SECONDS_PER_FRAME = 0.0012
-#: numpy engine at the default chunk, seconds per distinct frame (6.06 ms measured, rounded up) --
+# Per-engine constants re-derived from the corpus performance.json at release
+# (docs/research/das_native_parity/performance.json, run_commit b62c1f2; combined-cycle C2), rounded
+# conservatively (time per frame up, efficiency down) so the advisory over-warns rather than under-warns.
+#: numba serial kernel, seconds per distinct frame (0.662 ms measured, rounded up to 2 significant figures).
+_DAS_SECONDS_PER_FRAME = 0.00067
+#: numpy engine at the default chunk, seconds per distinct frame (2.49 ms measured, rounded up) --
 #: used when numba is absent (numpy has no prange path).
-_DAS_SECONDS_PER_FRAME_NUMPY = 0.0061
+_DAS_SECONDS_PER_FRAME_NUMPY = 0.0025
 #: prange scaling efficiency (numba parallel): effective throughput ~= n_threads * this. Measured at
-#: 16 threads (0.498, rounded down); < 1 because of the per-frame serial residue.
-_PRANGE_EFFICIENCY = 0.49
+#: 16 threads (0.576, rounded down to 2 decimals); < 1 because of the per-frame serial residue.
+_PRANGE_EFFICIENCY = 0.57
 #: seconds budget for DasCostWarning (replaces the old 5000-frame count = 5000 x 0.02 s = 100 s).
 _DAS_COST_WARN_SECONDS = 100.0
 

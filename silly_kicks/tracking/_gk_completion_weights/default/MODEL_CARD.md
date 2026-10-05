@@ -46,3 +46,7 @@ unrecorded original `tracking_limit`'s density float noise, without changing the
 \+ SHA256 envelope (`model.json` + `SHA256SUMS`). Caller `completion=` override supported.
 Attribution: xT-GK is Jeffrey Eyestone's (Pitch to the Pros 1), public-with-attribution — see
 NOTICE / ADR-024.
+
+## Provenance (4.128.0)
+
+**Provenance (silly-kicks 4.128.0).** `run_commit=3ca609f` · `artifact_label: full` · 3491 rows

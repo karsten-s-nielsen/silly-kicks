@@ -1,44 +1,33 @@
 {
   "lock_commit": "6b242cfbd1369500cf65d26a0c4b3fa49c234da6",
-  "run_commit": "6b242cfbd1369500cf65d26a0c4b3fa49c234da6",
+  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
   "run_tree_dirty": false,
+  "run_tree_state": "clean",
   "n_spells": 37086,
   "n_treated": 151,
   "treated_prevalence": 0.004071617321900448,
-  "spells_source": "/tmp/layer2_run/layer2_spells.parquet",
+  "spells_source": "layer2_spells.parquet",
   "upstream_provenance": {
     "spells": {
-      "path": "/tmp/layer2_run/layer2_spells.parquet",
-      "run_commit": "6b242cfbd1369500cf65d26a0c4b3fa49c234da6",
+      "path": "layer2_spells.parquet",
+      "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
       "run_tree_dirty": false,
       "commit_consistent": true,
       "manifests": [
-        "/tmp/layer2_run/layer2_spells_manifest.json",
-        "/tmp/layer2_run/manifest_p0.json",
-        "/tmp/layer2_run/manifest_p1.json",
-        "/tmp/layer2_run/manifest_p2.json",
-        "/tmp/layer2_run/manifest_p3.json",
-        "/tmp/layer2_run/manifest_p4.json",
-        "/tmp/layer2_run/manifest_p5.json",
-        "/tmp/layer2_run/manifest_p6.json",
-        "/tmp/layer2_run/manifest_p7.json"
+        "layer2_spells_manifest.json",
+        "manifest_spells_0.json",
+        "manifest_spells_1.json"
       ]
     },
     "arm_values": {
-      "path": "/tmp/gkdv_run/arm_values_delta_das.parquet",
-      "run_commit": "93ac3ba7c68369ce2f6da229de3b91f237387d25",
+      "path": "arm_values_delta_das.parquet",
+      "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
       "run_tree_dirty": false,
       "commit_consistent": true,
       "manifests": [
-        "/tmp/gkdv_run/arm_values_manifest.json",
-        "/tmp/gkdv_run/manifest_p0.json",
-        "/tmp/gkdv_run/manifest_p1.json",
-        "/tmp/gkdv_run/manifest_p2.json",
-        "/tmp/gkdv_run/manifest_p3.json",
-        "/tmp/gkdv_run/manifest_p4.json",
-        "/tmp/gkdv_run/manifest_p5.json",
-        "/tmp/gkdv_run/manifest_p6.json",
-        "/tmp/gkdv_run/manifest_p7.json"
+        "arm_values_manifest.json",
+        "manifest_gkdv_0.json",
+        "manifest_gkdv_1.json"
       ]
     }
   },
@@ -55,11 +44,11 @@
       "anchors": {
         "0.1": {
           "power_by_size": {
-            "500": 0.0,
-            "1000": 0.01,
+            "500": 0.015,
+            "1000": 0.005,
             "2000": 0.02,
-            "4000": 0.045,
-            "8000": 0.05
+            "4000": 0.035,
+            "8000": 0.055
           },
           "matched_n_by_size": {
             "500": 2,
@@ -88,11 +77,11 @@
         },
         "0.15": {
           "power_by_size": {
-            "500": 0.0,
-            "1000": 0.01,
-            "2000": 0.015,
-            "4000": 0.045,
-            "8000": 0.055
+            "500": 0.015,
+            "1000": 0.005,
+            "2000": 0.02,
+            "4000": 0.035,
+            "8000": 0.05
           },
           "matched_n_by_size": {
             "500": 2,
@@ -121,11 +110,11 @@
         },
         "0.2": {
           "power_by_size": {
-            "500": 0.005,
-            "1000": 0.01,
-            "2000": 0.015,
-            "4000": 0.05,
-            "8000": 0.05
+            "500": 0.02,
+            "1000": 0.005,
+            "2000": 0.02,
+            "4000": 0.04,
+            "8000": 0.06
           },
           "matched_n_by_size": {
             "500": 2,
@@ -159,11 +148,11 @@
       "anchors": {
         "0.1": {
           "power_by_size": {
-            "500": 0.0,
-            "1000": 0.005,
-            "2000": 0.01,
+            "500": 0.01,
+            "1000": 0.01,
+            "2000": 0.005,
             "4000": 0.005,
-            "8000": 0.04
+            "8000": 0.03
           },
           "matched_n_by_size": {
             "500": 2,
@@ -192,11 +181,11 @@
         },
         "0.15": {
           "power_by_size": {
-            "500": 0.0,
-            "1000": 0.005,
-            "2000": 0.01,
+            "500": 0.01,
+            "1000": 0.01,
+            "2000": 0.005,
             "4000": 0.005,
-            "8000": 0.045
+            "8000": 0.04
           },
           "matched_n_by_size": {
             "500": 2,
@@ -225,11 +214,11 @@
         },
         "0.2": {
           "power_by_size": {
-            "500": 0.0,
-            "1000": 0.005,
-            "2000": 0.015,
-            "4000": 0.005,
-            "8000": 0.045
+            "500": 0.01,
+            "1000": 0.01,
+            "2000": 0.01,
+            "4000": 0.01,
+            "8000": 0.04
           },
           "matched_n_by_size": {
             "500": 2,
@@ -266,19 +255,19 @@
   "N_MIN_MATCHED": null,
   "icc": {
     "power": {
-      "0.015": 1.0,
+      "0.015": 0.995,
       "0.02": 1.0,
       "0.026": 1.0
     },
     "mean_observed_icc": {
-      "0.015": 0.015370622084129218,
-      "0.02": 0.020619223940853394,
-      "0.026": 0.025517858456367462
+      "0.015": 0.015555902918395337,
+      "0.02": 0.020301563654380565,
+      "0.026": 0.025611095902993552
     },
     "mean_null_icc": {
-      "0.015": 0.007246662368304038,
-      "0.02": 0.008709769617018137,
-      "0.026": 0.010382609663310529
+      "0.015": 0.007837428419741966,
+      "0.02": 0.009338349274405588,
+      "0.026": 0.010978165830621002
     },
     "mean_observed_icc_at_zero": -0.00033506729723101593,
     "n_replicates": 200,

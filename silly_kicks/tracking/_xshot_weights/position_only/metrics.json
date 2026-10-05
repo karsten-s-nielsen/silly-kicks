@@ -1,30 +1,101 @@
 {
-  "run_commit": "0ce2c2187e09212440063f15494915f0f4a5f2ba",
+  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
   "shipped_variant": "public",
-  "n_rows": 156110,
-  "n_positive": 34650,
+  "n_rows": 156106,
+  "n_positive": 34649,
   "providers": [
     "idsse",
     "skillcorner"
   ],
+  "corpus_match_ids": [
+    [
+      "idsse",
+      "DFL-MAT-J03WMX"
+    ],
+    [
+      "idsse",
+      "DFL-MAT-J03WN1"
+    ],
+    [
+      "idsse",
+      "DFL-MAT-J03WOH"
+    ],
+    [
+      "idsse",
+      "DFL-MAT-J03WOY"
+    ],
+    [
+      "idsse",
+      "DFL-MAT-J03WPY"
+    ],
+    [
+      "idsse",
+      "DFL-MAT-J03WQQ"
+    ],
+    [
+      "idsse",
+      "DFL-MAT-J03WR9"
+    ],
+    [
+      "skillcorner",
+      "1886347"
+    ],
+    [
+      "skillcorner",
+      "1899585"
+    ],
+    [
+      "skillcorner",
+      "1925299"
+    ],
+    [
+      "skillcorner",
+      "1953632"
+    ],
+    [
+      "skillcorner",
+      "1996435"
+    ],
+    [
+      "skillcorner",
+      "2006229"
+    ],
+    [
+      "skillcorner",
+      "2011166"
+    ],
+    [
+      "skillcorner",
+      "2013725"
+    ],
+    [
+      "skillcorner",
+      "2015213"
+    ],
+    [
+      "skillcorner",
+      "2017461"
+    ]
+  ],
+  "reproducibility": "public",
   "candidates": {
     "public": {
       "params": {
-        "n_estimators": 150.30902308255034,
-        "max_depth": 5.1121741035066215,
-        "learning_rate": 0.06465599543062533,
-        "min_child_weight": 17.228384202220838,
-        "reg_lambda": 4.398069633632561
+        "n_estimators": 266.921160012869,
+        "max_depth": 5.677741238430813,
+        "learning_rate": 0.025164167531014834,
+        "min_child_weight": 18.412238054096036,
+        "reg_lambda": 2.29977746907269
       },
       "metrics": {
-        "pr_auc": 0.3065819349186868,
-        "brier": 0.16699706315994262,
-        "log_loss": 0.5109103977680206,
-        "pr_auc_std": 0.02242147853479626,
-        "positive_rate": 0.2219588751521363,
-        "base_rate_brier": 0.17269313289333468,
+        "pr_auc": 0.3035995420824977,
+        "brier": 0.16700676679611207,
+        "log_loss": 0.5107476651668549,
+        "pr_auc_std": 0.027998941568745325,
+        "positive_rate": 0.22195815663715682,
+        "base_rate_brier": 0.1726927333393922,
         "n_usable_folds": 5
       },
       "providers": [
@@ -40,6 +111,5 @@
     "log_loss_lt_uniform": true
   },
   "estimates_are_cv_not_shipped_fit": true,
-  "artifact_size_bytes": 436819,
-  "reproducibility": "public"
+  "artifact_size_bytes": 1182266
 }

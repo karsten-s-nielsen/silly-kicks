@@ -1,0 +1,137 @@
+{
+  "org": "silly-kicks",
+  "repos": {
+    "silly-kicks/ghost-gk-sweeper-position-only-v1": {
+      "role": "mirror",
+      "readme_matches_card": false,
+      "revision": "17bca6258385286e8e7b48615ada63a027920ca7",
+      "hub_training_commit": "adafb72a7f16456c3775d3a45709c2655dda3ce5",
+      "wheel_training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "mirror_matches_wheel": false,
+      "loaded": false,
+      "load_error": "IntegrityError: GhostGk: chirality mismatch --- served outputs [2.0373670229, 35.405897276] do not match the trained fingerprint [2.0288865211, 32.5761370699] within tol (atol=0.001). This is the y-mirror-mis-serving signature; refusing to load.",
+      "n_scores": 0,
+      "finite": false,
+      "training_commit": null,
+      "class": "GhostGkModel"
+    },
+    "silly-kicks/ghost-gk-sweeper-v1": {
+      "role": "mirror",
+      "readme_matches_card": false,
+      "revision": "0dd25e8f957665fc92026a1a5fe30dd57f957d2f",
+      "hub_training_commit": "adafb72a7f16456c3775d3a45709c2655dda3ce5",
+      "wheel_training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "mirror_matches_wheel": false,
+      "loaded": false,
+      "load_error": "IntegrityError: GhostGk: chirality mismatch --- served outputs [2.0261173273, 35.5546690915] do not match the trained fingerprint [2.0261173273, 32.4614887424] within tol (atol=0.001). This is the y-mirror-mis-serving signature; refusing to load.",
+      "n_scores": 0,
+      "finite": false,
+      "training_commit": null,
+      "class": "GhostGkModel"
+    },
+    "silly-kicks/ghost-gk-v1": {
+      "role": "hf_only",
+      "readme_matches_card": true,
+      "revision": "51d4b64acac576acb7cb3534289819711f04eb7d",
+      "hub_training_commit": "4bda048b898669227a648a5f853c4314f7fdebe3",
+      "loaded": true,
+      "n_scores": 4,
+      "finite": true,
+      "training_commit": "4bda048b898669227a648a5f853c4314f7fdebe3",
+      "class": "GhostGkModel"
+    },
+    "silly-kicks/ghost-outfield-position-only-v1": {
+      "role": "mirror",
+      "readme_matches_card": true,
+      "revision": "92d10c1653641fea4c9321caf28dbdbb133c53be",
+      "hub_training_commit": "b68328a1697851d0ff96f8b11039d5d2ee375f5d",
+      "wheel_training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "mirror_matches_wheel": false,
+      "loaded": true,
+      "n_scores": 4,
+      "finite": true,
+      "training_commit": "b68328a1697851d0ff96f8b11039d5d2ee375f5d",
+      "class": "GhostOutfieldModel"
+    },
+    "silly-kicks/ghost-outfield-v1": {
+      "role": "mirror",
+      "readme_matches_card": true,
+      "revision": "ab3c4ff28e33e37d04d94a339659d183246c04fe",
+      "hub_training_commit": "b68328a1697851d0ff96f8b11039d5d2ee375f5d",
+      "wheel_training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "mirror_matches_wheel": false,
+      "loaded": true,
+      "n_scores": 4,
+      "finite": true,
+      "training_commit": "b68328a1697851d0ff96f8b11039d5d2ee375f5d",
+      "class": "GhostOutfieldModel"
+    },
+    "silly-kicks/xcross-attempt-position-only-v1": {
+      "role": "hf_only",
+      "readme_matches_card": true,
+      "revision": "869fe8334fdacde8e337a3fc18fc23ce2c57db16",
+      "hub_training_commit": null,
+      "loaded": true,
+      "n_scores": 3,
+      "finite": true,
+      "training_commit": null,
+      "class": "XCrossAttemptModel"
+    },
+    "silly-kicks/xcross-attempt-v1": {
+      "role": "hf_only",
+      "readme_matches_card": true,
+      "revision": "49733041cde9f7c464d8303e5f1b8ad568766cb7",
+      "hub_training_commit": null,
+      "loaded": true,
+      "n_scores": 3,
+      "finite": true,
+      "training_commit": null,
+      "class": "XCrossAttemptModel"
+    },
+    "silly-kicks/xshot-occurrence-position-only-v1": {
+      "role": "hf_only",
+      "readme_matches_card": true,
+      "revision": "6956c494f5e230f2d2bbe21ba19d83828fb23c70",
+      "hub_training_commit": null,
+      "loaded": true,
+      "n_scores": 3,
+      "finite": true,
+      "training_commit": null,
+      "class": "XShotOccurrenceModel"
+    },
+    "silly-kicks/xshot-occurrence-v1": {
+      "role": "hf_only",
+      "readme_matches_card": true,
+      "revision": "cc96af05406b0a582f757bc0deec61fb8425a189",
+      "hub_training_commit": null,
+      "loaded": true,
+      "n_scores": 3,
+      "finite": true,
+      "training_commit": null,
+      "class": "XShotOccurrenceModel"
+    },
+    "silly-kicks/xsuccess-v1": {
+      "role": "event_only",
+      "readme_matches_card": true,
+      "skipped": "event-only model: no frame geometry"
+    }
+  },
+  "all_finite": true,
+  "load_refused": [
+    "silly-kicks/ghost-gk-sweeper-position-only-v1",
+    "silly-kicks/ghost-gk-sweeper-v1"
+  ],
+  "cards_mismatched": [
+    "silly-kicks/ghost-gk-sweeper-position-only-v1",
+    "silly-kicks/ghost-gk-sweeper-v1"
+  ],
+  "mirrors_mismatched": [
+    "silly-kicks/ghost-gk-sweeper-position-only-v1",
+    "silly-kicks/ghost-gk-sweeper-v1",
+    "silly-kicks/ghost-outfield-position-only-v1",
+    "silly-kicks/ghost-outfield-v1"
+  ],
+  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean"
+}

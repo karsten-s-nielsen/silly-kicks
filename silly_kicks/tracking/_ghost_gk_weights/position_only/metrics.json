@@ -15,24 +15,26 @@
     "beta": 0.0,
     "gamma": 0.25
   },
-  "training_commit": "4bda048b898669227a648a5f853c4314f7fdebe3",
-  "run_commit": "4bda048b898669227a648a5f853c4314f7fdebe3",
+  "training_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
+  "reproducibility": "restricted",
+  "reproducibility_note": "Restricted: trained at training_commit b62c1f24a7a9e3361ce416b402ed27da4a59b9e6 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
   "hyperparameters": {
     "n_estimators": 500,
     "max_depth": 8
   },
-  "cv_mae_x_mean": 0.16557404667061446,
-  "cv_mae_x_std": 0.0035845710767746274,
-  "cv_mae_y_mean": 1.096384912610031,
-  "cv_mae_y_std": 0.034341150155643076,
-  "cv_mae_euclidean_mean": 1.147711665204172,
-  "cv_mae_euclidean_std": 0.03518337583931125,
+  "cv_mae_x_mean": 0.16575005375018742,
+  "cv_mae_x_std": 0.0029015944310148457,
+  "cv_mae_y_mean": 1.0970911630195823,
+  "cv_mae_y_std": 0.03594358547930148,
+  "cv_mae_euclidean_mean": 1.148417041567875,
+  "cv_mae_euclidean_std": 0.03657401809325441,
   "per_provider_mae_euclidean": {
-    "gradientsports": 1.0854972872538218,
-    "skillcorner": 1.2098417690565202,
-    "sportec": 1.7000038117484682
+    "gradientsports": 1.0855152703025628,
+    "skillcorner": 1.2129398071157047,
+    "sportec": 1.7014019939045355
   },
   "grid_x_max": 30.0,
   "high_sweeper_stratum_mae_mean": NaN,
@@ -47,17 +49,15 @@
     "cross_fold_std_lt_05m": true,
     "artifact_size_lt_15mb": true
   },
-  "artifact_size_bytes": 2389906,
+  "artifact_size_bytes": 2341647,
   "detection_selection_bias": {
-    "keeper_depth_detected_mean": 5.050323365342181,
-    "keeper_depth_undetected_mean": 15.526409784723722,
-    "ball_to_keeper_dist_detected_mean": 23.268318332653397,
-    "ball_to_keeper_dist_undetected_mean": 47.98931664042842,
+    "keeper_depth_detected_mean": 5.05032336584333,
+    "keeper_depth_undetected_mean": 15.526409788919468,
+    "ball_to_keeper_dist_detected_mean": 23.268318334326782,
+    "ball_to_keeper_dist_undetected_mean": 47.98931663400538,
     "n_detected": 184277,
     "n_undetected": 735727,
     "n_games_counters_unrecorded": 0,
     "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
-  },
-  "reproducibility": "restricted",
-  "reproducibility_note": "Trained on the full 179-match native corpus including gradientsports (owner-tier) and non-public SkillCorner matches; not reproducible from public data. Re-fit under the ADR-089 both-axes goal-relative convention unification (TF-60 Layer-3, training_commit 4bda048), same restricted corpus as the ADR-067 native re-fit it supersedes."
+  }
 }

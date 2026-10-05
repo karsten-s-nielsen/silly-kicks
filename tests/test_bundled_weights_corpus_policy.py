@@ -9,14 +9,25 @@ from pathlib import Path
 
 import pytest
 
+from scripts._corpus import bundled_public_arm_pairs
+
 _ROOT = Path("silly_kicks/tracking")
+# Re-fit at the combined-cycle C2 release commit; the 6 reused dirs keep the F1b anchor 3ca609f.
+_M = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
+_REUSED = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
 _WHEEL_EXCLUDED = {"full"}  # pyproject.toml:222 excludes the maintainer-local `full` dirs from the wheel
 _GHOST_PROVIDERS = ["gradientsports", "skillcorner", "sportec"]
 _PUBLIC_PROVIDERS = ["idsse", "skillcorner"]
 
 
 def _x_policy():
-    return {("metadata.json", "shipped_variant"): "public", ("metadata.json", "provider_list"): _PUBLIC_PROVIDERS}
+    return {
+        ("metadata.json", "shipped_variant"): "public",
+        ("metadata.json", "provider_list"): _PUBLIC_PROVIDERS,
+        ("metrics.json", "shipped_variant"): "public",
+        ("metrics.json", "reproducibility"): "public",
+        ("metrics.json", "corpus_match_ids"): bundled_public_arm_pairs(),
+    }
 
 
 def _ghost_policy():
@@ -39,7 +50,7 @@ POLICY: dict[str, dict[tuple[str, str], object]] = {
     "_xcross_weights/default": _x_policy(),
     "_xcross_weights/position_only": _x_policy(),
     "_ghost_gk_weights/default": _ghost_policy(),
-    "_ghost_gk_weights/position_only": _ghost_policy(),
+    "_ghost_gk_weights/position_only": {**_ghost_policy(), ("metrics.json", "reproducibility"): "restricted"},
     "_ghost_gk_weights/sweeper": _ghost_policy(),
     "_ghost_gk_weights/sweeper_position_only": _ghost_policy(),
     "_ghost_outfield_weights/default": _gof_policy("default"),
@@ -51,11 +62,32 @@ POLICY: dict[str, dict[tuple[str, str], object]] = {
     "_gk_completion_weights/skillcorner": {
         ("metrics.json", "variant"): "skillcorner",
         ("metrics.json", "n_matches"): 10,
+        ("metrics.json", "artifact_label"): "public",
+        ("metrics.json", "all_public"): True,
+        ("metrics.json", "requested_match_ids"): bundled_public_arm_pairs(("skillcorner",)),
     },
     "_receiver_weights/default": {
         ("metrics.json", "providers_trained"): ["statsbomb"],
-        ("metrics.json", "corpus_visibility"): "public",  # as committed; C2 sets it per D7
+        ("metrics.json", "corpus_visibility"): "restricted",  # D7: licensed SB360; weights non-reversible
     },
+}
+
+# ADR anchor per dir: 7 re-fit at the C2 run commit, 6 reused at the F1b commit. training_commit lives
+# in metadata.json (ghost/gof/xshot/xcross); run_commit in metrics.json (gkc/receiver).
+_ANCHOR: dict[str, tuple[str, str, str]] = {
+    "_xshot_weights/default": ("metadata.json", "training_commit", _M),
+    "_xshot_weights/position_only": ("metadata.json", "training_commit", _M),
+    "_xcross_weights/default": ("metadata.json", "training_commit", _M),
+    "_xcross_weights/position_only": ("metadata.json", "training_commit", _M),
+    "_ghost_gk_weights/position_only": ("metadata.json", "training_commit", _M),
+    "_gk_completion_weights/skillcorner": ("metrics.json", "run_commit", _M),
+    "_receiver_weights/default": ("metrics.json", "run_commit", _M),
+    "_ghost_gk_weights/default": ("metadata.json", "training_commit", _REUSED),
+    "_ghost_gk_weights/sweeper": ("metadata.json", "training_commit", _REUSED),
+    "_ghost_gk_weights/sweeper_position_only": ("metadata.json", "training_commit", _REUSED),
+    "_ghost_outfield_weights/default": ("metadata.json", "training_commit", _REUSED),
+    "_ghost_outfield_weights/position_only": ("metadata.json", "training_commit", _REUSED),
+    "_gk_completion_weights/default": ("metrics.json", "run_commit", _REUSED),
 }
 
 _UNDERIVABLE: tuple[str, ...] = ()
@@ -125,3 +157,23 @@ def test_the_checker_catches_a_wrong_variant():
     """Anti-rot: an sc_extended artifact in a public slot must be reported."""
     fake = {"metadata.json": {"shipped_variant": "sc_extended", "provider_list": _PUBLIC_PROVIDERS}}
     assert violations("_xshot_weights/default", _x_policy(), read=fake.__getitem__)
+
+
+def test_anchor_covers_every_dir_exactly():
+    # Anti-rot: the anchor registry's population equals the discovered dirs (ADR-056 idiom).
+    assert set(_ANCHOR) == _discover()
+
+
+@pytest.mark.parametrize("dirname", sorted(_ANCHOR))
+def test_dir_traces_to_its_adr_anchor(dirname):
+    fname, key, want = _ANCHOR[dirname]
+    got = json.loads((_ROOT / dirname / fname).read_text(encoding="utf-8")).get(key)
+    assert got == want, f"{dirname}/{fname}:{key} = {got!r}, anchor {want!r}"
+
+
+def test_ghost_position_only_reproducibility_note_names_its_own_commit():
+    m = json.loads((_ROOT / "_ghost_gk_weights/position_only/metrics.json").read_text(encoding="utf-8"))
+    assert m["reproducibility"] == "restricted"
+    assert m["training_commit"] in m["reproducibility_note"], (
+        "the note must cite the commit it cannot be reproduced from"
+    )

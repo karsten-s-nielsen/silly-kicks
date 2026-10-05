@@ -27,9 +27,9 @@
     "gamma": 0.25
   },
   "params": {
-    "n_estimators": 141,
+    "n_estimators": 258,
     "max_depth": 2,
-    "learning_rate": 0.05480319440585896,
+    "learning_rate": 0.027723152335929188,
     "tree_method": "hist",
     "n_jobs": 1,
     "subsample": 1.0,
@@ -37,14 +37,14 @@
     "random_state": 42,
     "eval_metric": "logloss",
     "verbosity": 0,
-    "min_child_weight": 10,
-    "reg_lambda": 3.1019112561289663
+    "min_child_weight": 18,
+    "reg_lambda": 3.673442441231983
   },
   "version": "1.0.0",
   "pitch_length": 105.0,
   "pitch_width": 68.0,
   "geometry_version": "goal-relative-2",
-  "xgboost_version": "3.2.0",
+  "xgboost_version": "3.4.1",
   "training_platform": "Linux-6.17.0-1014-nvidia-aarch64-with-glibc2.39",
   "shipped_variant": "public",
   "provider_list": [
@@ -55,7 +55,7 @@
     "version": "chirality-probe-1",
     "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
     "outputs": [
-      0.0077240025
+      0.0074809385
     ]
   },
   "feature_contract": {
@@ -84,5 +84,5 @@
       "goal_width": 7.32
     }
   },
-  "training_commit": "0ce2c2187e09212440063f15494915f0f4a5f2ba"
+  "training_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
 }

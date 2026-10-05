@@ -5,6 +5,30 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.128.0!] — 2026-10-05 — F1b float32 frames + native DAS corpus re-fits + §7.3 downstream (PR-S200, ADR-106/107/108)
+
+The combined provenance cycle: the F1b float32 frame-storage schema and the native DAS engine both landed as code on `main`; this release re-fits every frame-geometry model and the downstream artifacts at one clean commit, and cuts the breaking version. **BREAKING (`!`)** — downstream must re-materialize; the lakehouse `<5` pin stays valid. Every artifact traces to its `run_commit` on `main`; no owner-tier match id enters the repo (weights and research aggregates are parameters-only, non-reversible).
+
+### BREAKING
+
+- **F1b frame schema (ADR-106):** tracking-frame coordinates store as float32 and compute as float64 (every kernel upcasts at its boundary); `team_id` is `category`. A storage-rounding delta ~1e-5 m, above the trained-model feature-contract atol (1e-6), so every frame-geometry bundled model is re-fit.
+- **Native DAS (ADR-107/108):** the `[das]`/`accessible-space` runtime extra is gone (native engine); `**kwargs` / `use_progress_bar` removed; new fail-loud `ValueError`s; periodic quadrature moves every DAS value. Owner-corpus shift (`|periodic − reference|`, median / p90 / max; `docs/research/das_native_parity/`, 980 matches): gradientsports 0.00495 / 0.153 / 5.37; idsse 0.00565 / 0.16 / 4.82; skillcorner 0.00633 / 0.19 / 16. D-KEY: 0 of 980 matches reuse a `frame_id` across periods; direction agreed on all 902 184 compared frames.
+- **Re-fit bundles:** ghost-GK `position_only` (byte-identical to the archive, re-stamped), ghost-GK `default`/sweeper/sweeper_position_only + ghost-outfield ×2 + gk_completion `default` (reused F1b re-fits, `training_commit 3ca609f`), gk_completion `skillcorner` (rebundle), xshot ×2 and xcross ×2. The `default` xshot/xcross also absorb the label changes since `6e3a132` (deltas recorded in `docs/research/f1b_float32/findings.md`, not gated against the old labels).
+- **Receiver:** the 30 → 327 widening did not beat the committed model under the pre-registered rule (point estimate ≥ 0 AND boot 95 % LB > −0.01; measured top-1 0.4958 vs 0.4969, CI [−0.0021, −0.0001]), so the shipped model stays the 30-match fit, re-fit at this commit. Its visibility is corrected to `restricted` (licensed SB360; the weights are three standardized coefficients, non-reversible — D7).
+
+### Added
+
+- `silly_kicks.mcp` read-only tripwire server (#264); `detected_mask` detection primitive (#260).
+- Guard + driver surface: `--expect-variant`; T10 / TF-19 / DAS CLI flags; the receiver-widening gate and Hub-smoke drivers; the card-only Hub push seam `scripts/publish_model_card.py` (`publish_card_only`, ADR-088 amendment) — both publish seams now stage cards with LF line endings.
+- New metrics keys (`corpus_match_ids` / `corpus_match_ids_sha256`, `requested_match_ids`, `reproducibility`, `n_outside_golden_bound`, `finite_counts`, `d_key_frames`, `direction`, `population.accounted`, `commits_seen`, `n_accounted`, `reduce_mode`, `partition_keys`) and `performance.json`. `estimate_das_cost` is engine-aware.
+- Corpus-driver overlap guard: summed worker manifests record `partition_keys`, `aggregate_manifests` refuses overlapping coverage, and GKDV / layer-2 spells gain `--reduce-only` (ADR-052 amendment).
+
+### Hyrum
+
+- The xcross `default` record shape (D5); the DAS shard schema `-4`.
+- Hub: the five HF-only variants (xshot ×2 and xcross ×2 `sc_extended`, ghost-GK `full`) keep their float64-trained weights — only their cards are refreshed. The four mirrors (`ghost-gk-sweeper-v1`, `ghost-gk-sweeper-position-only-v1` stale since `adafb72`; `ghost-outfield-v1`, `ghost-outfield-position-only-v1`) are republished to match the wheel.
+- **Downstream (relay):** re-materialize the lakehouse `das_*` and gkdv `delta_das` together with the F1b frame-geometry re-materialize; the `<5` version pin holds.
+
 ## [4.127.0] — 2026-09-25 — vectorized spearman kernel + scorer batching & bounded-memory streaming (PR-S199, ADR-105)
 
 ### Changed — tracking pitch-control CPU + bounded-memory pass (PR-S199, ADR-105)

@@ -58,9 +58,10 @@ variant; consumers opt in via `from_variant("sweeper")`.
 
 | Metric | Value |
 |---|---|
-| Held-out CV euclidean MAE | **1.137 m** (per-provider: Gradient Sports 1.072 / SkillCorner 1.171 / Sportec 1.713) |
+| Held-out CV euclidean MAE | **1.136 m** (per-provider: Gradient Sports 1.072 / SkillCorner 1.168 / Sportec 1.719) |
 | Boosted-reconstruction parity vs sklearn | 1.14e-13 (exact &mdash; safe to publish) |
 | **> 30 m high-sweeper stratum MAE** | **~2.00 m** (the sweeper *places* high keepers where the default is blind) |
+| Training corpus | 179 games / 1048834 frames |
 
 The `> 30 m` (high-sweeper) coverage of the training corpus is **IDSSE/Sportec-dominated (11.5 %)**;
 SkillCorner 0.24 %; **Gradient Sports 0.0 %** &mdash; see the data caveat below.
@@ -117,3 +118,7 @@ Pospisil &amp; Lee 2018 (RFCDE, arXiv:1804.05753). See the silly-kicks `NOTICE` 
 - **License:** [MIT](https://opensource.org/licenses/MIT) &middot; **Library:**
   [silly-kicks](https://pypi.org/project/silly-kicks/) (**v4.111.0+** for these both-axes weights) &middot;
   [GitHub](https://github.com/karsten-s-nielsen/silly-kicks) &middot; ADR-083 / ADR-089.
+
+## F1b re-fit (4.128.0)
+
+**F1b float32-frame re-fit (silly-kicks 4.128.0 / ADR-106; `training_commit=3ca609f`).** Re-fit on float32-stored frames (the storage rounding exceeds the trained-model feature-contract atol); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.

@@ -58,3 +58,7 @@ goalkeepers in some matches and inflates the frame-derived GK-pass domain (full 
 N=542 exactly). The 4.21.4 re-bundle attaches the per-type gate onto the committed coefficients
 without changing them. Attribution: xT-GK is Jeffrey Eyestone's (Pitch to the Pros 1),
 public-with-attribution — see NOTICE / ADR-024.
+
+## Provenance (4.128.0)
+
+**Provenance (silly-kicks 4.128.0).** `run_commit=b62c1f2` · `artifact_label: public` · 10 matches · 542 rows

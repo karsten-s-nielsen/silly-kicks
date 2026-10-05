@@ -3,15 +3,15 @@
     "delta_das": {
       "layer0": "instrument_void",
       "layer1": "not_responsive",
-      "n_domain": 241716,
+      "n_domain": 241715,
       "medians": {
-        "real_med": 0.4646317492823595,
-        "sat_med": 0.12163621907727462,
-        "gk_med": 0.05630699292122188,
-        "nd_med": 0.33847450588515215,
-        "placebo_p95": 2.8346335353020593
+        "real_med": 0.4731105059754048,
+        "sat_med": 0.1254124417168372,
+        "gk_med": 0.05771035211955322,
+        "nd_med": 0.3420016726761723,
+        "placebo_p95": 2.8779486458678907
       },
-      "n_placebo": 725148
+      "n_placebo": 725145
     },
     "delta_threat_suppression": {
       "layer0": "arm_unscoreable",
@@ -25,7 +25,7 @@
     "expected_direction": "negative",
     "n_keepers": 116,
     "n_gate_eligible": 74,
-    "n_eligible_sign_matches_expected": 35,
+    "n_eligible_sign_matches_expected": 38,
     "n_unresolved_keeper_frames": 0,
     "behavioural_anchoring": "uninterpretable",
     "min_nonzero": 20,
@@ -41,30 +41,7 @@
       "Onana": "descriptive_only"
     },
     "locked": "2026-08-29 (before the owner run)",
-    "check": {
-      "Alisson": {
-        "expected_sign": "negative",
-        "n_matched_keepers": 1,
-        "observed_signs": [
-          "negative"
-        ],
-        "gate_eligible": [
-          true
-        ],
-        "meets_prior": true
-      },
-      "Neuer": {
-        "expected_sign": "negative",
-        "n_matched_keepers": 1,
-        "observed_signs": [
-          "negative"
-        ],
-        "gate_eligible": [
-          true
-        ],
-        "meets_prior": true
-      }
-    }
+    "check": null
   },
   "keeper_identity": {
     "n_keeper_teams": 744,
@@ -98,14 +75,18 @@
       "delta_threat_suppression": "arm_unscoreable_no_xt"
     }
   },
-  "n_frames_scored": 241716,
-  "generation": "b78992842482c8ad",
-  "n_shards": 179,
-  "n_matches": 179,
-  "reduce_mode": "manual-shard-read: the driver's reduce functions applied over exactly the 179-match corpus shards. The driver's --match-ids-json=None reduce would re-stream the full provider manifest (>179); scientific content is identical (same functions), frame re-enumeration skipped.",
-  "run_commit": "a867f9b326b0ef71ed000185292b698e93183d32",
+  "n_frames_scored": 241715,
+  "reduce_mode": "driver-reduce-only",
+  "population_size": 179,
+  "generation": "1be53da27b1470b9",
+  "n_attempted": 0,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "n_excluded": 0,
+  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
+  "partition": "corpus179",
   "input_contract": {
     "version": 1,
     "driver": "build_tf19_instrument_responsiveness",

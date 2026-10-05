@@ -258,3 +258,7 @@ Features are extracted in **goal-relative coordinates**:
 - **Library**: [silly-kicks](https://pypi.org/project/silly-kicks/) (v3.24.0+)
 - **Documentation**: [silly-kicks GitHub](https://github.com/karsten-s-nielsen/silly-kicks)
 - **Research program**: GKDV (GK Deterrent Value) &mdash; TF-15 through TF-19
+
+## Wheel sibling (4.128.0)
+
+In silly-kicks 4.128.0 the wheel's bundled `default` was re-fit on float32-stored frames (`training_commit=3ca609f`). This Hub artifact is unchanged: trained on float64 frames, its predictions and weights are byte-identical to the previous release.

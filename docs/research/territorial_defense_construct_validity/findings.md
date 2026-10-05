@@ -12,6 +12,11 @@ NOT a ranking").
 - **Corpus:** **321 matches** — the full StatsBomb-360 corpus reachable via the pining loader
   (`load_statsbomb_matches`: WC2022 + the multi-competition open-data 360 set + the licensed 360
   cohort). `n_failed=0`, `n_counters_unrecorded=0`.
+- **ID verifiability (owner ruling 2026-10-05).** `named_defender_signs.parquet` carries a `game_id`
+  column. **30 of its `game_id`s are StatsBomb-licensed and cannot be verified with public-only
+  access** — they are exactly the 30 ids in `../sb360_licensed_coverage/coverage.parquet` (absent from
+  the StatsBomb open-data catalogue). Every other `game_id` is StatsBomb open data (publicly
+  verifiable). Only ids + derived per-defender aggregates are committed, never tracking data.
 - **Populations:** 6,852 domain defenders; Arm A scored 6,359 `(defender, match)` rows, Arm B scored
   3,271; the dose battery pooled **23,366 finite domain frames** (70,098 single-player placebo draws).
 - **Registered thresholds (locked, from the input contract):** `MIN_DOMAIN_FRAMES=200`,

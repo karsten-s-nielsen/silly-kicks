@@ -42,9 +42,10 @@ def _rel(p: pathlib.Path) -> str:
 #: Committed artifacts deliberately without canonical top-level provenance, each with a reason.
 #: An entry is a decision on the record; an omission is an untraceable number.
 _UNPROVENANCED: dict[str, str] = {
-    "docs/research/tf19_signoff_power/invalidation.json": (
-        "an ANNOTATION about another artifact, not a driver output. It records the annotated "
-        "artifact's commit in `artifact_run_commit`; it has no run of its own to stamp."
+    "docs/research/tf24_stage2_refresh/invalidation.json": (
+        "an ANNOTATION about a historical artifact, not a driver output (combined-cycle C2, "
+        "owner-approved spec rev 3). It classifies the TF-24 Stage-2 report's DAS-derived fields "
+        "against the native engine; it has no run of its own to stamp."
     ),
     "docs/research/skillcorner_corpus/manifest_skillcorner_full.json": (
         "a JSON LIST of corpus ids, not an object -- there is no mapping to stamp. Structural, not an oversight."
