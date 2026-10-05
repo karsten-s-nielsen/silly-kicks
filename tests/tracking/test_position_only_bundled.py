@@ -42,6 +42,7 @@ _C1 = "0ce2c2187e09212440063f15494915f0f4a5f2ba"  # ADR-067 commit (xshot/xcross
 _C2 = "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a"  # ADR-067 native-SkillCorner ghost re-fit (SUPERSEDED by _C3)
 _C3 = "4bda048b898669227a648a5f853c4314f7fdebe3"  # ADR-089 both-axes ghost re-fit (TF-60 Layer-3; all 5 GK variants)
 _C4 = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"  # F1b float32-frame ghost default re-fit (ADR-106)
+_C5 = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"  # combined-cycle C2: xshot/xcross + ghost position_only re-fit at M
 
 
 def _declare_unavailable(frames: pd.DataFrame) -> pd.DataFrame:
@@ -84,9 +85,10 @@ def test_bundled_position_only_loads_clean(name, cls, root, n_feat):
 def test_bundled_position_only_carry_training_provenance():
     # Bundled weights must be traceable to a commit (test_artifact_provenance_output enforces this
     # over the whole surface; pinned here to the position_only trio for a focused, in-place check).
-    # The ADR-089 both-axes cycle re-fit the GHOST variant only (=> _C3); xshot/xcross position_only
-    # are untouched and stay at their ADR-067 commit (_C1).
-    expected = {"_xshot_weights": _C1, "_xcross_weights": _C1, "_ghost_gk_weights": _C3}
+    # The combined-cycle C2 re-fit all three position_only variants at M (_C5): xshot/xcross on the
+    # public arm (the old sc_extended weights were wrong-corpus) and ghost position_only on the F1b
+    # float32 frames (byte-identical to the 3ca609f archive, re-stamped at the run commit).
+    expected = {"_xshot_weights": _C5, "_xcross_weights": _C5, "_ghost_gk_weights": _C5}
     for root, want in expected.items():
         meta = json.loads((_WEIGHTS_ROOT / root / "position_only" / "metadata.json").read_text(encoding="utf-8"))
         assert meta.get("training_commit") == want, f"{root}/position_only training_commit"

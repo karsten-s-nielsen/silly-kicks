@@ -1,0 +1,520 @@
+{
+  "providers": {
+    "gradientsports": {
+      "team": {
+        "das": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        },
+        "as": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        }
+      },
+      "player": {
+        "das": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        },
+        "as": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        }
+      },
+      "finite_mask_mismatches": {
+        "team": 0,
+        "player": 0
+      },
+      "quadrature_shift_das": {
+        "median": 0.004950535057058447,
+        "p90": 0.15344751305170568,
+        "max": 5.369791186527223
+      },
+      "numba_vs_numpy_das_max_abs": 9.947598300641403e-14,
+      "numba_vs_numpy_max_abs": {
+        "team": {
+          "das": 9.947598300641403e-14,
+          "as": 1.4551915228366852e-11
+        },
+        "player": {
+          "das": 3.410605131648481e-13,
+          "as": 9.094947017729282e-12
+        }
+      },
+      "n_outside_golden_bound": {
+        "numpy": {
+          "team": {
+            "das": 0,
+            "as": 0
+          },
+          "player": {
+            "das": 0,
+            "as": 0
+          }
+        },
+        "numba": {
+          "team": {
+            "das": 0,
+            "as": 0
+          },
+          "player": {
+            "das": 0,
+            "as": 0
+          }
+        }
+      },
+      "numba_compared": {
+        "team": {
+          "das": 43649,
+          "as": 43649
+        },
+        "player": {
+          "das": 960279,
+          "as": 960279
+        }
+      },
+      "finite_counts": {
+        "team": {
+          "ref": 43649,
+          "native": 43649,
+          "rows": 43649
+        },
+        "player": {
+          "ref": 960279,
+          "native": 960279,
+          "rows": 960279
+        }
+      },
+      "d_key_frames": 0,
+      "direction": {
+        "n_compared": 43649,
+        "n_disagree": 0
+      },
+      "timings_ms_per_frame": {
+        "ref": 13.43816639345825,
+        "numpy": 2.499920437584564,
+        "numba": 0.7647791929819898,
+        "periodic": 2.4672824463747682
+      },
+      "reason_counts": {
+        "reason_ok": 43649,
+        "reason_no_possession": 34881,
+        "reason_no_ball": 0,
+        "reason_no_players": 0,
+        "reason_ball_nan": 0,
+        "reason_poss_team_absent": 0,
+        "reason_direction_unresolved": 0
+      },
+      "n_scored_frames": 78530,
+      "n_matches_scored": 64
+    },
+    "idsse": {
+      "team": {
+        "das": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        },
+        "as": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        }
+      },
+      "player": {
+        "das": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        },
+        "as": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        }
+      },
+      "finite_mask_mismatches": {
+        "team": 0,
+        "player": 0
+      },
+      "quadrature_shift_das": {
+        "median": 0.005650011888747995,
+        "p90": 0.15992247398927023,
+        "max": 4.819242913818254
+      },
+      "numba_vs_numpy_das_max_abs": 5.684341886080802e-14,
+      "numba_vs_numpy_max_abs": {
+        "team": {
+          "das": 5.684341886080802e-14,
+          "as": 1.0913936421275139e-11
+        },
+        "player": {
+          "das": 2.4158453015843406e-13,
+          "as": 8.185452315956354e-12
+        }
+      },
+      "n_outside_golden_bound": {
+        "numpy": {
+          "team": {
+            "das": 0,
+            "as": 0
+          },
+          "player": {
+            "das": 0,
+            "as": 0
+          }
+        },
+        "numba": {
+          "team": {
+            "das": 0,
+            "as": 0
+          },
+          "player": {
+            "das": 0,
+            "as": 0
+          }
+        }
+      },
+      "numba_compared": {
+        "team": {
+          "das": 5812,
+          "as": 5812
+        },
+        "player": {
+          "das": 126876,
+          "as": 126876
+        }
+      },
+      "finite_counts": {
+        "team": {
+          "ref": 5812,
+          "native": 5812,
+          "rows": 5812
+        },
+        "player": {
+          "ref": 126876,
+          "native": 126876,
+          "rows": 126876
+        }
+      },
+      "d_key_frames": 0,
+      "direction": {
+        "n_compared": 5812,
+        "n_disagree": 0
+      },
+      "timings_ms_per_frame": {
+        "ref": 15.56418500710409,
+        "numpy": 3.2149581530836446,
+        "numba": 0.9229768975040852,
+        "periodic": 3.1753219139619113
+      },
+      "reason_counts": {
+        "reason_ok": 5812,
+        "reason_no_possession": 2678,
+        "reason_no_ball": 0,
+        "reason_no_players": 0,
+        "reason_ball_nan": 0,
+        "reason_poss_team_absent": 0,
+        "reason_direction_unresolved": 0
+      },
+      "n_scored_frames": 8490,
+      "n_matches_scored": 7
+    },
+    "skillcorner": {
+      "team": {
+        "das": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        },
+        "as": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        }
+      },
+      "player": {
+        "das": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        },
+        "as": {
+          "abs": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          },
+          "rel": {
+            "max": 0.0,
+            "p99": 0.0,
+            "p50": 0.0
+          }
+        }
+      },
+      "finite_mask_mismatches": {
+        "team": 0,
+        "player": 0
+      },
+      "quadrature_shift_das": {
+        "median": 0.006332066698949545,
+        "p90": 0.1897391673289635,
+        "max": 16.036625702011122
+      },
+      "numba_vs_numpy_das_max_abs": 1.2789769243681803e-13,
+      "numba_vs_numpy_max_abs": {
+        "team": {
+          "das": 1.2789769243681803e-13,
+          "as": 1.7280399333685637e-11
+        },
+        "player": {
+          "das": 4.263256414560601e-13,
+          "as": 1.2732925824820995e-11
+        }
+      },
+      "n_outside_golden_bound": {
+        "numpy": {
+          "team": {
+            "das": 0,
+            "as": 0
+          },
+          "player": {
+            "das": 0,
+            "as": 0
+          }
+        },
+        "numba": {
+          "team": {
+            "das": 0,
+            "as": 0
+          },
+          "player": {
+            "das": 0,
+            "as": 0
+          }
+        }
+      },
+      "numba_compared": {
+        "team": {
+          "das": 852722,
+          "as": 852723
+        },
+        "player": {
+          "das": 18722591,
+          "as": 18722613
+        }
+      },
+      "finite_counts": {
+        "team": {
+          "ref": 852723,
+          "native": 852723,
+          "rows": 852723
+        },
+        "player": {
+          "ref": 18722613,
+          "native": 18722613,
+          "rows": 18722613
+        }
+      },
+      "d_key_frames": 0,
+      "direction": {
+        "n_compared": 852723,
+        "n_disagree": 0
+      },
+      "timings_ms_per_frame": {
+        "ref": 23.68649909502679,
+        "numpy": 4.604107230803845,
+        "numba": 1.2119359122609759,
+        "periodic": 4.622277706746281
+      },
+      "reason_counts": {
+        "reason_ok": 852723,
+        "reason_no_possession": 40952,
+        "reason_no_ball": 0,
+        "reason_no_players": 0,
+        "reason_ball_nan": 0,
+        "reason_poss_team_absent": 0,
+        "reason_direction_unresolved": 0
+      },
+      "n_scored_frames": 893675,
+      "n_matches_scored": 895
+    }
+  },
+  "population": {
+    "listed_per_provider": {
+      "skillcorner": 909,
+      "gradientsports": 64,
+      "idsse": 7
+    },
+    "accounted": 980,
+    "scored_per_provider": {
+      "gradientsports": 64,
+      "idsse": 7,
+      "skillcorner": 895
+    },
+    "excluded": {
+      "attempted": 980,
+      "failed": 0,
+      "excluded": 14,
+      "note": "SB360 freeze-frames are velocity-less (ADR-063) -> structurally unscoreable; excluded and recorded."
+    }
+  },
+  "generation": "e1c82eb909a178c5",
+  "n_attempted": 980,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "n_excluded": 14,
+  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "run_tree_dirty": false,
+  "commit_consistent": true,
+  "commits_seen": [
+    "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
+  ],
+  "run_tree_state": "clean",
+  "run_platform": "Linux-6.17.0-1014-nvidia-aarch64-with-glibc2.39",
+  "run_machine": "aarch64",
+  "reference_env": {
+    "pandas": "2.3.3",
+    "numpy": "2.5.3",
+    "accessible_space": "2.0.15",
+    "python": "3.12.3"
+  },
+  "input_contract": {
+    "version": 1,
+    "driver": "validate_das_native_parity",
+    "params": {
+      "das_params": {
+        "a_max": 10.659091365334193,
+        "b0": -4.565680899844368,
+        "b1": -2000.0,
+        "danger_weight": 1.0,
+        "exclude_passer": false,
+        "factor": 5.077423030272923,
+        "factor2": 1.0063028450754512,
+        "inertial_seconds": 0.17,
+        "n_angles": 30,
+        "n_v0": 15,
+        "normalize": true,
+        "pass_start_location_offset": 0.0,
+        "phi_offset": 0.0,
+        "player_velocity": 9.0,
+        "quadrature": "periodic",
+        "radial_gridsize": 3.0,
+        "respect_offside": true,
+        "time_offset_ball": 0.0,
+        "tol_distance": 5.0,
+        "use_max": false,
+        "v0_max": 30.0,
+        "v0_min": 3.0,
+        "v_max": 19.85563874348074
+      },
+      "golden_tolerances": {
+        "numba": 1e-10,
+        "numpy": 1e-12
+      },
+      "reference_env_pins": {
+        "accessible-space": "2.0.15",
+        "pandas": "<3"
+      },
+      "reference_quadrature": "reference",
+      "schema": "das-native-parity-4",
+      "thread_sweep": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        20
+      ]
+    },
+    "extractors": [
+      "silly_kicks.tracking._das_pack",
+      "silly_kicks.tracking._das_engine"
+    ],
+    "models": [
+      "silly_kicks.tracking._das_params"
+    ],
+    "digest": "2616c225eb42d8796d45bc8cbc96446d302cc29377fe5e94ee1c67b77b3a3ea7"
+  }
+}

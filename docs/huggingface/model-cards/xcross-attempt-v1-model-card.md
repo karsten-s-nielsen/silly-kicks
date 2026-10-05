@@ -144,3 +144,7 @@ See the `NOTICE` file in the silly-kicks repository for full bibliographic citat
 ## More Information
 
 https://github.com/karsten-s-nielsen/silly-kicks
+
+## Wheel sibling (4.128.0)
+
+In silly-kicks 4.128.0 the wheel's bundled `default` was re-fit on float32-stored frames (`training_commit=b62c1f2`). This Hub artifact is unchanged: trained on float64 frames, its predictions and weights are byte-identical to the previous release.

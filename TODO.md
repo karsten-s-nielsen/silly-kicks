@@ -2,9 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last shipped — combined provenance cycle, PR-1: cycle code + reused F1b weights. NO version bump (the release is PR-2).** Merged ahead of the DGX wave so every wave run anchors to one `main` commit. It carries the cycle's driver and guard code (corpus guard, reproducibility caveats, receiver-gate and Hub-smoke drivers, card-only Hub seam, launcher fan-out, sharded T10 / TF-19 / DAS reduces), the reused F1b float32 re-fits (ghost-GK x3, ghost-outfield x2, gk_completion default), and the fixes the first wave found (DAS reference-leg frame order; T10 ghost_gk measured, plus a refusal when a model is never measured; overlapping-partition refusal and GKDV / spells `--reduce-only`). Re-fit weights, artifacts, cards and the version follow in PR-2; plan Phase B amendments 1-3.
-
-**Prev — last released 4.127.0 (PR-S199, ADR-105): vectorized spearman kernel + scorer batching & bounded-memory streaming.** Full detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.128.0! (PR-S200, ADR-106/107/108): F1b float32 frames + native DAS corpus re-fits + §7.3 downstream.** Breaking: float32 frame storage + `team_id` category (ADR-106); native DAS engine, `[das]` extra gone, every DAS value moves (ADR-107/108); all frame-geometry bundles re-fit at one `main` commit; the receiver widening declined by its pre-registered gate, so the 30-match model re-ships (visibility corrected to `restricted`). Downstream re-materializes `das_*` + gkdv `delta_das` with the F1b frame re-materialize; the `<5` pin holds. Full detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

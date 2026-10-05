@@ -28,9 +28,9 @@
     "gamma": 0.25
   },
   "params": {
-    "n_estimators": 292,
+    "n_estimators": 248,
     "max_depth": 3,
-    "learning_rate": 0.02427372604249366,
+    "learning_rate": 0.025258160303058913,
     "tree_method": "hist",
     "n_jobs": 1,
     "subsample": 1.0,
@@ -38,15 +38,15 @@
     "random_state": 42,
     "eval_metric": "logloss",
     "verbosity": 0,
-    "min_child_weight": 17,
-    "reg_lambda": 3.2289713387920482
+    "min_child_weight": 19,
+    "reg_lambda": 4.758026051404766
   },
   "version": "1.0.0",
   "pitch_length": 105.0,
   "pitch_width": 68.0,
   "geometry_version": "goal-relative-2",
-  "xgboost_version": "3.3.0",
-  "training_platform": "Linux-6.14.0-1015-nvidia-aarch64-with-glibc2.39",
+  "xgboost_version": "3.4.1",
+  "training_platform": "Linux-6.17.0-1014-nvidia-aarch64-with-glibc2.39",
   "shipped_variant": "public",
   "provider_list": [
     "idsse",
@@ -56,12 +56,12 @@
     "version": "chirality-probe-1",
     "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
     "outputs": [
-      0.0046812715
+      0.0062371464
     ]
   },
   "feature_contract": {
     "version": "feature-contract-1",
-    "probe_sha256": "9f17a54c10b8237f1f60ac7f84953ac8948b90e92bbc45eabc7bc3378138b398",
+    "probe_sha256": "d86fc4ab50ba6d14bee656539383512cec95ea328402271a7dcc930dfb001135",
     "fingerprint": [
       22.0227155455,
       0.6889243882,
@@ -86,5 +86,5 @@
       "goal_width": 7.32
     }
   },
-  "training_commit": "6e3a132b0e75da425bec7affede02218150f1232"
+  "training_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
 }

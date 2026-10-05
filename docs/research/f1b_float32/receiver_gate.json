@@ -1,0 +1,41 @@
+{
+  "identification": {
+    "identified": true,
+    "candidate_reproduces": true,
+    "n_controls": 20,
+    "n_controls_passing": 0,
+    "criteria": {
+      "top1": 0.5097663185813329,
+      "top1_tol": 0.005,
+      "param_rtol": 0.01
+    },
+    "n_present": 30,
+    "refit_top1_cv": 0.5096914124655281,
+    "max_rel_param_diff": 0.0011645124250385748
+  },
+  "gate": {
+    "n_test_matches": 297,
+    "n_test_passes": 98954,
+    "top1_new": 0.4957657093194818,
+    "top1_old": 0.49690765406148313,
+    "diff_new_minus_old": -0.0011419447420013338,
+    "boot_ci_95": [
+      -0.002141991074195823,
+      -0.00010948490183221181
+    ],
+    "decision_rule": "point_estimate_ge_0_and_boot_lb95_gt_-0.01",
+    "margin": 0.01,
+    "ship": false,
+    "seed": 0,
+    "n_boot": 2000,
+    "excluded_from_test": 30
+  },
+  "inputs_sha256": {
+    "rows": "8492e60d35f86ea36dc5a5e1a338ab82b9892a7f162f420f037e156976f4897b",
+    "committed_model": "2d887f435188fe161ae81b726b5f9d5b6809e72fb5aa358df58264a0b907f336"
+  },
+  "n_matches": 327,
+  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean"
+}

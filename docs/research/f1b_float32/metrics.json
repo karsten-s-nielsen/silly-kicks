@@ -1,0 +1,928 @@
+{
+  "atol": 1e-06,
+  "n_matches": 179,
+  "models": {
+    "ghost_gk": {
+      "max_abs_delta_over_features": 1.0,
+      "moved_features": [
+        "attacker_centroid_x",
+        "attacker_centroid_y",
+        "ball_distance_to_goal",
+        "ball_speed",
+        "ball_to_goal_angle",
+        "ball_to_nearest_attacker_dist",
+        "ball_vx",
+        "ball_vy",
+        "ball_x",
+        "ball_y",
+        "deepest_defender_x",
+        "defending_centroid_vx",
+        "defending_team_compactness",
+        "defensive_line_depth",
+        "defensive_line_speed",
+        "defensive_line_width",
+        "defensive_line_x",
+        "nearest_attacker_to_goal_x",
+        "team_in_possession"
+      ],
+      "unmoved_features": [
+        "attackers_in_box",
+        "ball_in_own_half",
+        "defenders_behind_ball",
+        "period_id",
+        "phase",
+        "score_diff",
+        "time_seconds"
+      ],
+      "features": {
+        "attacker_centroid_x": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 3.5389247748407307e-07,
+          "max_abs_delta": 3.204345688345711e-06,
+          "frac_gt_atol": 0.04766178657962622,
+          "n_gt_atol": 82736
+        },
+        "attacker_centroid_y": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 2.311707520858356e-07,
+          "max_abs_delta": 1.6921997030294733e-06,
+          "frac_gt_atol": 0.001447089633146648,
+          "n_gt_atol": 2512
+        },
+        "attackers_in_box": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "ball_distance_to_goal": {
+          "n_rows": 1494802,
+          "mean_abs_delta": 1.0974239667745322e-06,
+          "max_abs_delta": 6.775116556667626e-06,
+          "frac_gt_atol": 0.44698227591346545,
+          "n_gt_atol": 668150
+        },
+        "ball_in_own_half": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "ball_speed": {
+          "n_rows": 1494802,
+          "mean_abs_delta": 1.1841383504822226e-07,
+          "max_abs_delta": 1.526987085753717e-05,
+          "frac_gt_atol": 0.0033455935970115105,
+          "n_gt_atol": 5001
+        },
+        "ball_to_goal_angle": {
+          "n_rows": 1494802,
+          "mean_abs_delta": 2.4429148428032318e-08,
+          "max_abs_delta": 3.0929429370996075e-05,
+          "frac_gt_atol": 0.0005953965809518585,
+          "n_gt_atol": 890
+        },
+        "ball_to_nearest_attacker_dist": {
+          "n_rows": 1494802,
+          "mean_abs_delta": 1.340934353443349e-06,
+          "max_abs_delta": 9.872267048738337e-06,
+          "frac_gt_atol": 0.4926338070192574,
+          "n_gt_atol": 736390
+        },
+        "ball_vx": {
+          "n_rows": 1494802,
+          "mean_abs_delta": 8.717393987504835e-08,
+          "max_abs_delta": 1.517159626018838e-05,
+          "frac_gt_atol": 0.002392959067488537,
+          "n_gt_atol": 3577
+        },
+        "ball_vy": {
+          "n_rows": 1494802,
+          "mean_abs_delta": 8.756255123106189e-08,
+          "max_abs_delta": 1.4449576781316864e-05,
+          "frac_gt_atol": 0.001997588978339606,
+          "n_gt_atol": 2986
+        },
+        "ball_x": {
+          "n_rows": 1494802,
+          "mean_abs_delta": 1.1545261050948042e-06,
+          "max_abs_delta": 6.713867207963631e-06,
+          "frac_gt_atol": 0.4548870017567544,
+          "n_gt_atol": 679966
+        },
+        "ball_y": {
+          "n_rows": 1494802,
+          "mean_abs_delta": 7.231357492383911e-07,
+          "max_abs_delta": 3.8124198340483417e-06,
+          "frac_gt_atol": 0.2746791882804545,
+          "n_gt_atol": 410591
+        },
+        "deepest_defender_x": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 1.1380478216638594e-06,
+          "max_abs_delta": 3.8072900849783764e-06,
+          "frac_gt_atol": 0.4566719934005339,
+          "n_gt_atol": 792736
+        },
+        "defenders_behind_ball": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "defending_centroid_vx": {
+          "n_rows": 1735547,
+          "mean_abs_delta": 4.951161803098395e-07,
+          "max_abs_delta": 4.8901245146351635e-06,
+          "frac_gt_atol": 0.12678711668424997,
+          "n_gt_atol": 220045
+        },
+        "defending_team_compactness": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 3.944699230316957e-05,
+          "max_abs_delta": 0.0003246781361667672,
+          "frac_gt_atol": 0.9807488688851533,
+          "n_gt_atol": 1702480
+        },
+        "defensive_line_depth": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 1.3622060805947127e-06,
+          "max_abs_delta": 7.476806636930178e-06,
+          "frac_gt_atol": 0.46877005446172526,
+          "n_gt_atol": 813737
+        },
+        "defensive_line_speed": {
+          "n_rows": 1735547,
+          "mean_abs_delta": 1.0774087835552678e-06,
+          "max_abs_delta": 1.1291503909660605e-05,
+          "frac_gt_atol": 0.40468336495640855,
+          "n_gt_atol": 702347
+        },
+        "defensive_line_width": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 1.4235748379191662e-06,
+          "max_abs_delta": 7.533742419241207e-06,
+          "frac_gt_atol": 0.5760949088022453,
+          "n_gt_atol": 1000042
+        },
+        "defensive_line_x": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 7.760530677980629e-07,
+          "max_abs_delta": 3.784179682497779e-06,
+          "frac_gt_atol": 0.2876154013657484,
+          "n_gt_atol": 499271
+        },
+        "nearest_attacker_to_goal_x": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 1.1444536666087474e-06,
+          "max_abs_delta": 3.8072900849783764e-06,
+          "frac_gt_atol": 0.4619873978770642,
+          "n_gt_atol": 801963
+        },
+        "period_id": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "phase": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "score_diff": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "team_in_possession": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 5.760707138322643e-07,
+          "max_abs_delta": 1.0,
+          "frac_gt_atol": 5.760707138322643e-07,
+          "n_gt_atol": 1
+        },
+        "time_seconds": {
+          "n_rows": 1735898,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        }
+      },
+      "match_status_counts": {
+        "ok": 4576,
+        "selection": 176,
+        "dup_keys": 3
+      },
+      "selection_instability": {
+        "n_only_f64": 0,
+        "n_only_f32": 0,
+        "n_common": 1735898,
+        "frac": 0.0
+      }
+    },
+    "ghost_outfield": {
+      "max_abs_delta_over_features": 1.526987085753717e-05,
+      "moved_features": [
+        "ball_distance_to_own_goal",
+        "ball_speed",
+        "ball_to_deepest_opp_dist",
+        "ball_to_own_goal_angle",
+        "ball_vx",
+        "ball_vy",
+        "ball_x",
+        "ball_y",
+        "opp_deepest_x",
+        "opp_forward_centroid_vx",
+        "opp_forward_centroid_x",
+        "opp_forward_centroid_y"
+      ],
+      "unmoved_features": [
+        "ball_in_own_half",
+        "opp_in_def_third_count",
+        "period_id",
+        "phase",
+        "score_diff",
+        "slot_index",
+        "team_in_possession",
+        "time_seconds"
+      ],
+      "features": {
+        "ball_distance_to_own_goal": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 1.1065762401956944e-06,
+          "max_abs_delta": 5.1790047521649285e-06,
+          "frac_gt_atol": 0.45142645061799436,
+          "n_gt_atol": 1882860
+        },
+        "ball_in_own_half": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "ball_speed": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 9.329939741143903e-08,
+          "max_abs_delta": 1.526987085753717e-05,
+          "frac_gt_atol": 0.0017204870301746956,
+          "n_gt_atol": 7176
+        },
+        "ball_to_deepest_opp_dist": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 1.3766851488829698e-06,
+          "max_abs_delta": 9.872267048738337e-06,
+          "frac_gt_atol": 0.5334545538241996,
+          "n_gt_atol": 2224992
+        },
+        "ball_to_own_goal_angle": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 2.2953600302853404e-08,
+          "max_abs_delta": 1.2219001460866963e-05,
+          "frac_gt_atol": 0.00037689598821552696,
+          "n_gt_atol": 1572
+        },
+        "ball_vx": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 7.027237962911345e-08,
+          "max_abs_delta": 1.517159626018838e-05,
+          "frac_gt_atol": 0.0012256312288535457,
+          "n_gt_atol": 5112
+        },
+        "ball_vy": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 6.780016073134689e-08,
+          "max_abs_delta": 1.0870070866531023e-05,
+          "frac_gt_atol": 0.001001219877091629,
+          "n_gt_atol": 4176
+        },
+        "ball_x": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 1.1631584313124216e-06,
+          "max_abs_delta": 3.8072900849783764e-06,
+          "frac_gt_atol": 0.4584800638325623,
+          "n_gt_atol": 1912280
+        },
+        "ball_y": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 7.194081685235366e-07,
+          "max_abs_delta": 3.8124198340483417e-06,
+          "frac_gt_atol": 0.27429013127105056,
+          "n_gt_atol": 1144040
+        },
+        "opp_deepest_x": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 1.1588961897603079e-06,
+          "max_abs_delta": 3.8072900849783764e-06,
+          "frac_gt_atol": 0.4671016794408513,
+          "n_gt_atol": 1948240
+        },
+        "opp_forward_centroid_vx": {
+          "n_rows": 4170908,
+          "mean_abs_delta": 2.003252296067624e-08,
+          "max_abs_delta": 4.781087454830413e-06,
+          "frac_gt_atol": 0.0002349608286732769,
+          "n_gt_atol": 980
+        },
+        "opp_forward_centroid_x": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 5.571441252222339e-07,
+          "max_abs_delta": 3.5858154348034077e-06,
+          "frac_gt_atol": 0.16028628750738447,
+          "n_gt_atol": 668540
+        },
+        "opp_forward_centroid_y": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 3.6817043395133847e-07,
+          "max_abs_delta": 2.628155607808935e-06,
+          "frac_gt_atol": 0.03517983596872818,
+          "n_gt_atol": 146732
+        },
+        "opp_in_def_third_count": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "period_id": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "phase": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "score_diff": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "slot_index": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "team_in_possession": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "time_seconds": {
+          "n_rows": 4170912,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        }
+      },
+      "match_status_counts": {
+        "ok": 3580,
+        "selection": 179
+      },
+      "selection_instability": {
+        "n_only_f64": 8,
+        "n_only_f32": 0,
+        "n_common": 4170912,
+        "frac": 1.918042062662434e-06
+      }
+    },
+    "gk_completion": {
+      "max_abs_delta_over_features": 4.10810331175071e-06,
+      "moved_features": [
+        "dy_abs",
+        "length"
+      ],
+      "unmoved_features": [
+        "dest_defender_density",
+        "dest_x",
+        "dest_y_off",
+        "forwardness",
+        "is_goalkick",
+        "is_throw_in"
+      ],
+      "features": {
+        "dest_defender_density": {
+          "n_rows": 9534,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "dest_x": {
+          "n_rows": 9566,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "dest_y_off": {
+          "n_rows": 9566,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "dy_abs": {
+          "n_rows": 9566,
+          "mean_abs_delta": 4.409831512344194e-08,
+          "max_abs_delta": 1.8920898412488896e-06,
+          "frac_gt_atol": 0.017353125653355634,
+          "n_gt_atol": 166
+        },
+        "forwardness": {
+          "n_rows": 9566,
+          "mean_abs_delta": 9.200672923006658e-10,
+          "max_abs_delta": 6.517754415069632e-07,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "is_goalkick": {
+          "n_rows": 9566,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "is_throw_in": {
+          "n_rows": 9566,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "length": {
+          "n_rows": 9566,
+          "mean_abs_delta": 5.556881242619292e-08,
+          "max_abs_delta": 4.10810331175071e-06,
+          "frac_gt_atol": 0.01965293748693289,
+          "n_gt_atol": 188
+        }
+      },
+      "match_status_counts": {
+        "ok": 1432,
+        "selection": 179
+      },
+      "selection_instability": {
+        "n_only_f64": 0,
+        "n_only_f32": 0,
+        "n_common": 9566,
+        "frac": 0.0
+      }
+    },
+    "receiver": {
+      "max_abs_delta_over_features": 1.999999999999998,
+      "moved_features": [
+        "ball_dist",
+        "lane_pressure",
+        "space"
+      ],
+      "unmoved_features": [],
+      "features": {
+        "ball_dist": {
+          "n_rows": 1516611,
+          "mean_abs_delta": 9.401636673661385e-07,
+          "max_abs_delta": 5.260283145958056e-06,
+          "frac_gt_atol": 0.379419640237345,
+          "n_gt_atol": 575432
+        },
+        "lane_pressure": {
+          "n_rows": 1536852,
+          "mean_abs_delta": 4.2018765735305516e-05,
+          "max_abs_delta": 1.999999999999998,
+          "frac_gt_atol": 0.007352041706032851,
+          "n_gt_atol": 11299
+        },
+        "space": {
+          "n_rows": 1536852,
+          "mean_abs_delta": 1.326566243155968e-06,
+          "max_abs_delta": 9.948277297500141e-06,
+          "frac_gt_atol": 0.5070683449024369,
+          "n_gt_atol": 779289
+        }
+      },
+      "match_status_counts": {
+        "ok": 537,
+        "selection": 179
+      },
+      "selection_instability": {
+        "n_only_f64": 0,
+        "n_only_f32": 0,
+        "n_common": 1536852,
+        "frac": 0.0
+      }
+    },
+    "xcross": {
+      "max_abs_delta_over_features": 17.739130434782624,
+      "moved_features": [
+        "ball_r",
+        "ball_speed",
+        "dist_endline",
+        "dist_nearest_def",
+        "dist_nearest_teammate",
+        "gk_carrier_side",
+        "gk_dist_far_post",
+        "gk_dist_near_post",
+        "gk_lateral_offset",
+        "gk_r",
+        "gk_theta",
+        "space_controlled"
+      ],
+      "unmoved_features": [
+        "ball_theta",
+        "box_off_def_ratio",
+        "score_differential",
+        "ten_minute_warning"
+      ],
+      "features": {
+        "ball_r": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 1.0378952238044924e-06,
+          "max_abs_delta": 5.256193382763286e-06,
+          "frac_gt_atol": 0.41817404527634744,
+          "n_gt_atol": 505710
+        },
+        "ball_speed": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 8.229638218166733e-08,
+          "max_abs_delta": 1.554636821765598e-05,
+          "frac_gt_atol": 0.0015446582360962152,
+          "n_gt_atol": 1868
+        },
+        "ball_theta": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 3.1079997213968636e-08,
+          "max_abs_delta": 1.9308417953389778e-07,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "box_off_def_ratio": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "dist_endline": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 1.2257658684451955e-06,
+          "max_abs_delta": 3.8072900849783764e-06,
+          "frac_gt_atol": 0.41679642181738796,
+          "n_gt_atol": 504044
+        },
+        "dist_nearest_def": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 1.341468099230207e-06,
+          "max_abs_delta": 9.826306461957479e-06,
+          "frac_gt_atol": 0.4638489608700362,
+          "n_gt_atol": 560946
+        },
+        "dist_nearest_teammate": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 1.4112120640940137e-06,
+          "max_abs_delta": 9.53788586088855e-06,
+          "frac_gt_atol": 0.48867595170544986,
+          "n_gt_atol": 590970
+        },
+        "gk_carrier_side": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 8.573606119155198e-07,
+          "max_abs_delta": 1.9062099170241709e-06,
+          "frac_gt_atol": 0.38387899405372733,
+          "n_gt_atol": 464236
+        },
+        "gk_dist_far_post": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 9.752377519370357e-07,
+          "max_abs_delta": 4.2066945766805475e-06,
+          "frac_gt_atol": 0.4069372354421336,
+          "n_gt_atol": 492121
+        },
+        "gk_dist_near_post": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 1.0787732128437917e-06,
+          "max_abs_delta": 4.222431299716334e-06,
+          "frac_gt_atol": 0.4001061745811107,
+          "n_gt_atol": 483860
+        },
+        "gk_lateral_offset": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 8.573606119155198e-07,
+          "max_abs_delta": 1.9062099170241709e-06,
+          "frac_gt_atol": 0.38387899405372733,
+          "n_gt_atol": 464236
+        },
+        "gk_r": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 1.0512491420861332e-06,
+          "max_abs_delta": 4.2258030177322325e-06,
+          "frac_gt_atol": 0.3786645321496466,
+          "n_gt_atol": 457930
+        },
+        "gk_theta": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 2.6178651674438873e-07,
+          "max_abs_delta": 7.629510954876295e-05,
+          "frac_gt_atol": 0.01839367120113716,
+          "n_gt_atol": 22244
+        },
+        "score_differential": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        },
+        "space_controlled": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 0.00035938003277203646,
+          "max_abs_delta": 17.739130434782624,
+          "frac_gt_atol": 3.886452735359857e-05,
+          "n_gt_atol": 47
+        },
+        "ten_minute_warning": {
+          "n_rows": 1209329,
+          "mean_abs_delta": 0.0,
+          "max_abs_delta": 0.0,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        }
+      },
+      "match_status_counts": {
+        "ok": 2864,
+        "selection": 179
+      },
+      "selection_instability": {
+        "n_only_f64": 3,
+        "n_only_f32": 2,
+        "n_common": 1209329,
+        "frac": 4.1345070923334666e-06
+      }
+    },
+    "xshot": {
+      "max_abs_delta_over_features": 5.355890330747588,
+      "moved_features": [
+        "DefAngle_0",
+        "DefAngle_1",
+        "DefAngle_2",
+        "DefAngle_3",
+        "DefAngle_4",
+        "DefDist_0",
+        "DefDist_1",
+        "DefDist_2",
+        "DefDist_3",
+        "DefDist_4",
+        "GK_r",
+        "GK_theta",
+        "OffAngle_0",
+        "OffAngle_1",
+        "OffAngle_2",
+        "OffAngle_3",
+        "OffAngle_4",
+        "OffDist_0",
+        "OffDist_1",
+        "OffDist_2",
+        "OffDist_3",
+        "OffDist_4",
+        "openGoal",
+        "r",
+        "speed",
+        "theta"
+      ],
+      "unmoved_features": [
+        "z"
+      ],
+      "features": {
+        "DefAngle_0": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 6.502198823492765e-06,
+          "max_abs_delta": 5.078610494039494,
+          "frac_gt_atol": 0.10838416411277814,
+          "n_gt_atol": 219409
+        },
+        "DefAngle_1": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 7.143673776935068e-06,
+          "max_abs_delta": 5.078610385256392,
+          "frac_gt_atol": 0.02236010915033067,
+          "n_gt_atol": 45265
+        },
+        "DefAngle_2": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.9919506390312317e-06,
+          "max_abs_delta": 2.0081342556787285,
+          "frac_gt_atol": 0.004545131211580526,
+          "n_gt_atol": 9201
+        },
+        "DefAngle_3": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 3.915823602455371e-06,
+          "max_abs_delta": 4.124428676959136,
+          "frac_gt_atol": 0.0011035564750212906,
+          "n_gt_atol": 2234
+        },
+        "DefAngle_4": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 8.990879464755253e-06,
+          "max_abs_delta": 5.355890330747588,
+          "frac_gt_atol": 0.00035764319065148363,
+          "n_gt_atol": 724
+        },
+        "DefDist_0": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.3618311653930958e-06,
+          "max_abs_delta": 1.0252183252346114e-05,
+          "frac_gt_atol": 0.4741415081477442,
+          "n_gt_atol": 959835
+        },
+        "DefDist_1": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.3527901857827697e-06,
+          "max_abs_delta": 9.204768868009694e-06,
+          "frac_gt_atol": 0.4746779729337214,
+          "n_gt_atol": 960921
+        },
+        "DefDist_2": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.336178943373846e-06,
+          "max_abs_delta": 9.027600801569946e-06,
+          "frac_gt_atol": 0.4749012529367248,
+          "n_gt_atol": 961373
+        },
+        "DefDist_3": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.3245347403250245e-06,
+          "max_abs_delta": 8.538149291581476e-06,
+          "frac_gt_atol": 0.47867428980163645,
+          "n_gt_atol": 969011
+        },
+        "DefDist_4": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.312320613827506e-06,
+          "max_abs_delta": 8.558287873938752e-06,
+          "frac_gt_atol": 0.48604697574151684,
+          "n_gt_atol": 983936
+        },
+        "GK_r": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.0426756635568616e-06,
+          "max_abs_delta": 4.226591476808039e-06,
+          "frac_gt_atol": 0.3766837386952149,
+          "n_gt_atol": 762545
+        },
+        "GK_theta": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 2.79243178236525e-07,
+          "max_abs_delta": 7.629510954876295e-05,
+          "frac_gt_atol": 0.025106650780195656,
+          "n_gt_atol": 50825
+        },
+        "OffAngle_0": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 3.314413290091135e-06,
+          "max_abs_delta": 3.0701947283766327,
+          "frac_gt_atol": 0.4421240448852084,
+          "n_gt_atol": 895020
+        },
+        "OffAngle_1": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 2.8258777910733805e-06,
+          "max_abs_delta": 3.0701940351846484,
+          "frac_gt_atol": 0.02522323060477266,
+          "n_gt_atol": 51061
+        },
+        "OffAngle_2": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.21580128601926e-06,
+          "max_abs_delta": 2.2142973999976268,
+          "frac_gt_atol": 0.0024338508291987014,
+          "n_gt_atol": 4927
+        },
+        "OffAngle_3": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 8.96838915178612e-08,
+          "max_abs_delta": 4.076484558135363e-06,
+          "frac_gt_atol": 0.00033887186296535605,
+          "n_gt_atol": 686
+        },
+        "OffAngle_4": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 7.23192087056065e-08,
+          "max_abs_delta": 3.534280228034703e-06,
+          "frac_gt_atol": 7.508531074451037e-05,
+          "n_gt_atol": 152
+        },
+        "OffDist_0": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.382952435599593e-06,
+          "max_abs_delta": 9.876899533800554e-06,
+          "frac_gt_atol": 0.4755622012641995,
+          "n_gt_atol": 962711
+        },
+        "OffDist_1": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.3864671623961144e-06,
+          "max_abs_delta": 1.0191643484702695e-05,
+          "frac_gt_atol": 0.48856085170453534,
+          "n_gt_atol": 989025
+        },
+        "OffDist_2": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.3754042388683938e-06,
+          "max_abs_delta": 8.893332740456117e-06,
+          "frac_gt_atol": 0.4970079491632928,
+          "n_gt_atol": 1006125
+        },
+        "OffDist_3": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.3677305344574902e-06,
+          "max_abs_delta": 8.936838747253262e-06,
+          "frac_gt_atol": 0.5080079471873635,
+          "n_gt_atol": 1028393
+        },
+        "OffDist_4": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.3684417732614904e-06,
+          "max_abs_delta": 8.597291341061464e-06,
+          "frac_gt_atol": 0.5208697645285136,
+          "n_gt_atol": 1054430
+        },
+        "openGoal": {
+          "n_rows": 2005646,
+          "mean_abs_delta": 4.4613693646743386e-07,
+          "max_abs_delta": 0.0003683140357355619,
+          "frac_gt_atol": 0.11178243817702625,
+          "n_gt_atol": 224196
+        },
+        "r": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.0687553983757998e-06,
+          "max_abs_delta": 5.256193382763286e-06,
+          "frac_gt_atol": 0.4187562118275172,
+          "n_gt_atol": 847715
+        },
+        "speed": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 9.37204455220567e-08,
+          "max_abs_delta": 1.554636821765598e-05,
+          "frac_gt_atol": 0.0015515984279507046,
+          "n_gt_atol": 3141
+        },
+        "theta": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 3.592372191184421e-08,
+          "max_abs_delta": 1.2219001460866963e-05,
+          "frac_gt_atol": 0.00020549663993234417,
+          "n_gt_atol": 416
+        },
+        "z": {
+          "n_rows": 2024364,
+          "mean_abs_delta": 1.119095401601742e-08,
+          "max_abs_delta": 9.155273446026513e-07,
+          "frac_gt_atol": 0.0,
+          "n_gt_atol": 0
+        }
+      },
+      "match_status_counts": {
+        "ok": 4833,
+        "selection": 179
+      },
+      "selection_instability": {
+        "n_only_f64": 7,
+        "n_only_f32": 7,
+        "n_common": 2024364,
+        "frac": 6.915704478116241e-06
+      }
+    }
+  },
+  "generation": "3c91d49661f144a1",
+  "n_attempted": 179,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "n_excluded": 0,
+  "n_accounted": 179,
+  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "run_tree_dirty": false
+}

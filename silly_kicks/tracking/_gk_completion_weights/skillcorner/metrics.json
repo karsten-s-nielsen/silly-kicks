@@ -1,19 +1,67 @@
 {
   "variant": "skillcorner",
-  "run_commit": "4b153655f2388c4c1f4009d5abb0955b114222f1",
+  "artifact_label": "public",
+  "all_public": true,
+  "requested_match_ids": [
+    [
+      "skillcorner",
+      "1886347"
+    ],
+    [
+      "skillcorner",
+      "1899585"
+    ],
+    [
+      "skillcorner",
+      "1925299"
+    ],
+    [
+      "skillcorner",
+      "1953632"
+    ],
+    [
+      "skillcorner",
+      "1996435"
+    ],
+    [
+      "skillcorner",
+      "2006229"
+    ],
+    [
+      "skillcorner",
+      "2011166"
+    ],
+    [
+      "skillcorner",
+      "2013725"
+    ],
+    [
+      "skillcorner",
+      "2015213"
+    ],
+    [
+      "skillcorner",
+      "2017461"
+    ]
+  ],
+  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
-  "mode": "retrain",
-  "reason": "ADR-051 RC4 + RC2/RC5: the pining loader shipped SkillCorner frames UNORIENTED (team_attacking_direction NULL on 100% of rows), so the ADR-028 per-action re-projection silently no-opped and the committed weights were fitted against mixed-convention geometry; _gk_geometry reprojection and the cross-team next-event borrow moved the design matrix further. Corpus is the 10-match PUBLIC arm (ADR-038); the other 98 SkillCorner matches are non-redistributable Real Madrid fixtures.",
+  "mode": "rebundle",
+  "reason": "F1b float32-frame rebundle (combined-cycle-completion)",
+  "max_per_provider": 10,
+  "tracking_limit": null,
+  "feature_space": null,
+  "probe_old": null,
   "superseded_coef": {
-    "length": -0.36394084068721805,
-    "forwardness": 0.4684687633815231,
-    "dy_abs": 1.0308869481113412,
-    "dest_x": -0.05148050986210171,
-    "dest_y_off": 0.3964470358207553,
-    "dest_defender_density": -0.039539182459226344,
-    "is_goalkick": -0.07952432559877323,
-    "is_throw_in": 0.19674953291627217
+    "length": -0.36164579125772306,
+    "forwardness": 0.4693928828609202,
+    "dy_abs": 1.0257528797077995,
+    "dest_x": -0.054362036882298424,
+    "dest_y_off": 0.39870067161569567,
+    "dest_defender_density": -0.024612584831941713,
+    "is_goalkick": -0.07833976040194607,
+    "is_throw_in": 0.19702317688682802
   },
   "decision": "bundle_skillcorner",
   "bundled": true,
@@ -27,10 +75,10 @@
       "sc_lcb": 0.6317257848887357,
       "sc_ece": 0.04937985179818928,
       "sc_slope": 0.7972412618745376,
-      "gs_auc": 0.451214994006756,
-      "gs_lcb": 0.38079013518957977,
-      "gs_ece": 0.10698929707654742,
-      "gs_slope": 0.33409384457710256
+      "gs_auc": 0.49709055246812683,
+      "gs_lcb": 0.4267412214366349,
+      "gs_ece": 0.1033103901943977,
+      "gs_slope": 0.35735933385989604
     },
     "goalkick": {
       "n": 81,
@@ -38,11 +86,11 @@
       "sc_auc": 0.4609507640067912,
       "sc_lcb": 0.30557134420904997,
       "sc_ece": 0.15793809373005874,
-      "sc_slope": -0.026612060292791673,
-      "gs_auc": 0.5314091680814941,
-      "gs_lcb": 0.3897691020852786,
-      "gs_ece": 0.1740297532303099,
-      "gs_slope": -0.32223489413190115
+      "sc_slope": -0.026612060292791798,
+      "gs_auc": 0.567911714770798,
+      "gs_lcb": 0.42536490826291823,
+      "gs_ece": 0.16203132240430235,
+      "gs_slope": 0.13670023307647264
     },
     "gk_pass": {
       "n": 461,
@@ -50,11 +98,11 @@
       "sc_auc": 0.7396279069767442,
       "sc_lcb": 0.6727867127845789,
       "sc_ece": 0.04499395817275341,
-      "sc_slope": 1.0076494215192726,
-      "gs_auc": 0.4183255813953488,
-      "gs_lcb": 0.34317615306667565,
-      "gs_ece": 0.10581021092875262,
-      "gs_slope": 0.39796998931821287
+      "sc_slope": 1.0076494215192722,
+      "gs_auc": 0.46037209302325577,
+      "gs_lcb": 0.38455102575919065,
+      "gs_ece": 0.09646326405340117,
+      "gs_slope": 0.3863317259111741
     }
   },
   "gkpass_auc_floor": 0.7,

@@ -70,8 +70,15 @@ DAS is mirror-invariant (`rtol=1e-6`, the `arccos` float floor — F1, §6.4) wh
   measured by `scripts/validate_das_native_parity.py` and **quoted here at commit 2**, with the
   downstream re-materialize notice (calibration `das_*` features, gkdv ΔDAS arm).
 
-<!-- COMMIT-2 PLACEHOLDER: owner-corpus DAS shift from docs/research/das_native_parity/metrics.json
-     (median / p90 / max, per provider); the CHANGELOG Hyrum block quotes the same figures. -->
+**Owner-corpus DAS shift** (periodic − reference, `|Δ|` over scored frames; `docs/research/das_native_parity/metrics.json`, run_commit `b62c1f2`, 980 matches):
+
+| provider | median | p90 | max |
+|---|---|---|---|
+| gradientsports | 0.00495 | 0.153 | 5.37 |
+| idsse | 0.00565 | 0.16 | 4.82 |
+| skillcorner | 0.00633 | 0.19 | 16 |
+
+The shift is sub-centimetre at the median and bounded in the tails; it does not move any downstream decision (the CHANGELOG Hyrum block quotes the same figures). **D-KEY: 0 of 980 matches** had a `frame_id` that restarts per period (no reused-key frames in the corpus), so the collision-free key changed nothing here; direction agreed with the reference on every compared frame (0 disagreements of 902,184).
 
 ### Neutral
 

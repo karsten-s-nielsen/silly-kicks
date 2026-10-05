@@ -1,0 +1,38 @@
+{
+  "_about": "Sibling annotation for the TF-24 Stage-2 calibration report. That report is historical (CHANGELOG PR-S152: 'within noise, no default change') and is NOT re-run. This file classifies each DAS-derived field it used against the native DAS engine (ADR-107) and periodic quadrature (ADR-108).",
+  "annotated_at": "2026-10-05",
+  "annotates": "docs/research/tf24_stage2_refresh/calibration_report.json",
+  "das_engine_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "corpus_shift_source": "docs/research/das_native_parity/metrics.json",
+  "fields": {
+    "das_team": {
+      "role": "calibration feature",
+      "changed": true,
+      "measured_shift": {
+        "gradientsports": "0.00495 / 0.153 / 5.37",
+        "idsse": "0.00565 / 0.16 / 4.82",
+        "skillcorner": "0.00633 / 0.19 / 16"
+      }
+    },
+    "das_opponent": {
+      "role": "calibration feature",
+      "changed": true,
+      "measured_shift": "same source (median / p90 / max per provider, as das_team)"
+    },
+    "das_diff": {
+      "role": "calibration feature",
+      "changed": true,
+      "measured_shift": "same source"
+    },
+    "das_degraded": {
+      "role": "degrade flag",
+      "changed": true,
+      "note": "native flags unscoreable frames by Reason (reason_counts in metrics.json), not the pre-ADR-043 broad-except NaN; the degrade PATH differs though the Stage-2 verdict does not"
+    }
+  },
+  "cites": [
+    "ADR-107",
+    "ADR-108"
+  ],
+  "decision_unchanged_because": "the per-provider DAS shift is sub-centimetre at the median (max 0.00633 m) and bounded in the tails, far below the Stage-2 'within noise' threshold."
+}
