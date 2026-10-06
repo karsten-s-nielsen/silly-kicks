@@ -41,3 +41,6 @@ def test_each_leg_is_non_vacuous():
     assert "ppda" in {_base(c) for c in E._team_metrics_columns()}  # TF-52 compute_team_kpis
     assert "win_prob_leverage" in {_base(c) for c in E._win_probability_columns()}  # TF-63 compute_win_probability
     assert "positioning_gap" in {_base(c) for c in E._positioning_columns()}  # TF-56 compute_positioning_gap
+    assert "coord_rp_resultant_length" in {
+        _base(c) for c in E._coordination_columns()
+    }  # TF-58 compute_team_coordination

@@ -64,6 +64,11 @@ _DECLARING = (
     "validate_match_outcome_calibration",
     "build_territory_ranking_census",
     "validate_territory_counterfactual",
+    # TF-58: each writes its artifact into <--out>; commit 2 copies it into docs/research/tf58_team_coordination/
+    "derive_coordination_params",  # D1: derivation.json (found via the C3-widened rglob("*.json"))
+    "calibrate_coordination",  # D2: calibration.json
+    "validate_team_coordination",  # D3: metrics.json (the in-cycle validation report)
+    "validate_coordination_numerics",  # ADR-110: numerics_noflip.json (the corpus no-flip gate verdict)
 )
 
 _RESEARCH = pathlib.Path(__file__).resolve().parents[2] / "docs" / "research"
@@ -75,7 +80,11 @@ class StaleArtifactWarning(UserWarning):
 
 def _artifacts_for(driver: str, root: pathlib.Path) -> list[pathlib.Path]:
     out = []
-    for p in sorted(root.rglob("metrics.json")):
+    # Any *.json, not just metrics.json (C3): the TF-58 D1 driver writes `derivation.json`, and a driver
+    # that names its artifact anything else would otherwise be invisible to the staleness detector forever.
+    # The content filter (a dict whose input_contract.driver matches) still keys it, so a non-artifact json
+    # is ignored.
+    for p in sorted(root.rglob("*.json")):
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -173,6 +182,18 @@ def test_the_warning_actually_reaches_the_caller(tmp_path):
     with pytest.warns(StaleArtifactWarning):
         for path, recorded, current in stale_artifacts("d", live, tmp_path):
             warnings.warn(f"{path} {recorded[:12]} {current[:12]}", StaleArtifactWarning, stacklevel=2)
+
+
+def test_detector_scans_any_json_with_input_contract(tmp_path):
+    """C3 (TF-58): the D1 coordination driver writes `derivation.json`, not `metrics.json`. The
+    staleness detector must find ANY *.json that carries an `input_contract` for the driver, else a
+    regenerated `derivation.json` reads as current forever -- the exact silent-staleness class the
+    metrics.json detector was built to catch, one artifact name over. Same content filter, wider glob."""
+    live = declare_inputs(driver="d", covariates={"arm": ("a", "b")})
+    art = tmp_path / "run" / "derivation.json"
+    art.parent.mkdir(parents=True)
+    art.write_text(json.dumps({"input_contract": live}), encoding="utf-8")
+    assert _artifacts_for("d", tmp_path) == [art]
 
 
 @pytest.mark.parametrize("driver", _DECLARING)

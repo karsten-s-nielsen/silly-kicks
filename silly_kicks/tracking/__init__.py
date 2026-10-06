@@ -18,6 +18,7 @@ line_breaking_ward_xfns).
 """
 
 __all__ = [
+    "COLLECTIVE_VARIABLES",
     "DAS_SOURCE_COMPUTED",
     "DAS_SOURCE_TEAM_UNRESOLVED",
     "DAS_SOURCE_UNLINKED",
@@ -158,10 +159,13 @@ __all__ = [
     "back_line_high_x",
     "back_n_count",
     "ball_carrier_at_action",
+    "butterworth_lowpass",
     "classify_region_observation",
+    "collective_from_positions",
     "compactness_x",
     "compute_blocking_score",
     "compute_bravery",
+    "compute_collective_variables",
     "compute_defensive_credits",
     "compute_defensive_line",
     "compute_ghost_gk",
@@ -272,6 +276,9 @@ __all__ = [
     "receiver_zone_density",
     "region_observed_fraction",
     "require_et_direction",
+    "resample_frames",
+    "resample_uniform",
+    "residual_analysis_cutoff",
     "resolve_defended_goals",
     "resolve_gk_geometry",
     "resolve_intended_receiver",
@@ -325,6 +332,7 @@ from . import (
     utils,
 )
 from ._ball_carrier import derive_team_in_possession, infer_ball_carrier
+from ._collective import COLLECTIVE_VARIABLES, collective_from_positions, compute_collective_variables
 from ._cover_shadows import (
     CoverShadowParams,
     LaneControlResult,
@@ -565,9 +573,13 @@ from .pitch_control import (
 )
 from .preprocess import (
     PreprocessConfig,
+    butterworth_lowpass,
     derive_velocities,
     get_provider_defaults,
     interpolate_frames,
+    resample_frames,
+    resample_uniform,
+    residual_analysis_cutoff,
     smooth_frames,
 )
 from .pressure import (

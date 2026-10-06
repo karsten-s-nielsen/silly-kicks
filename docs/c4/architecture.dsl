@@ -40,9 +40,10 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze): Sportec/DFL + SB360 freeze-frames -> frames + visible_area; keeper-appearance extractors (4 providers) -> KeeperAppearances port. ADR-031/054/084." "Python" "Library"
-            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 459 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 538 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
             keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
             positioning = container "silly_kicks.positioning" "TF-56 prescriptive positioning optimiser: SA solver (optimise_positions) for the best REACHABLE shape + measured positioning_gap = threat(actual) - threat(optimum). compute_*; xt injected." "Python" "Library"
+            coordination = container "silly_kicks.coordination" "TF-58 team-coordination dynamics: relative phase, cross-correlation, vector coding, spectral, cluster phase, relative stretch between the two teams; per-segment surrogate baselines. ADR-110." "Python" "Library"
 
             // Phase-2 agent-support server (shipped). Opt-in [mcp] extra; the core lib never imports it.
             mcp = container "silly_kicks.mcp" "Read-only tripwire MCP server (FastMCP, stdio): check_orientation / diagnose_provider / validate_construct_validity — binds pure read-only seams / committed memos, never run()/main()." "Python (optional [mcp] extra)" "Library"
@@ -95,6 +96,8 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         analyst -> gkdv "Values keeper positioning against a league-average ghost via" "build_ghost_frames + delta_das / delta_threat_suppression"
         gkdv -> tracking "Consumes PUBLIC tracking seams + ONE confined private DAS seam (_das.individual_das_paired via _das_port.py, ADR-107); never the reverse (allowlist-gated)" "Python import"
         restdefense -> tracking "Consumes PUBLIC tracking seams (GoalMap, defensive line, team shape, linkage, FOV) only; never the reverse (allowlist-gated)" "Python import"
+        analyst -> coordination "Scores team-coordination dynamics (relative phase, cross-correlation, vector coding, spectral, cluster phase, stretch) via" "compute_team_coordination()"
+        coordination -> tracking "Consumes PUBLIC tracking seams (collective kernel, preprocess, GoalMap, carrier) + four allowlisted private modules; never the reverse (allowlist-gated)" "Python import"
         gkdv -> xthreat "Weights the pitch-control field by per-cell threat with an injected fitted model" "ExpectedThreat"
 
         // --- Relationships: Causal-validation toolkit (ADR-015; TF-19 sign-off package) ---

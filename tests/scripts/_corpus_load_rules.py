@@ -77,6 +77,10 @@ _UNSHARDED_LOOP_EXEMPT: dict[str, str] = {
         "the whole loop, so sharding or resuming it would split the timing and invalidate that measurement "
         "(combined-cycle spec 12 D1)"
     ),
+    "_coordination_corpus.visibility_preflight": (
+        "the TF-58 ADR-069 Layer-2 probe (owner ruling 2026-10-03): BEFORE the sharded pass it loads one match per "
+        "detection-aware provider (at most `attempts`, one at a time, nothing kept) -- a bounded probe, not a pass"
+    ),
 }
 
 #: Rule D allowlist -- the only functions that may call load_match with events_only != literal False

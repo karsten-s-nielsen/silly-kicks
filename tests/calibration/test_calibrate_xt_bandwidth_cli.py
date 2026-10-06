@@ -24,6 +24,7 @@ def test_run_xt_bandwidth_smoke_returns_finite_best(tmp_path):
         n_trials=3,
         seed=42,
         store_path=str(tmp_path / "xt.db"),
+        objective_id="test-objective",
     )
     assert result.best is not None
     assert math.isfinite(result.best.metrics["xt_holdout_nll"])
@@ -35,6 +36,7 @@ def test_build_manifest_scopes_recommendation_and_versions(tmp_path):
         n_trials=3,
         seed=42,
         store_path=str(tmp_path / "xt.db"),
+        objective_id="test-objective",
     )
     manifest = build_manifest(
         source="pining",

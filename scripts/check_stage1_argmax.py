@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 
 from scripts._driver import for_each
-from scripts._provenance import git_provenance, require_clean_tree
+from scripts._provenance import git_provenance, objective_id, require_clean_tree
 from silly_kicks.calibration import MIN_EFFECT_SIZE
 
 #: Pre-registered in spec D5 BEFORE any corrected-geometry data was scored. A gate whose threshold
@@ -77,7 +77,7 @@ def invariance_verdict(*, same: int, total: int) -> str:
     return "stands" if (same / total) >= _INVARIANCE_THRESHOLD else "sweep"
 
 
-def stage1_metric_and_direction() -> tuple[str, object]:
+def stage1_metric_and_direction(prov: dict | None = None) -> tuple[str, object]:
     """The metric name and optimisation direction, READ FROM the sweep's own config.
 
     `stage1_config` is the single source for both (`metric="carrier_accuracy"`,
@@ -86,9 +86,18 @@ def stage1_metric_and_direction() -> tuple[str, object]:
     keep reporting on a design that no longer exists, which is the exact failure mode the whole
     corrected-geometry re-check exists to catch one level up.
     """
+    from scripts._input_contract import declare_inputs
+    from silly_kicks.calibration._carrier_objective import CarrierAccuracyObjective
     from silly_kicks.calibration._spaces import stage1_config
 
-    cfg = stage1_config(n_trials=1, store_path=":memory:")
+    # A throwaway in-memory config built ONLY to read metric/direction (never persisted, never run). It still takes
+    # the D21 helper's id (plan Task 21: no StoreConfig site is special -- one identity rule everywhere).
+    oid = objective_id(
+        CarrierAccuracyObjective,
+        declare_inputs(driver="check_stage1_argmax", probe="stage1_metric_and_direction"),
+        prov=prov,
+    )
+    cfg = stage1_config(n_trials=1, store_path=":memory:", objective_id=oid)
     return cfg.metric, cfg.direction
 
 
@@ -458,7 +467,7 @@ def main() -> None:
 
     from silly_kicks.calibration._cv import cv_scheme_for, cv_standard_error
 
-    metric_name, direction = stage1_metric_and_direction()
+    metric_name, direction = stage1_metric_and_direction(prov)
     maximize = direction == Direction.MAXIMIZE
 
     summary = {

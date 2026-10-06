@@ -35,7 +35,6 @@ Usage (owner):
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from collections import defaultdict
@@ -46,8 +45,14 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-_MIN_TEAMS = 3  # a correlation / ICC below this team count is not reported
-_COMPARABILITY_ICC_TOL = 0.20  # max cross-provider ICC spread for a KPI to be flagged poolable
+from scripts._reliability import (  # repo root joined sys.path just above
+    _COMPARABILITY_ICC_TOL,
+    _MIN_TEAMS,
+    compare_providers,
+    icc1,
+    split_half_reliability,
+    type_ii_slope,  # noqa: F401  re-exported: tests import this kernel from the driver's namespace
+)
 
 #: Wyscout ``matchPeriod`` -> SPADL period id (Pappalardo public data set).
 _WS_PERIOD = {"1H": 1, "2H": 2, "E1": 3, "E2": 4, "P": 5}
@@ -58,60 +63,6 @@ _WS_PERIOD = {"1H": 1, "2H": 2, "E1": 3, "E2": 4, "P": 5}
 _PAPPALARDO_PUBLIC_COMPETITIONS = frozenset(
     {"England", "Italy", "Spain", "Germany", "France", "European_Championship", "World_Cup"}
 )
-
-
-# --------------------------------------------------------------------------- pure stat kernels
-def icc1(values: np.ndarray, groups: np.ndarray) -> float:
-    """One-way random-effects ICC(1): between-group / total variance (team-discrimination). Pure numpy."""
-    df = pd.DataFrame({"v": np.asarray(values, dtype="float64"), "g": groups}).dropna(subset=["v"])
-    k = df["g"].nunique()
-    n = len(df)
-    if k < 2 or n <= k:
-        return float("nan")
-    grand = df["v"].mean()
-    gm = df.groupby("g")["v"]
-    ni = gm.count().to_numpy(dtype="float64")
-    mi = gm.mean().to_numpy()
-    ssb = float(np.sum(ni * (mi - grand) ** 2))
-    ssw = float(np.sum((df["v"].to_numpy() - df.groupby("g")["v"].transform("mean").to_numpy()) ** 2))
-    msb = ssb / (k - 1)
-    msw = ssw / (n - k)
-    n0 = (n - np.sum(ni**2) / n) / (k - 1)
-    denom = msb + (n0 - 1) * msw
-    return (msb - msw) / denom if denom > 0 else float("nan")
-
-
-def _stable_half(game_id) -> int:
-    """Deterministic 0/1 split of a match id (stable across runs / platforms)."""
-    return int(hashlib.sha256(str(game_id).encode("utf-8")).hexdigest(), 16) % 2
-
-
-def split_half_reliability(samples: pd.DataFrame, kpi: str, *, team_col="team_id", id_col="game_id") -> dict:
-    """Split each team's matches odd/even, mean the KPI per half, Pearson r of the two halves across teams."""
-    df = samples[[team_col, id_col, kpi]].dropna()
-    if df.empty:
-        return {"r": float("nan"), "n_teams": 0}
-    df = df.assign(_h=df[id_col].map(_stable_half))
-    means = df.groupby([team_col, "_h"])[kpi].mean().unstack("_h")
-    if 0 not in means.columns or 1 not in means.columns:
-        return {"r": float("nan"), "n_teams": 0}
-    pair = means.dropna(subset=[0, 1])
-    if len(pair) < _MIN_TEAMS or pair[0].std() == 0 or pair[1].std() == 0:
-        return {"r": float("nan"), "n_teams": len(pair)}
-    r = float(np.corrcoef(pair[0].to_numpy(), pair[1].to_numpy())[0, 1])
-    return {"r": r, "n_teams": len(pair)}
-
-
-def type_ii_slope(x: np.ndarray, y: np.ndarray) -> float:
-    """Major-axis (orthogonal) regression slope = sign(corr) * sd(y) / sd(x)."""
-    x = np.asarray(x, dtype="float64")
-    y = np.asarray(y, dtype="float64")
-    m = np.isfinite(x) & np.isfinite(y)
-    x, y = x[m], y[m]
-    if len(x) < _MIN_TEAMS or x.std() == 0 or y.std() == 0:
-        return float("nan")
-    r = float(np.corrcoef(x, y)[0, 1])
-    return float(np.sign(r) * y.std() / x.std())
 
 
 def reduce_reliability(samples: pd.DataFrame, kpis: list[str]) -> dict:
@@ -164,35 +115,6 @@ def reduce_possession_ground_truth(samples: pd.DataFrame) -> dict:
         for rec in per_match[cols].to_dict("records")
     ]
     return aggregate_possession_ground_truth(rows)
-
-
-def compare_providers(reports: dict[str, dict]) -> dict:
-    """Per-KPI cross-provider comparability: POOLABLE iff every provider reports finite same-sign ICC
-    within ``_COMPARABILITY_ICC_TOL``. ``reports`` maps provider -> its ``verdicts`` dict."""
-    providers = list(reports)
-    if len(providers) < 2:
-        return {"n_providers": len(providers), "per_kpi": {}}
-    kpis: set[str] = set()
-    for r in reports.values():
-        kpis |= set(r.get("reliability", {}).get("per_kpi", {}))
-    out: dict = {}
-    for k in sorted(kpis):
-        vals = {p: reports[p].get("reliability", {}).get("per_kpi", {}).get(k, {}) for p in providers}
-        iccs = [v.get("icc") for v in vals.values()]
-        finite = [x for x in iccs if x is not None and np.isfinite(x)]
-        poolable = (
-            len(finite) == len(providers)
-            and all(np.sign(finite[0]) == np.sign(x) for x in finite)
-            and (max(finite) - min(finite)) <= _COMPARABILITY_ICC_TOL
-        )
-        out[k] = {
-            "providers": {
-                p: {"icc": vals[p].get("icc"), "split_half_r": vals[p].get("split_half_r")} for p in providers
-            },
-            "icc_spread": float(max(finite) - min(finite)) if len(finite) == len(providers) else None,
-            "poolable": bool(poolable),
-        }
-    return {"n_providers": len(providers), "per_kpi": out}
 
 
 def possession_boundary_vs_native(actions: pd.DataFrame, *, native_possession_col: str) -> dict:

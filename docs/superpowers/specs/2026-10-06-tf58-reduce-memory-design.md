@@ -1,0 +1,56 @@
+# TF-58 reduce-memory + speed architecture — design
+
+**Status:** Draft rev 3 (for independent re-review). Rev 3 PIVOTS the architecture after a direct measurement overturned rev 1/2's row-count premise (owner-adopted 2026-10-06). Rev 1/2 (projection + liveness schema change) are superseded; see "Why rev 3". Branch `feat/tf58-team-coordination`, commit `9b99003`.
+
+## Context
+
+The authoritative full-corpus DGX run (980 matches: skillcorner 909 / gradientsports 64 / idsse 7) surfaced defects the fixtures (120 s synthetic matches, `--max-matches 1/2`) cannot catch -- the drivers were never run at corpus scale. Two classes: reduce-memory OOM and redundant-work speed.
+
+### Measured (not estimated)
+- **A3 - D1 occlusion reduce** (`derive_coordination_params.py:1703`): `occ_err` share **465M rows @ 71 matches**, 33.9 GB/share object -> **OOM 116 GiB, reproducible** (`RC=137`).
+- **A1 - D3 metrics reduce** (`validate_team_coordination.py:587`): `match_tables` melt measured **38,914 rows (SK) / 65,102 (GS)**, 126 cols, 86 / 142 MB -> corpus ~**40M rows / ~88 GB object**, concat peak ~150-176 GB -> **OOM by WIDTH/dtype (41 string cols), NOT row count** (rev-1/2's "6B rows" was a bad extrapolation from occ_err's per-player-frame granularity).
+- **A2 - D2 layer-b `combine_levels`** (`calibrate_coordination.py:447`, loops 11 `preparation_levels()`) + `_confirm`/`_joint_source` (`:742`): each combines the full-corpus `match_tables` (`n_surrogates=0`) -> same ~88 GB x 11 (sequential).
+- **F3 (speed) - pass-b 166.6 s/match** (966 matches; GS ~560 s). Profiled: `_pre_index_frames` (`silly_kicks/tracking/_ball_carrier.py:35`) = **79 % (SK) / 87 % (GS)** of pass-b, `ncalls=15` for ONE match -- `boundary_f1_by_gap` (`scripts/_coordination_hypotheses.py:71-72`) re-infers the gap-invariant ball carrier per candidate gap. Coordination math (`numpy correlate2`) is 34 s of 850 s.
+- **F2 (speed) - `provider_bootstrap_se`** (`derive_coordination_params.py:354`, loop `:378`, `n_boot` `:359`): 1000x `pd.concat` in the thin-provider bootstrap loop (D1 reduce).
+
+### Categorical cut (measured)
+Casting the match_tables melt's 41 string columns to `category`: **metrics 3.0x (88 -> 29 GB)**, **occlusion 7x (-> 19 GB)**. Both fit 119 GiB (metrics concat peak ~58 GB, ~2x headroom). D2 layer-b combines are sequential -> each fits.
+
+Ruled safe: D1 `a`/`b`/`occlusion_cal`; D-numerics reduce combine (`validate_coordination_numerics.py:271`). `_collective`/`_butterworth`/`build_coordination_signals` vectorized + subquadratic-guarded (ADR-073).
+
+**Systematic gap:** `SCALE_GUARDED` (ADR-073) guards only in-process signal-building; it is blind to reduce-memory. This cycle closes that.
+
+## Why rev 3 (the pivot)
+Rev 1/2 assumed the metrics reduce held ~6B rows and fixed it with a per-consumer map-side PROJECTION + a `metrics.json` liveness schema change (drop `n_unique`). Direct measurement showed the reduce holds ~40M rows / ~88 GB, OOMing on **string-column WIDTH, not row count**. So the simple **categorical dtype** (rev-2's occlusion-only fix, D-2) **generalized to every match_tables reduce** fixes all three OOMs with one mechanism, full melt retained -- making the PROJECTION registry, its completeness/circular-guard, and the liveness schema change ALL unnecessary. This dissolves the re-review's hardest findings (A RM-SPEC-01 projection completeness; B RM-SPEC-01 liveness; B RM-SPEC-02 vacuous guard) by removing the machinery they hardened.
+
+## Decisions
+
+- **D-1: generalized categorical combine (fixes A1/A2/A3).** `combine_workers` reads each worker share with the string columns dictionary-encoded -> `category` (pyarrow `read_dictionary`), cast to a **shared explicit sorted `CategoricalDtype`** per column (union across shares), then `pd.concat`. The categorical dtype **persists through the reduce** (keeps the combined table at ~29 GB, not re-inflated to 88 GB). Full melt retained -- no row projection, no schema change. Load-bearing: cast every share to the SAME `CategoricalDtype(categories=sorted(union), ordered=False)` BEFORE concat so (a) concat stays categorical (differing per-share categories would upcast to object and re-inflate -> OOM) and (b) the category order is lexicographic. **`union_categoricals` alone is NOT sufficient** -- its default `sort_categories=False` leaves append-order categories, under which `sort_values`/key order diverges from the object (lexicographic) path (re-review A RM-R3-02). Pin the explicit sorted `CategoricalDtype`. Applies to the match_tables reduces: D3 metrics/stoppage, D2 layer-a/b/confirm, D1 occlusion. Scoped to those pass names in `combine_workers` (shared by 3 drivers / 7+ passes; a/b/occlusion_cal/numerics stay as-is).
+- **D-1b: `observed=True` sweep (byte-identity under categorical).** With categorical group keys, `groupby`'s `observed=` default flips pd2 `False` (cartesian -> empty groups) / pd3 `True`, which would add spurious keys and diverge across versions. **Every reduce groupby keyed on a now-categorical column pins `observed=True`** -- occlusion (`derive:1217,:1239,:1357,:1488`; `validate:234,:237`) AND the metrics/D2 reduces (`build_constructs_report`/`derive_constructs`, `reliability_over_folds`, the hypotheses, `liveness_block`, stoppage). Enforced by a grep/AST gate (every groupby on a categorical key col has `observed=True`) + D-5 on the pd2 leg (where the empty-group trap bites). Liveness itself is **UNCHANGED** -- `n_unique`/`n_finite`/`live` computed on the full combined categorical table, exact; no schema change (the combine now fits).
+- **D-2 (F2): `provider_bootstrap_se` index-resample (D1 speed).** Pre-group once; resample integer indices instead of `pd.concat`-ing frames in the 1000-iteration loop; per-draw row order preserved (ADR-105). Output identical.
+- **D-3 (F3): hoist the gap-invariant ball-carrier (pass-b speed).** `boundary_f1_by_gap` computes `car = infer_ball_carrier(frames)` ONCE before the gap loop and passes `carrier=car` into `possession_windows_from_frames` (the `carrier=` kwarg exists, `_windows.py:328`). Byte-identical. Measured: `_pre_index_frames` 15 -> 1 call/match -> pass-b SK ~180 -> ~45 s, GS ~850 -> ~160 s, corpus ~166.6 -> ~45 s/match (~4x). **Do NOT relax the budget**; the ≤45 s/match figure (parent spec §5 goal-6) is superseded by the binding corpus **<=1h / 16 workers** (parent spec l.272) -- reconcile the post-hoist GS figure. The `_pre_index_frames` Arrow-`__getitem__` / `slice_block_rows` residual is a broader shared-infra de-Arrow optimization -> OUT of this cycle (large blast radius), recorded as a follow-up.
+- **D-4: reduce-memory guard (closes the ADR-073 gap).** (a) assert `combine_workers` returns `category`-dtype string columns for the match_tables reduces + a combined-table per-row memory bound below the object-path size; (b) the categorical-safety grep/AST gate covering **every categorical-semantics op, not just groupby** (re-review A RM-R3-01 / B RM-SPEC-11): `groupby`+`observed=True`, plus `merge`/`sort_values`/`set_index`/`astype(str)`/`.isin`/`.map` on a match_tables categorical column; registered with the anti-rot meta-assertion (ADR-056). A future reduce that concats a full-corpus object-dtype melt, or applies an unsafe categorical op, fails.
+- **D-5: byte-identity validation (the exactness gate).** A `tests/` harness runs the current (object) reduce and the new (categorical) reduce on a small multi-match synthetic corpus and asserts identical `derivation.json` / `calibration.json` / `metrics.json` / `numerics_noflip.json` (minus volatile `*timings*`/`stage_seconds`). **Adversarial fixture (per-categorical-column-consumer, not just H-paths/groupby — re-review A RM-R3-01 / B RM-SPEC-11):** sparse `(level, window_kind)` combos (the `observed=` empty-group trap); finite values for every family column; every H1-H7 + stoppage + occlusion path reached; dyad + team entities; AND exercise the non-groupby categorical ops the reduce performs (`merge` on `_window_join:93`, `set_index` `_paired_axis:147`, `astype(str)` `_team_key:102`, `.isin`/`.map`, `sort_values`) so a merge/sort/index divergence under categorical is caught, not only a groupby empty-group one. Run on **both pandas legs** (pd2 is where a missed `observed=True` / append-order category diverges).
+
+- **D-6 (occlusion per-bin CI bootstrap: match-grain + capped — VALUE-CHANGING, owner-approved 2026-10-07; ADR-112 decision 5).** Added after the authoritative DGX run profiled the D1 `occ_err` reduce to the per-bin CI bootstrap (`_bootstrap_weighted_median_ci`): 400 draws × resample+weighted-quantile over the whole million-row bin = O(400·n log n), > 1 h at corpus scale. Change the resampling unit from ROW to MATCH (cluster bootstrap — `occ_err` rows within a match are not independent, so this is also the sounder statistic; < 2 matches → NaN) and cap each bin's CI to a seeded 20k-row subsample (per-match-balanced so every draw's pool ≤ the cap). The point estimate `err_by_bin` is UNCHANGED (full bin); only `derivation.json`'s occlusion `ci_by_bin` values change. Measured ~1 s per 1.5M-row bin (occ reduce hours → minutes). This is the ONE place the cycle is not byte-identical to the pre-change output; D-5 therefore proves object == categorical of the NEW occ-CI statistic. Gated by 4 unit tests (match-grain vs row-grain, < 2-match NaN, per-draw cap ≤ 20k, seeded-deterministic). Re-materialize `derivation.json` under it at the authoritative run.
+
+## Non-goals
+- No per-consumer projection, no row-dropping (rev-2's A1/D-1b -- dropped).
+- No metric-definition / artifact-schema change (liveness unchanged). ONE owner-approved reduce-statistic change: the occlusion per-bin CI bootstrap (D-6 / ADR-112 decision 5, match-grain + 20k cap) -- value-changing (occ `ci_by_bin` differ from row-grain), the D1-reduce hotspot fix. Everything else byte-identical.
+- No `_pre_index_frames` internal de-Arrow (follow-up cycle).
+- No launcher/partition/provenance change.
+
+## Risks
+- **Categorical-concat upcast trap** -> shared sorted `CategoricalDtype` / `union_categoricals`; D-5 + a memory assertion catch a regression.
+- **A missed `observed=True`** on a reduce groupby -> grep/AST gate + D-5 pd2 leg.
+- **Metrics headroom** -- 3x (vs occlusion 7x): 29 GB base / ~58 GB peak, ~2x under 119 GiB. Ample for the bounded 980-match corpus; recorded (a far-larger corpus would want the projection, explicitly deferred).
+- **F3 hoist** carrier semantics -> D-5 H-tests + a pass-b re-time confirm ~4x.
+
+## Validation / CI
+- D-5 byte-identity (both pandas legs).
+- D-4 categorical + per-row-mem guard + `observed=True` gate.
+- DGX pre-measure: metrics/occlusion/D2-layer-b combine peak RSS < ceiling (categorical); pass-b re-time post-hoist (~4x).
+- Full `-m "not e2e"`, lint CI-scope, bare pyright -- both legs. (calibrate/D2 on pd3 + ruthless-0.7.0; local `.venv` ruthless 0.6.0 cannot import calibrate.)
+
+## Commit / run order
+Reviewed spec/plan (rev 3) -> implement (TDD, D-5-gated) -> independent implementation review -> owner commit gate -> amend/commit on `feat/tf58-team-coordination` -> CI green -> re-run authoritative DGX cycle (D1->D2->D3->numerics) at the fixed commit -> commit-2 artifacts. DGX halted; the halted-run shares are discarded (new commit = new `run_commit`; combine requires one commit).

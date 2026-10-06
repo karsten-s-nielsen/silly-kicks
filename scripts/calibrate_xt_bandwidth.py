@@ -35,10 +35,13 @@ from silly_kicks.calibration._xt_bandwidth_objective import XtBandwidthObjective
 _XT_COLS = ["game_id", "start_x", "start_y", "end_x", "end_y", "type_id", "result_id"]
 
 
-def run_xt_bandwidth(*, actions, n_trials, seed, store_path, max_points_per_zone=None):
-    """Run the Optuna study on an already-loaded corpus (the testable seam -- no I/O)."""
+def run_xt_bandwidth(*, actions, n_trials, seed, store_path, objective_id, max_points_per_zone=None):
+    """Run the Optuna study on an already-loaded corpus (the testable seam -- no I/O).
+
+    ``objective_id`` (D21) keys the ruthless 0.7.0 store; ``main`` derives it, tests pass a literal.
+    """
     objective = XtBandwidthObjective(actions, seed=seed, max_points_per_zone=max_points_per_zone)
-    config = xt_bandwidth_config(n_trials=n_trials, store_path=store_path)
+    config = xt_bandwidth_config(n_trials=n_trials, store_path=store_path, objective_id=objective_id)
     result = OptunaStrategy(config, seed=seed).run(objective, backend=InProcessBackend())
     return result, objective
 
@@ -366,7 +369,8 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    from scripts._provenance import git_provenance, require_clean_tree
+    from scripts._input_contract import declare_inputs
+    from scripts._provenance import git_provenance, objective_id, require_clean_tree, store_path_for
 
     # BEFORE any corpus work. The report is an audit record by its own docstring, and a bare HEAD
     # sha reads clean on a modified tree -- so a guard that ran after the sweep would certify code
@@ -374,11 +378,25 @@ def main() -> None:
     prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
 
     actions, match_ids = _load_corpus(args)
+    # D21: store identity per (objective class, code commit, declared inputs). Output / resume-only
+    # knobs (store path, n_trials, allow_dirty, report_out) are excluded so they never fork the store
+    # key; every other CLI arg is an input the sweep depends on.
+    resume_knobs = {"store", "n_trials", "allow_dirty", "report_out"}
+    oid = objective_id(
+        XtBandwidthObjective,
+        declare_inputs(
+            driver="calibrate_xt_bandwidth",
+            args={k: v for k, v in vars(args).items() if k not in resume_knobs},
+            match_ids=match_ids,
+        ),
+        prov=prov,
+    )
     result, _obj = run_xt_bandwidth(
         actions=actions,
         n_trials=args.n_trials,
         seed=args.seed,
-        store_path=args.store,
+        store_path=store_path_for(args.store, oid),  # a dirty id opens a fresh store, never --store itself
+        objective_id=oid,
         max_points_per_zone=args.max_points_per_zone,
     )
     cross_check = None

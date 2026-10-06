@@ -26,6 +26,28 @@ _DETECTION_AWARE_PROVIDERS = frozenset({"skillcorner"})
 # the registered GKDV corpora is a separate corpus-composition decision (Tier-2 data quality).
 _FULLY_OBSERVED_PROVIDERS = frozenset({"gradientsports", "sportec", "idsse", "metrica"})
 
+# TF-58 D20: which providers' native feeds carry a RELIABLE dead-ball signal (`ball_state`). skillcorner and
+# metrica hard-code ball_state="alive" (tracking/skillcorner.py, tracking/metrica.py), so a stoppage split
+# reading only `ball_state` would silently do nothing on them -- they are unobserved BY CONSTRUCTION.
+_DEAD_BALL_OBSERVED_PROVIDERS = frozenset({"sportec", "idsse", "gradientsports"})
+
+
+def dead_ball_observed(provider: str) -> bool:
+    """True iff ``provider``'s native feed carries a reliable dead-ball (`ball_state`) signal (TF-58 D20).
+
+    Calls :func:`validate_provider` first, so an unclassified provider RAISES rather than being assumed
+    observed (fail-closed). ``"snapshot"`` (freeze frames) is unclassified and therefore raises.
+
+    Examples
+    --------
+    >>> dead_ball_observed("sportec")
+    True
+    >>> dead_ball_observed("skillcorner")
+    False
+    """
+    validate_provider(provider)
+    return provider in _DEAD_BALL_OBSERVED_PROVIDERS
+
 
 def validate_provider(provider: str) -> None:
     """Raise unless ``provider`` is classified as detection-aware or fully observed.

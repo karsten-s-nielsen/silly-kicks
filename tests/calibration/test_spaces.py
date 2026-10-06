@@ -1,11 +1,12 @@
+import pytest
 from ruthless import Direction, OptunaConfig
 
-from silly_kicks.calibration._spaces import stage1_config, stage2_config
+from silly_kicks.calibration._spaces import stage1_config, stage2_config, xt_bandwidth_config
 
 
 def test_stage1_config_is_maximize_with_two_params():
     # ADR-060: tolerance_m is held at DEFAULT_CARRIER_PARAMS, not swept -> beta/gamma only.
-    cfg = stage1_config(n_trials=10, store_path="s1.db")
+    cfg = stage1_config(n_trials=10, store_path="s1.db", objective_id="test-objective")
     assert isinstance(cfg, OptunaConfig)
     assert cfg.metric == "carrier_accuracy"
     assert cfg.direction is Direction.MAXIMIZE
@@ -17,13 +18,13 @@ def test_stage1_config_is_maximize_with_two_params():
 def test_stage1_config_does_not_sweep_tolerance_m():
     # ADR-060: tolerance_m is held at DEFAULT_CARRIER_PARAMS, not swept (under-determined by the
     # carrier-actor objective, which has no loose-ball negatives). Only beta/gamma are searched.
-    cfg = stage1_config(n_trials=1, store_path=":memory:")
+    cfg = stage1_config(n_trials=1, store_path=":memory:", objective_id="test-objective")
     assert set(cfg.param_space) == {"beta", "gamma"}
     assert "tolerance_m" not in cfg.warm_start
 
 
 def test_stage2_config_is_minimize_with_three_params():
-    cfg = stage2_config(n_trials=10, store_path="s2.db")
+    cfg = stage2_config(n_trials=10, store_path="s2.db", objective_id="test-objective")
     assert cfg.metric == "brier"
     assert cfg.direction is Direction.MINIMIZE
     assert set(cfg.param_space) == {"k3", "pre_seconds", "min_displacement_m"}
@@ -32,14 +33,14 @@ def test_stage2_config_is_minimize_with_three_params():
 
 def test_warm_start_subset_of_param_space_enforced_by_ruthless():
     # OptunaConfig validates warm_start subset of param_space; our builders must satisfy it.
-    stage1_config(n_trials=1, store_path="x.db")  # must not raise
-    stage2_config(n_trials=1, store_path="y.db")  # must not raise
+    stage1_config(n_trials=1, store_path="x.db", objective_id="test-objective")  # must not raise
+    stage2_config(n_trials=1, store_path="y.db", objective_id="test-objective")  # must not raise
 
 
 def test_xt_bandwidth_config_minimizes_nll_over_three_axes():
     from silly_kicks.calibration._spaces import xt_bandwidth_config
 
-    cfg = xt_bandwidth_config(n_trials=10, store_path="xt.db")
+    cfg = xt_bandwidth_config(n_trials=10, store_path="xt.db", objective_id="test-objective")
     assert cfg.metric == "xt_holdout_nll"
     assert cfg.direction is Direction.MINIMIZE
     assert set(cfg.param_space) == {"bandwidth", "adaptive", "grid"}
@@ -65,3 +66,22 @@ def test_xt_bandwidth_public_exports():
     assert callable(xt_bandwidth_config)
     assert callable(grid_from_str)
     assert XtBandwidthObjective.__name__ == "XtBandwidthObjective"
+
+
+def test_builders_require_objective_id():
+    # ruthless 0.7.0 makes StoreConfig.objective_id mandatory; the builders surface it as a required kwarg.
+    with pytest.raises(TypeError):
+        stage1_config(n_trials=1, store_path="s1.db")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        stage2_config(n_trials=1, store_path="s2.db")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        xt_bandwidth_config(n_trials=1, store_path="xt.db")  # type: ignore[call-arg]
+
+
+def test_builders_forward_objective_id_to_store():
+    s1 = stage1_config(n_trials=1, store_path="s1.db", objective_id="oid-1")
+    s2 = stage2_config(n_trials=1, store_path="s2.db", objective_id="oid-2")
+    xt = xt_bandwidth_config(n_trials=1, store_path="xt.db", objective_id="oid-3")
+    assert s1.store.objective_id == "oid-1"  # type: ignore[union-attr]
+    assert s2.store.objective_id == "oid-2"  # type: ignore[union-attr]
+    assert xt.store.objective_id == "oid-3"  # type: ignore[union-attr]

@@ -67,6 +67,38 @@ def persist_study_inputs(
     return root
 
 
+def _study_shard_path(study_shard_dir: str | Path, tag: str) -> Path:
+    return Path(study_shard_dir) / f"{tag}.study.json"
+
+
+def read_study_shard(study_shard_dir: str | Path, tag: str, *, objective_id: str, n_trials: int) -> dict | None:
+    """The cached frozen params for study ``tag`` -- or None when there is no shard to TRUST.
+
+    A shard is the result of one HPO store, so it is reused under exactly the store's resume rule (D21):
+    only when it was written under the same ``objective_id`` (objective class + commit + declared inputs
+    + per-fold tag; a dirty tree's id carries a per-call nonce, so it never matches) and the same
+    ``n_trials`` (a larger budget resumes the store and can move the best params). Anything else -- a
+    shard from another run's code / corpus / trial budget, or an identity-less one -- is recomputed,
+    never served stale.
+    """
+    shard = _study_shard_path(study_shard_dir, tag)
+    if not shard.exists():
+        return None
+    cached = json.loads(shard.read_text(encoding="utf-8"))
+    if cached.get("objective_id") != objective_id or cached.get("n_trials") != n_trials:
+        return None
+    return dict(cached["params"])
+
+
+def write_study_shard(study_shard_dir: str | Path, tag: str, params: dict, *, objective_id: str, n_trials: int) -> Path:
+    """Write study ``tag``'s frozen params with the identity :func:`read_study_shard` checks."""
+    shard = _study_shard_path(study_shard_dir, tag)
+    shard.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"tag": tag, "objective_id": objective_id, "n_trials": n_trials, "params": params}
+    shard.write_text(json.dumps(payload), encoding="utf-8")
+    return shard
+
+
 def load_study_inputs(shard_root: str | Path) -> StudyInputs:
     """Reconstruct the study inputs written by :func:`persist_study_inputs`."""
     root = Path(shard_root)

@@ -24,10 +24,13 @@ import json
 import os
 import pathlib
 
+#: The tag of an unpartitioned run: one worker over the whole listed corpus.
+UNPARTITIONED_TAG = "all"
+
 
 def worker_tag(match_ids_json: str | None) -> str:
     """The partition's name, taken from its id-list filename (``all`` for an unpartitioned run)."""
-    return pathlib.Path(match_ids_json).stem if match_ids_json else "all"
+    return pathlib.Path(match_ids_json).stem if match_ids_json else UNPARTITIONED_TAG
 
 
 def list_match_ids(providers: list[str]) -> dict[str, list[str]]:

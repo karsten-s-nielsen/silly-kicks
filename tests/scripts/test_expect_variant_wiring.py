@@ -73,6 +73,7 @@ def _inputs(root, feature_names, *, public: bool, expect, extra_config, n_games=
             "run_paired": False,
             "run_prov": {"commit": "test", "dirty": False, "tree_state": "clean"},
             "expect_variant": expect,
+            "objective_inputs": {"driver": "test_expect_variant_wiring"},  # D21 identity the prep persists
             **extra_config,
         },
     )
@@ -345,6 +346,7 @@ def test_study_list_fan_out_equals_the_serial_assemble(trainer, tmp_path):
                 "run_prov": {"commit": "t", "dirty": False, "tree_state": "clean"},
                 "ship_variant": None,
                 "expect_variant": None,
+                "objective_inputs": {"driver": "test_expect_variant_wiring"},  # D21 identity the prep persists
             },
         )
 

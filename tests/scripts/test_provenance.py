@@ -178,6 +178,46 @@ def test_the_unknown_refusal_does_not_claim_the_tree_was_MODIFIED(monkeypatch):
     assert "nothing is known about it" in str(exc.value)
 
 
+# ---------------------------------------------------------------------------
+# A-55: git_tree_hash -- a CONTENT identifier, stable when the tree is dirty vs HEAD
+# ---------------------------------------------------------------------------
+
+
+def test_git_tree_hash_reflects_working_tree_content_not_head(tmp_path, monkeypatch):
+    """The point of the helper: it hashes the WORKING-TREE content, so dirtying a tracked file moves the hash
+    though HEAD did not. A throwaway repo makes that non-vacuous -- the clean and dirty hashes must differ."""
+    import subprocess as _sp
+
+    def git(*a):
+        _sp.run(["git", *a], cwd=tmp_path, check=True, capture_output=True)  # noqa: S603,S607
+
+    git("init")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    git("config", "commit.gpgsign", "false")
+    (tmp_path / "f.txt").write_text("one", encoding="utf-8")
+    git("add", "f.txt")
+    git("commit", "-m", "c1")
+    monkeypatch.chdir(tmp_path)
+
+    clean = mod.git_tree_hash()
+    (tmp_path / "f.txt").write_text("two", encoding="utf-8")  # dirty vs HEAD -- content changed, HEAD did not
+    dirty = mod.git_tree_hash()
+
+    assert len(clean) == 40 and len(dirty) == 40, (clean, dirty)
+    assert clean != dirty, "a content hash that ignores uncommitted edits is useless for A-55"
+
+
+def test_git_tree_hash_is_unknown_when_git_is_unavailable(monkeypatch):
+    """Degradable like the rest of the module: a genuine git-invocation failure returns the sentinel, never raises."""
+
+    def _boom(*_a, **_k):
+        raise OSError("git not found")
+
+    monkeypatch.setattr(mod.subprocess, "run", _boom)
+    assert mod.git_tree_hash() == "unknown"
+
+
 def test_the_boolean_is_UNCHANGED_for_every_state(monkeypatch):
     """Hyrum. `run_tree_dirty` is read by `_partition.aggregate_manifests` (which ORs it across
     workers) and sits in every artifact already on disk. Widening it to the tri-state string would

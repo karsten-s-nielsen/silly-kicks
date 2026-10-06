@@ -55,18 +55,20 @@ def build_manifest(*, source, seed, n_trials, match_ids, xt, stage, diagnostics=
     return manifest
 
 
-def run_stage(*, stage, fold, n_trials, seed, store_path, xt, carrier_params):
+def run_stage(*, stage, fold, n_trials, seed, store_path, xt, carrier_params, objective_id):
     """Run one Optuna stage on an already-loaded fold (the testable seam -- no I/O).
 
     Returns (result, objective) so the caller can read objective.diagnostics (M1/M8) for the
     manifest and the Stage-1 best params for the carrier_best.json handoff (M9).
+
+    ``objective_id`` (D21) keys the ruthless 0.7.0 store; ``main`` derives it, tests pass a literal.
     """
     if stage == 1:
         objective = CarrierAccuracyObjective(fold)
-        config = stage1_config(n_trials=n_trials, store_path=store_path)
+        config = stage1_config(n_trials=n_trials, store_path=store_path, objective_id=objective_id)
     elif stage == 2:
         objective = AugmentedVaepBrierObjective(fold=fold, xt=xt, carrier_params=carrier_params, seed=seed)
-        config = stage2_config(n_trials=n_trials, store_path=store_path)
+        config = stage2_config(n_trials=n_trials, store_path=store_path, objective_id=objective_id)
     else:
         raise ValueError(f"unknown stage {stage}")
     result = OptunaStrategy(config, seed=seed).run(objective, backend=InProcessBackend())
@@ -389,7 +391,8 @@ def main() -> None:
     # ADR-037: refuse BEFORE `_load_fold` downloads the pining tracking corpus. The harness
     # RECOMMENDS library defaults, so its manifest is cited in an apply-PR -- a recommendation
     # nobody can trace back to a commit cannot be reproduced or audited.
-    from scripts._provenance import git_provenance, require_clean_tree
+    from scripts._input_contract import declare_inputs
+    from scripts._provenance import git_provenance, objective_id, require_clean_tree, store_path_for
 
     provenance = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
 
@@ -403,14 +406,32 @@ def main() -> None:
         # from the file. Refuses an unprovenanced / dirty upstream.
         carrier_params = _load_carrier_selection(args.carrier_best)
 
+    # D21: one ruthless store identity per (objective class, code commit, declared inputs). The two
+    # stages use different objectives (distinct qualnames); `stage` is kept explicit per the per-site
+    # rule. Output / resume-only knobs (store path, n_trials, allow_dirty, report_out) are excluded so
+    # they never fork the store key; every other CLI arg is an input the objective depends on.
+    resume_knobs = {"store", "n_trials", "allow_dirty", "report_out"}
+    objective_cls = CarrierAccuracyObjective if args.stage == "1" else AugmentedVaepBrierObjective
+    oid = objective_id(
+        objective_cls,
+        declare_inputs(
+            driver="calibrate_tracking_defaults",
+            args={k: v for k, v in vars(args).items() if k not in resume_knobs},
+            match_ids=used_ids,
+            stage=args.stage,
+        ),
+        prov=provenance,
+    )
+
     result, objective = run_stage(
         stage=int(args.stage) if args.stage != "diagnostics" else "diagnostics",
         fold=fold,
         n_trials=args.n_trials,
         seed=args.seed,
-        store_path=args.store,
+        store_path=store_path_for(args.store, oid),  # a dirty id opens a fresh store, never --store itself
         xt=xt,  # FrozenXt artifact; the Stage-2 objective unwraps the inner ExpectedThreat itself
         carrier_params=carrier_params,
+        objective_id=oid,
     )
 
     # M9: Stage 1 writes carrier_best.json so Stage 2 consumes a RECORDED artifact (not hand-typed).

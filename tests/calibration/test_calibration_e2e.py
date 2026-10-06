@@ -38,7 +38,14 @@ def _run_stage1(provider, match_ids):
     ):
         fold.setdefault(prov, []).append((actions, frames, home))
     result, _objective = run_stage(
-        stage=1, fold=fold, n_trials=2, seed=42, store_path=str(_tmp_db()), xt=None, carrier_params=None
+        stage=1,
+        fold=fold,
+        n_trials=2,
+        seed=42,
+        store_path=str(_tmp_db()),
+        xt=None,
+        carrier_params=None,
+        objective_id="test-objective",
     )
     assert result.best is not None
     assert 0.0 <= result.best.metrics["carrier_accuracy"] <= 1.0
@@ -76,6 +83,7 @@ def test_stage2_e2e_skillcorner_public():
         store_path=str(_tmp_db()),
         xt=xt,  # the FrozenXt artifact (same object the CLI passes); the objective unwraps .xt
         carrier_params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0},
+        objective_id="test-objective",
     )
     assert result.best is not None
     assert math.isfinite(result.best.metrics["brier"])

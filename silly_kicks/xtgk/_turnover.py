@@ -15,6 +15,7 @@ The turnover term needs `V_opp` = the expected OPPONENT threat after a loss of p
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
@@ -90,12 +91,17 @@ def _opp_first_shot_scan(
 # The numba dispatcher and the pure-Python fn share this call signature; annotate so callers
 # (and pyright) see one callable regardless of whether numba resolved.
 _opp_first_shot_scan_fast: Callable[..., np.ndarray]
+#: numba's on-disk cache is OPT-IN (``tests/tracking/test_numba_cache_gating.py``): an unconditional on-disk cache
+#: resolves a writable locator at decoration, and on a read-only install the resulting ``RuntimeError`` was swallowed
+#: by the ``except`` below -- silently dropping to the ~100x slower pure-Python scan. ``SILLY_KICKS_NUMBA_CACHE=1``
+#: or ``NUMBA_CACHE_DIR`` opts in.
+_NUMBA_CACHE = os.environ.get("SILLY_KICKS_NUMBA_CACHE", "0") == "1" or bool(os.environ.get("NUMBA_CACHE_DIR"))
 try:  # numba accelerates the O(n*k) scan ~100x; pure-Python fallback stays byte-identical (ADR-068)
     from numba import njit as _njit
 
-    _opp_first_shot_scan_fast = _njit(cache=True)(_opp_first_shot_scan)
+    _opp_first_shot_scan_fast = _njit(cache=_NUMBA_CACHE)(_opp_first_shot_scan)
     _NUMBA_TURNOVER = True
-except Exception:  # numba absent (it is an optional extra) -> the pure-Python kernel above
+except ImportError:  # numba absent (it is an optional extra) -> the pure-Python kernel above
     _opp_first_shot_scan_fast = _opp_first_shot_scan
     _NUMBA_TURNOVER = False
 

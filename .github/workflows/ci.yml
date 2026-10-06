@@ -79,16 +79,19 @@ jobs:
           # parallel jobs -- they race to populate; the win is subsequent commits). Test jobs only;
           # the lint job's exact typing pins (ADR-057) are untouched.
           cache: pip
-      # Lever C -- restore/persist numba's on-disk compiled @njit kernels. The two hashFiles patterns
-      # cover ALL 5 numba files: 4 @njit-DECORATED (_numba_kernels, _ghost_gk_numba, _ball_carrier_numba,
-      # _das_numba via the glob) + 1 CALL-form (_turnover.py:96 `_njit(cache=True)(...)`, listed
-      # explicitly). Pinned by tests/test_ci_shard_wiring.py::test_numba_cache_key_covers_all_njit_files
-      # so a NEW @njit file fails CI until the key is extended. A narrow key (not silly_kicks/**/*.py) is
-      # deliberate: it survives across PRs that touch non-numba code, which helps the windows floor.
+      # Lever C -- restore/persist numba's on-disk compiled @njit kernels. The three hashFiles patterns
+      # cover ALL 6 numba files: 4 @njit-DECORATED in tracking (_numba_kernels, _ghost_gk_numba,
+      # _ball_carrier_numba, _das_numba via the tracking glob) + coordination/_kernels/_numba (via the
+      # coordination glob) + 1 CALL-form (_turnover.py `_njit(cache=_NUMBA_CACHE)(...)`, listed explicitly).
+      # The on-disk cache is OPT-IN in the library (tests/tracking/test_numba_cache_gating.py): the job-level
+      # NUMBA_CACHE_DIR below is what turns it on here.
+      # Pinned by tests/test_ci_shard_wiring.py::test_numba_cache_key_covers_all_njit_files so a NEW @njit
+      # file fails CI until the key is extended. A narrow key (not silly_kicks/**/*.py) is deliberate: it
+      # survives across PRs that touch non-numba code, which helps the windows floor.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.numba_cache
-          key: numba-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py') }}
+          key: numba-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py', 'silly_kicks/coordination/**/*_numba*.py') }}
       # DAS is a NATIVE engine (ADR-107): `accessible-space` is no longer installed on any CI leg.
       # The TF-28 DAS + gkdv DAS-arm suites run on every leg (they no longer importorskip a library);
       # their numerics are pinned against the committed golden oracle
@@ -181,7 +184,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.numba_cache
-          key: numba-ubuntu-latest-3.12-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py') }}
+          key: numba-ubuntu-latest-3.12-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py', 'silly_kicks/coordination/**/*_numba*.py') }}
       - run: pip install -e ".[kloppy,xgboost,test]"
       - run: pytest tests/ -m "slow and not e2e" --splits 2 --group ${{ matrix.slow-shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
       # reconcile artifacts (proofs #2/#3): each slow-shard uploads its node-ID set; slow-shard 1 also

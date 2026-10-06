@@ -36,6 +36,8 @@ Unit = Literal[
     "xG",
     "points",
     "ratio",
+    "cycles/min",  # TF-58 spectral median / peak frequency (oscillations per minute)
+    "switches/min",  # TF-58 relative-stretch sign-switch rate (R5)
     "dimensionless",
 ]
 
@@ -130,6 +132,7 @@ _M_DEFENSIVE_CREDIT = "silly_kicks.tracking.defensive_credit._orchestration"
 _M_PRESS_COMMITMENT = "silly_kicks.tracking._press_commitment"
 _M_XSHOT = "silly_kicks.tracking._xshot_occurrence"
 _M_XCROSS = "silly_kicks.tracking._xcross_attempt"
+_M_COORDINATION = "silly_kicks.coordination._compute"  # TF-58 team-coordination family home
 
 # Attribution TOKENS -- each MUST appear verbatim in NOTICE (notice-linkage gate, ADR-005).
 _A_STRUCTURAL = "arXiv:2603.28916"  # Karakus & Arkadas 2026 (LBS/SGM/SDI; shared by packing's LBS inequality)
@@ -169,6 +172,24 @@ _A_GK_DECISION = "J. Eyestone, xT-GK collaboration (2026)"  # TF-62 GK build-up 
 _A_TEAM_METRICS = "Twelve.football match-report glossary + MSC Bootcamp practitioner KPIs"  # TF-52 team KPIs
 _A_MATCH_OUTCOME = "Dixon & Coles (1997); Poisson-binomial goal model; Sumpter, Soccermatics (module 3)"  # TF-53
 _A_WIN_PROB = "Paul, Klemp & Memmert (2025); Dixon & Robinson (1998); Robberechts, Van Haaren & Davis (2019)"  # TF-63
+# TF-58 team-coordination methodology tokens, each against the method it supplies (spec §2); each MUST appear
+# verbatim in NOTICE (ADR-005).
+_A_TF58_BOURBOUSSON = "Bourbousson, Seve & McGarry (2010)"  # relative phase per axis; relative stretch index
+_A_TF58_MARDIA = "Mardia & Jupp (2000)"  # circular statistics: circular mean, mean resultant length, circular SD
+#: The three relative-phase CIRCULAR statistics are Bourbousson's construct scored with Mardia & Jupp's circular
+#: statistics (spec 2; review B m9) -- both are credited, unlike the histogram / near-in-phase entries.
+_A_TF58_RP_CIRCULAR = f"{_A_TF58_BOURBOUSSON}; {_A_TF58_MARDIA}"
+_A_TF58_FOLGADO = "Folgado et al. (2014)"  # % time near in-phase (-30..30 deg)
+_A_TF58_MOURA_2016 = "Moura et al. (2016)"  # lagged cross-correlation of team signals
+_A_TF58_VECTOR_CODING = (
+    "Moura et al. (2016); Sparrow et al. (1987); Chang, Van Emmerik & Hamill (2008)"  # coupling angle via Moura 2016
+)
+_A_TF58_MOURA_2013 = "Moura et al. (2013)"  # FFT spectrum median frequency
+_A_TF58_COHERENCE = "Welch (1967); Carter (1987)"  # Welch-averaged coherence; its small-K upward bias
+_A_TF58_RICHARDSON = "Richardson et al. (2012); Frank & Richardson (2010)"  # cluster phase; Kuramoto statistic
+_A_TF58_DUARTE = "Duarte et al. (2013)"  # cluster phase in football: rho SD, team-team r
+_A_TF58_RICHMAN = "Richman & Moorman (2000)"  # sample entropy / cross-sample entropy
+_A_TF58_PFISTER = "Pfister et al. (2013)"  # bimodality coefficient (H7)
 _A_POSITIONING = (
     "Oonk & Shah (databallpy optimization, MIT); Spearman pitch control; Le et al. (2017) ghosting; "
     "Pleuler TTI (Soccer Analytics Handbook)"  # TF-56
@@ -2702,6 +2723,820 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_POSITIONING,
         attribution=_A_POSITIONING,
         higher_is_better=False,
+    ),
+    # ---------------------------------------------------------------------------
+    # TF-58 team-coordination dynamics (7 families; home silly_kicks.coordination._compute)
+    # ---------------------------------------------------------------------------
+    FeatureColumn(
+        name="coord_coh_band_mean",
+        definition=(
+            "Magnitude-squared coherence between the two teams' signals averaged over the analysis band, in [0, 1]: 1 "
+            "= a fixed phase relation at those frequencies, 0 = unrelated (Welch-averaged spectra, Welch 1967). Biased "
+            "upward when few segments are pooled (Carter 1987): read it with coord_coh_n_segments and its surrogate "
+            "baseline."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_COHERENCE,
+    ),
+    FeatureColumn(
+        name="coord_coh_band_mean_excess",
+        definition=(
+            "Observed in-band coherence minus its surrogate mean, in the metric's own units: > 0 = above chance, <= 0 "
+            "= nothing beyond chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_COHERENCE,
+    ),
+    FeatureColumn(
+        name="coord_coh_band_mean_percentile",
+        definition=(
+            "Percentile rank of the observed in-band coherence against its surrogate distribution, in [0, 1]: higher = "
+            "the observed value exceeds more surrogates (stronger than chance); near 0.5 = indistinguishable from "
+            "chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_COHERENCE,
+    ),
+    FeatureColumn(
+        name="coord_coh_band_mean_surrogate_mean",
+        definition=(
+            "Mean in-band coherence over the surrogate baseline, in [0, 1]: the chance level the observed value is "
+            "judged against. Higher when fewer segments are pooled (Carter 1987)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_COHERENCE,
+    ),
+    FeatureColumn(
+        name="coord_coh_n_segments",
+        definition=(
+            "Coverage: number of Welch segments pooled for the coherence estimate (more segments = less upward bias, "
+            "Carter 1987)."
+        ),
+        unit="count",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_coh_peak_freq_cpm",
+        definition=(
+            "Frequency of the peak in-band coherence, in cycles per minute: the oscillation rate at which the two "
+            "teams are most tightly coupled."
+        ),
+        unit="cycles/min",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_COHERENCE,
+    ),
+    FeatureColumn(
+        name="coord_detected_share",
+        definition=(
+            "Coverage: the detection share the insufficient_detection gate tests, in [0, 1] -- the lowest, over the "
+            "row's sides, of the share of that side's on-pitch player-samples in the window that were detected "
+            "(bridged samples count as not detected; a cluster player row takes the lower of its team's and its "
+            "own). Higher = better observed; the row is insufficient_detection below its family's "
+            "min_observed_fraction; 1.0 on a fully observed provider; NaN where no gate applies (the possession "
+            "spectral row) or no side was on the pitch."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_duration_s",
+        definition="Coverage: scored duration of the window in seconds.",
+        unit="seconds",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_median_freq_cpm",
+        definition=(
+            "Median frequency of the signal's power spectrum (the frequency at which cumulative power reaches half the "
+            "total, over the whole DC-excluded periodogram -- NOT restricted to the analysis band; review A-38), in "
+            "cycles per minute: the dominant oscillation rate (higher = faster expansion-contraction cycles). Moura "
+            "et al. (2013) reported 0.46-0.63 cycles/min (SD 0.10-0.16) for team surface area and spread, lower in "
+            "the second half."
+        ),
+        unit="cycles/min",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_MOURA_2013,
+    ),
+    FeatureColumn(
+        name="coord_n_players_mean",
+        definition="Coverage: mean number of usable players contributing to the cluster phase per sample.",
+        unit="count",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_n_samples",
+        definition="Coverage: number of scored samples in the window.",
+        unit="count",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_n_segments",
+        definition="Coverage: number of contiguous segments contributing to the window.",
+        unit="count",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_observed_fraction",
+        definition=(
+            "Coverage: the share, in [0, 1], of the team's on-pitch player-samples in the window that were detected "
+            "(samples bridged across a detection gap count as not detected); higher = better observed; 1.0 on a "
+            "fully observed provider."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_observed_fraction_a",
+        definition=(
+            "Coverage: the share, in [0, 1], of side A's on-pitch player-samples in the window that were detected "
+            "(side A = team A, or player A on a dyad; bridged samples count as not detected); higher = better "
+            "observed; 1.0 on a fully observed provider."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_observed_fraction_b",
+        definition=(
+            "Coverage: the share, in [0, 1], of side B's on-pitch player-samples in the window that were detected "
+            "(side B = team B, or player B on a dyad; bridged samples count as not detected); higher = better "
+            "observed; 1.0 on a fully observed provider."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_on_pitch_s",
+        definition="Coverage: seconds a player was on the pitch within the window.",
+        unit="seconds",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_phi_mean_deg",
+        definition=(
+            "Per-player circular-mean relative phase to the team's cluster phase, in degrees (-180 to 180): 0 = moving "
+            "with the team; the further from 0, the further the player leads or lags the team's rhythm (Richardson "
+            "2012)."
+        ),
+        unit="degrees",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RICHARDSON,
+    ),
+    FeatureColumn(
+        name="coord_phi_sampen",
+        definition=(
+            "Sample entropy of a player's relative-phase series to the cluster phase, >= 0: lower = more regular "
+            "(predictable) coupling to the team, higher = more irregular (Richman & Moorman 2000)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RICHMAN,
+    ),
+    FeatureColumn(
+        name="coord_phi_sd_deg",
+        definition=(
+            "Circular standard deviation of a player's relative phase to the team's cluster phase, in degrees, >= 0: "
+            "lower = the player stays locked to the team's rhythm, higher = looser coupling (Richardson 2012)."
+        ),
+        unit="degrees",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RICHARDSON,
+    ),
+    FeatureColumn(
+        name="coord_rho_group_mean",
+        definition=(
+            "Group synchronisation index rho averaged over the window, in [0, 1]: 1 = all players phase-locked, 0 = "
+            "incoherent (cluster phase, Richardson 2012). Duarte et al. (2013) reported 0.89 +- 0.12 longitudinally "
+            "and 0.73 +- 0.16 laterally for football teams."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RICHARDSON,
+    ),
+    FeatureColumn(
+        name="coord_rho_group_mean_excess",
+        definition=(
+            "Observed group synchronisation index rho minus its surrogate mean, in the metric's own units: > 0 = above "
+            "chance, <= 0 = nothing beyond chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RICHARDSON,
+    ),
+    FeatureColumn(
+        name="coord_rho_group_mean_percentile",
+        definition=(
+            "Percentile rank of the observed group synchronisation index rho against its surrogate distribution, in "
+            "[0, 1]: higher = the observed value exceeds more surrogates (stronger than chance); near 0.5 = "
+            "indistinguishable from chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RICHARDSON,
+    ),
+    FeatureColumn(
+        name="coord_rho_group_mean_surrogate_mean",
+        definition=(
+            "Mean group synchronisation index rho over the surrogate baseline, in [0, 1]: the chance level the "
+            "observed value is judged against."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RICHARDSON,
+    ),
+    FeatureColumn(
+        name="coord_rho_group_sampen",
+        definition=(
+            "Sample entropy of the instantaneous group synchronisation series, >= 0: lower = the team's synchrony "
+            "waxes and wanes regularly, higher = irregularly (Richman & Moorman 2000; as applied by Duarte 2013)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RICHMAN,
+    ),
+    FeatureColumn(
+        name="coord_rho_group_sd",
+        definition=(
+            "Standard deviation of the instantaneous group synchronisation index rho over the window, in [0, 0.5]: "
+            "higher = the team's synchrony fluctuates more within the window (Duarte 2013)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_DUARTE,
+    ),
+    FeatureColumn(
+        name="coord_rho_k",
+        definition=(
+            "Per-player resultant length rho_k in [0, 1]: how tightly one player's phase locks to the team's cluster "
+            "phase (1 = fully locked, 0 = unrelated; Richardson 2012)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RICHARDSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_circ_sd_deg",
+        definition=(
+            "Circular standard deviation of the relative phase over the window, in degrees, >= 0: lower = a more "
+            "stable phase relation (tighter coupling). Bourbousson et al. (2010) reported SDs of 10.5 deg "
+            "longitudinally and 39.9 deg laterally for basketball team centroids (linear SD of wrapped angles)."
+        ),
+        unit="degrees",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RP_CIRCULAR,  # B m9: Bourbousson's construct + Mardia & Jupp's circular SD
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_m030",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [-30, 0) degree bin, in [0, 1]; "
+            "the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_m060",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [-60, -30) degree bin, in [0, 1]; "
+            "the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_m090",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [-90, -60) degree bin, in [0, 1]; "
+            "the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_m120",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [-120, -90) degree bin, in [0, 1]; "
+            "the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_m150",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [-150, -120) degree bin, in [0, "
+            "1]; the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_m180",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [-180, -150) degree bin, in [0, "
+            "1]; the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_p000",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [0, 30) degree bin, in [0, 1]; the "
+            "12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase distribution, "
+            "Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_p030",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [30, 60) degree bin, in [0, 1]; "
+            "the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_p060",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [60, 90) degree bin, in [0, 1]; "
+            "the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_p090",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [90, 120) degree bin, in [0, 1]; "
+            "the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_p120",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [120, 150) degree bin, in [0, 1]; "
+            "the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_hist_bin_p150",
+        definition=(
+            "Fraction of window samples whose team-team relative phase falls in the [150, 180) degree bin, in [0, 1]; "
+            "the 12 bins sum to 1 (bins near 0 deg = in-phase, near +-180 deg = anti-phase; relative-phase "
+            "distribution, Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_mean_deg",
+        definition=(
+            "Circular-mean relative phase between the two teams' signals over the window, in degrees (-180 to 180): 0 "
+            "deg = in-phase (moving together), +-180 deg = anti-phase. Bourbousson et al. (2010) reported 6.9 +- 10.5 "
+            "deg longitudinally and -4.9 +- 39.9 deg laterally for basketball team centroids."
+        ),
+        unit="degrees",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RP_CIRCULAR,  # B m9: Bourbousson's construct + Mardia & Jupp's circular mean
+    ),
+    FeatureColumn(
+        name="coord_rp_pct_near_in_phase",
+        definition=(
+            "Fraction of samples whose relative phase lies within +-near_in_phase_deg (default 30 deg) of 0 deg, in "
+            "[0, 1]: higher = more time moving in phase (Folgado 2014's % time near in-phase)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_FOLGADO,
+    ),
+    FeatureColumn(
+        name="coord_rp_pct_near_in_phase_excess",
+        definition=(
+            "Observed near-in-phase fraction minus its surrogate mean, in the metric's own units: > 0 = above chance, "
+            "<= 0 = nothing beyond chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_FOLGADO,
+    ),
+    FeatureColumn(
+        name="coord_rp_pct_near_in_phase_percentile",
+        definition=(
+            "Percentile rank of the observed near-in-phase fraction against its surrogate distribution, in [0, 1]: "
+            "higher = the observed value exceeds more surrogates (stronger than chance); near 0.5 = indistinguishable "
+            "from chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_FOLGADO,
+    ),
+    FeatureColumn(
+        name="coord_rp_pct_near_in_phase_surrogate_mean",
+        definition=(
+            "Mean near-in-phase fraction over the surrogate baseline, in [0, 1]: the chance level the observed value "
+            "is judged against."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_FOLGADO,
+    ),
+    FeatureColumn(
+        name="coord_rp_phase_valid_fraction_a",
+        definition="Coverage: fraction of window samples with a valid analytic phase for team A.",
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_rp_phase_valid_fraction_b",
+        definition="Coverage: fraction of window samples with a valid analytic phase for team B.",
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_rp_resultant_length",
+        definition=(
+            "Mean resultant length R of the relative-phase distribution in [0, 1]: 1 = perfectly locked phase, 0 = "
+            "uniform/uncoupled (circular statistics, Mardia & Jupp 2000, on Bourbousson 2010's relative phase)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RP_CIRCULAR,  # B m9: Bourbousson's construct + Mardia & Jupp's mean resultant length
+    ),
+    FeatureColumn(
+        name="coord_rp_resultant_length_excess",
+        definition=(
+            "Observed resultant length R minus its surrogate mean, in the metric's own units: > 0 = above chance, <= 0 "
+            "= nothing beyond chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_resultant_length_percentile",
+        definition=(
+            "Percentile rank of the observed resultant length R against its surrogate distribution, in [0, 1]: higher "
+            "= the observed value exceeds more surrogates (stronger than chance); near 0.5 = indistinguishable from "
+            "chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rp_resultant_length_surrogate_mean",
+        definition=(
+            "Mean resultant length R over the surrogate baseline, in [0, 1]: the chance level the observed value is "
+            "judged against."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rsi_bimodality_coefficient",
+        definition=(
+            "Bimodality coefficient of the relative-stretch-index distribution (dimensionless): BC > 5/9 (about 0.556) "
+            "indicates two modes, i.e. the stretch lead alternates between the teams rather than sitting with one "
+            "(Pfister et al. 2013; the RSI per Bourbousson 2010)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_PFISTER,
+    ),
+    FeatureColumn(
+        name="coord_rsi_fraction_positive",
+        definition=(
+            "Fraction of window samples where team A is more stretched than team B (RSI > 0), in [0, 1]: 0.5 = shared, "
+            "near 1 = team A stays the more stretched team, near 0 = team B does (Bourbousson 2010)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rsi_mean_m",
+        definition=(
+            "Mean relative stretch index (team A stretch minus team B stretch) over the window, in metres: > 0 = team "
+            "A more spread out on average, < 0 = team B (Bourbousson 2010)."
+        ),
+        unit="metres",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_rsi_switch_rate_per_min",
+        definition=(
+            "Rate of sign switches of the relative stretch index, in switches per minute, >= 0: higher = the stretch "
+            "lead changes hands more often (Bourbousson 2010; the switch times feed H7)."
+        ),
+        unit="switches/min",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_BOURBOUSSON,
+    ),
+    FeatureColumn(
+        name="coord_team_sync_cross_sampen",
+        definition=(
+            "Cross-sample entropy between the two teams' cluster-amplitude series, >= 0: lower = the two teams' "
+            "synchrony patterns are more mutually regular (Richman & Moorman 2000; as applied by Duarte 2013)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_RICHMAN,
+    ),
+    FeatureColumn(
+        name="coord_team_sync_pearson_r",
+        definition=(
+            "Pearson correlation between the two teams' cluster-amplitude series over the window, in [-1, 1]: > 0 = "
+            "the teams synchronise and desynchronise together, < 0 = in alternation (Duarte 2013)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_DUARTE,
+    ),
+    FeatureColumn(
+        name="coord_team_sync_pearson_r_excess",
+        definition=(
+            "Observed between-team amplitude correlation minus its surrogate mean, in the metric's own units: > 0 = "
+            "above chance, <= 0 = nothing beyond chance."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_DUARTE,
+    ),
+    FeatureColumn(
+        name="coord_team_sync_pearson_r_percentile",
+        definition=(
+            "Percentile rank of the observed between-team amplitude correlation against its surrogate distribution, in "
+            "[0, 1]: higher = the observed value exceeds more surrogates (stronger than chance); near 0.5 = "
+            "indistinguishable from chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_DUARTE,
+    ),
+    FeatureColumn(
+        name="coord_team_sync_pearson_r_surrogate_mean",
+        definition=(
+            "Mean between-team amplitude correlation over the surrogate baseline, in [-1, 1]: the chance level the "
+            "observed value is judged against."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_DUARTE,
+    ),
+    FeatureColumn(
+        name="coord_vc_angle_variability_deg",
+        definition=(
+            "Circular standard deviation of the coupling angle, in degrees, >= 0: higher = the coordination pattern "
+            "changes more often within the window (vector coding; Sparrow 1987, Chang 2008, Moura 2016)."
+        ),
+        unit="degrees",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_mean_angle_deg",
+        definition=(
+            "Circular-mean coupling angle over the window in [0, 360) degrees: 45 / 225 deg = in-phase, 135 / 315 deg "
+            "= anti-phase, 0 / 180 deg = team A changing alone, 90 / 270 deg = team B changing alone (vector coding)."
+        ),
+        unit="degrees",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_n_stationary",
+        definition=(
+            "Coverage: count of samples excluded from vector coding because both signals were below their "
+            "stationarity epsilon."
+        ),
+        unit="count",
+        emitting_module=_M_COORDINATION,
+        attribution=None,
+    ),
+    FeatureColumn(
+        name="coord_vc_pct_a_phase",
+        definition=(
+            "Fraction of the scored (non-stationary) samples in the team-A-phase pattern (team A changing, team B "
+            "nearly static), in [0, 1]; the four pattern fractions sum to 1 (vector coding; Sparrow 1987, Chang 2008, "
+            "Moura 2016 Table 1)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_pct_anti_phase",
+        definition=(
+            "Fraction of the scored (non-stationary) samples in the anti-phase pattern (the two teams' signals "
+            "changing in opposite directions), in [0, 1]; the four pattern fractions sum to 1 (vector coding; Sparrow "
+            "1987, Chang 2008, Moura 2016 Table 1)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_pct_anti_phase_excess",
+        definition=(
+            "Observed anti-phase fraction minus its surrogate mean, in the metric's own units: > 0 = above chance, <= "
+            "0 = nothing beyond chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_pct_anti_phase_percentile",
+        definition=(
+            "Percentile rank of the observed anti-phase fraction against its surrogate distribution, in [0, 1]: higher "
+            "= the observed value exceeds more surrogates (stronger than chance); near 0.5 = indistinguishable from "
+            "chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_pct_anti_phase_surrogate_mean",
+        definition=(
+            "Mean anti-phase fraction over the surrogate baseline, in [0, 1]: the chance level the observed value is "
+            "judged against."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_pct_b_phase",
+        definition=(
+            "Fraction of the scored (non-stationary) samples in the team-B-phase pattern (team B changing, team A "
+            "nearly static), in [0, 1]; the four pattern fractions sum to 1 (vector coding; Sparrow 1987, Chang 2008, "
+            "Moura 2016 Table 1)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_pct_in_phase",
+        definition=(
+            "Fraction of the scored (non-stationary) samples in the in-phase pattern (both teams' signals changing in "
+            "the same direction), in [0, 1]; the four pattern fractions sum to 1 (vector coding; Sparrow 1987, Chang "
+            "2008, Moura 2016 Table 1)."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_pct_in_phase_excess",
+        definition=(
+            "Observed in-phase fraction minus its surrogate mean, in the metric's own units: > 0 = above chance, <= 0 "
+            "= nothing beyond chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_pct_in_phase_percentile",
+        definition=(
+            "Percentile rank of the observed in-phase fraction against its surrogate distribution, in [0, 1]: higher = "
+            "the observed value exceeds more surrogates (stronger than chance); near 0.5 = indistinguishable from "
+            "chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_vc_pct_in_phase_surrogate_mean",
+        definition=(
+            "Mean in-phase fraction over the surrogate baseline, in [0, 1]: the chance level the observed value is "
+            "judged against."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_VECTOR_CODING,
+    ),
+    FeatureColumn(
+        name="coord_xc_lag_s",
+        definition=(
+            "Lag in seconds at the peak |r|, within +-xcorr_max_lag_s (default 15 s): positive = team A leads team B, "
+            "negative = team B leads. Moura et al. (2016) reported mean lags of 0.21-0.33 s (SD 0.30-0.36) for the "
+            "teams' spread."
+        ),
+        unit="seconds",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_MOURA_2016,
+    ),
+    FeatureColumn(
+        name="coord_xc_max_abs_r",
+        definition=(
+            "Peak absolute lagged Pearson correlation between the two teams' signals within the lag window, in [0, 1]: "
+            "higher = stronger co-movement at the best lag. Moura et al. (2016) reported r = 0.36-0.41 (SD 0.09-0.13) "
+            "for the teams' spread."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_MOURA_2016,
+    ),
+    FeatureColumn(
+        name="coord_xc_max_abs_r_excess",
+        definition=(
+            "Observed peak |r| minus its surrogate mean, in the metric's own units: > 0 = above chance, <= 0 = nothing "
+            "beyond chance."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_MOURA_2016,
+    ),
+    FeatureColumn(
+        name="coord_xc_max_abs_r_percentile",
+        definition=(
+            "Percentile rank of the observed peak |r| against its surrogate distribution, in [0, 1]: higher = the "
+            "observed value exceeds more surrogates (stronger than chance); near 0.5 = indistinguishable from chance."
+        ),
+        unit="ratio",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_MOURA_2016,
+    ),
+    FeatureColumn(
+        name="coord_xc_max_abs_r_surrogate_mean",
+        definition=(
+            "Mean peak |r| over the surrogate baseline, in [0, 1]: the chance level the observed value is judged "
+            "against. Above 0 by construction: the peak is searched over lags."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_MOURA_2016,
+    ),
+    FeatureColumn(
+        name="coord_xc_r_at_max",
+        definition=(
+            "Signed lagged Pearson correlation at the peak-|r| lag, in [-1, 1]: > 0 = the signals move together, < 0 = "
+            "in opposition."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_MOURA_2016,
+    ),
+    FeatureColumn(
+        name="coord_xc_r_lag0",
+        definition=(
+            "Pearson correlation at zero lag, in [-1, 1]: instantaneous co-movement (> 0 = together, < 0 = in "
+            "opposition)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_COORDINATION,
+        attribution=_A_TF58_MOURA_2016,
     ),
 )
 

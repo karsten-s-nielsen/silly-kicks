@@ -80,3 +80,11 @@ def called_names(tree: ast.AST) -> set[str]:
     return {
         (getattr(n.func, "id", "") or getattr(n.func, "attr", "")) for n in ast.walk(tree) if isinstance(n, ast.Call)
     }
+
+
+def coordination_corpus_drivers() -> tuple[str, ...]:
+    """The TF-58 corpus drivers, DERIVED (review A-54; ADR-056): every non-private script that goes through the shared
+    ``run_params_token`` seam -- the M-4 anchor every TF-58 corpus pass uses, and ONLY they (``corpus_source`` alone
+    also matches ``train_receiver_model``). Single-sourced here so the worker-combine token guards and the pre-flight
+    gate derive the SAME population from one predicate instead of each keeping its own hand-list."""
+    return tuple(sorted(stem for stem, tree in iter_scripts().items() if "run_params_token" in called_names(tree)))

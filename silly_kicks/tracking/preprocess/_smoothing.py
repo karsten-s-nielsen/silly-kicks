@@ -16,14 +16,40 @@ from scipy.signal import savgol_filter
 
 from ._config_dataclass import PreprocessConfig
 
-_GROUP_KEYS = ["period_id", "is_ball", "player_id"]
+# game_id in the key so a two-game frame never smooths one entity's series across the game boundary (review A-31;
+# the defect fixed in resample_frames this cycle). Single-game frames are byte-identical (game_id is constant).
+_GROUP_KEYS = ["game_id", "period_id", "is_ball", "player_id"]
 
 
 def _provenance_tag(config: PreprocessConfig, method_used: str) -> str:
+    # butterworth gets its OWN tag so the savgol/ema tags stay byte-identical (Hyrum's law).
+    if method_used == "butterworth":
+        return f"method=butterworth|bw_cutoff_hz={config.butterworth_cutoff_hz}|bw_order={config.butterworth_order}"
     return (
         f"method={method_used}|sg_window_s={config.sg_window_seconds}|"
         f"sg_poly={config.sg_poly_order}|ema_alpha={config.ema_alpha}"
     )
+
+
+def _butterworth_per_group(values: np.ndarray, hz: float, config: PreprocessConfig) -> np.ndarray:
+    # Mirror _savgol_per_group's NaN handling: interior NaN bridged, filtered, then restored. A group shorter
+    # than sosfiltfilt's pad passes through unchanged.
+    from ._butterworth import butterworth_lowpass, butterworth_min_length
+
+    if len(values) < butterworth_min_length(hz, config.butterworth_cutoff_hz, config.butterworth_order):
+        return values.copy()
+    nan_idx = np.flatnonzero(np.isnan(values))
+    valid_idx = np.flatnonzero(~np.isnan(values))
+    if len(valid_idx) == 0:
+        return values.copy()
+    out = values.copy()
+    if len(nan_idx) > 0:
+        idx = np.arange(len(values))
+        out[nan_idx] = np.interp(idx[nan_idx], idx[valid_idx], values[valid_idx])
+    smoothed = butterworth_lowpass(out, hz, config.butterworth_cutoff_hz, config.butterworth_order)
+    if len(nan_idx) > 0:
+        smoothed[nan_idx] = np.nan
+    return smoothed
 
 
 def _savgol_per_group(values: np.ndarray, window_frames: int, poly_order: int) -> np.ndarray:
@@ -102,7 +128,7 @@ def smooth_frames(
         if "x_smoothed" in out.columns and "y_smoothed" in out.columns:
             return out
 
-    sort_cols = ["period_id", "is_ball", "player_id", "frame_id"]
+    sort_cols = ["game_id", "period_id", "is_ball", "player_id", "frame_id"]  # game_id first (A-31)
     sorted_frames = frames.sort_values(sort_cols, kind="mergesort").reset_index()
     original_index = sorted_frames["index"].to_numpy()
     sorted_frames = sorted_frames.drop(columns="index")
@@ -128,6 +154,9 @@ def smooth_frames(
         elif method_used == "ema":
             x_smoothed[idx_arr] = _ema_per_group(x_vals, cfg.ema_alpha)
             y_smoothed[idx_arr] = _ema_per_group(y_vals, cfg.ema_alpha)
+        elif method_used == "butterworth":
+            x_smoothed[idx_arr] = _butterworth_per_group(x_vals, hz, cfg)
+            y_smoothed[idx_arr] = _butterworth_per_group(y_vals, hz, cfg)
         else:
             raise ValueError(f"smooth_frames: unsupported method={method_used!r}")
 

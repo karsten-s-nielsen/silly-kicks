@@ -74,6 +74,12 @@ SCALE_GUARDED: dict[str, str] = {
     # PitchControlCache.warm groups the frames ONCE (its own group_rows, on top of the batch it calls)
     # and .get per request; same linear pattern, scaled on the distinct-frame (loop) dimension.
     "silly_kicks.tracking.pitch_control._cache.warm": "test_cache_warm_is_subquadratic",
+    # TF-58 coordination: _build_coordination_signals -- the body behind the public build_coordination_signals and
+    # the D1 raw-resample seam, and the actual group_rows caller -- groups the frames ONCE over (game_id,period_id)
+    # and the windows ONCE (ADR-068), then .get per (game,period); the growth fixture (through the public entry
+    # point) scales the GAME dimension so a per-game full-frame rescan would be O(games^2). The mandatory regression
+    # companion proves the counter distinguishes (a rescan shim monkeypatched into the loop goes super-linear).
+    "silly_kicks.coordination._signals._build_coordination_signals": "test_build_coordination_signals_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.

@@ -172,27 +172,51 @@ def _extract(
     )
 
 
-def _hpo_once(X, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, seed=42, study_shard_dir=None) -> dict:
+def _hpo_once(
+    X,
+    y,
+    groups,
+    out_dir,
+    tag,
+    n_trials,
+    *,
+    objective_inputs,
+    prov,
+    negative_subsample=None,
+    seed=42,
+    study_shard_dir=None,
+) -> dict:
     """Run ruthless HPO once for one candidate; return the frozen best-params dict.
 
     ``negative_subsample`` thins negatives in TRAIN folds only (never eval) inside the objective.
+    ``objective_inputs`` (D21) carries the run's shared identity parts (driver/args/match_ids); this
+    seam COMPLETES them with its per-fold ``tag`` (the trainer's per-site extra) and ``prov`` into the
+    store's ``objective_id``, so each fold's study keys on its own tag and a dirty tree never resumes.
 
-    ``study_shard_dir`` (opt-in) caches the frozen params to ``<dir>/<tag>.study.json``: an existing
-    shard is loaded and returned (resume), else the computed params are written after HPO. The study
-    is deterministic (seeded TPE + a tag-keyed sqlite store), so a cached result is byte-identical to
-    an in-process one -- this is what lets the ~15 nested studies run as independent parallel workers
-    (5c) and be assembled with no loss of quality (spec 6). JSON round-trips finite floats exactly.
+    ``study_shard_dir`` (opt-in) caches the frozen params to ``<dir>/<tag>.study.json``: a shard written
+    under THIS call's ``objective_id`` and ``n_trials`` is loaded and returned (resume), else HPO runs and
+    the shard is (re)written -- the store's own D21 resume rule, so a shard from another run is never
+    served stale and a dirty tree never resumes from one (a dirty-tree parallel run therefore recomputes
+    its studies in the reduce). The study is deterministic (seeded TPE + a tag-keyed sqlite store), so a
+    cached result is byte-identical to an in-process one -- this is what lets the ~15 nested studies run
+    as independent parallel workers (5c) and be assembled with no loss of quality (spec 6). JSON
+    round-trips finite floats exactly.
     """
+    from scripts._input_contract import declare_inputs
+    from scripts._provenance import objective_id, store_path_for
+    from scripts._study_shared import read_study_shard, write_study_shard
+    from silly_kicks.tracking._xshot_occurrence_objective import XShotOccurrenceObjective
+
+    # The id depends on the objective CLASS, never its data, so it is known before the shard check.
+    oid = objective_id(XShotOccurrenceObjective, declare_inputs(**objective_inputs, tag=tag), prov=prov)
     if study_shard_dir is not None:
-        shard = Path(study_shard_dir) / f"{tag}.study.json"
-        if shard.exists():
-            return dict(json.loads(shard.read_text(encoding="utf-8"))["params"])
+        cached = read_study_shard(study_shard_dir, tag, objective_id=oid, n_trials=n_trials)
+        if cached is not None:
+            return cached
 
     from ruthless import Direction, FloatRange, InProcessBackend, OptunaConfig
     from ruthless.config.common import StoreConfig
     from ruthless.strategies.optuna_ import OptunaStrategy
-
-    from silly_kicks.tracking._xshot_occurrence_objective import XShotOccurrenceObjective
 
     obj = XShotOccurrenceObjective(
         fold={tag: [(X, pd.Series(y), groups)]}, negative_subsample=negative_subsample, subsample_seed=seed
@@ -210,16 +234,19 @@ def _hpo_once(X, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, 
             "min_child_weight": FloatRange(kind="float", lo=1.0, hi=20.0),
             "reg_lambda": FloatRange(kind="float", lo=0.0, hi=5.0),
         },
-        store=StoreConfig(kind="sqlite", path=str(out_dir / f"study_{tag}.db")),
+        # a dirty id opens a FRESH store (store_path_for): never resumes, never reopens a worker's store
+        store=StoreConfig(
+            kind="sqlite",
+            path=store_path_for(out_dir / f"study_{tag}.db", oid),
+            objective_id=oid,  # pyright: ignore[reportCallIssue]  # B m4: ruthless-efficiency 0.7.0 stub omits objective_id
+        ),
     )
     result = OptunaStrategy(cfg, seed=42).run(obj, backend=InProcessBackend())
     if result.best is None:
         raise RuntimeError("HPO produced no best candidate")
     params = dict(result.best.candidate.params)
     if study_shard_dir is not None:
-        shard = Path(study_shard_dir) / f"{tag}.study.json"
-        shard.parent.mkdir(parents=True, exist_ok=True)
-        shard.write_text(json.dumps({"tag": tag, "params": params}), encoding="utf-8")
+        write_study_shard(study_shard_dir, tag, params, objective_id=oid, n_trials=n_trials)
     return params
 
 
@@ -325,7 +352,18 @@ def _fit_study_for_test(X, y, groups, tag, n_trials, seed=42):
 
     y = np.asarray(y)
     d = tempfile.mkdtemp(prefix="xshot_study_")  # test seam: OS temp, no lock-sensitive cleanup
-    params = _hpo_once(X, y, np.asarray(groups), Path(d), tag, n_trials, seed=seed)
+    # D21: a fixed clean identity -- this seam is test-only and its store is a fresh tempdir.
+    params = _hpo_once(
+        X,
+        y,
+        np.asarray(groups),
+        Path(d),
+        tag,
+        n_trials,
+        objective_inputs={"driver": "train_xshot_occurrence._fit_study_for_test"},
+        prov={"commit": "test", "dirty": False, "tree_state": "clean"},
+        seed=seed,
+    )
     p_ = dict(_pinned_params(params))
     p_["base_score"] = float(y.mean())
     clf = xgb.XGBClassifier(**p_)
@@ -362,6 +400,8 @@ def _paired_data_effect(
     candidates,
     n_trials,
     out_dir,
+    objective_inputs,
+    prov,
     negative_subsample=None,
     seed=42,
     study_shard_dir=None,
@@ -392,6 +432,8 @@ def _paired_data_effect(
                 out_dir,
                 f"{name}_f{fold}",  # real dir + unique tag -> no study-db collision
                 n_trials,
+                objective_inputs=objective_inputs,
+                prov=prov,
                 negative_subsample=negative_subsample,
                 seed=seed,
                 study_shard_dir=study_shard_dir,
@@ -479,6 +521,8 @@ def run_one_study(shard_root, tag: str):
         Path(cfg["study_db_dir"]),
         tag,
         cfg["n_trials"],
+        objective_inputs=cfg["objective_inputs"],
+        prov=cfg["run_prov"],
         negative_subsample=cfg["negative_subsample"],
         seed=cfg["seed"],
         study_shard_dir=shard_root,
@@ -512,6 +556,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
     out = Path(cfg["study_db_dir"])
     art = Path(cfg["artifact_dir"])
     run_prov = cfg["run_prov"]
+    objective_inputs = cfg["objective_inputs"]  # D21, persisted by the prep
     provset = {str(p) for p in providers.tolist()}
 
     candidates: dict = {}
@@ -526,6 +571,8 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
             candidates=cand_masks,
             n_trials=n_trials,
             out_dir=out,
+            objective_inputs=objective_inputs,
+            prov=run_prov,
             negative_subsample=ns,
             seed=seed,
             study_shard_dir=study_shard_dir,
@@ -544,6 +591,8 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
             out,
             shipped,
             n_trials,
+            objective_inputs=objective_inputs,
+            prov=run_prov,
             negative_subsample=ns,
             seed=seed,
             study_shard_dir=study_shard_dir,
@@ -568,7 +617,17 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
         shipped = artifact_label(providers=ship_provs, all_public=bool(is_public[ship_mask].all()))
         check_shipped_variant(cfg.get("expect_variant"), shipped)  # before the study: a refusal costs no fit
         params_all = _hpo_once(
-            X, y, groups, out, "single", n_trials, negative_subsample=ns, seed=seed, study_shard_dir=study_shard_dir
+            X,
+            y,
+            groups,
+            out,
+            "single",
+            n_trials,
+            objective_inputs=objective_inputs,
+            prov=run_prov,
+            negative_subsample=ns,
+            seed=seed,
+            study_shard_dir=study_shard_dir,
         )
         candidates[shipped] = {
             "params": params_all,
@@ -833,6 +892,18 @@ def main(argv=None) -> None:
     # carries GS, so its behaviour is unchanged; only the paired-test INTERNALS became nested-HPO.
     run_paired = bool(is_public.any() and (~is_public).any() and "gradientsports" in provset)
 
+    # D21: shared store-identity parts for every HPO study this run opens; `_hpo_once` completes them
+    # with its per-fold `tag`. Output / resume / orchestration knobs (output_dir, n_trials, allow_dirty,
+    # and the 5c parallel-path shard_root/study/assemble) are excluded so they never fork the store key;
+    # every other CLI arg is an input the tuning depends on. Persisted in the study config below so the
+    # parallel workers and the reduce key their stores on the SAME identity as a serial run.
+    resume_knobs = {"output_dir", "n_trials", "allow_dirty", "shard_root", "study", "assemble"}
+    objective_inputs = {
+        "driver": "train_xshot_occurrence",
+        "args": {k: v for k, v in vars(args).items() if k not in resume_knobs},
+        "match_ids": sorted(map(str, match_ids.tolist())),
+    }
+
     # --- Phase 2/3 (single-sourced with the parallel study path, 5c): persist the trial-invariant
     # inputs, then assemble. A serial run computes the studies inline via the empty cache; a parallel
     # launcher pre-fills them with run_one_study workers -- either way assemble_studies produces the
@@ -849,6 +920,7 @@ def main(argv=None) -> None:
         "run_paired": run_paired,
         "run_prov": run_prov,
         "expect_variant": args.expect_variant,
+        "objective_inputs": objective_inputs,
     }
     from scripts._study_shared import persist_study_inputs
 
