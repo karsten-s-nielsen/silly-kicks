@@ -344,3 +344,15 @@ def test_read_declared_exclusions_refuses_a_reason_outside_the_vocabulary(tmp_pa
     bad.write_text(json.dumps({"skillcorner__m2": "because_i_said_so"}), encoding="utf-8")
     with pytest.raises(SystemExit, match="reason outside"):
         read_declared_exclusions(str(bad))
+
+
+def test_geometry_rate_gate_is_a_declarable_reason(tmp_path):
+    # ADR-115: the SkillCorner spec-4.4 geometry admission gate (ball/player off-pitch RATE) excludes matches at load
+    # uniformly across every TF-58 driver; nf_reduce must be able to DECLARE those exclusions with a vocabulary reason.
+    assert "geometry_rate_gate" in COORD_EXCLUSION_REASONS
+    decl = tmp_path / "decl.json"
+    decl.write_text(json.dumps({"skillcorner__m2": "geometry_rate_gate"}), encoding="utf-8")
+    declared = read_declared_exclusions(str(decl))  # accepted by the closed vocabulary (RED before the token is added)
+    assert declared == {"skillcorner__m2": "geometry_rate_gate"}
+    # and the conservation gate is satisfied once the geometry-gate exclusion is declared with that reason.
+    assert assert_exclusions_declared(["skillcorner__m2"], declared) == declared

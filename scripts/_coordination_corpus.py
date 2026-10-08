@@ -529,7 +529,12 @@ def combine_workers(
 #: The CLOSED vocabulary of reasons a corpus match may be DECLARED excluded with (exclusions nit). An exclusion for any
 #: other reason -- or an UNDECLARED exclusion -- fails the gate: a PASS must cover (scored union declared_excluded) ==
 #: corpus, never a silent subset. The owner ratifies / extends this set.
-COORD_EXCLUSION_REASONS = frozenset({"no_tracking", "empty_after_filter"})
+#:   * ``no_tracking``          -- the match carries no tracking frames to score.
+#:   * ``empty_after_filter``   -- nothing survives the per-match filtering.
+#:   * ``geometry_rate_gate``   -- the SkillCorner loader's spec-4.4 geometry admission gate excluded the match at load
+#:     (``silly_kicks.tracking.skillcorner.geometry_rate_gate``: player/ball off-pitch RATE beyond the public-10 noise
+#:     floor -- i.e. coordinate corruption, not football). Uniform across every TF-58 driver (ADR-115).
+COORD_EXCLUSION_REASONS = frozenset({"no_tracking", "empty_after_filter", "geometry_rate_gate"})
 
 
 def read_declared_exclusions(path: str | None) -> dict[str, str]:
