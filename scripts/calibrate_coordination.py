@@ -141,7 +141,7 @@ _FAMILY_COLUMNS: dict[str, tuple[str, str, tuple[str, ...]]] = {
 #: ``_FAMILY_COLUMNS``, ``AFFECTED_FAMILIES``) do not capture -- the match-CV fold scheme (``match_cv_splits``) or the
 #: provider-weighted per-construct estimator in :func:`_reliability_weighted_over_providers`. It rides in the C27
 #: store id and the ``input_contract`` so an objective edit never resumes a store under the old definition (A-33).
-OBJECTIVE_VERSION = "2"  # A-34 NaN-kept index-keyed folds + A-35 circular-aware estimator + m7 join-key CV
+OBJECTIVE_VERSION = "3"  # A-34 folds + A-35 circular estimator + m7 join-key CV + ADR-114 NA-entity exclusion
 #: The generated-module file name the confirm writes beside calibration.json (commit 2 copies it into the package).
 GENERATED_ARTIFACT = "_provider_params_generated.py"
 _SHARD_SCHEMA_VERSION = "tf58-d2-3"  # tf58-d2-3: baseline share split per variant (ADR-112 follow-up, D2 layer-a OOM)
@@ -229,7 +229,12 @@ def _reliability_weighted_over_providers(sub: pd.DataFrame, team_key: str, col: 
     for _prov, g in sub.groupby("provider", sort=True, observed=True):
         vals = g[col].to_numpy(dtype=np.float64)
         groups = g[team_key].to_numpy()
-        finite = np.isfinite(vals)
+        # ADR-114: drop rows whose team key is NA before the team-discrimination ICC, exactly as D3 does
+        # (``_coordination_reliability.py`` ``dropna(subset=["value", "entity"])``). A teamless unit -- the Moura-2013
+        # ``possession`` spectral signal carries ``team_id`` NA by construction -- cannot enter a per-team ICC, and
+        # a mixed ``str``/``float`` group array would otherwise crash ``np.unique``. Restores the A-35 "same
+        # per-construct estimator" contract between the D2 objective and the D3 report.
+        finite = np.isfinite(vals) & pd.notna(groups)
         if finite.sum() < 2 or len(np.unique(groups[finite])) < 2:
             continue
         rel = (

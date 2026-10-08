@@ -119,6 +119,72 @@ def _pair_frame(provider, n_matches, variant, sep, seed=0):
     return pd.DataFrame(rows)
 
 
+def _spectral_frame(provider, n_matches, *, with_possession, seed=1):
+    """A melted SPECTRAL metric frame. The 12 per-team signals carry a resolved ``team_id``; the Moura-2013
+    ``possession`` signal is teamless by construction (``team_id`` = NA). ``team_id`` is a categorical with a
+    missing category, so ``.to_numpy()`` yields an object array mixing ``str`` ids and ``float`` NaN -- exactly
+    the full-corpus layer-b shape that crashed ``np.unique`` (ADR-114)."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for m in range(n_matches):
+        for team, base in (("t1", 0.5), ("t2", 1.1)):  # separated team means -> a finite, positive ICC
+            rows.append(
+                {
+                    "provider": provider,
+                    "match_id": f"{provider}-{m}",
+                    "variant": "base",
+                    "table": "spectral",
+                    "team_id": team,
+                    "signal": "centroid_x",
+                    "coord_median_freq_cpm": base + rng.normal(0, 0.02),
+                }
+            )
+        if with_possession:  # a SCORED possession row: finite value, NA team -> must be excluded from the team ICC
+            rows.append(
+                {
+                    "provider": provider,
+                    "match_id": f"{provider}-{m}",
+                    "variant": "base",
+                    "table": "spectral",
+                    "team_id": pd.NA,
+                    "signal": "possession",
+                    "coord_median_freq_cpm": 0.8 + rng.normal(0, 0.02),
+                }
+            )
+    frame = pd.DataFrame(rows)
+    frame["team_id"] = frame["team_id"].astype("category")  # the ADR-112 combine stores team_id categorical
+    return frame
+
+
+def test_reliability_excludes_the_teamless_possession_signal_parity_with_d3(tmp_path):
+    """ADR-114: the spectral ``possession`` signal is teamless (``team_id`` NA). The per-team reliability must
+    exclude it exactly as D3 does (``_coordination_reliability.dropna(subset=["value","entity"])``) -- NOT crash
+    on the mixed ``str``/``float`` group array, and NOT let a teamless unit perturb the team ICC. RED before the fix:
+    ``np.unique`` raises ``TypeError: '<' not supported between instances of 'float' and 'str'``."""
+    with_poss = _spectral_frame("skillcorner", 8, with_possession=True)
+    # `without` is `with` minus its possession rows -- the SAME team rows, so the ICC must be bit-for-bit identical
+    # (building a separate frame would offset the rng stream and perturb the team values, a fixture artifact).
+    without_poss = with_poss[with_poss["signal"] != "possession"].copy()
+    rel_with = d._reliability_weighted_over_providers(with_poss, "team_id", "coord_median_freq_cpm")
+    rel_without = d._reliability_weighted_over_providers(without_poss, "team_id", "coord_median_freq_cpm")
+    assert np.isfinite(rel_with), "the teamless possession rows must be dropped, not crash the ICC"
+    # excluding the teamless rows == they were never there: the team ICC is identical with or without them.
+    assert rel_with == rel_without
+
+
+def test_reliability_over_folds_survives_spectral_possession_rows(tmp_path):
+    """ADR-114 end-to-end: the objective's fold loop (the actual crash site via ``evaluate``) runs clean on a
+    spectral frame carrying teamless possession rows across multiple providers."""
+    frame = pd.concat(
+        [_spectral_frame(p, 6, with_possession=True) for p in ("skillcorner", "gradientsports")],
+        ignore_index=True,
+    )
+    frame["team_id"] = frame["team_id"].astype("category")
+    keys = d._join_keys(frame)
+    mean, folds = d.reliability_over_folds(frame, ("spectral",), d.match_cv_splits(keys))
+    assert np.isfinite(mean) and len(folds) >= 1
+
+
 def _write_level(out: Path, level_key: str, frames: list[pd.DataFrame]):
     """The COMBINED per-level table(s) a reader reads. The baseline is stored PER VARIANT (ADR-112 follow-up, option
     C): one combined file per variant present in the frames; a non-baseline level is a single file."""

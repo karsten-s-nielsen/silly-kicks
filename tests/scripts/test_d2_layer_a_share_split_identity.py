@@ -186,15 +186,18 @@ def test_summary_fold_refuses_disagreeing_population():
 
 
 # ----------------------------------------------------------------- whole-calibration.json golden (D2-SPEC-05b)
-# The approved bar asserts the WHOLE calibration.json (minus volatiles) is byte-identical to a golden captured from the
-# ACTUAL pre-C code (fcca558). The confirm's ruthless OAT needs FINITE reliability for every candidate, which a real
-# match_tables melt of a tiny synthetic corpus does not give (it fatals: non-finite reliability) -- so, like every
-# other D2 test, this PLANTS controlled high-separation shares (finite reliability, the OAT runs, welch_segment_s
-# moves) and runs the REAL combine_levels + _layer_b + _confirm. The ONLY version-specific step is the baseline share
-# layout: pre-C writes one stacked share, C writes one per variant; `plant_and_confirm` detects which and plants
-# accordingly, so the SAME function captures the golden at fcca558 and asserts reproduction at HEAD. (The planted
-# shares are pair-only, so H1-H7 are non-findings -- but byte-identically so in both layouts; the point is the whole
-# file, not a live hypothesis finding.)
+# This asserts the WHOLE calibration.json (minus volatiles) reproduces the committed golden -- an end-to-end
+# change-detector for unintended calibration drift. The golden pins the CURRENT expected output (post ADR-113
+# per-variant split + ADR-114 OBJECTIVE_VERSION=3), NOT a pre-C reference: per-variant-vs-stacked LAYOUT-NEUTRALITY
+# (ADR-113's original claim) is now carried by the LIVE differential tests above (test_per_variant_read_equals_
+# stacked_filter / test_confirm_reducers_identical_per_variant_vs_stacked / the fold tests), which compare the two
+# layouts directly rather than through this frozen file; the fcca558 capture is locked by the fe449af CI history.
+# The confirm's ruthless OAT needs FINITE reliability for every candidate, which a real match_tables melt of a tiny
+# synthetic corpus does not give (it fatals: non-finite reliability) -- so, like every other D2 test, this PLANTS
+# controlled high-separation shares (finite reliability, the OAT runs, welch_segment_s moves) and runs the REAL
+# combine_levels + _layer_b + _confirm. `plant_and_confirm` writes the per-variant layout this (post-C) tree uses.
+# (The planted shares are pair-only, so H1-H7 are non-findings and the NA-entity exclusion (ADR-114) is a no-op
+# here -- the golden moved only by the version string + its hashed digests; the point is the whole file.)
 _CLEAN = {"commit": "0" * 40, "dirty": False, "tree_state": "clean"}
 _GOLDEN = Path(__file__).resolve().parent / "_fixtures" / "d2_calibration_golden.json"
 _VOLATILE = {"stage_seconds", "run_commit", "run_tree_dirty", "run_tree_state", "__provenance__"}
@@ -344,10 +347,14 @@ def test_harness_smoke_produces_a_real_confirm(tmp_path):
 
 @pytest.mark.skipif(not _GOLDEN.is_file(), reason="golden fixture not captured yet (see the capture steps in the PR)")
 def test_whole_calibration_json_byte_identical_to_golden(tmp_path):
-    # D2-SPEC-05(b): the WHOLE calibration.json (minus volatiles) reproduces the golden captured from pre-C (fcca558).
+    # D2-SPEC-05(b): the WHOLE calibration.json (minus volatiles) reproduces the committed golden (the current
+    # expected output; a change-detector for unintended calibration drift -- see the section comment above).
     current = _strip_volatiles(plant_and_confirm(tmp_path / "out"))
     golden = _strip_volatiles(json.loads(_GOLDEN.read_text(encoding="utf-8")))
     # non-vacuity: the golden is a real confirm -- selections, hypotheses (all seven), population, objective_ids.
     assert {"selections", "hypotheses", "objective_ids", "population", "joint_point"} <= set(golden)
     assert golden["selections"] and set(golden["hypotheses"]) == {"H1", "H2", "H3", "H4", "H5", "H6", "H7"}
+    # ADR114-01/02: freshness guard -- a future OBJECTIVE_VERSION bump that forgets to regenerate the golden must
+    # fail LOUD here, not read as "expected" drift (the golden is freely re-baselineable, so this is its teeth).
+    assert golden["input_contract"]["objective_version"] == d2.OBJECTIVE_VERSION
     assert current == golden

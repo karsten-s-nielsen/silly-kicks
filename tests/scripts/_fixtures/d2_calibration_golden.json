@@ -1,5 +1,5 @@
 {
-  "__provenance__": "Captured from the PRE-C stacked tree at fcca558 via tests/scripts/_fixtures/regenerate_d2_calibration_golden.py (git stash the 2 production scripts first, then run). This key is stripped before the byte-identity comparison (listed in _VOLATILE). Do NOT regenerate against the post-C tree -- that would be circular.",
+  "__provenance__": "The current expected whole-calibration.json from plant_and_confirm (post ADR-113 per-variant split + ADR-114 OBJECTIVE_VERSION=3), by regenerate_d2_calibration_golden.py. This key is stripped before the byte-identity comparison. The per-variant-split identity is proven by the live differential tests, not this golden; see this file's docstring.",
   "confirmation": {
     "gate_cleared": false,
     "hypotheses_pass": false,
@@ -108,7 +108,7 @@
       "vc_epsilon": 1.0,
       "welch_segment_s": 1.0
     },
-    "digest": "d3be6034e9d845ab7fe9095fa2ecd062cc2f842bd4777071a28a65e26e0715c2",
+    "digest": "0af8eaba9d5f22b9e311019a8de40cc48effd254fa33385d8c51f2d7b0dcc7bf",
     "driver": "calibrate_coordination",
     "family_columns": {
       "cluster": [
@@ -168,7 +168,7 @@
     },
     "geometry_version": "goal-relative-2",
     "min_effect_size": 0.005,
-    "objective_version": "2",
+    "objective_version": "3",
     "sweep": {
       "butterworth_cutoff_hz": [
         0.5,
@@ -224,8 +224,8 @@
     }
   },
   "objective_ids": {
-    "confirm": "calibrate_coordination:ef8a422e1fc26985",
-    "oat": "calibrate_coordination:4f2473b586d01280"
+    "confirm": "calibrate_coordination:d0059b76db1ed452",
+    "oat": "calibrate_coordination:582146682c5a01e2"
   },
   "population": {
     "baseline": {

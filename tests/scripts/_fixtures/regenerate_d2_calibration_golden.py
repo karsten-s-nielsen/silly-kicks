@@ -1,19 +1,22 @@
 #!/usr/bin/env python
-"""Regenerate tests/scripts/_fixtures/d2_calibration_golden.json (the D2-SPEC-05b whole-calibration.json golden).
+"""Regenerate tests/scripts/_fixtures/d2_calibration_golden.json (the whole-calibration.json golden).
 
-MUST be run against the PRE-C STACKED tree, else the golden is circular (it would merely mirror the current per-variant
-code instead of pinning the pre-change behaviour):
-
-    git stash push -- scripts/calibrate_coordination.py scripts/_coordination_corpus.py
     python tests/scripts/_fixtures/regenerate_d2_calibration_golden.py \
         --out tests/scripts/_fixtures/d2_calibration_golden.json
-    git stash pop
 
-The golden was first captured at commit fcca558. It is the byte-identical reference the per-variant (option C) code
-must reproduce -- see test_whole_calibration_json_byte_identical_to_golden in
-tests/scripts/test_d2_layer_a_share_split_identity.py. This generator runs the SAME plant_and_confirm harness as the
-test (driver entrypoints only, so it runs at both fcca558 and HEAD), strips the volatiles, and writes the golden.
-Requires ruthless-efficiency 0.7.0.
+The golden pins the CURRENT expected whole-calibration.json from the synthetic ``plant_and_confirm`` harness
+(test_whole_calibration_json_byte_identical_to_golden in test_d2_layer_a_share_split_identity.py) -- it catches
+unintended end-to-end calibration drift.
+
+HISTORY. It was first captured at fcca558 to prove the ADR-113 per-variant split (option C) is byte-identical to
+the pre-C stacked layout; that proof is locked by the fe449af CI run AND stays guarded going forward by the LIVE
+differential tests in the same file (test_per_variant_read_equals_stacked_filter,
+test_confirm_reducers_identical_per_variant_vs_stacked, the fold tests) -- which compare per-variant vs stacked
+directly, not via this frozen golden. ADR-114 then deliberately bumped OBJECTIVE_VERSION (2 -> 3), which changes
+only objective_version + the three objective_id/input_contract digests that hash it (proven: the reliability
+VALUES -- selections/population/joint_point/gate_cleared -- are byte-identical; the synthetic fixture has no NA
+team entity, so the NA-entity exclusion is a no-op here). Re-baselining the golden therefore mirrors a version
+string, not a laundered value change -- it is not circular. Requires ruthless-efficiency 0.7.0.
 """
 
 from __future__ import annotations
@@ -40,18 +43,14 @@ def main() -> None:
 
     import test_d2_layer_a_share_split_identity as harness
 
-    if harness._per_variant_layout():
-        raise SystemExit(
-            "refusing: this tree stores the baseline share PER VARIANT (post-C); regenerating here is circular. "
-            "git stash the two production scripts to the pre-C stacked tree first (see this file's docstring)."
-        )
-
     with tempfile.TemporaryDirectory() as td:
         calibration = harness.plant_and_confirm(pathlib.Path(td) / "out")
     golden = harness._strip_volatiles(calibration)
     golden["__provenance__"] = (
-        "Captured from the PRE-C stacked tree (fcca558) by regenerate_d2_calibration_golden.py. This key is stripped "
-        "before the byte-identity comparison. Do NOT regenerate against the post-C tree -- that is circular."
+        "The current expected whole-calibration.json from plant_and_confirm (post ADR-113 per-variant split + "
+        "ADR-114 OBJECTIVE_VERSION=3), by regenerate_d2_calibration_golden.py. This key is stripped before the "
+        "byte-identity comparison. The per-variant-split identity is proven by the live differential tests, not "
+        "this golden; see this file's docstring."
     )
     out = pathlib.Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
