@@ -113,6 +113,8 @@ _TRACKING_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     # --- preprocess-added (NOT in TRACKING_FRAMES_COLUMNS -- the original blind spot) ---
     "vx": "vector_x",
     "vy": "vector_y",
+    "accel_x": "vector_x",  # TF-65: acceleration components flip sign like velocity (named accel_x/accel_y,
+    "accel_y": "vector_y",  # NOT ax/ay -- ax/ay are _kernels.py triangle anchor columns)
     "x_smoothed": "point_x",
     "y_smoothed": "point_y",
     # invariant BY DECISION, not oversight: the tag names the preprocess config that
@@ -124,6 +126,11 @@ _TRACKING_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "_preprocessed_with": "invariant",
     # --- magnitudes ---
     "speed": "magnitude",
+    "accel": "magnitude",  # TF-65: |a| = sqrt(ax^2+ay^2), invariant under reflection like speed
+    # --- TF-65 per-frame uncertainty (statistical variances; unchanged under reflection) ---
+    "pos_var": "invariant",
+    "vel_var": "invariant",
+    "accel_var": "invariant",
     # --- labels / identity / provenance ---
     "team_attacking_direction": "direction_label",
     "game_id": "invariant",

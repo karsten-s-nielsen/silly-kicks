@@ -235,6 +235,14 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   pre_shot_gk_angle_to_shot_trajectory and pre_shot_gk_angle_off_goal_line
   features in silly_kicks/tracking/features.py and the atomic mirror.)
 
+- Kalman, R. E. (1960). "A New Approach to Linear Filtering and Prediction
+  Problems." Journal of Basic Engineering, 82(1), 35-45. / Rauch, H. E.,
+  Tung, F., & Striebel, C. T. (1965). "Maximum Likelihood Estimates of Linear
+  Dynamic Systems." AIAA Journal, 3(8), 1445-1450.
+  (Constant-acceleration Kalman filter + Rauch-Tung-Striebel smoother -- the
+  "kalman" point smoother and the always-on per-frame uncertainty pass in
+  silly_kicks.tracking.preprocess._kalman (TF-65).)
+
 - Andrienko, G., Andrienko, N., Budziak, G., Dykes, J., Fuchs, G.,
   von Landesberger, T., & Weber, H. (2017). "Visual analysis of pressure in
   football." Data Mining and Knowledge Discovery, 31, 1793-1839.
