@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.129.0 (PR-S201): team-coordination package (TF-58).** `silly_kicks.coordination` ships the temporal-coordination layer silly-kicks lacked — relative phase, lagged cross-correlation, vector coding, spectral/coherence and cluster-phase (tracking-only, descriptive, no VAEP path, no retrain) — with D1/D2/D3 corpus drivers and A-09 per-construct reliability + occlusion (ADR-111/112/113/114/115; corpus artifacts in `docs/research/tf58_team_coordination/`). Release detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — TF-65 kinematics-smoother bake-off + velocity-gap fix + TF-64 GK detection-gate (in flight, `feat/tf65-tf64-kinematics`).** C1 lands the smoother-agnostic foundation in `tracking.preprocess`: a dense-grid `frame_id` reindex so a non-detection no longer fabricates through-gap velocity (honest gap handling), per-frame acceleration (`accel_x`/`accel_y`/`accel`) + an always-on constant-acceleration Kalman/RTS uncertainty pass (`pos_var`/`vel_var`/`accel_var`), Butterworth + Kalman smoother arms, and a soft `≤40 m/s` plausibility guard (`PlausibilityWarning`); the default stays Savitzky-Golay. The point smoother is chosen by an in-cycle downstream model-AUC + DAS-calibration A/B; TF-64 then wires the ADR-109 `detected_mask` gate into the GK outputs. Last released: 4.129.0 (TF-58). Version claimed only at the final commit.
 
 ---
 

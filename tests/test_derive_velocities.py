@@ -64,8 +64,11 @@ def test_emits_only_velocity_columns():
     pre_cols = set(smoothed.columns)
     out = derive_velocities(smoothed, config=PreprocessConfig.default())
     new_cols = set(out.columns) - pre_cols
-    assert new_cols == {"vx", "vy"}, (
-        f"derive_velocities must add only vx/vy as new columns; speed is overwritten in place. Got new_cols={new_cols}"
+    # TF-65 §7: derive_velocities now also emits acceleration + the always-on Kalman/RTS uncertainty
+    # columns (speed is overwritten in place). It still does NOT re-add x_smoothed/_preprocessed_with (S4).
+    assert new_cols == {"vx", "vy", "accel_x", "accel_y", "accel", "pos_var", "vel_var", "accel_var"}, (
+        f"derive_velocities must add vx/vy + accel + uncertainty as new columns; speed overwritten in place. "
+        f"Got new_cols={new_cols}"
     )
     # speed is a known column from input schema; verify it is now populated where positions allowed.
     valid = out["x_smoothed"].notna() & out["y_smoothed"].notna()
@@ -161,7 +164,9 @@ def test_two_frame_group_produces_finite_velocity():
     """Two-frame group is the minimum for np.gradient -- must not crash and
     must produce finite velocity values."""
     f = _pre_smoothed_frames(n=2)
-    result = derive_velocities(f)
+    # the toy fixture's 2-frame jump (5 m / frame) is physically implausible; this test exercises the
+    # gradient path, not the guard, so run with the guard off (TF-65).
+    result = derive_velocities(f, config=PreprocessConfig(max_plausible_speed=1e6, max_plausible_accel=1e6))
     assert len(result) == 2
     assert result["vx"].notna().all()
     assert result["vy"].notna().all()

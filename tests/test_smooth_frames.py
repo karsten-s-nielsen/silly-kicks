@@ -99,4 +99,4 @@ def test_unsupported_method_raises():
     import pytest
 
     with pytest.raises(ValueError, match="unsupported method"):
-        smooth_frames(_toy_frames(), method="kalman")
+        smooth_frames(_toy_frames(), method="bogus")  # "kalman" is now a supported method (TF-65)
