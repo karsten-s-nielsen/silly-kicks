@@ -57,7 +57,7 @@ _KEY_COLUMNS = ("game_id", "period_id", "frame_id", "player_id", "x", "y", "team
 #: every item, emit an EMPTY home map, and report a conserved pass. Exactly the 4.77.1 shape with a
 #: different trigger. **The real invariant is "bump when a resumed pass would produce something
 #: different", not "when a column changed".**
-_SHARD_SCHEMA_VERSION = "tc3-frames-2"
+_SHARD_SCHEMA_VERSION = "tc3-frames-3"  # tc3-frames-3: TF-65 dense-grid preprocess adds accel_x/accel_y/accel + pos_var/vel_var/accel_var and moves vx/vy/x_smoothed (shape+content change -> new generation)
 
 
 def _checksum(df: pd.DataFrame) -> str:
@@ -241,8 +241,17 @@ def main() -> None:
         "came from (identified from the file itself), before any corpus work.",
     )
     ap.add_argument("--max-per-provider", type=int, default=None)
+    ap.add_argument(
+        "--match-ids-json",
+        type=pathlib.Path,
+        default=None,
+        help="JSON {provider: [match_id, ...]} constraining the corpus to a roster (e.g. the F1b "
+        "179-match training corpus). Omit = the full pining catalog. Recorded in token_inputs as a "
+        "roster hash so a constrained corpus lands its own generation.",
+    )
     ap.add_argument("--allow-dirty", action="store_true")
     args = ap.parse_args()
+    match_ids = json.loads(args.match_ids_json.read_text()) if args.match_ids_json else None
 
     prov = git_provenance()
     require_clean_tree(prov, allow_dirty=args.allow_dirty)
@@ -307,6 +316,7 @@ def main() -> None:
     # a flat `*.parquet` glob, so the trainer reads the generation directory directly.
     refs, load = pining_source(
         args.providers,
+        match_ids=match_ids,
         max_per_provider=args.max_per_provider,
         cache_dir=cache_dir,
     )
@@ -322,6 +332,13 @@ def main() -> None:
         token_inputs={
             "providers": sorted(args.providers),
             "schema": _SHARD_SCHEMA_VERSION,
+            # A roster constrains WHICH matches; record its hash so a constrained corpus (e.g. the
+            # F1b 179) lands its own generation, distinct from the full-catalog run.
+            **(
+                {"roster_sha": hashlib.sha256(json.dumps(match_ids, sort_keys=True).encode()).hexdigest()[:16]}
+                if match_ids
+                else {}
+            ),
         },
         label="match",
     )

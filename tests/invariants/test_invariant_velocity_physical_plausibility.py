@@ -34,3 +34,19 @@ def test_speed_within_human_bounds(provider):
         f"{provider}: only {fraction_under_12mps:.4f} of player frames have speed <= 12 m/s "
         f"(expected >= 0.999). Outliers may indicate smoothing-window misconfiguration."
     )
+
+
+@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "gradientsports"])
+def test_built_speed_within_guard_bound(provider):
+    """TF-65 §4.5(3): the soft plausibility guard leaves NO surviving speed above its bound -- BALL
+    included. The fabricated 500-850 m/s through-gap broadcast ball speeds must be gone."""
+    frames = load_provider_frames(provider)
+    cfg = PreprocessConfig.for_provider(provider)
+    out = derive_velocities(smooth_frames(frames, config=cfg), config=cfg)
+    surviving = out["speed"].dropna()
+    if len(surviving) == 0:
+        pytest.skip(f"{provider}: derived speed has no valid rows")
+    assert (surviving <= cfg.max_plausible_speed).all(), (
+        f"{provider}: {int((surviving > cfg.max_plausible_speed).sum())} frame(s) survived the guard "
+        f"above {cfg.max_plausible_speed} m/s."
+    )

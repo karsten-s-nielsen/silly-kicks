@@ -585,6 +585,22 @@ class TestAggregatorAndXfns:
         assert "time_offset_seconds" not in result.columns
         assert "link_quality_score" not in result.columns
 
+    def test_add_ghost_gk_nan_tolerant_on_guarded_ball_velocity(self):
+        """TF-65 §11: the plausibility guard NaNs ball vx/vy/speed on ~6% of frames; add_ghost_gk
+        (which consumes ball_vx/vy/speed) must stay NaN-safe (ADR-003), not crash."""
+        from silly_kicks.tracking.features import add_ghost_gk
+
+        model, _, _ = _fitted_model()
+        actions = self._make_actions()
+        frames = pd.concat(
+            [_make_ghost_gk_frames(frame_id=1, timestamp=1.0), _make_ghost_gk_frames(frame_id=2, timestamp=2.0)],
+            ignore_index=True,
+        )
+        ball = frames["is_ball"].astype(bool)
+        frames.loc[ball, ["vx", "vy", "speed"]] = np.nan  # simulate the guard output
+        result = add_ghost_gk(actions, frames, model=model, home_team_id=1)  # must not raise
+        assert len(result) == len(actions) and {"ghost_gk_x", "ghost_gk_y"} <= set(result.columns)
+
     def test_ghost_gk_xfns_factory(self):
         """Correct column names, silent NaN on dummy gamestate."""
         from silly_kicks.tracking.features import ghost_gk_xfns
