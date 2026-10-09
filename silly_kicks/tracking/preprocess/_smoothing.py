@@ -6,6 +6,12 @@ Savitzky, A., & Golay, M. J. E. (1964). "Smoothing and Differentiation of Data
 by Simplified Least Squares Procedures." Analytical Chemistry, 36(8), 1627-1639.
 
 See NOTICE for full bibliographic citation.
+
+TF-65 §4.1b -- two gap-fill stages, complementary not overlapping: this function's internal dense-grid
+reindex handles MISSING ROWS (non-detections); the standalone ``interpolate_frames`` fills NaN-position
+runs BETWEEN existing rows. Both honour the same ``max_gap_seconds`` cap. Default-pipeline order is
+``interpolate_frames`` -> ``smooth_frames``/``derive_velocities``; the reindex is idempotent w.r.t.
+already-filled frames, so there is no double-fill.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ import pandas as pd
 from scipy.signal import savgol_filter
 
 from ._config_dataclass import PreprocessConfig
+from ._densify import bridge_small, densify_group, segments
 
 # game_id in the key so a two-game frame never smooths one entity's series across the game boundary (review A-31;
 # the defect fixed in resample_frames this cycle). Single-game frames are byte-identical (game_id is constant).
@@ -86,6 +93,65 @@ def _ema_per_group(values: np.ndarray, alpha: float) -> np.ndarray:
     return out
 
 
+def _smooth_one(
+    values: np.ndarray, method: str, window: int, poly: int, cfg: PreprocessConfig, hz: float
+) -> np.ndarray:
+    """Smooth a single contiguous (bridged) segment via the chosen method."""
+    if method == "savgol":
+        return _savgol_per_group(values, window, poly)
+    if method == "ema":
+        return _ema_per_group(values, cfg.ema_alpha)
+    if method == "butterworth":
+        return _butterworth_per_group(values, hz, cfg)
+    raise ValueError(f"smooth_frames: unsupported method={method!r}")
+
+
+def _smooth_positions_dense(
+    frame_ids: np.ndarray,
+    x_vals: np.ndarray,
+    y_vals: np.ndarray,
+    method: str,
+    window: int,
+    poly: int,
+    cfg: PreprocessConfig,
+    hz: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Smooth one group on its dense ``frame_id`` grid (TF-65 §4.1).
+
+    Densify -> bridge small gaps -> smooth per segment (split at runs > max_gap) -> map back to the
+    group's rows by ``frame_id`` (duplicate-frame-safe). Kalman handles gaps natively (whole-series).
+    Byte-identical to the row-order path on a contiguous single-detection-run group.
+    """
+    g = pd.DataFrame(
+        {"frame_id": np.asarray(frame_ids), "x": np.asarray(x_vals, float), "y": np.asarray(y_vals, float)}
+    )
+    full, xd, yd, _real = densify_group(g)
+    f0 = int(full[0])
+    dense_idx = np.asarray(frame_ids, dtype=int) - f0
+    if method == "kalman":
+        from ._kalman import kalman_ca
+
+        dt = 1.0 / hz
+        xs = kalman_ca(xd, dt, cfg).pos
+        ys = kalman_ca(yd, dt, cfg).pos
+        return xs[dense_idx], ys[dense_idx]
+    maxg = round(cfg.max_gap_seconds * hz)
+    valid = ~(np.isnan(xd) | np.isnan(yd))
+    xs = np.full(len(xd), np.nan)
+    ys = np.full(len(yd), np.nan)
+    for s, e in segments(valid, maxg):
+        xb = bridge_small(xd[s:e], maxg)
+        yb = bridge_small(yd[s:e], maxg)
+        sv = valid[s:e]
+        xss = np.asarray(_smooth_one(xb, method, window, poly, cfg, hz), dtype=float).copy()
+        yss = np.asarray(_smooth_one(yb, method, window, poly, cfg, hz), dtype=float).copy()
+        xss[~sv] = np.nan
+        yss[~sv] = np.nan
+        xs[s:e] = xss
+        ys[s:e] = yss
+    return xs[dense_idx], ys[dense_idx]
+
+
 def smooth_frames(
     frames: pd.DataFrame,
     *,
@@ -103,7 +169,7 @@ def smooth_frames(
         Long-form tracking frames matching TRACKING_FRAMES_COLUMNS.
     config : PreprocessConfig or None
         Smoothing config. Defaults to ``PreprocessConfig.default()``.
-    method : {"savgol", "ema"} or None
+    method : {"savgol", "ema", "butterworth", "kalman"} or None
         Override ``config.smoothing_method`` for this call.
 
     Returns
@@ -144,21 +210,20 @@ def smooth_frames(
     x_smoothed = np.full(len(sorted_frames), np.nan)
     y_smoothed = np.full(len(sorted_frames), np.nan)
 
+    if method_used not in ("savgol", "ema", "butterworth", "kalman"):
+        raise ValueError(f"smooth_frames: unsupported method={method_used!r}")
+
+    # Each group is smoothed on its dense frame_id grid (TF-65 §4.1): a non-detection becomes a
+    # NaN-position run the max_gap cap handles, and segments split at runs > max_gap so no window
+    # spans a big gap. Contiguous single-detection-run groups are byte-identical to the old row path.
     for _key, idx in sorted_frames.groupby(_GROUP_KEYS, dropna=False).groups.items():
         idx_arr = np.asarray(list(idx), dtype=int)
+        fids = sorted_frames.loc[idx_arr, "frame_id"].to_numpy()
         x_vals = sorted_frames.loc[idx_arr, "x"].to_numpy(dtype=float)
         y_vals = sorted_frames.loc[idx_arr, "y"].to_numpy(dtype=float)
-        if method_used == "savgol":
-            x_smoothed[idx_arr] = _savgol_per_group(x_vals, window_frames, cfg.sg_poly_order)
-            y_smoothed[idx_arr] = _savgol_per_group(y_vals, window_frames, cfg.sg_poly_order)
-        elif method_used == "ema":
-            x_smoothed[idx_arr] = _ema_per_group(x_vals, cfg.ema_alpha)
-            y_smoothed[idx_arr] = _ema_per_group(y_vals, cfg.ema_alpha)
-        elif method_used == "butterworth":
-            x_smoothed[idx_arr] = _butterworth_per_group(x_vals, hz, cfg)
-            y_smoothed[idx_arr] = _butterworth_per_group(y_vals, hz, cfg)
-        else:
-            raise ValueError(f"smooth_frames: unsupported method={method_used!r}")
+        xs, ys = _smooth_positions_dense(fids, x_vals, y_vals, method_used, window_frames, cfg.sg_poly_order, cfg, hz)
+        x_smoothed[idx_arr] = xs
+        y_smoothed[idx_arr] = ys
 
     # F1b (ADR-106): smoothed-position STORAGE is float32, matching the float32 coordinate columns.
     sorted_frames["x_smoothed"] = x_smoothed.astype(np.float32)

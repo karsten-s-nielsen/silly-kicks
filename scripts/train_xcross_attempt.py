@@ -59,12 +59,22 @@ def _corpus_fingerprint(args) -> str:
     return corpus_fingerprint([(p, m, vis.get((p, m), "private")) for p, m in pairs])
 
 
-def _iter_matches_from_dir(data_dir: Path):
+def _iter_matches_from_dir(data_dir: Path, home_map: dict | None = None):
     for game_dir in sorted(p for p in data_dir.iterdir() if p.is_dir()):
         frames = pd.read_parquet(game_dir / "frames.parquet")
         actions = pd.read_parquet(game_dir / "actions.parquet")
         prov = str(frames["source_provider"].iloc[0]) if "source_provider" in frames.columns else "unknown"
-        yield prov, game_dir.name, actions, frames, frames["team_id"].dropna().iloc[0]
+        # xcross USES home to sign score_differential (PA-H1), so the first-team heuristic flips the
+        # sign on a match whose frames lead with the away team. A --home-teams map (keyed by game_id)
+        # overrides it; a pre-built tree from a flat generation carries no meta.json. (ADR: TF-65 C2.)
+        home = None
+        if home_map is not None:
+            gids = frames["game_id"].dropna()
+            if len(gids):
+                home = home_map.get(str(gids.iloc[0]))
+        if home is None:
+            home = frames["team_id"].dropna().iloc[0]
+        yield prov, game_dir.name, actions, frames, home
 
 
 def _source_key(item):
@@ -813,6 +823,13 @@ def main(argv=None) -> None:
     src = ap.add_mutually_exclusive_group(required=False)  # not required for --study/--assemble workers
     src.add_argument("--data-dir")
     src.add_argument("--providers")
+    ap.add_argument(
+        "--home-teams",
+        default=None,
+        help="Optional JSON {game_id: home_team_id} override for the --data-dir path. xcross signs "
+        "score_differential from HOME, so a tree built from a flat generation (no meta.json) needs this "
+        "to avoid the first-team sign-flip; falls back to the first non-ball team_id. (TF-65 C2.)",
+    )
     ap.add_argument("--output-dir")
     ap.add_argument("--n-trials", type=int, default=50)
     ap.add_argument("--max-per-provider", type=int, default=None)
@@ -1037,7 +1054,8 @@ def main(argv=None) -> None:
                 cache_dir=args.cache_dir,
             )
         else:
-            source, load = _iter_matches_from_dir(Path(args.data_dir)), None
+            home_map = json.loads(Path(args.home_teams).read_text()) if args.home_teams else None
+            source, load = _iter_matches_from_dir(Path(args.data_dir), home_map), None
         t0 = time.time()
         X, y, groups, providers, match_ids, probe_bundle = _extract(
             source,

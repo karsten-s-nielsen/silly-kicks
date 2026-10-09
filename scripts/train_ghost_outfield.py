@@ -146,6 +146,14 @@ def parse_args(argv=None):
     ap.add_argument("--output-dir", type=Path, default=Path("models"), help="Where to save the artifact")
     ap.add_argument("--actions-dir", type=Path, default=None, help="Optional: directory of SPADL actions parquets")
     ap.add_argument(
+        "--home-teams",
+        type=Path,
+        default=None,
+        help="Optional JSON {game_id: home_team_id} (the materialize home_teams.json). REQUIRED for a "
+        "FLAT for_each generation (no per-match meta.json) to sign score_diff correctly; falls back to "
+        "the meta.json sibling, then the first-team heuristic.",
+    )
+    ap.add_argument(
         "--variant",
         choices=["default", "position_only"],
         default="default",
@@ -201,9 +209,10 @@ def _actions_for(frames_path: Path, args) -> pd.DataFrame | None:
     return None
 
 
-def _home_team_for(frames_path: Path, frames: pd.DataFrame) -> int | str | None:
-    """The authoritative home team for the ``score_diff`` perspective: the ``meta.json`` sibling of a
-    tc3 cache frames parquet, else the first non-ball ``team_id``.
+def _home_team_for(frames_path: Path, frames: pd.DataFrame, home_map: dict | None = None) -> int | str | None:
+    """The authoritative home team for the ``score_diff`` perspective: a ``--home-teams`` map keyed by
+    ``game_id`` (a FLAT for_each generation has no per-match ``meta.json``), else the ``meta.json``
+    sibling of a tc3-tree frames parquet, else the first non-ball ``team_id``.
 
     ``score_diff`` is signed from HOME's perspective, so an arbitrary first-team fallback flips the
     sign on any match whose frame row order leads with the away team (measured on IDSSE:
@@ -211,6 +220,12 @@ def _home_team_for(frames_path: Path, frames: pd.DataFrame) -> int | str | None:
     score lookup --- orientation is GoalMap-based (ADR-055) --- so a wrong home corrupts the sign of
     one feature, never the geometry. Returns ``None`` on an all-ball / empty frame (the caller drops it).
     """
+    if home_map is not None:
+        gids = frames["game_id"].dropna()
+        if len(gids):
+            hv = home_map.get(str(gids.iloc[0]))
+            if hv is not None:
+                return hv
     meta = frames_path.parent / "meta.json"
     if meta.exists():
         try:
@@ -320,6 +335,8 @@ def main(argv=None):
 
     from scripts._driver import for_each, shard_path
 
+    home_map = json.loads(args.home_teams.read_text()) if args.home_teams else None
+
     def _items():
         yield from parquets
 
@@ -336,7 +353,7 @@ def main(argv=None):
             _actions_for(p, args),
             fs,
             n_rearguard=args.n_rearguard,
-            home_team_id=_home_team_for(p, frames),
+            home_team_id=_home_team_for(p, frames, home_map),
             subsample_fps=args.subsample_fps,
         )
 

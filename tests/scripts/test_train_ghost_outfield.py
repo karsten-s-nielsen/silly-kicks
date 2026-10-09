@@ -230,7 +230,25 @@ def test_actions_and_home_resolve_tc3_cache_layout(tmp_path):
     not sklearn_supports_training(),
     reason="bundled-weights fit needs scikit-learn in [1.9, 2)",
 )
-def test_train_ghost_outfield_main_smoke(tmp_path):
+def test_train_ghost_outfield_main_smoke(tmp_path, monkeypatch):
+    # Provenance is mocked dirty so the --allow-dirty stamping assertion is deterministic. The
+    # trainer reads git_provenance() at run time (function-local import from scripts._provenance),
+    # so a clean CI checkout would otherwise stamp run_tree_dirty=False and this test would fail.
+    # We assert the LOGIC -- the allow-dirty path records the dirty fact -- not the ambient tree.
+    import scripts._provenance as _provenance
+
+    monkeypatch.setattr(
+        _provenance,
+        "git_provenance",
+        lambda: {
+            "commit": "testcommit",
+            "tree_state": "dirty",
+            "dirty": True,
+            "dirty_files": ["uncommitted_wip.py"],
+            "platform": "test",
+            "machine": "test",
+        },
+    )
     data = tmp_path / "data"
     _write_tiny_corpus(data)
     out = tmp_path / "out"
@@ -261,7 +279,7 @@ def test_train_ghost_outfield_main_smoke(tmp_path):
     # Possession-conditioned (Option 2): both regimes reported, so the rest-defense (in-possession)
     # MAE is separable from the out-of-possession line.
     assert set(m["cv_mae_by_possession"]) == {"in_possession", "out_of_possession"}
-    assert m["run_tree_dirty"] is True  # ran with --allow-dirty; the fact is recorded, never laundered
+    assert m["run_tree_dirty"] is True  # provenance mocked dirty; stamping records the fact, not the ambient tree
 
 
 def test_publish_verify_only_and_contract_refusal(tmp_path):
@@ -321,3 +339,42 @@ def test_ghost_outfield_artifact_files_are_all_hub_allowlisted(tmp_path):
     assert not missing, f"ghost-outfield save() emits files not in the Hub allowlist: {sorted(missing)}"
     # (The shared publish_model_with_card seam -- create_repo + card-as-README staging -- is covered
     # in tests/scripts/test_hub_publish_guard.py.)
+
+
+# --------------------------------------------------------------------------- #
+# --home-teams override (TF-65 C2): a FLAT for_each generation has no meta.json
+# sibling, so _home_team_for must take the home from a game_id-keyed map, not the
+# first-team heuristic (which flips score_diff's sign).
+# --------------------------------------------------------------------------- #
+
+
+def _two_team_frames(game_id: str = "g7") -> pd.DataFrame:
+    # first non-ball team_id is "AWAY" -> the first-team fallback would pick AWAY
+    return pd.DataFrame(
+        {
+            "game_id": [game_id, game_id, game_id],
+            "is_ball": [True, False, False],
+            "team_id": [pd.NA, "AWAY", "HOME"],
+            "player_id": [pd.NA, "a", "b"],
+            "x": [0.0, 1.0, 2.0],
+            "y": [0.0, 3.0, 4.0],
+        }
+    )
+
+
+def test_home_team_for_prefers_home_map_over_first_team(tmp_path):
+    frames = _two_team_frames("g7")
+    p = tmp_path / "frames.parquet"  # no meta.json sibling (flat generation)
+    assert _home_team_for(p, frames, {"g7": "HOME"}) == "HOME"
+
+
+def test_home_team_for_falls_back_to_first_team_without_map(tmp_path):
+    frames = _two_team_frames("g7")
+    p = tmp_path / "frames.parquet"
+    assert _home_team_for(p, frames, None) == "AWAY"
+
+
+def test_home_team_for_falls_back_when_game_id_absent_from_map(tmp_path):
+    frames = _two_team_frames("g7")
+    p = tmp_path / "frames.parquet"
+    assert _home_team_for(p, frames, {"other_game": "X"}) == "AWAY"

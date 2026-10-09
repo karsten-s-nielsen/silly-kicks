@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-SmoothingMethod = Literal["savgol", "ema", "butterworth", None]
+SmoothingMethod = Literal["savgol", "ema", "butterworth", "kalman", None]
 # Cubic interpolation is intentionally NOT in the API surface for PR-S24.
 # Lakehouse review N3: the implementation only does linear math; "cubic" was
 # accepted in v1 but produced linear output. Restrict the Literal to linear-only
@@ -53,6 +53,17 @@ class PreprocessConfig:
     # original fields, leaving these to default) are unaffected.
     butterworth_cutoff_hz: float = 0.4
     butterworth_order: int = 3
+    # TF-65: soft plausibility-guard bounds (NaN + warn, never raise) and constant-acceleration
+    # Kalman/RTS noise params (used by smoothing_method="kalman" and the always-on uncertainty pass).
+    # Appended after the pre-existing fields so positional construction + the codegen are unaffected.
+    max_plausible_speed: float = 40.0
+    # PROVISIONAL (owner-approved 2026-10-09): 10 m/s^2 is a human-player bound and NaNs real ball-kick
+    # acceleration. Accel is not consumed downstream yet (gates TF-50) and SG accel is noise-dominated,
+    # so a single bound is acceptable for C1; re-tuned (ball-vs-player, or dropped) at the A/B / TF-50
+    # when accel is actually consumed and a cleaner-accel smoother is chosen.
+    max_plausible_accel: float = 10.0
+    kalman_jerk_std: float = 4.0
+    kalman_meas_noise_m: float = 0.15
     # Provenance flag -- set by default() factory only. Excluded from __eq__/__hash__/repr
     # so two configs with the same field values are still equal regardless of which
     # factory built them. Read via is_default() (flag-based, NOT value-equality --
@@ -78,6 +89,12 @@ class PreprocessConfig:
             raise ValueError("PreprocessConfig: butterworth_cutoff_hz must be > 0")
         if self.butterworth_order < 1:
             raise ValueError("PreprocessConfig: butterworth_order must be >= 1")
+        if self.max_plausible_speed <= 0:
+            raise ValueError("PreprocessConfig: max_plausible_speed must be > 0")
+        if self.max_plausible_accel <= 0:
+            raise ValueError("PreprocessConfig: max_plausible_accel must be > 0")
+        if self.kalman_jerk_std <= 0 or self.kalman_meas_noise_m <= 0:
+            raise ValueError("PreprocessConfig: kalman_jerk_std and kalman_meas_noise_m must be > 0")
 
     @classmethod
     def default(cls, *, force_universal: bool = False) -> PreprocessConfig:
