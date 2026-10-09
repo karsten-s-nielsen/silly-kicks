@@ -46,7 +46,7 @@ jobs:
       - run: pyright
 
   # Duration-sharded test matrix. Ubuntu and windows shard INDEPENDENTLY (ADR-074 amendment): windows
-  # runs ~2.4x ubuntu on this suite, so it gets MORE shards (16) than ubuntu (6) -- more runners where
+  # runs ~2.4x ubuntu on this suite, so it gets MORE shards (18) than ubuntu (10) -- more runners where
   # the bottleneck is, with NO test dropped from either OS. Each leg balances on its OWN CI-measured
   # durations file (.test_durations.ubuntu / .test_durations.windows via `--durations-path`); the former
   # single ubuntu/windows blended .test_durations is retired (it could not flatten both legs at once).
@@ -57,8 +57,8 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-        # N_ubuntu=6, kept consistent with `--splits 6` by tests/test_ci_shard_wiring.py.
-        shard: [1, 2, 3, 4, 5, 6]
+        # N_ubuntu=10, kept consistent with `--splits 10` by tests/test_ci_shard_wiring.py.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     env:
       # Strict mode (PR-S22 / ADR-006): promote the in-converter direction-of-play invariant AND the
       # input-convention validator's on_mismatch from warn to raise. See feedback_home_team_id_heuristic_fragile.
@@ -86,7 +86,7 @@ jobs:
       # Bulk suite, DURATION-SHARDED. `-p no:randomly` pins collection order (the partition is only valid if
       # every shard collects identically); balanced by the committed .test_durations.ubuntu. Slow-test gating
       # (ADR-023): the `not e2e and not slow` selection; the @slow tail runs once in the dedicated `slow` job.
-      - run: pytest tests/ -m "not e2e and not slow" --splits 6 --group ${{ matrix.shard }} --durations-path .test_durations.ubuntu --splitting-algorithm least_duration -p no:randomly --benchmark-skip --tb=short --durations=25
+      - run: pytest tests/ -m "not e2e and not slow" --splits 10 --group ${{ matrix.shard }} --durations-path .test_durations.ubuntu --splitting-algorithm least_duration -p no:randomly --benchmark-skip --tb=short --durations=25
       # Public-API doctest (PR-S124), version-sensitive repr -> runs on EVERY leg, but NOT sharded, so shard 1
       # only (once per leg). Gated by test_ci_doctest_wired.py.
       - if: ${{ matrix.shard == 1 }}
@@ -106,7 +106,7 @@ jobs:
       # Node-ID lists for shard-reconcile. `shell: bash` for grep/sort. Each shard uploads its set; shard 1
       # also uploads the leg's FULL set (no --splits); reconcile asserts union(shards) == full, disjoint, per leg.
       - shell: bash
-        run: pytest tests/ -m "not e2e and not slow" --splits 6 --group ${{ matrix.shard }} --durations-path .test_durations.ubuntu --splitting-algorithm least_duration -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
+        run: pytest tests/ -m "not e2e and not slow" --splits 10 --group ${{ matrix.shard }} --durations-path .test_durations.ubuntu --splitting-algorithm least_duration -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: shard-nodeids-ubuntu-latest-${{ matrix.python-version }}-${{ matrix.shard }}
@@ -120,7 +120,7 @@ jobs:
           name: full-nodeids-ubuntu-latest-${{ matrix.python-version }}
           path: full-nodeids.txt
 
-  # Windows leg, sharded x16 (vs ubuntu x6) -- windows runs ~2.4x ubuntu, so more shards keep its per-shard
+  # Windows leg, sharded x18 (vs ubuntu x10) -- windows runs ~2.4x ubuntu, so more shards keep its per-shard
   # wall-clock near ubuntu's. Only python 3.12 on windows (3.10/3.11 were always excluded). Balanced on
   # .test_durations.windows. Same steps as test-ubuntu; artifact names carry the literal windows-latest-3.12
   # leg so shard-reconcile's "<os>-<py>" parse is unchanged.
@@ -129,8 +129,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # N_windows=16, kept consistent with `--splits 16` by tests/test_ci_shard_wiring.py.
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        # N_windows=18, kept consistent with `--splits 18` by tests/test_ci_shard_wiring.py.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     env:
       SILLY_KICKS_ASSERT_INVARIANTS: "1"
       NUMBA_CACHE_DIR: ${{ github.workspace }}/.numba_cache
@@ -148,7 +148,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv pip install -e ".[kloppy,xgboost,test]"
-      - run: pytest tests/ -m "not e2e and not slow" --splits 16 --group ${{ matrix.shard }} --durations-path .test_durations.windows --splitting-algorithm least_duration -p no:randomly --benchmark-skip --tb=short --durations=25
+      - run: pytest tests/ -m "not e2e and not slow" --splits 18 --group ${{ matrix.shard }} --durations-path .test_durations.windows --splitting-algorithm least_duration -p no:randomly --benchmark-skip --tb=short --durations=25
       - if: ${{ matrix.shard == 1 }}
         run: pytest --doctest-modules silly_kicks/ --ignore-glob="*/_[!_]*.py" --tb=short
       - if: ${{ matrix.shard == 1 }}
@@ -161,7 +161,7 @@ jobs:
           name: pandas-major-windows-latest-3.12
           path: pandas-major.txt
       - shell: bash
-        run: pytest tests/ -m "not e2e and not slow" --splits 16 --group ${{ matrix.shard }} --durations-path .test_durations.windows --splitting-algorithm least_duration -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
+        run: pytest tests/ -m "not e2e and not slow" --splits 18 --group ${{ matrix.shard }} --durations-path .test_durations.windows --splitting-algorithm least_duration -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: shard-nodeids-windows-latest-3.12-${{ matrix.shard }}
@@ -335,8 +335,8 @@ jobs:
           path: combined/
       - name: Shards must PARTITION each leg's suite (union == full, pairwise-disjoint)
         env:
-          UBUNTU_SPLITS: "6"    # per-leg shard counts; test_ci_shard_wiring.py pins each axis to 1..N
-          WINDOWS_SPLITS: "16"
+          UBUNTU_SPLITS: "10"    # per-leg shard counts; test_ci_shard_wiring.py pins each axis to 1..N
+          WINDOWS_SPLITS: "18"
         run: |
           python - <<'PY'
           import os, pathlib, sys

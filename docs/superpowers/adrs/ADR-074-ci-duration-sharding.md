@@ -91,7 +91,7 @@ B-Windows) is the recorded next lever if latency/cost later warrant it.
 
 ### Known limits (stated, not discovered)
 - **Windows runs ~2.4x ubuntu and is EXEC-bound** (pip install is now ~22s warm via uv, a minor part);
-  ASYMMETRIC sharding is the lever — `test-windows` gets `--splits 16` vs `test-ubuntu`'s `--splits 6`, so
+  ASYMMETRIC sharding is the lever — `test-windows` gets `--splits 18` vs `test-ubuntu`'s `--splits 10`, so
   more runners land where the 2.4x is. The numba/pip caches still matter (cold-cache first run sits higher).
 - Durations are PER-OS: `.test_durations.ubuntu` (test-ubuntu + slow) and `.test_durations.windows`
   (test-windows), each CI-measured on its own OS, so every leg is balanced DIRECTLY — no cross-OS blend.

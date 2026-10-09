@@ -22,8 +22,8 @@ which is enough noise to hide the real ones. `pyright` runs **bare** (config-dri
 neither tool is on PATH — use `python -m`.
 
 CI **duration-shards** the bulk suite across parallel jobs via `pytest-split` (ADR-074). Ubuntu and
-windows shard INDEPENDENTLY (asymmetric sharding): `test-ubuntu` runs `--splits 6` (matrix
-`python × shard[1..6]`), `test-windows` runs `--splits 16` — windows runs ~2.4× ubuntu on this suite, so
+windows shard INDEPENDENTLY (asymmetric sharding): `test-ubuntu` runs `--splits 10` (matrix
+`python × shard[1..10]`), `test-windows` runs `--splits 18` — windows runs ~2.4× ubuntu on this suite, so
 it gets more shards to keep its per-shard wall-clock near ubuntu's, with NO test dropped from either OS.
 Each shard runs on its own runner (the `xdist -n auto` memory-kill on the 4-core/7GB runners is why
 intra-job parallelism was reverted). Each leg balances on its OWN committed durations file via
