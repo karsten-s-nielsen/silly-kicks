@@ -22,6 +22,9 @@ _COORD_LITERALS = {"x", "y", "z", "x_smoothed", "y_smoothed"}
 _KERNEL_DIRS = (
     Path("silly_kicks/tracking"),
     Path("silly_kicks/tracking/pitch_control"),
+    Path("silly_kicks/tracking/preprocess"),
+    Path("silly_kicks/coordination"),
+    Path("silly_kicks/coordination/_kernels"),  # nested; non-recursive glob needs it explicit (TF-58)
 )
 
 # (module_path, reason). A coord read that legitimately need not upcast (e.g. it is immediately
@@ -33,7 +36,8 @@ def _kernel_files() -> list[Path]:
     out: list[Path] = []
     for d in _KERNEL_DIRS:
         out.extend(p for p in d.glob("*.py") if not p.name.startswith("__"))
-    # dedupe (pitch_control is nested under tracking's glob is *.py non-recursive, so no overlap)
+    # dedupe: every glob is *.py non-recursive, so nested entries (pitch_control, preprocess,
+    # coordination/_kernels) never overlap their parent dir's files -- set() is belt-and-braces.
     return sorted(set(out))
 
 

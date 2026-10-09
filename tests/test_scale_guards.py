@@ -1028,3 +1028,150 @@ def test_elastic_align_is_subquadratic():
         return c["n"]
 
     assert_subquadratic_growth(measure, sizes=(32, 64, 128), label="elastic_align")
+
+
+# ============================ TF-58 coordination (ADR-073) ============================
+def _coord_multi_game_frames(n_games: int):
+    from tests.coordination._fixtures import make_coordination_match
+
+    parts = []
+    for gi in range(n_games):
+        g = make_coordination_match(seconds=2.0, hz=10.0, n_outfield=4, seed=58 + gi).copy()
+        g["game_id"] = gi + 1
+        g["frame_id"] = g["frame_id"] + gi * 100_000
+        parts.append(g)
+    return pd.concat(parts, ignore_index=True)
+
+
+def _coord_params():
+    import dataclasses
+
+    from silly_kicks.coordination._config import CoordinationParams
+
+    return dataclasses.replace(CoordinationParams(), n_surrogates=0, welch_segment_s=20.0)
+
+
+def _measure_coord_signals(n_games: int) -> int:
+    from silly_kicks.coordination._signals import build_coordination_signals
+    from silly_kicks.coordination._windows import period_windows
+
+    frames = _coord_multi_game_frames(n_games)
+    windows = period_windows(frames)
+    params = _coord_params()
+    with rows_scanned_counter() as c:
+        build_coordination_signals(frames, windows=windows, params=params)
+    return c["n"]
+
+
+#: The guard and its mandatory rescan companion share ONE ladder and ONE threshold, or the pair proves nothing.
+#: Measured 2026-09-28 (games -> rows scanned): real 3,963 rows/game, exponent 1.000 on every ladder; rescan shim
+#: 1.486 on (8, 16, 32) but 1.566 on (8, 64) and 1.649 on (16, 32, 64). The per-game linear work grew after the
+#: guard was written (detected_mask wiring), diluting the shim's quadratic term at small sizes until 1.486 slipped
+#: under 1.5; larger sizes let the quadratic term dominate (-> 2), so the separation is structural, not tuned.
+_COORD_SIGNALS_LADDER = (16, 32, 64)
+_COORD_SIGNALS_MAX_EXPONENT = 1.2
+
+
+def test_build_coordination_signals_is_subquadratic():
+    assert_subquadratic_growth(
+        _measure_coord_signals,
+        sizes=_COORD_SIGNALS_LADDER,
+        max_exponent=_COORD_SIGNALS_MAX_EXPONENT,
+        label="build_coordination_signals",
+    )
+
+
+def test_build_coordination_signals_rescan_goes_superlinear(monkeypatch):
+    # MANDATORY companion (ADR-073): a rescan shim in place of group_rows (full-frame boolean mask per .get)
+    # makes the per-(game,period) lookup O(games^2) -> the same counter that passes above must FAIL here,
+    # proving it discriminates the fix from the regression.
+    import silly_kicks.coordination._signals as S
+
+    real = S.group_rows
+
+    def _rescan_group_rows(df, keys):
+        real(df, keys)  # keep the real call's cost/behaviour available
+
+        class _Shim:
+            def get(self, *vals):
+                mask = pd.Series(True, index=df.index)
+                for k, v in zip(keys, vals, strict=False):
+                    mask &= df[k] == v
+                return df[mask]
+
+        return _Shim()
+
+    monkeypatch.setattr(S, "group_rows", _rescan_group_rows)
+    with pytest.raises(AssertionError):
+        assert_subquadratic_growth(
+            _measure_coord_signals,
+            sizes=_COORD_SIGNALS_LADDER,
+            max_exponent=_COORD_SIGNALS_MAX_EXPONENT,
+            label="coord_signals_rescan",
+        )
+
+
+def test_relative_phase_is_linear_in_pairs():
+    from itertools import product
+
+    import silly_kicks.coordination._compute as CC
+    from silly_kicks.coordination._catalog import PairSpec
+    from silly_kicks.coordination._columns import COORD_SIGNALS
+    from silly_kicks.coordination._signals import build_coordination_signals
+    from silly_kicks.coordination._windows import period_windows
+    from tests.coordination._fixtures import make_coordination_match
+
+    team_sigs = [s for s in COORD_SIGNALS if COORD_SIGNALS[s].scope == "team" and s != "possession"]
+    all_pairs = [PairSpec("team_team", a, b, "canonical") for a, b in product(team_sigs, team_sigs)]
+    assert len(all_pairs) >= 128, f"need >= 128 team_team pairs, have {len(all_pairs)}"
+
+    frames = make_coordination_match(seconds=180.0, hz=10.0, provider="sportec")
+    signals = build_coordination_signals(frames, windows=period_windows(frames), params=_coord_params())
+
+    def measure(n):
+        mp = pytest.MonkeyPatch()
+        calls = call_counter(mp, CC, "circular_summary")
+        try:
+            CC.compute_relative_phase(signals, levels=["team_team"], pairs=all_pairs[:n])
+        finally:
+            mp.undo()
+        return calls["n"]
+
+    assert_subquadratic_growth(measure, sizes=(8, 32, 128), max_exponent=1.2, label="relative_phase_pairs")
+
+
+def test_cluster_surrogate_never_rescores_the_period_per_draw():
+    # R8 structural guard: the cluster-phase surrogate null re-scores ONLY the window rows, all draws at once
+    # (shifted_rho_group_means), so cluster_phase runs once per (period, team, axis) whatever the draw and window
+    # counts. The first build re-ran cluster_phase over the whole period per window x draw (9,162 calls, 108 s of a
+    # 128 s SkillCorner match).
+    import dataclasses
+
+    import silly_kicks.coordination._compute as CC
+    from silly_kicks.coordination._config import CoordinationParams
+    from silly_kicks.coordination._signals import build_coordination_signals
+    from silly_kicks.coordination._windows import period_windows
+    from tests.coordination._fixtures import make_coordination_match
+
+    frames = make_coordination_match(seconds=120.0, hz=10.0, provider="sportec")
+    windows = pd.concat([period_windows(frames), period_windows(frames, length_s=20.0, step_s=10.0)], ignore_index=True)
+    base = CoordinationParams()
+
+    def measure(n_surrogates: int) -> tuple[int, int]:
+        params = dataclasses.replace(
+            base, n_surrogates=n_surrogates, welch_segment_s=20.0, min_shift_s=dict.fromkeys(base.min_shift_s, 5.0)
+        )
+        signals = build_coordination_signals(frames, windows=windows, params=params)
+        mp = pytest.MonkeyPatch()
+        phase_calls = call_counter(mp, CC, "cluster_phase")
+        kernel_calls = call_counter(mp, CC, "shifted_rho_group_means")
+        try:
+            CC.compute_cluster_phase(signals)
+        finally:
+            mp.undo()
+        return phase_calls["n"], kernel_calls["n"]
+
+    few, many = measure(3), measure(19)
+    assert few[0] == many[0] == 4  # 1 period x 2 teams x 2 axes -- not windows x draws
+    assert many[1] > 0  # non-vacuity: the batched null actually ran
+    assert few[1] == many[1]  # one kernel call per scored (window, team, axis), independent of the draw count

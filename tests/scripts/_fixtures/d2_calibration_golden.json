@@ -1,0 +1,548 @@
+{
+  "__provenance__": "The current expected whole-calibration.json from plant_and_confirm (post ADR-113 per-variant split + ADR-114 OBJECTIVE_VERSION=3), by regenerate_d2_calibration_golden.py. This key is stripped before the byte-identity comparison. The per-variant-split identity is proven by the live differential tests, not this golden; see this file's docstring.",
+  "confirmation": {
+    "gate_cleared": false,
+    "hypotheses_pass": false,
+    "moved": true
+  },
+  "corpus_visibility": "sc_extended",
+  "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0",
+  "fallback_reason": "the hypotheses gate did not pass; Tier-B values stand",
+  "hypotheses": {
+    "H1": {
+      "longitudinal_circ_mean_deg": NaN,
+      "n_halves": 0,
+      "p_value": NaN,
+      "pass": false,
+      "share_x_gt_y": NaN
+    },
+    "H2": {
+      "median_abs_lag_s": NaN,
+      "n": 0,
+      "pass": false,
+      "positive_share": NaN
+    },
+    "H3": {
+      "p_anti_phase": NaN,
+      "p_attack_phase": NaN,
+      "pass": false
+    },
+    "H4": {
+      "below_ceiling_share": NaN,
+      "by_signal": {},
+      "p_first_gt_second": NaN,
+      "pass": false
+    },
+    "H5": {
+      "n_halves": 0,
+      "p_x_gt_y": NaN,
+      "pass": false,
+      "possession_tost_equivalent": false,
+      "share_x_gt_y": NaN,
+      "tost_p_lower": NaN,
+      "tost_p_upper": NaN
+    },
+    "H6": {
+      "pass": null,
+      "quartiles_x": [
+        NaN,
+        NaN,
+        NaN
+      ],
+      "quartiles_y": [
+        NaN,
+        NaN,
+        NaN
+      ]
+    },
+    "H7": {
+      "bc_share": NaN,
+      "pass": false,
+      "surrogate_95": NaN,
+      "switch_share": NaN
+    }
+  },
+  "input_contract": {
+    "affected_families": {
+      "butterworth_cutoff_hz": [
+        "relative_phase",
+        "cross_correlation",
+        "vector_coding",
+        "coherence",
+        "spectral",
+        "cluster",
+        "team_sync",
+        "rsi"
+      ],
+      "max_detection_gap_s": [
+        "relative_phase",
+        "cross_correlation",
+        "vector_coding",
+        "coherence",
+        "spectral",
+        "cluster",
+        "team_sync",
+        "rsi"
+      ],
+      "min_observed_fraction": [
+        "relative_phase",
+        "cross_correlation",
+        "vector_coding",
+        "coherence",
+        "spectral",
+        "cluster",
+        "team_sync",
+        "rsi"
+      ],
+      "vc_epsilon": [
+        "vector_coding"
+      ],
+      "welch_segment_s": [
+        "coherence"
+      ]
+    },
+    "baseline": {
+      "butterworth_cutoff_hz": 1.0,
+      "max_detection_gap_s": 1.0,
+      "min_observed_fraction": 0.0,
+      "vc_epsilon": 1.0,
+      "welch_segment_s": 1.0
+    },
+    "digest": "0af8eaba9d5f22b9e311019a8de40cc48effd254fa33385d8c51f2d7b0dcc7bf",
+    "driver": "calibrate_coordination",
+    "family_columns": {
+      "cluster": [
+        "cluster_team",
+        "team_id",
+        [
+          "coord_rho_group_mean"
+        ]
+      ],
+      "coherence": [
+        "pair",
+        "team_a_id",
+        [
+          "coord_coh_band_mean"
+        ]
+      ],
+      "cross_correlation": [
+        "pair",
+        "team_a_id",
+        [
+          "coord_xc_max_abs_r"
+        ]
+      ],
+      "relative_phase": [
+        "pair",
+        "team_a_id",
+        [
+          "coord_rp_resultant_length",
+          "coord_rp_pct_near_in_phase"
+        ]
+      ],
+      "rsi": [
+        "rsi",
+        "",
+        []
+      ],
+      "spectral": [
+        "spectral",
+        "team_id",
+        [
+          "coord_median_freq_cpm"
+        ]
+      ],
+      "team_sync": [
+        "team_sync",
+        "",
+        []
+      ],
+      "vector_coding": [
+        "pair",
+        "team_a_id",
+        [
+          "coord_vc_pct_in_phase",
+          "coord_vc_pct_anti_phase"
+        ]
+      ]
+    },
+    "geometry_version": "goal-relative-2",
+    "min_effect_size": 0.005,
+    "objective_version": "3",
+    "sweep": {
+      "butterworth_cutoff_hz": [
+        0.5,
+        0.67,
+        0.8,
+        1.0,
+        1.25,
+        1.5,
+        2.0
+      ],
+      "max_detection_gap_s": [
+        0.5,
+        0.75,
+        1.0,
+        1.5,
+        2.0
+      ],
+      "min_observed_fraction": [
+        -0.2,
+        -0.1,
+        0.0,
+        0.1,
+        0.2,
+        0.3
+      ],
+      "vc_epsilon": [
+        0.5,
+        0.75,
+        1.0,
+        1.5,
+        2.0
+      ],
+      "welch_segment_s": [
+        0.5,
+        0.75,
+        1.0,
+        1.5,
+        2.0
+      ]
+    },
+    "version": 1
+  },
+  "joint_point": {
+    "butterworth_cutoff_hz": 1.0,
+    "max_detection_gap_s": 1.0,
+    "min_observed_fraction": 0.0,
+    "vc_epsilon": 1.0,
+    "welch_segment_s": 1.5
+  },
+  "moved_multipliers": {
+    "welch_segment_s": {
+      "multiplier": 1.5
+    }
+  },
+  "objective_ids": {
+    "confirm": "calibrate_coordination:d0059b76db1ed452",
+    "oat": "calibrate_coordination:582146682c5a01e2"
+  },
+  "population": {
+    "baseline": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__baseline",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    },
+    "butterworth_cutoff_hz=0.5": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__butterworth_cutoff_hz__0p5",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    },
+    "butterworth_cutoff_hz=0.67": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__butterworth_cutoff_hz__0p67",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    },
+    "butterworth_cutoff_hz=0.8": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__butterworth_cutoff_hz__0p8",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    },
+    "butterworth_cutoff_hz=1.25": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__butterworth_cutoff_hz__1p25",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    },
+    "butterworth_cutoff_hz=1.5": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__butterworth_cutoff_hz__1p5",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    },
+    "butterworth_cutoff_hz=2.0": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__butterworth_cutoff_hz__2p0",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    },
+    "max_detection_gap_s=0.5": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__max_detection_gap_s__0p5",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    },
+    "max_detection_gap_s=0.75": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__max_detection_gap_s__0p75",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    },
+    "max_detection_gap_s=1.5": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__max_detection_gap_s__1p5",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    },
+    "max_detection_gap_s=2.0": {
+      "consistent": {
+        "derivation_sha256": "fc3be792b099ea48e62333f6859afd89b3d9701a7d5602fe220ca3253d8002a0"
+      },
+      "excluded_keys": [],
+      "generation": "g1",
+      "n_attempted": 10,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_listed": 10,
+      "n_produced": 10,
+      "n_workers": 1,
+      "partitions": [
+        "all"
+      ],
+      "pass": "layer_a__max_detection_gap_s__2p0",
+      "population_checked_against": "unpartitioned_listing",
+      "population_digest": "b889b37ee8890872"
+    }
+  },
+  "selections": {
+    "butterworth_cutoff_hz": {
+      "effect_size": null,
+      "incumbent": {
+        "label": "baseline",
+        "mean": 0.7566071340690245
+      },
+      "moved": false,
+      "paired_se": null,
+      "reason": "no candidate cleared both the effect-size floor and the paired-SE test",
+      "selected": {
+        "label": "baseline",
+        "mean": 0.7566071340690245,
+        "params": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": 0.0,
+          "vc_epsilon": 1.0,
+          "welch_segment_s": 1.0
+        }
+      }
+    },
+    "max_detection_gap_s": {
+      "effect_size": null,
+      "incumbent": {
+        "label": "baseline",
+        "mean": 0.7566071340690245
+      },
+      "moved": false,
+      "paired_se": null,
+      "reason": "no candidate cleared both the effect-size floor and the paired-SE test",
+      "selected": {
+        "label": "baseline",
+        "mean": 0.7566071340690245,
+        "params": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": 0.0,
+          "vc_epsilon": 1.0,
+          "welch_segment_s": 1.0
+        }
+      }
+    },
+    "min_observed_fraction": {
+      "effect_size": null,
+      "incumbent": {
+        "label": "baseline",
+        "mean": 0.7566071340690245
+      },
+      "moved": false,
+      "paired_se": null,
+      "reason": "no candidate cleared both the effect-size floor and the paired-SE test",
+      "selected": {
+        "label": "baseline",
+        "mean": 0.7566071340690245,
+        "params": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": 0.0,
+          "vc_epsilon": 1.0,
+          "welch_segment_s": 1.0
+        }
+      }
+    },
+    "vc_epsilon": {
+      "effect_size": null,
+      "incumbent": {
+        "label": "baseline",
+        "mean": 0.7566071340690245
+      },
+      "moved": false,
+      "paired_se": null,
+      "reason": "no candidate cleared both the effect-size floor and the paired-SE test",
+      "selected": {
+        "label": "baseline",
+        "mean": 0.7566071340690245,
+        "params": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": 0.0,
+          "vc_epsilon": 1.0,
+          "welch_segment_s": 1.0
+        }
+      }
+    },
+    "welch_segment_s": {
+      "effect_size": 0.24092541608893436,
+      "incumbent": {
+        "label": "baseline",
+        "mean": 0.7566071340690245
+      },
+      "moved": true,
+      "paired_se": 0.0754205673319022,
+      "reason": "candidate 'welch_segment_s=1.5' cleared both bars (gain 0.240925 > \u03b4, paired_se 0.0754206)",
+      "selected": {
+        "label": "welch_segment_s=1.5",
+        "mean": 0.9975325501579588,
+        "params": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": 0.0,
+          "vc_epsilon": 1.0,
+          "welch_segment_s": 1.5
+        }
+      }
+    }
+  }
+}

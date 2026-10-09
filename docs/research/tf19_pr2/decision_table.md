@@ -37,7 +37,7 @@ column as current.
 ## Source data
 
 Authoritative numbers below were read directly from the DGX training box
-(`karsten@192.168.68.73:~/Development/sk_stageB_448/xcross/xcross_attempt_v1/metrics.json`)
+(`karsten@192.168.68.73:<stageB>/xcross/xcross_attempt_v1/metrics.json`)
 during this PR, not relayed from memory. The bundled `silly_kicks/tracking/_xcross_weights/default/metrics.json`
 (Stage A, `public`) was cross-checked against the repository worktree and independently
 reproduces the Stage A figures below.

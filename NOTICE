@@ -444,6 +444,44 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   scores positioning_gap = threat(actual) - threat(reachable optimum) >= 0 per defensive frame, at
   frame/team grain. Additive; a compute_* (not an add_*); in no default xfn list; ships no weights.
 
+- Team-coordination dynamics (relative phase, cross-correlation, vector coding, spectral median frequency, coherence,
+  cluster phase, relative stretch index) and their signal preparation and surrogate baselines.
+  Attribution: Bourbousson, Seve & McGarry (2010); Folgado et al. (2014); Moura et al. (2016); Sparrow et al. (1987); Chang, Van Emmerik & Hamill (2008); Moura et al. (2013); Moura et al. (2012); Welch (1967); Carter (1987); Richardson et al. (2012); Frank & Richardson (2010); Duarte et al. (2013); Richman & Moorman (2000); Pfister et al. (2013); Lamb & Stockl (2014); Mardia & Jupp (2000); Schreiber & Schmitz (2000); Winter (2009).
+  Used by: silly_kicks.coordination (TF-58); silly_kicks.tracking.preprocess (residual_analysis_cutoff and the
+  zero-phase Butterworth); silly_kicks.tracking._collective (team spread).
+  Each method against the source that supplies it:
+  - Relative phase: the Hilbert analytic signal of the centred segment (Lamb & Stockl 2014); per-axis team-team
+    relative phase wrapped to +-180 deg, its 12 x 30 deg histogram (Bourbousson, Seve & McGarry 2010, Part 2; Part 1
+    is cited for the player-dyad level); the % of time within +-30 deg, "near in-phase" (Folgado et al. 2014);
+    circular mean, mean resultant length and circular SD (Mardia & Jupp 2000). The relative-phase circular-mean,
+    resultant-length and circular-SD columns credit Bourbousson, Seve & McGarry (2010); Mardia & Jupp (2000).
+  - Lagged cross-correlation of team signals over +-15 s, its peak |r| and lag (Moura et al. 2016).
+  - Vector coding: the four-quadrant coupling angle and its four coordination patterns (Sparrow et al. 1987;
+    Chang, Van Emmerik & Hamill 2008), as applied to team signals by Moura et al. (2016, Table 1).
+  - Spectral median frequency of the FFT power spectrum in cycles/min, including the possession series (Moura et
+    al. 2013); team spread as the Frobenius norm of the inter-player distance matrix (Moura et al. 2016, 2013).
+  - Magnitude-squared coherence from Welch-averaged spectra (Welch 1967), with the segment count reported because
+    coherence is biased upward when few segments are pooled (Carter 1987).
+  - Cluster phase: rho_k and rho_group (Richardson et al. 2012) and the Kuramoto order-parameter test statistic
+    (Frank & Richardson 2010), as applied to football with rho mean / SD / sample entropy, team-team Pearson r and
+    cross-sample entropy (Duarte et al. 2013); sample entropy and cross-sample entropy (Richman & Moorman 2000).
+  - Relative stretch index SI_A - SI_B, its sign and sign-switch rate (Bourbousson, Seve & McGarry 2010); the
+    bimodality coefficient of its distribution (Pfister et al. 2013).
+  - Signal preparation: the zero-phase Butterworth with its residual-analysis cutoff and dual-pass correction
+    (Winter 2009); the 0.4 Hz low-pass band for team signals (Moura et al. 2016, 2013) and the 3 Hz band for player
+    signals (Folgado et al. 2014); the exclusion of dead-ball stoppages longer than 25 s (Duarte et al. 2013).
+  - Surrogate baselines: circular time-shift and IAAFT surrogates (Schreiber & Schmitz 2000); the surrogate-based
+    chance level for synchrony (Richardson et al. 2012).
+  Descriptive; a compute_* (not an add_*); in no default xfn list; ships no weights. DataGoal (Bedo et al. 2026,
+  MATLAB, Apache-2.0) was a cross-check only; no code was ported.
+
+- Exact geometric orientation predicate (convex-hull area / collinearity), shared collective kernel.
+  Attribution: Shewchuk, J. R. (1997), "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates", Discrete & Computational Geometry 18(3):305-363.
+  Used by: silly_kicks.tracking._collective (the hull-area angular-gap orientation test; TF-58 / ADR-005).
+  The exact 2D orientation sign uses Shewchuk's ccwerrboundA adaptive error bound with a fractions.Fraction
+  fallback, so a near-collinear hull vertex is classified deterministically (an exactly-zero orientation
+  determinant -> 0.0 area) rather than by a float tolerance.
+
 - Territorial defense (SB360 counterfactual) -- DEMOTED to experimental (ADR-090).
   Attribution: Fernandez & Bornn 2018 (pitch control / marginal player value); Le et al. 2017 (data-driven ghosting).
   Used by: silly_kicks.territorial_defense._arms (TF-54b) -- PRIVATE (demoted; no public surface).

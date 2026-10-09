@@ -35,6 +35,7 @@ def test_stage1_smoke_returns_result(stage1_fold, tmp_path):
         store_path=str(tmp_path / "s1.db"),
         xt=None,
         carrier_params=None,
+        objective_id="test-objective",
     )
     assert result.best is not None
     assert "carrier_accuracy" in result.best.metrics
@@ -56,6 +57,7 @@ def test_stage2_smoke_accepts_frozen_xt_artifact(stage2_fold, frozen_xt, tmp_pat
         store_path=str(tmp_path / "s2.db"),
         xt=frozen_xt,  # FrozenXt artifact — exactly what main() passes (NOT frozen_xt.xt)
         carrier_params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0},
+        objective_id="test-objective",
     )
     assert result.best is not None
     assert math.isfinite(result.best.metrics["brier"])

@@ -7,7 +7,7 @@ add_off_ball_runs(pre_seconds=1.5, min_displacement_m=3.0).
 Examples
 --------
 >>> from silly_kicks.calibration._spaces import stage1_config, stage2_config
->>> cfg = stage2_config(n_trials=60, store_path="tc3_stage2.db")
+>>> cfg = stage2_config(n_trials=60, store_path="tc3_stage2.db", objective_id="test-objective")
 >>> cfg.metric
 'brier'
 """
@@ -22,7 +22,9 @@ from ruthless.config.common import StoreConfig
 from silly_kicks.xthreat import GridSpec
 
 
-def stage1_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "random"] = "tpe") -> OptunaConfig:
+def stage1_config(
+    *, n_trials: int, store_path: str, objective_id: str, sampler: Literal["tpe", "random"] = "tpe"
+) -> OptunaConfig:
     """Stage 1 — carrier accuracy (maximize): beta, gamma.
 
     tolerance_m is held at DEFAULT_CARRIER_PARAMS — under-determined by this objective (ADR-060),
@@ -31,7 +33,7 @@ def stage1_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "ra
     Examples
     --------
     >>> from silly_kicks.calibration._spaces import stage1_config
-    >>> stage1_config(n_trials=10, store_path="/tmp/s1.db").metric
+    >>> stage1_config(n_trials=10, store_path="/tmp/s1.db", objective_id="test-objective").metric
     'carrier_accuracy'
     """
     return OptunaConfig(
@@ -45,17 +47,19 @@ def stage1_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "ra
             "gamma": FloatRange(kind="float", lo=0.0, hi=3.0),
         },
         warm_start={"beta": 0.5, "gamma": 1.0},
-        store=StoreConfig(kind="sqlite", path=store_path),
+        store=StoreConfig(kind="sqlite", path=store_path, objective_id=objective_id),
     )
 
 
-def stage2_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "random"] = "tpe") -> OptunaConfig:
+def stage2_config(
+    *, n_trials: int, store_path: str, objective_id: str, sampler: Literal["tpe", "random"] = "tpe"
+) -> OptunaConfig:
     """Stage 2 — augmented-VAEP held-out Brier (minimize): k3, pre_seconds, min_displacement_m.
 
     Examples
     --------
     >>> from silly_kicks.calibration._spaces import stage2_config
-    >>> stage2_config(n_trials=10, store_path="/tmp/s2.db").param_space["k3"].log
+    >>> stage2_config(n_trials=10, store_path="/tmp/s2.db", objective_id="test-objective").param_space["k3"].log
     True
     """
     return OptunaConfig(
@@ -70,7 +74,7 @@ def stage2_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "ra
             "min_displacement_m": FloatRange(kind="float", lo=1.0, hi=8.0),
         },
         warm_start={"k3": 1.0, "pre_seconds": 1.5, "min_displacement_m": 3.0},
-        store=StoreConfig(kind="sqlite", path=store_path),
+        store=StoreConfig(kind="sqlite", path=store_path, objective_id=objective_id),
     )
 
 
@@ -92,13 +96,15 @@ def grid_from_str(s: str) -> GridSpec:
     return GridSpec(n_zones_x=int(nx), n_zones_y=int(ny))
 
 
-def xt_bandwidth_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "random"] = "tpe") -> OptunaConfig:
+def xt_bandwidth_config(
+    *, n_trials: int, store_path: str, objective_id: str, sampler: Literal["tpe", "random"] = "tpe"
+) -> OptunaConfig:
     """SK-xT-3 — held-out xT transition-NLL sweep (minimize): bandwidth x adaptive x grid.
 
     Examples
     --------
     >>> from silly_kicks.calibration._spaces import xt_bandwidth_config
-    >>> xt_bandwidth_config(n_trials=10, store_path="/tmp/xt.db").metric
+    >>> xt_bandwidth_config(n_trials=10, store_path="/tmp/xt.db", objective_id="test-objective").metric
     'xt_holdout_nll'
     """
     return OptunaConfig(
@@ -113,5 +119,5 @@ def xt_bandwidth_config(*, n_trials: int, store_path: str, sampler: Literal["tpe
             "grid": Choice(kind="choice", choices=_GRIDS),
         },
         warm_start={"bandwidth": 1.0, "adaptive": True, "grid": "16x12"},
-        store=StoreConfig(kind="sqlite", path=store_path),
+        store=StoreConfig(kind="sqlite", path=store_path, objective_id=objective_id),
     )

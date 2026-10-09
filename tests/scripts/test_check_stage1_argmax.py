@@ -344,3 +344,22 @@ def test_fold_stability_verdict_flips_on_a_discriminating_fold_set():
     assert out["selection"]["moved"] is True
     assert out["fold_stability"]["verdict"] == "moved"
     assert selected["beta"] == 0.1 and selected["gamma"] == 0.3  # the artifact follows the move
+
+
+def test_the_metric_probe_takes_the_d21_helper_id(monkeypatch):
+    # plan Task 21 (D21): the probe builds a config only to read metric/direction, but still passes the helper's id --
+    # no StoreConfig site is special (it passed the literal "stage1-metric-probe").
+    import silly_kicks.calibration._spaces as spaces
+    from scripts.check_stage1_argmax import stage1_metric_and_direction
+
+    seen: dict = {}
+    real = spaces.stage1_config
+
+    def spy(**kwargs):
+        seen.update(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(spaces, "stage1_config", spy)
+    metric, _direction = stage1_metric_and_direction(prov={"commit": "abc", "dirty": False, "tree_state": "clean"})
+    assert metric == "carrier_accuracy"
+    assert seen["objective_id"].startswith("silly_kicks.calibration._carrier_objective.CarrierAccuracyObjective@abc:")

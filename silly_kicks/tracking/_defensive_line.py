@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks.id_compat import ids_match
+from silly_kicks.tracking._collective import back_line_batch, pack_groups
 from silly_kicks.tracking._gk_resolve import GoalEndUnresolvedError, GoalMap
 
 
@@ -201,98 +202,50 @@ def compute_defensive_line(
         return pd.DataFrame(columns=result_cols)
 
     # --- Core computation ---
-    # Filter to outfield players with valid coordinates
+    # Filter to outfield players with valid coordinates (x-valid only; NaN y propagates as before).
     outfield = frames[(~frames["is_ball"]) & (~frames["is_goalkeeper"]) & frames["x"].notna()].copy()
 
-    # Group by (game_id, period_id, frame_id, team_id)
-    rows: list[dict] = []
-    groups = outfield.groupby(["game_id", "period_id", "frame_id", "team_id"], dropna=False, observed=True)
-
-    for (game_id, period_id, frame_id, team_id), group in groups:
-        p = len(group)
-        if p < 3:
-            rows.append(
-                {
-                    "game_id": game_id,
-                    "period_id": period_id,
-                    "frame_id": frame_id,
-                    "team_id": team_id,
-                    "defensive_line_x": np.nan,
-                    "back_line_high_x": np.nan,
-                    "compactness_x": np.nan,
-                    "lateral_width": np.nan,
-                    "max_lateral_gap": np.nan,
-                    "back_n_count": pd.NA,
-                }
-            )
+    # Delegate the six back-line columns to the vectorised kernel (ADR D13, byte-identical). Group order
+    # (sort=True) matches the legacy iteration order. observed=True is deterministic across pandas majors.
+    gb = outfield.groupby(["game_id", "period_id", "frame_id", "team_id"], dropna=False, sort=True, observed=True)
+    codes = gb.ngroup().to_numpy()
+    key_tuples = gb.size().index.tolist()
+    pos, counts, _first = pack_groups(
+        codes,
+        outfield["x"].to_numpy(dtype="float64"),
+        outfield["y"].to_numpy(dtype="float64"),
+        len(key_tuples),
+    )
+    # Resolve the defended end ONCE per (game, period, team) with >= 3 players -- never per frame-team, never
+    # from team IDENTITY (`same_id(team_id, home_team_id)` silently inverts off home-attacks-right; ADR-051 D3).
+    # An unresolved end raises for the FIRST such group in key order, matching the legacy loop.
+    ends: dict[tuple, float | None] = {}
+    for i, k in enumerate(key_tuples):
+        if counts[i] < 3:
             continue
-
-        # Sort by proximity to own goal. Direction comes from the GoalMap, never from team
-        # IDENTITY: `same_id(team_id, home_team_id)` is correct only while the frames are
-        # home-attacks-right and silently inverts otherwise (ADR-051 D3).
-        own_end = goal_map.get(game_id, period_id, team_id, allow_guess=True)
-        if own_end is None:
-            # Explicit: `== 0.0` alone would fail OPEN, silently choosing 'defends x=0'.
+        gpt = (k[0], k[1], k[3])
+        if gpt not in ends:
+            ends[gpt] = goal_map.get(k[0], k[1], k[3], allow_guess=True)
+    for i, k in enumerate(key_tuples):
+        # Explicit `is None`: `== 0.0` alone would fail OPEN, silently choosing 'defends x=0'.
+        if counts[i] >= 3 and ends[(k[0], k[1], k[3])] is None:
             raise GoalEndUnresolvedError(
-                f"defensive line: goal_map does not resolve the end defended by {team_id!r} "
-                f"in (game={game_id!r}, period={period_id!r})."
+                f"defensive line: goal_map does not resolve the end defended by {k[3]!r} "
+                f"in (game={k[0]!r}, period={k[1]!r})."
             )
-        defends_x0 = own_end == 0.0
-        xs = group["x"].to_numpy(dtype="float64")
-        ys = group["y"].to_numpy(dtype="float64")
+    defends_x0 = np.array(
+        [counts[i] >= 3 and ends[(k[0], k[1], k[3])] == 0.0 for i, k in enumerate(key_tuples)],
+        dtype=bool,
+    )
+    bl = back_line_batch(pos, counts, defends_x0, n=n, adaptive_max_n=adaptive_max_n)
 
-        if defends_x0:
-            order = np.argsort(xs)  # ascending: closest to x=0 first
-        else:
-            order = np.argsort(-xs)  # descending: closest to x=105 first
-
-        xs_sorted = xs[order]
-        ys_sorted = ys[order]
-
-        # Determine N
-        n_effective = _select_n(xs_sorted, n, adaptive_max_n, p)
-
-        # Select back-line players
-        sel_x = xs_sorted[:n_effective]
-        sel_y = ys_sorted[:n_effective]
-
-        # Compute 6 columns
-        defensive_line_x = float(np.mean(sel_x))
-        compactness_x = float(np.max(sel_x) - np.min(sel_x))
-
-        if defends_x0:
-            back_line_high_x = float(np.max(sel_x))  # furthest from x=0
-        else:
-            back_line_high_x = float(np.min(sel_x))  # furthest from x=105
-
-        lateral_width = float(np.max(sel_y) - np.min(sel_y))
-
-        # max_lateral_gap: sort by y, compute adjacent gaps
-        y_sorted = np.sort(sel_y)
-        if len(y_sorted) >= 2:
-            y_gaps = np.diff(y_sorted)
-            max_lateral_gap = float(np.max(y_gaps))
-        else:
-            max_lateral_gap = 0.0
-
-        rows.append(
-            {
-                "game_id": game_id,
-                "period_id": period_id,
-                "frame_id": frame_id,
-                "team_id": team_id,
-                "defensive_line_x": defensive_line_x,
-                "back_line_high_x": back_line_high_x,
-                "compactness_x": compactness_x,
-                "lateral_width": lateral_width,
-                "max_lateral_gap": max_lateral_gap,
-                "back_n_count": n_effective,
-            }
-        )
-
-    result = pd.DataFrame(rows, columns=result_cols)
-    result["back_n_count"] = result["back_n_count"].astype("Int64")
-    return result
+    result = pd.DataFrame(key_tuples, columns=["game_id", "period_id", "frame_id", "team_id"])
+    for col in ("defensive_line_x", "back_line_high_x", "compactness_x", "lateral_width", "max_lateral_gap"):
+        result[col] = bl[col]
+    back_n = pd.array(bl["back_n_count"], dtype="Int64")
+    back_n[~bl["valid"]] = pd.NA  # count < 3 -> NA, matching the legacy per-frame NaN row
+    result["back_n_count"] = back_n
+    return result[result_cols]
 
 
 def _select_n(

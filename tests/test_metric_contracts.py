@@ -46,6 +46,49 @@ _PKG: dict[str, tuple[str, str, str, str | None]] = {
         "POSITIONING_METRIC_COLUMNS",
         "POSITIONING_SAMPLE_COLUMNS",
     ),
+    # TF-58 coordination: seven families exported from ONE package (one _PKG row per exported constant).
+    "coordination_pair": (
+        "silly_kicks.coordination",
+        "COORDINATION_PAIR_KEYS",
+        "COORDINATION_PAIR_METRIC_COLUMNS",
+        "COORDINATION_PAIR_COLUMNS",
+    ),
+    "coordination_pair_phase": (
+        "silly_kicks.coordination",
+        "COORDINATION_PAIR_PHASE_KEYS",
+        "COORDINATION_PAIR_PHASE_METRIC_COLUMNS",
+        "COORDINATION_PAIR_PHASE_COLUMNS",
+    ),
+    "coordination_spectral": (
+        "silly_kicks.coordination",
+        "COORDINATION_SPECTRAL_KEYS",
+        "COORDINATION_SPECTRAL_METRIC_COLUMNS",
+        "COORDINATION_SPECTRAL_COLUMNS",
+    ),
+    "coordination_cluster_team": (
+        "silly_kicks.coordination",
+        "COORDINATION_CLUSTER_TEAM_KEYS",
+        "COORDINATION_CLUSTER_TEAM_METRIC_COLUMNS",
+        "COORDINATION_CLUSTER_TEAM_COLUMNS",
+    ),
+    "coordination_cluster_player": (
+        "silly_kicks.coordination",
+        "COORDINATION_CLUSTER_PLAYER_KEYS",
+        "COORDINATION_CLUSTER_PLAYER_METRIC_COLUMNS",
+        "COORDINATION_CLUSTER_PLAYER_COLUMNS",
+    ),
+    "coordination_team_sync": (
+        "silly_kicks.coordination",
+        "COORDINATION_TEAM_SYNC_KEYS",
+        "COORDINATION_TEAM_SYNC_METRIC_COLUMNS",
+        "COORDINATION_TEAM_SYNC_COLUMNS",
+    ),
+    "coordination_rsi": (
+        "silly_kicks.coordination",
+        "COORDINATION_RSI_KEYS",
+        "COORDINATION_RSI_METRIC_COLUMNS",
+        "COORDINATION_RSI_COLUMNS",
+    ),
 }
 
 #: xsuccess is a VAEP rating method (TF-61) with no mart column-set -> deliberately not in the registry.
@@ -83,14 +126,28 @@ def _pkg_all(init_path: pathlib.Path) -> list[str]:
     return []
 
 
-def _packages_exporting_metric_columns() -> set[str]:
-    root = pathlib.Path(silly_kicks.__file__).parent
-    out: set[str] = set()
+def _metric_constants_exported(root: pathlib.Path) -> set[tuple[str, str]]:
+    """Every ``(package, constant)`` where ``constant`` is a ``*_METRIC_COLUMNS`` name in that package's
+    ``__all__`` (ADR-098 amendment: completeness is keyed PER exported constant, so a package exporting several
+    -- coordination's seven families -- is accounted for one family per constant, not once per package)."""
+    out: set[tuple[str, str]] = set()
     for sub in root.iterdir():
         init = sub / "__init__.py"
-        if sub.is_dir() and init.exists() and any(n.endswith("_METRIC_COLUMNS") for n in _pkg_all(init)):
-            out.add(sub.name)
+        if sub.is_dir() and init.exists():
+            out.update((sub.name, n) for n in _pkg_all(init) if n.endswith("_METRIC_COLUMNS"))
     return out
+
+
+def _completeness_diff(registered: set[tuple[str, str]], derived: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    return registered ^ derived
+
+
+def _registry_gap(library_families, pkg_families) -> set[str]:
+    """Families in the LIBRARY registry (``METRIC_CONTRACTS``) but not this test's ``_PKG`` table, or the reverse.
+
+    ``_PKG`` is what the exported-constant derivation is checked against; this ties the library registry to it, so
+    a family dropped from ``METRIC_CONTRACTS`` (ADR-098: "registers or the gate fails") cannot pass unnoticed."""
+    return set(library_families) ^ set(pkg_families)
 
 
 def test_public_metric_constants_importable():
@@ -139,10 +196,33 @@ def test_round_trip_to_package_constants():
         assert c["metric_columns"] == tuple(_attr(family, 2)), family
 
 
+def test_completeness_is_keyed_per_exported_constant_planted(tmp_path):
+    """ADR-098 amendment: the derived population is keyed PER exported ``*_METRIC_COLUMNS`` constant, so a
+    single package exporting several families is one enrollment per constant -- coordination's seven families
+    from one package cannot collapse to a single entry the way a per-package derivation would."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text('__all__ = ["A_KEYS", "A_METRIC_COLUMNS", "B_METRIC_COLUMNS"]\n', encoding="utf-8")
+    derived = _metric_constants_exported(tmp_path)
+    assert derived == {("pkg", "A_METRIC_COLUMNS"), ("pkg", "B_METRIC_COLUMNS")}
+    # a registry naming only ONE of the package's two constants is INCOMPLETE by exactly the other.
+    assert _completeness_diff({("pkg", "A_METRIC_COLUMNS")}, derived) == {("pkg", "B_METRIC_COLUMNS")}
+
+
+def test_library_registry_gap_detects_a_dropped_family_planted():
+    """Planted violation: a library registry missing one family is reported by exactly that family."""
+    dropped = next(iter(_PKG))
+    library = {f: c for f, c in METRIC_CONTRACTS.items() if f != dropped}
+    assert _registry_gap(library, _PKG) == {dropped}
+
+
 def test_completeness_three_bucket():
-    derived = _packages_exporting_metric_columns()
-    assert set(METRIC_CONTRACTS) == derived, set(METRIC_CONTRACTS) ^ derived
     root = pathlib.Path(silly_kicks.__file__).parent
+    assert not _registry_gap(METRIC_CONTRACTS, _PKG), _registry_gap(METRIC_CONTRACTS, _PKG)  # ADR-098 library leg
+    derived = _metric_constants_exported(root)
+    registered = {(module.rsplit(".", 1)[-1], metric_attr) for module, _k, metric_attr, _f in _PKG.values()}
+    assert not _completeness_diff(registered, derived), _completeness_diff(registered, derived)
+    assert len(registered) == len(_PKG)  # one family per exported constant; no two families share a key
     for name in _EXEMPT:
         init = root / name / "__init__.py"
         assert init.exists(), f"exempt package missing on disk: {name}"

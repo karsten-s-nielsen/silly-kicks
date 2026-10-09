@@ -64,13 +64,21 @@ def test_agents_md_exists():
     assert _AGENTS.is_file(), "AGENTS.md missing"
 
 
+def _agents_byte_len() -> int:
+    # Content bytes, EOL-normalized. The budget (`_CEILING_BYTES` = landed 24131 + 15%) was measured in
+    # LF; ``stat().st_size`` counts the extra ``\r`` on a CRLF checkout (Windows: ``autocrlf=true``, incl.
+    # the windows-latest CI leg), so identical content failed there while passing on Linux. ``read_text``
+    # universal-newline translation gives the same LF length on every platform.
+    return len(_agents_text().encode("utf-8"))
+
+
 def test_target_size():
-    n = _AGENTS.stat().st_size
+    n = _agents_byte_len()
     assert n <= _TARGET_BYTES, f"AGENTS.md {n} B > TARGET {_TARGET_BYTES} B (80% cut not achieved)"
 
 
 def test_ceiling_size():
-    n = _AGENTS.stat().st_size
+    n = _agents_byte_len()
     assert n <= _CEILING_BYTES, f"AGENTS.md {n} B > CEILING {_CEILING_BYTES} B (re-bloat)"
 
 

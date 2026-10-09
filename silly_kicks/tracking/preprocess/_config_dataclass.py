@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-SmoothingMethod = Literal["savgol", "ema", None]
+SmoothingMethod = Literal["savgol", "ema", "butterworth", None]
 # Cubic interpolation is intentionally NOT in the API surface for PR-S24.
 # Lakehouse review N3: the implementation only does linear math; "cubic" was
 # accepted in v1 but produced linear output. Restrict the Literal to linear-only
@@ -48,6 +48,11 @@ class PreprocessConfig:
     max_gap_seconds: float = 0.5
     derive_velocity: bool = True
     link_quality_high_threshold: float = 0.85
+    # TF-58: zero-phase Butterworth low-pass params (used only when smoothing_method="butterworth").
+    # Appended after the pre-existing fields so positional construction and the codegen (which emits only the
+    # original fields, leaving these to default) are unaffected.
+    butterworth_cutoff_hz: float = 0.4
+    butterworth_order: int = 3
     # Provenance flag -- set by default() factory only. Excluded from __eq__/__hash__/repr
     # so two configs with the same field values are still equal regardless of which
     # factory built them. Read via is_default() (flag-based, NOT value-equality --
@@ -69,6 +74,10 @@ class PreprocessConfig:
                 "smooth_frames). Either set smoothing_method='savgol'/'ema' or "
                 "derive_velocity=False."
             )
+        if self.butterworth_cutoff_hz <= 0:
+            raise ValueError("PreprocessConfig: butterworth_cutoff_hz must be > 0")
+        if self.butterworth_order < 1:
+            raise ValueError("PreprocessConfig: butterworth_order must be >= 1")
 
     @classmethod
     def default(cls, *, force_universal: bool = False) -> PreprocessConfig:

@@ -66,7 +66,7 @@ def test_objective_optuna_smoke_3_trials():
             "learning_rate": FloatRange(kind="float", lo=0.1, hi=0.5),
             "reg_lambda": FloatRange(kind="float", lo=0.0, hi=3.0),
         },
-        store=StoreConfig(kind="sqlite", path=db),
+        store=StoreConfig(kind="sqlite", path=db, objective_id="test-objective"),
     )
     result = OptunaStrategy(cfg, seed=42).run(obj, backend=InProcessBackend())
     assert result.best is not None
@@ -772,7 +772,20 @@ def test_paired_data_effect_three_arm_shape(monkeypatch, tmp_path):
     patched to fixed per-tag params so the shape is exercised without a real Optuna sweep."""
     import scripts.train_xshot_occurrence as tr
 
-    def _fake_hpo(x, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, seed=42, study_shard_dir=None):
+    def _fake_hpo(
+        x,
+        y,
+        groups,
+        out_dir,
+        tag,
+        n_trials,
+        *,
+        objective_inputs,
+        prov,
+        negative_subsample=None,
+        seed=42,
+        study_shard_dir=None,
+    ):
         # Distinct params keyed by candidate so nested (own) != shared (public) is DETERMINISTIC.
         if tag.startswith("sc_extended"):
             return {"max_depth": 6, "n_estimators": 120}
@@ -785,7 +798,16 @@ def test_paired_data_effect_three_arm_shape(monkeypatch, tmp_path):
     is_sc = ~is_public  # every non-public game is "sc" in this synthetic
     cand_masks = {"public": is_public, "sc_extended": is_public | is_sc, "full": np.ones(len(X), bool)}
     paired = tr._paired_data_effect(
-        X, y, groups, is_public, match_ids, candidates=cand_masks, n_trials=1, out_dir=tmp_path
+        X,
+        y,
+        groups,
+        is_public,
+        match_ids,
+        candidates=cand_masks,
+        n_trials=1,
+        out_dir=tmp_path,
+        objective_inputs={"driver": "test-paired"},
+        prov={"commit": "test", "tree_state": "clean"},
     )
     assert set(paired) == {"public", "sc_extended", "full"}
     for arm in cand_masks:
@@ -802,7 +824,20 @@ def test_paired_nested_uses_candidate_params_not_public(monkeypatch, tmp_path):
     """
     import scripts.train_xshot_occurrence as tr
 
-    def _fake_hpo(x, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, seed=42, study_shard_dir=None):
+    def _fake_hpo(
+        x,
+        y,
+        groups,
+        out_dir,
+        tag,
+        n_trials,
+        *,
+        objective_inputs,
+        prov,
+        negative_subsample=None,
+        seed=42,
+        study_shard_dir=None,
+    ):
         if tag.startswith("sc_extended"):
             return {"max_depth": 6, "n_estimators": 200}
         return {"max_depth": 1, "n_estimators": 40}
@@ -813,7 +848,16 @@ def test_paired_nested_uses_candidate_params_not_public(monkeypatch, tmp_path):
     match_ids = np.array([str(g) for g in groups])
     cand_masks = {"public": is_public, "sc_extended": np.ones(len(X), bool), "full": np.ones(len(X), bool)}
     paired = tr._paired_data_effect(
-        X, y, groups, is_public, match_ids, candidates=cand_masks, n_trials=1, out_dir=tmp_path
+        X,
+        y,
+        groups,
+        is_public,
+        match_ids,
+        candidates=cand_masks,
+        n_trials=1,
+        out_dir=tmp_path,
+        objective_inputs={"driver": "test-paired"},
+        prov={"commit": "test", "tree_state": "clean"},
     )
     assert paired["sc_extended"]["nested"] != paired["sc_extended"]["shared_params"], (
         "nested and shared_params collapsed -- the candidate was scored at public params (M4 leakage)"

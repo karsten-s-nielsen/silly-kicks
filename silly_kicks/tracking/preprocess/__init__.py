@@ -30,6 +30,7 @@ columns, not in-place mutation; per ``feedback_additive_columns_over_inplace_mut
 
 from __future__ import annotations
 
+from ._butterworth import butterworth_lowpass, resample_frames, resample_uniform, residual_analysis_cutoff
 from ._config import get_provider_defaults
 from ._config_dataclass import PreprocessConfig
 from ._interpolation import interpolate_frames
@@ -38,8 +39,12 @@ from ._velocity import derive_velocities
 
 __all__ = [
     "PreprocessConfig",
+    "butterworth_lowpass",
     "derive_velocities",
     "get_provider_defaults",
     "interpolate_frames",
+    "resample_frames",
+    "resample_uniform",
+    "residual_analysis_cutoff",
     "smooth_frames",
 ]

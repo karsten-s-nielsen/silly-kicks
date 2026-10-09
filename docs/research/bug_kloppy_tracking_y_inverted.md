@@ -135,12 +135,12 @@ fixtures (`test_action_ltr_mirror_invariance.py`) cannot catch it — they assum
 ## Reproduce
 ```bash
 ssh karsten@192.168.68.73
-source ~/.pining_env
-export PINING_CACHE_DIR=~/Development/silly-kicks/xt_bandwidth_run/artifact_cache
-cd ~/Development/silly-kicks
-~/sk-s93-venv/bin/python scripts/_tf48_clean_localize.py skillcorner   # d_yflip≈0.2 vs d_identity≈40
-~/sk-s93-venv/bin/python scripts/_tf48_clean_localize.py idsse         # d_yflip ≪ d_identity
-~/sk-s93-venv/bin/python scripts/_tf48_yflip_confirm.py  skillcorner   # 0.123 -> 0.605 resolution
+source <pining-env>
+export PINING_CACHE_DIR=<repo>/xt_bandwidth_run/artifact_cache
+cd <repo>
+<venv>/bin/python scripts/_tf48_clean_localize.py skillcorner   # d_yflip≈0.2 vs d_identity≈40
+<venv>/bin/python scripts/_tf48_clean_localize.py idsse         # d_yflip ≪ d_identity
+<venv>/bin/python scripts/_tf48_yflip_confirm.py  skillcorner   # 0.123 -> 0.605 resolution
 ```
 Scripts are read-only (load from cache, compare coords / run `add_shot_goalmouth`); `_tf48_*` are
 throwaway, not committed. The TF-48 kernel itself is correct and Gradient-Sports-validated (all

@@ -35,33 +35,14 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts._reliability import icc1  # repo root joined sys.path just above
+
 _RNG = np.random.default_rng(20260912)
 _MIN_PER_KEEPER = 5
 _DECISION_METRICS = ("decision_value", "sel_efficiency", "decision_pct")
 
 
 # --------------------------------------------------------------------------- pure stat kernels
-def icc1(values: np.ndarray, groups: np.ndarray) -> float:
-    """One-way random-effects ICC(1): between-group / total variance. Pure numpy."""
-    df = pd.DataFrame({"v": np.asarray(values, dtype="float64"), "g": groups})
-    df = df.dropna(subset=["v"])
-    k = df["g"].nunique()
-    n = len(df)
-    if k < 2 or n <= k:
-        return float("nan")
-    grand = df["v"].mean()
-    gm = df.groupby("g")["v"]
-    ni = gm.count().to_numpy(dtype="float64")
-    mi = gm.mean().to_numpy()
-    ssb = float(np.sum(ni * (mi - grand) ** 2))
-    ssw = float(np.sum((df["v"].to_numpy() - df.groupby("g")["v"].transform("mean").to_numpy()) ** 2))
-    msb = ssb / (k - 1)
-    msw = ssw / (n - k)
-    n0 = (n - np.sum(ni**2) / n) / (k - 1)
-    denom = msb + (n0 - 1) * msw
-    return (msb - msw) / denom if denom > 0 else float("nan")
-
-
 def icc_vs_permutation(df: pd.DataFrame, col: str, *, n_perm: int = 1000) -> dict:
     """Observed keeper ICC(1) + a keeper-label permutation null (p95, p-value)."""
     s = df.dropna(subset=[col]).groupby("keeper").filter(lambda g: len(g) >= _MIN_PER_KEEPER)

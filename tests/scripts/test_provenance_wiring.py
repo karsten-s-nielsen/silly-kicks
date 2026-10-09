@@ -214,6 +214,27 @@ ARTIFACT_DRIVERS = (
     # non-degeneracy + the GO/NO-GO composite that DECIDES the metric column's ship status) -- a cited
     # number over external data; owner-run. No bundled weights (pure solver).
     "build_tf56_positioning_validity",
+    # TF-58 D1 (ADR-110). The four-pass Tier-B coordination-parameter derivation: walks the ~980-match
+    # pining corpus (`corpus_source` -> `for_each`) and, in --pass reduce, writes <--out>/derivation.json
+    # (the released base defaults + per-provider values + thin-provider precision + the occlusion width/gk-rate
+    # check) and the regenerated params module beside it; commit 2 copies both into the repo -- cited numbers
+    # over external data, so provenance.
+    "derive_coordination_params",
+    # TF-58 D2 (ADR-110). The gated Tier-C sensitivity calibration: walks the corpus per preparation level
+    # (`--layer a`), runs the ruthless OAT/confirm grid, and writes <--out>/calibration.json + the final params
+    # module (commit 2 copies both in) -- cited numbers over external data that decide the shipped defaults, so
+    # provenance.
+    "calibrate_coordination",
+    # TF-58 D3 (ADR-110). The in-cycle validation artifact: runs the final params on the corpus and, in
+    # --pass reduce, writes <--out>/metrics.json (+ report.md; commit 2 copies them in) with the H1-H7
+    # verdicts, per-metric reliability, poolability, coverage stratification, the D20 stoppage leg, the
+    # occlusion curves and real-data liveness -- cited numbers over external data, so provenance.
+    "validate_team_coordination",
+    # ADR-110. The corpus no-flip gate for the coordination numerics (D2(b) surrogate identities + D4 cluster
+    # arithmetic vs the as-built reference numerics): walks the corpus under both numerics and, in --pass reduce,
+    # writes <--out>/numerics_noflip.json (commit 2 copies it in) -- the verdict that decides whether the
+    # numerics ship, over external data, so provenance.
+    "validate_coordination_numerics",
 )
 
 

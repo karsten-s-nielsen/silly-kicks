@@ -13,9 +13,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
-from scipy.spatial import ConvexHull, QhullError
 
 from silly_kicks.id_compat import ids_match
+from silly_kicks.tracking._collective import collective_from_positions, pack_groups
 
 _RESULT_COLS = [
     "game_id",
@@ -88,83 +88,74 @@ def compute_team_shape(
     if outfield.empty:
         return pd.DataFrame(columns=_RESULT_COLS)
 
-    rows: list[dict] = []
-    groups = outfield.groupby(["game_id", "period_id", "frame_id"], dropna=False)
+    # Delegate centroid/length/width/stretch/hull to the single vectorised kernel (ADR D12); keep the Ward
+    # line clustering per group (no batch form). Group order (sort=True) matches the legacy iteration order,
+    # so the output is row-for-row byte-identical except convex_hull_area (<= 1e-9 relative; exactly 0.0 iff
+    # exactly collinear). observed=True is deterministic across pandas majors (F1b-safe).
+    gb = outfield.groupby(["game_id", "period_id", "frame_id"], dropna=False, sort=True, observed=True)
+    codes = gb.ngroup().to_numpy()
+    key_tuples = gb.size().index.tolist()
+    pos, counts, first_row = pack_groups(
+        codes,
+        outfield["x"].to_numpy(dtype="float64"),
+        outfield["y"].to_numpy(dtype="float64"),
+        len(key_tuples),
+    )
+    cv = collective_from_positions(pos, counts)
+    directions = (
+        outfield["team_attacking_direction"].to_numpy()[first_row]
+        if "team_attacking_direction" in outfield.columns
+        else np.full(len(key_tuples), None)
+    )
+    def_line, gap_1, gap_2 = _ward_lines(pos, counts, directions, n_defensive_lines)
 
-    for (game_id, period_id, frame_id), group in groups:
-        xs = group["x"].to_numpy(dtype="float64")
-        ys = group["y"].to_numpy(dtype="float64")
-        n = len(xs)
-
-        cx = float(np.mean(xs))
-        cy = float(np.mean(ys))
-        team_length = float(np.max(xs) - np.min(xs))
-        team_width = float(np.max(ys) - np.min(ys))
-
-        # Stretch index: mean Euclidean distance from centroid
-        dists = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
-        stretch = float(np.mean(dists))
-
-        # Convex hull area
-        if n < 3:
-            hull_area = np.nan
-        else:
-            try:
-                hull = ConvexHull(np.column_stack([xs, ys]))
-                hull_area = float(hull.volume)  # 2D: volume = area
-            except QhullError:
-                hull_area = 0.0  # collinear points -> degenerate hull with area 0
-
-        # Defensive-line orientation (ADR-028): the deepest line is the cluster NEAREST
-        # the team's defended goal. team_attacking_direction tells which goal the team
-        # defends in these (home-attacks-right) frames: "ltr" attacks x=105 -> defends
-        # x=0 -> deepest = lowest-x cluster; "rtl" attacks x=0 -> defends x=105 ->
-        # deepest = highest-x cluster. Ordering from the deepest line outward makes
-        # defensive_line_height + inter-line gaps the team's true defensive line for
-        # BOTH teams (was min-x for everyone -> the away team's ADVANCED line). This is a
-        # frame-level value; add_team_shape re-projects it to the per-action LTR frame.
-        # Defaults to "ltr" (the historical behaviour) when direction is absent.
-        direction = group["team_attacking_direction"].iloc[0] if "team_attacking_direction" in group.columns else None
-        defends_high_x = direction == "rtl"
-
-        # Ward hierarchical clustering for inter-line gaps (TF-44)
-        n_eff = min(n_defensive_lines, n)
-        if n < 2:
-            def_line_height = float(xs.max() if defends_high_x else xs.min())
-            gap_1 = np.nan
-            gap_2 = np.nan
-        else:
-            z = linkage(xs.reshape(-1, 1), method="ward")
-            labels = fcluster(z, t=n_eff, criterion="maxclust")
-            # Cluster centroids, ordered from the DEEPEST line (nearest the defended goal)
-            # outward. Ascending for ltr (deepest = min-x); reversed for rtl (deepest = max-x).
-            centroids = np.sort([float(np.mean(xs[labels == c])) for c in range(1, n_eff + 1) if np.any(labels == c)])
-            if defends_high_x:
-                centroids = centroids[::-1]
-            n_actual = len(centroids)
-            def_line_height = float(centroids[0])
-            gap_1 = float(abs(centroids[1] - centroids[0])) if n_actual >= 2 else np.nan
-            gap_2 = float(abs(centroids[2] - centroids[1])) if n_actual >= 3 else np.nan
-
-        rows.append(
-            {
-                "game_id": game_id,
-                "period_id": period_id,
-                "frame_id": frame_id,
-                "team_id": team_id,
-                "n_outfield_players": n,
-                "centroid_x": cx,
-                "centroid_y": cy,
-                "convex_hull_area": hull_area,
-                "team_length": team_length,
-                "team_width": team_width,
-                "stretch_index": stretch,
-                "defensive_line_height": def_line_height,
-                "inter_line_gap_1": gap_1,
-                "inter_line_gap_2": gap_2,
-            }
-        )
-
-    result = pd.DataFrame(rows, columns=_RESULT_COLS)
+    result = pd.DataFrame(key_tuples, columns=["game_id", "period_id", "frame_id"])
+    result["team_id"] = team_id
+    result["n_outfield_players"] = counts
+    result["centroid_x"] = cv["centroid_x"]
+    result["centroid_y"] = cv["centroid_y"]
+    result["convex_hull_area"] = cv["convex_hull_area"]
+    result["team_length"] = cv["team_length"]
+    result["team_width"] = cv["team_width"]
+    result["stretch_index"] = cv["stretch_index"]
+    result["defensive_line_height"] = def_line
+    result["inter_line_gap_1"] = gap_1
+    result["inter_line_gap_2"] = gap_2
+    result = result[_RESULT_COLS]
     result["n_outfield_players"] = result["n_outfield_players"].astype("Int64")
     return result
+
+
+def _ward_lines(
+    pos: np.ndarray, counts: np.ndarray, directions: np.ndarray, n_defensive_lines: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-group Ward line clustering (TF-44), verbatim legacy semantics. Reads the packed row (input row
+    order), never rescans. Returns ``(defensive_line_height, inter_line_gap_1, inter_line_gap_2)`` arrays.
+
+    The deepest line is the cluster NEAREST the defended goal (ADR-028): "rtl" defends x=105 (deepest =
+    highest-x), else deepest = lowest-x. Defaults to "ltr" when direction is absent.
+    """
+    g = counts.shape[0]
+    def_line = np.full(g, np.nan)
+    gap_1 = np.full(g, np.nan)
+    gap_2 = np.full(g, np.nan)
+    for i in range(g):
+        n = int(counts[i])
+        xs = pos[i, :n, 0]
+        defends_high_x = directions[i] == "rtl"
+        n_eff = min(n_defensive_lines, n)
+        if n < 2:
+            def_line[i] = float(xs.max() if defends_high_x else xs.min())
+            continue
+        z = linkage(xs.reshape(-1, 1), method="ward")
+        labels = fcluster(z, t=n_eff, criterion="maxclust")
+        centroids = np.sort([float(np.mean(xs[labels == c])) for c in range(1, n_eff + 1) if np.any(labels == c)])
+        if defends_high_x:
+            centroids = centroids[::-1]
+        n_actual = len(centroids)
+        def_line[i] = float(centroids[0])
+        if n_actual >= 2:
+            gap_1[i] = float(abs(centroids[1] - centroids[0]))
+        if n_actual >= 3:
+            gap_2[i] = float(abs(centroids[2] - centroids[1]))
+    return def_line, gap_1, gap_2

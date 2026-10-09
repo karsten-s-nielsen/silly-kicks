@@ -199,3 +199,31 @@ def in_penalty_area_absolute(x: float, y: float, *, attacked_goal_x: float) -> b
     """
     gr_x = abs(float(attacked_goal_x) - float(x))
     return in_penalty_area_goal_relative(gr_x, y)
+
+
+def to_goal_relative_x_array(x: np.ndarray, *, goal_x: float) -> np.ndarray:
+    """Array form of :func:`to_goal_relative_x` (element-wise; NaN preserved; input not mutated). Reuses
+    ``_flip`` and ``FIELD_LENGTH`` so it stays a single definition (TF-58 C2).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> to_goal_relative_x_array(np.array([30.0, 70.0]), goal_x=105.0).tolist()
+    [75.0, 35.0]
+    """
+    x = np.asarray(x, dtype=np.float64)
+    return (FIELD_LENGTH - x) if _flip(goal_x) else x.copy()
+
+
+def to_goal_relative_y_array(y: np.ndarray, *, goal_x: float) -> np.ndarray:
+    """Array form of :func:`to_goal_relative_y` (element-wise; NaN preserved; input not mutated). Reuses
+    ``_flip`` and ``PITCH_WIDTH`` (TF-58 C2).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> to_goal_relative_y_array(np.array([20.0, 48.0]), goal_x=105.0).tolist()
+    [48.0, 20.0]
+    """
+    y = np.asarray(y, dtype=np.float64)
+    return (PITCH_WIDTH - y) if _flip(goal_x) else y.copy()

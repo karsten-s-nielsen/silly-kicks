@@ -5,7 +5,7 @@ geometry, run with the redesigned `scripts/check_stage1_argmax.py` (prefer-incum
 indistinguishable set + a standing fold-stability diagnostic).
 
 - **Code:** `run_commit 2cecd2b` (clean tree, `run_tree_dirty: false`).
-- **Store:** `~/tf24-store/s1.db` (the `balanced_confirm_tol3` study) — **150 trials over `beta`/`gamma`
+- **Store:** `tf24-store/s1.db` (the `balanced_confirm_tol3` study) — **150 trials over `beta`/`gamma`
   only; `tolerance_m` was held at 3.0, never swept**. This discharges the spec §7 store-reconciliation
   gate: the checker's "only beta/gamma vary in the store" was correct, and item C's removal of
   `tolerance_m` from `stage1_config` simply aligns the config with what this store already did.

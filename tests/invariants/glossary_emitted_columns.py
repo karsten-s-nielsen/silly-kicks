@@ -528,6 +528,40 @@ def _positioning_columns() -> set[str]:
     return set(POSITIONING_METRIC_COLUMNS) & set(samples.columns)
 
 
+def _coordination_columns() -> set[str]:
+    """Derived TF-58 coordination metric columns emitted by compute_team_coordination (7 family tables).
+
+    compute_team_coordination is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape discovery
+    misses it; this leg runs it on the synthetic fixture and returns every ``*_METRIC_COLUMNS`` value emitted
+    across the 7 tables (the column schema is fixed by ``_cast``, so a value is present even when NaN on this
+    fixture). A NEW emitted metric appears here and fails the coverage gate until documented (anti-rot)."""
+    import dataclasses
+
+    import silly_kicks.coordination as C
+    from silly_kicks.coordination import CoordinationParams, compute_team_coordination
+    from tests.coordination._fixtures import make_coordination_actions, make_coordination_match
+
+    frames = make_coordination_match(seconds=120.0, hz=10.0, provider="sportec")
+    res = compute_team_coordination(
+        frames,
+        actions=make_coordination_actions(frames),
+        params=dataclasses.replace(CoordinationParams(), n_surrogates=0),
+    )
+    tables = {
+        "pair": C.COORDINATION_PAIR_METRIC_COLUMNS,
+        "pair_phase": C.COORDINATION_PAIR_PHASE_METRIC_COLUMNS,
+        "spectral": C.COORDINATION_SPECTRAL_METRIC_COLUMNS,
+        "cluster_team": C.COORDINATION_CLUSTER_TEAM_METRIC_COLUMNS,
+        "cluster_player": C.COORDINATION_CLUSTER_PLAYER_METRIC_COLUMNS,
+        "team_sync": C.COORDINATION_TEAM_SYNC_METRIC_COLUMNS,
+        "rsi": C.COORDINATION_RSI_METRIC_COLUMNS,
+    }
+    out: set[str] = set()
+    for attr, cols in tables.items():
+        out |= set(cols) & set(getattr(res, attr).columns)
+    return out
+
+
 def _base_schema_and_provenance() -> set[str]:
     """Base schema + linkage-provenance column names -- EXCLUDED per spec Non-goal 1 (not derived features).
 
@@ -563,5 +597,6 @@ def emitted_columns() -> set[str]:
         | _match_outcome_columns()
         | _win_probability_columns()
         | _positioning_columns()
+        | _coordination_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()

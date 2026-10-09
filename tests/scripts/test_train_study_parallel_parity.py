@@ -11,6 +11,22 @@ from scripts import train_xshot_occurrence as tr
 from scripts._corpus_mmap import load_design_matrix, persist_design_matrix
 
 
+def _count_hpo_runs(monkeypatch):
+    """Count real ``OptunaStrategy.run`` calls from here on (the HPO still runs; only counted)."""
+    import ruthless.strategies.optuna_ as optuna_mod
+
+    real = optuna_mod.OptunaStrategy
+    runs = [0]
+
+    class _Counting(real):
+        def run(self, *args, **kwargs):
+            runs[0] += 1
+            return super().run(*args, **kwargs)
+
+    monkeypatch.setattr(optuna_mod, "OptunaStrategy", _Counting)
+    return lambda: runs[0]
+
+
 @pytest.mark.slow
 def test_study_from_shared_corpus_matches_in_memory_booster_bytes(tmp_path):
     rng = np.random.default_rng(0)
@@ -68,7 +84,7 @@ def _synthetic_paired_corpus():
 
 
 @pytest.mark.slow
-def test_parallel_assemble_equals_serial_weights_byte_identical(tmp_path):
+def test_parallel_assemble_equals_serial_weights_byte_identical(tmp_path, monkeypatch):
     X, y, groups, providers, match_ids, is_public = _synthetic_paired_corpus()
     from scripts._study_shared import persist_study_inputs
 
@@ -83,6 +99,7 @@ def test_parallel_assemble_equals_serial_weights_byte_identical(tmp_path):
             "artifact_dir": str(art / "art"),
             "run_paired": True,
             "run_prov": {"commit": "test", "dirty": False, "tree_state": "clean"},
+            "objective_inputs": {"driver": "test-parallel-parity"},  # D21 identity the prep persists
         }
 
     # Serial: studies computed inline during assemble (empty cache).
@@ -115,7 +132,11 @@ def test_parallel_assemble_equals_serial_weights_byte_identical(tmp_path):
     assert len(tags) == 9  # 3 candidates x 3 public folds
     for tag in tags:
         tr.run_one_study(root_p, tag)
+    hpo_runs = _count_hpo_runs(monkeypatch)
     m_parallel, model_parallel = tr.assemble_studies(root_p, study_shard_dir=root_p)
+    # Non-vacuity: the reduce SERVED every worker's shard (their D21 identity matched) -- its only HPO is
+    # the shipped candidate's all-data study, which no worker pre-fills.
+    assert hpo_runs() == 1
 
     assert m_serial["shipped_variant"] == m_parallel["shipped_variant"]  # same ship verdict
     sb, pb = model_serial._booster, model_parallel._booster
@@ -162,7 +183,7 @@ def _synthetic_paired_corpus_xcross():
 
 
 @pytest.mark.slow
-def test_xcross_parallel_assemble_equals_serial_weights_byte_identical(tmp_path):
+def test_xcross_parallel_assemble_equals_serial_weights_byte_identical(tmp_path, monkeypatch):
     from scripts import train_xcross_attempt as trx
     from scripts._study_shared import persist_study_inputs
 
@@ -180,6 +201,7 @@ def test_xcross_parallel_assemble_equals_serial_weights_byte_identical(tmp_path)
             "run_paired": True,
             "ship_variant": None,
             "run_prov": {"commit": "test", "dirty": False, "tree_state": "clean"},
+            "objective_inputs": {"driver": "test-parallel-parity"},  # D21 identity the prep persists
         }
 
     root_s = tmp_path / "serial"
@@ -210,7 +232,9 @@ def test_xcross_parallel_assemble_equals_serial_weights_byte_identical(tmp_path)
     assert len(tags) == 9  # 3 candidates x 3 public folds
     for tag in tags:
         trx.run_one_study(root_p, tag)
+    hpo_runs = _count_hpo_runs(monkeypatch)
     m_parallel, model_parallel = trx.assemble_studies(root_p, study_shard_dir=root_p, run_probe=False)
+    assert hpo_runs() == 1  # non-vacuity: every nested study served from its worker's shard
 
     assert m_serial["shipped_variant"] == m_parallel["shipped_variant"]
     sb, pb = model_serial._booster, model_parallel._booster

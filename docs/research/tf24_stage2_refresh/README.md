@@ -5,7 +5,7 @@
 over the **full 179-match pining corpus** (skillcorner 108 + gradientsports 64 + idsse 7), 60 Optuna
 trials minimizing the augmented-VAEP held-out Brier over `k3` / `pre_seconds` / `min_displacement_m`,
 holding the ADR-060 Stage-1 carrier params (`docs/research/tf24_stage1_confirmation/carrier_selected.json`,
-`run_commit 2cecd2b`, clean). Frozen exogenous xT: `~/tf24-store/calibration_xt.npz`, disjoint 16-match
+`run_commit 2cecd2b`, clean). Frozen exogenous xT: `tf24-store/calibration_xt.npz`, disjoint 16-match
 corpus, sha256 `52d7a8…`, fail-closed. No DAS degradation, no excluded providers. silly_kicks 4.82.0,
 xgboost 3.4.0, ruthless 0.4.0.
 
