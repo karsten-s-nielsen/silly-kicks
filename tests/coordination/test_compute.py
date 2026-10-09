@@ -617,9 +617,15 @@ def test_cluster_window_below_two_usable_samples_is_too_short():
     # the data and for every shift draw -- no information, and its percentile is float rounding (the 12 no-flip
     # crossings, all on 0.1 s IDSSE possession windows, 2026-10-02). Below 2 usable samples the family is too_short.
     f = make_coordination_match(seconds=300.0, hz=10.0, provider="sportec", oscillation_cpm=0.5)
+    # the cluster surrogate shifts each PLAYER run; pin player min_shift small so the 300 s segment shifts and the
+    # 2-sample window's null is "computed" (the commit-2 derivation default player min_shift is ~200 s, longer than
+    # this synthetic segment, which would make every window segment_too_short and erase the scored/too_short contrast).
+    fast = dataclasses.replace(
+        _FAST, min_shift_s={**CoordinationParams().min_shift_s, "player_x": 0.5, "player_y": 0.5}
+    )
 
     def sliding_rows(length_s):
-        sig = build_coordination_signals(f, windows=period_windows(f, length_s=length_s, step_s=60.0), params=_FAST)
+        sig = build_coordination_signals(f, windows=period_windows(f, length_s=length_s, step_s=60.0), params=fast)
         ct, cp = compute_cluster_phase(sig)[:2]
         return ct[ct.window_kind == "sliding"], cp[cp.window_kind == "sliding"]
 

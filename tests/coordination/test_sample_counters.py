@@ -48,7 +48,10 @@ def test_samples_stationary_is_populated_when_vector_coding_omits_stationary_dif
     big_eps = {k: 1e6 for k in CoordinationParams().vc_epsilon}
     stationary = compute_team_coordination(f, params=_clean(vc_epsilon=big_eps)).report
     assert stationary.samples_stationary > 0
-    assert compute_team_coordination(f, params=_clean()).report.samples_stationary == 0
+    # the "omits none" leg pins vc_epsilon to zero: the mechanism is "within-epsilon -> stationary", and the
+    # commit-2 derivation default vc_epsilon is non-zero (~0.0015), so the default no longer omits exactly none.
+    zero_eps = {k: 0.0 for k in CoordinationParams().vc_epsilon}
+    assert compute_team_coordination(f, params=_clean(vc_epsilon=zero_eps)).report.samples_stationary == 0
 
 
 def _player(x, y, grid_n, *, nan_slice=None, gk=False):

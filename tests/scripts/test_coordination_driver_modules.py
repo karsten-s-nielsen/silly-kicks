@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -37,9 +38,17 @@ from tests.coordination._fixtures import make_coordination_actions, make_coordin
 
 
 # --------------------------------------------------------------------------- codegen
-def test_codegen_empty_reproduces_commit_1_file():
-    committed = (Path(__file__).resolve().parents[2] / cg.GENERATED_PATH).read_text(encoding="utf-8")
-    assert cg.render_generated_params(None, None) == committed
+def test_codegen_reproduces_the_committed_derivation_module():
+    # Commit 2: the committed module is BASE_SOURCE="derivation", rendered from the authoritative DGX derivation +
+    # calibration artifacts; the codegen must reproduce it byte-for-byte from those inputs (the generator-
+    # reproduces-its-output rule). The empty-input (interim) render is still covered by
+    # test_codegen_deterministic_and_sorted + test_interim_base_matches_R4_table below.
+    repo = Path(__file__).resolve().parents[2]
+    art = repo / "docs" / "research" / "tf58_team_coordination"
+    derivation = json.loads((art / "derivation.json").read_text(encoding="utf-8"))
+    calibration = json.loads((art / "calibration.json").read_text(encoding="utf-8"))
+    committed = (repo / cg.GENERATED_PATH).read_text(encoding="utf-8")
+    assert cg.render_generated_params(derivation, calibration) == committed
 
 
 def test_codegen_deterministic_and_sorted():
@@ -858,14 +867,16 @@ def test_boundary_f1_by_gap_infers_the_carrier_once(monkeypatch):
 def test_provider_bootstrap_se_byte_identical_after_index_resample():
     # F2 (speed): the match-resample bootstrap drops the 1000x pd.concat for per-match row-index arrays
     # + a single .iloc per draw. Row order within a draw is identical (drawn-match order, rows in situ)
-    # -> byte-identical SE. Goldens captured from the pre-refactor concat version @ 9b99003.
+    # -> byte-identical SE (the F2 refactor is unchanged). The seed entropy is input_contract()["digest"], which
+    # moved with the commit-2 derivation module + OBJECTIVE_VERSION, so the goldens are re-baselined to the
+    # current digest (originally captured from the pre-refactor concat version @ 9b99003).
     from derive_coordination_params import provider_bootstrap_se
 
     u = pd.DataFrame({"match": ["a", "a", "b", "c", "c", "c", "d"], "value": [1.0, 3.0, 2.0, 5.0, 4.0, 6.0, 0.5]})
     se = provider_bootstrap_se(
         u, lambda df: float(df["value"].mean()), seed_key=("relative_phase", "band_low_cpm"), n_boot=1000
     )
-    assert se == pytest.approx(1.0022327751508664, rel=0.0, abs=0.0)
+    assert se == pytest.approx(1.0089459531423133, rel=0.0, abs=0.0)
     # order-sensitive reducer -> proves per-draw row order is preserved (ADR-105)
     se2 = provider_bootstrap_se(
         u,
@@ -873,7 +884,7 @@ def test_provider_bootstrap_se_byte_identical_after_index_resample():
         seed_key=("spectral", "x"),
         n_boot=500,
     )
-    assert se2 == pytest.approx(6.175784525244289, rel=0.0, abs=0.0)
+    assert se2 == pytest.approx(6.696609165950613, rel=0.0, abs=0.0)
 
 
 @pytest.mark.parametrize(

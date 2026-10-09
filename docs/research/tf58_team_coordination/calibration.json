@@ -1,0 +1,1168 @@
+{
+  "selections": {
+    "butterworth_cutoff_hz": {
+      "moved": false,
+      "reason": "no candidate cleared both the effect-size floor and the paired-SE test",
+      "effect_size": null,
+      "paired_se": null,
+      "selected": {
+        "label": "baseline",
+        "params": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": 0.0,
+          "welch_segment_s": 1.0,
+          "vc_epsilon": 1.0
+        },
+        "mean": 0.040357412089795035
+      },
+      "incumbent": {
+        "label": "baseline",
+        "mean": 0.040357412089795035
+      }
+    },
+    "max_detection_gap_s": {
+      "moved": false,
+      "reason": "no candidate cleared both the effect-size floor and the paired-SE test",
+      "effect_size": null,
+      "paired_se": null,
+      "selected": {
+        "label": "baseline",
+        "params": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": 0.0,
+          "welch_segment_s": 1.0,
+          "vc_epsilon": 1.0
+        },
+        "mean": 0.040357412089795035
+      },
+      "incumbent": {
+        "label": "baseline",
+        "mean": 0.040357412089795035
+      }
+    },
+    "min_observed_fraction": {
+      "moved": true,
+      "reason": "candidate 'min_observed_fraction=-0.1' cleared both bars (gain 0.0202957 > \u03b4, paired_se 0.00284228)",
+      "effect_size": 0.02029566477072666,
+      "paired_se": 0.002842282497619839,
+      "selected": {
+        "label": "min_observed_fraction=-0.1",
+        "params": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": -0.1,
+          "welch_segment_s": 1.0,
+          "vc_epsilon": 1.0
+        },
+        "mean": 0.060653076860521696
+      },
+      "incumbent": {
+        "label": "baseline",
+        "mean": 0.040357412089795035
+      }
+    },
+    "welch_segment_s": {
+      "moved": true,
+      "reason": "candidate 'welch_segment_s=0.5' cleared both bars (gain 0.0913417 > \u03b4, paired_se 0.00984157)",
+      "effect_size": 0.09134167676420055,
+      "paired_se": 0.009841568164644291,
+      "selected": {
+        "label": "welch_segment_s=0.5",
+        "params": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": 0.0,
+          "welch_segment_s": 0.5,
+          "vc_epsilon": 1.0
+        },
+        "mean": 0.1316990888539956
+      },
+      "incumbent": {
+        "label": "baseline",
+        "mean": 0.040357412089795035
+      }
+    },
+    "vc_epsilon": {
+      "moved": false,
+      "reason": "no candidate cleared both the effect-size floor and the paired-SE test",
+      "effect_size": null,
+      "paired_se": null,
+      "selected": {
+        "label": "baseline",
+        "params": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": 0.0,
+          "welch_segment_s": 1.0,
+          "vc_epsilon": 1.0
+        },
+        "mean": 0.040357412089795035
+      },
+      "incumbent": {
+        "label": "baseline",
+        "mean": 0.040357412089795035
+      }
+    }
+  },
+  "joint_point": {
+    "butterworth_cutoff_hz": 1.0,
+    "max_detection_gap_s": 1.0,
+    "min_observed_fraction": -0.1,
+    "welch_segment_s": 0.5,
+    "vc_epsilon": 1.0
+  },
+  "confirmation": {
+    "moved": true,
+    "hypotheses_pass": false,
+    "gate_cleared": false
+  },
+  "hypotheses": {
+    "H1": {
+      "pass": true,
+      "p_value": 5.795750327031258e-35,
+      "n_halves": 161,
+      "share_x_gt_y": 0.9440993788819876,
+      "longitudinal_circ_mean_deg": 0.27101657225151143
+    },
+    "H2": {
+      "pass": true,
+      "positive_share": 0.9691358024691358,
+      "median_abs_lag_s": 0.2670747440523961,
+      "n": 162
+    },
+    "H3": {
+      "pass": true,
+      "p_anti_phase": 0.02435121267789873,
+      "p_attack_phase": 0.00023781257302226693
+    },
+    "H4": {
+      "pass": false,
+      "below_ceiling_share": 0.9707792207792207,
+      "p_first_gt_second": 0.963043212890625,
+      "by_signal": {
+        "convex_hull_area": {
+          "pass": false,
+          "below_ceiling_share": 0.9707792207792207,
+          "p_first_gt_second": 0.963043212890625
+        },
+        "spread": {
+          "pass": false,
+          "below_ceiling_share": 0.9772727272727273,
+          "p_first_gt_second": 0.7359161376953125
+        }
+      }
+    },
+    "H5": {
+      "pass": true,
+      "p_x_gt_y": 7.31511930420656e-99,
+      "n_halves": 326,
+      "share_x_gt_y": 1.0,
+      "possession_tost_equivalent": true,
+      "tost_p_lower": 5.05310474091096e-60,
+      "tost_p_upper": 1.379592467820752e-26
+    },
+    "H6": {
+      "pass": null,
+      "quartiles_x": [
+        0.7040142066573057,
+        0.7817779183802595,
+        0.8377893793176185
+      ],
+      "quartiles_y": [
+        0.3273789833498732,
+        0.41717325227963525,
+        0.509458465001515
+      ]
+    },
+    "H7": {
+      "pass": false,
+      "bc_share": 0.04938271604938271,
+      "switch_share": 0.5685241771201887,
+      "surrogate_95": 0.2597184250026804
+    }
+  },
+  "objective_ids": {
+    "oat": "calibrate_coordination:d762ea61c756d802",
+    "confirm": "calibrate_coordination:277e95e74b2c791a"
+  },
+  "moved_multipliers": {
+    "min_observed_fraction": {
+      "offset": -0.1
+    },
+    "welch_segment_s": {
+      "multiplier": 0.5
+    }
+  },
+  "fallback_reason": "the hypotheses gate did not pass; Tier-B values stand",
+  "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080",
+  "population": {
+    "baseline": {
+      "pass": "layer_a__baseline",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "b5a6369711afeb9a",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "butterworth_cutoff_hz=0.5": {
+      "pass": "layer_a__butterworth_cutoff_hz__0p5",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "b71202a065227586",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "butterworth_cutoff_hz=0.67": {
+      "pass": "layer_a__butterworth_cutoff_hz__0p67",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "c2f171fc53e61840",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "butterworth_cutoff_hz=0.8": {
+      "pass": "layer_a__butterworth_cutoff_hz__0p8",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "e4bcca5b1d1a4715",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "butterworth_cutoff_hz=1.25": {
+      "pass": "layer_a__butterworth_cutoff_hz__1p25",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "69531c0576e5250f",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "butterworth_cutoff_hz=1.5": {
+      "pass": "layer_a__butterworth_cutoff_hz__1p5",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "e327b5b3771aa7df",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "butterworth_cutoff_hz=2.0": {
+      "pass": "layer_a__butterworth_cutoff_hz__2p0",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "91a025e6e289c1d7",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "max_detection_gap_s=0.5": {
+      "pass": "layer_a__max_detection_gap_s__0p5",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "9378faec6bfc8fe2",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "max_detection_gap_s=0.75": {
+      "pass": "layer_a__max_detection_gap_s__0p75",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "6b0132d334f3c3ce",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "max_detection_gap_s=1.5": {
+      "pass": "layer_a__max_detection_gap_s__1p5",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "3247c5c64db978a8",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "max_detection_gap_s=2.0": {
+      "pass": "layer_a__max_detection_gap_s__2p0",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "ce89456f0459e2ac",
+      "run_commit": "fe449af86b019cb14d0c6d15e74a8b47cb17e9e1",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    },
+    "joint_prep": {
+      "pass": "joint_prep",
+      "n_workers": 14,
+      "partitions": [
+        "match_ids_w0",
+        "match_ids_w1",
+        "match_ids_w10",
+        "match_ids_w11",
+        "match_ids_w12",
+        "match_ids_w13",
+        "match_ids_w2",
+        "match_ids_w3",
+        "match_ids_w4",
+        "match_ids_w5",
+        "match_ids_w6",
+        "match_ids_w7",
+        "match_ids_w8",
+        "match_ids_w9"
+      ],
+      "n_listed": 980,
+      "population_digest": "b77c9bad14a351e4",
+      "n_attempted": 980,
+      "n_produced": 966,
+      "n_excluded": 14,
+      "excluded_keys": [
+        "skillcorner__1713834",
+        "skillcorner__1800189",
+        "skillcorner__1846873",
+        "skillcorner__1912996",
+        "skillcorner__1972419",
+        "skillcorner__2006399",
+        "skillcorner__2011150",
+        "skillcorner__2011870",
+        "skillcorner__2012177",
+        "skillcorner__2034406",
+        "skillcorner__2037217",
+        "skillcorner__2046466",
+        "skillcorner__2049070",
+        "skillcorner__2055108"
+      ],
+      "n_failed": 0,
+      "population_checked_against": "corpus_json",
+      "generation": "f732b05e32d1b5a9",
+      "run_commit": "c769e8604d45bb6e5078c1bcefec6bfa1067e318",
+      "run_tree_dirty": false,
+      "run_tree_state": [
+        "clean"
+      ],
+      "consistent": {
+        "joint": {
+          "butterworth_cutoff_hz": 1.0,
+          "max_detection_gap_s": 1.0,
+          "min_observed_fraction": -0.1,
+          "welch_segment_s": 0.5,
+          "vc_epsilon": 1.0
+        },
+        "derivation_sha256": "6d9c760cde0143d15c5543cb48391b9683c3b45dbebcb88fc498f32a68a3b080"
+      }
+    }
+  },
+  "stage_seconds": {
+    "baseline": {
+      "windows": 2731.561991300434,
+      "signals": 43921.88006608002,
+      "switch_events": 1710.1983096338809,
+      "family.relative_phase": 132819.7344936058,
+      "family.cross_correlation": 100819.22438286245,
+      "family.vector_coding": 83328.90950134769,
+      "family.coherence": 40490.94519119337,
+      "family.spectral": 26474.850137753412,
+      "family.cluster_phase": 99085.451669503,
+      "family.relative_stretch": 5883.831647954881,
+      "family.combine": 122377.29705491103,
+      "melt": 8101.182818247005,
+      "corpus": 821921.88258861
+    },
+    "butterworth_cutoff_hz=0.5": {
+      "windows": 169.97311222180724,
+      "signals": 2171.3096441328526,
+      "switch_events": 10.325367075391114,
+      "family.relative_phase": 592.3549803746864,
+      "family.cross_correlation": 434.2364824321121,
+      "family.vector_coding": 368.3124544657767,
+      "family.coherence": 180.85747961327434,
+      "family.spectral": 120.2184349456802,
+      "family.cluster_phase": 424.7231108965352,
+      "family.relative_stretch": 25.856032949872315,
+      "family.combine": 600.2925458261743,
+      "melt": 42.29081730823964,
+      "corpus": 14118.673558276147
+    },
+    "butterworth_cutoff_hz=0.67": {
+      "windows": 167.28986257780343,
+      "signals": 2158.9363716039807,
+      "switch_events": 10.471522007137537,
+      "family.relative_phase": 593.6814426071942,
+      "family.cross_correlation": 437.4584291987121,
+      "family.vector_coding": 370.2549334000796,
+      "family.coherence": 183.7061755824834,
+      "family.spectral": 121.49722000770271,
+      "family.cluster_phase": 428.85511528886855,
+      "family.relative_stretch": 26.370673391968012,
+      "family.combine": 607.5572322281078,
+      "melt": 42.505018677562475,
+      "corpus": 13936.438447372057
+    },
+    "butterworth_cutoff_hz=0.8": {
+      "windows": 170.54094223119318,
+      "signals": 2172.889301788993,
+      "switch_events": 10.392298819497228,
+      "family.relative_phase": 604.2359441109002,
+      "family.cross_correlation": 454.81539600901306,
+      "family.vector_coding": 374.08428986091167,
+      "family.coherence": 183.82693018577993,
+      "family.spectral": 124.55822279769927,
+      "family.cluster_phase": 451.57549789734185,
+      "family.relative_stretch": 26.579833711497486,
+      "family.combine": 606.4175759060308,
+      "melt": 42.72486934438348,
+      "corpus": 14060.037374195643
+    },
+    "butterworth_cutoff_hz=1.25": {
+      "windows": 173.520512053743,
+      "signals": 2243.1284418348223,
+      "switch_events": 10.460453650914133,
+      "family.relative_phase": 630.4802646832541,
+      "family.cross_correlation": 503.9948465079069,
+      "family.vector_coding": 378.0918310172856,
+      "family.coherence": 185.70188640616834,
+      "family.spectral": 131.99822361953557,
+      "family.cluster_phase": 525.7801734730601,
+      "family.relative_stretch": 26.910123260691762,
+      "family.combine": 609.447550595738,
+      "melt": 42.8140663029626,
+      "corpus": 14439.45908154454
+    },
+    "butterworth_cutoff_hz=1.5": {
+      "windows": 173.612550473772,
+      "signals": 2288.353982624598,
+      "switch_events": 10.519053982570767,
+      "family.relative_phase": 655.3964069690555,
+      "family.cross_correlation": 537.6806066129357,
+      "family.vector_coding": 383.6247981796041,
+      "family.coherence": 188.9429586948827,
+      "family.spectral": 135.81785439513624,
+      "family.cluster_phase": 568.814795171842,
+      "family.relative_stretch": 27.08609759248793,
+      "family.combine": 613.8753694342449,
+      "melt": 43.43247507233173,
+      "corpus": 14609.065042742528
+    },
+    "butterworth_cutoff_hz=2.0": {
+      "windows": 176.1531069818884,
+      "signals": 2340.155663991347,
+      "switch_events": 10.569180767051876,
+      "family.relative_phase": 683.7605534680188,
+      "family.cross_correlation": 588.2998364167288,
+      "family.vector_coding": 381.8314988967031,
+      "family.coherence": 196.89641746506095,
+      "family.spectral": 142.75589743629098,
+      "family.cluster_phase": 639.9357558134943,
+      "family.relative_stretch": 27.471700254827738,
+      "family.combine": 609.3658178243786,
+      "melt": 43.06698187626898,
+      "corpus": 14931.354315357283
+    },
+    "max_detection_gap_s=0.5": {
+      "windows": 172.64339269697666,
+      "signals": 2229.450643944554,
+      "switch_events": 10.452010934241116,
+      "family.relative_phase": 621.3524116333574,
+      "family.cross_correlation": 476.37860935088247,
+      "family.vector_coding": 377.627402221784,
+      "family.coherence": 186.12553662527353,
+      "family.spectral": 126.93310399353504,
+      "family.cluster_phase": 486.59174334350973,
+      "family.relative_stretch": 26.772418474778533,
+      "family.combine": 610.5162654733285,
+      "melt": 42.47179478313774,
+      "corpus": 14294.337309479713
+    },
+    "max_detection_gap_s=0.75": {
+      "windows": 168.83553457353264,
+      "signals": 2202.883396230638,
+      "switch_events": 10.42420821543783,
+      "family.relative_phase": 615.6115477336571,
+      "family.cross_correlation": 469.6132740303874,
+      "family.vector_coding": 373.4902929328382,
+      "family.coherence": 183.2750221742317,
+      "family.spectral": 127.07128533814102,
+      "family.cluster_phase": 480.62868705019355,
+      "family.relative_stretch": 26.605870653875172,
+      "family.combine": 607.0037004863843,
+      "melt": 42.75422868784517,
+      "corpus": 14232.179912792519
+    },
+    "max_detection_gap_s=1.5": {
+      "windows": 169.82474521826953,
+      "signals": 2187.273420690559,
+      "switch_events": 10.40035389829427,
+      "family.relative_phase": 615.7255726726726,
+      "family.cross_correlation": 476.7854135921225,
+      "family.vector_coding": 375.66748667228967,
+      "family.coherence": 182.76315856166184,
+      "family.spectral": 130.58024706784636,
+      "family.cluster_phase": 483.5616682469845,
+      "family.relative_stretch": 26.978219402953982,
+      "family.combine": 607.167502168566,
+      "melt": 41.66962947323918,
+      "corpus": 14164.288346118294
+    },
+    "max_detection_gap_s=2.0": {
+      "windows": 168.53339273296297,
+      "signals": 2173.8588542286307,
+      "switch_events": 10.504303664900362,
+      "family.relative_phase": 615.5401728395373,
+      "family.cross_correlation": 470.7311173295602,
+      "family.vector_coding": 378.3921204339713,
+      "family.coherence": 186.84900574572384,
+      "family.spectral": 128.83553221356124,
+      "family.cluster_phase": 483.9807549389079,
+      "family.relative_stretch": 25.70533293299377,
+      "family.combine": 610.3562920354307,
+      "melt": 42.65186258312315,
+      "corpus": 14173.595472929068
+    },
+    "joint_prep": {
+      "windows": 169.50673855654895,
+      "signals": 2206.973563114181,
+      "switch_events": 10.41059141792357,
+      "family.relative_phase": 643.4396491786465,
+      "family.cross_correlation": 478.7503412999213,
+      "family.vector_coding": 403.4633093997836,
+      "family.coherence": 183.0618547378108,
+      "family.spectral": 127.20652120281011,
+      "family.cluster_phase": 546.7540981611237,
+      "family.relative_stretch": 32.60290598496795,
+      "family.combine": 610.4065276561305,
+      "melt": 42.55334737896919,
+      "corpus": 14252.441444167867
+    }
+  },
+  "corpus_visibility": "full",
+  "input_contract": {
+    "version": 1,
+    "driver": "calibrate_coordination",
+    "sweep": {
+      "butterworth_cutoff_hz": [
+        0.5,
+        0.67,
+        0.8,
+        1.0,
+        1.25,
+        1.5,
+        2.0
+      ],
+      "max_detection_gap_s": [
+        0.5,
+        0.75,
+        1.0,
+        1.5,
+        2.0
+      ],
+      "min_observed_fraction": [
+        -0.2,
+        -0.1,
+        0.0,
+        0.1,
+        0.2,
+        0.3
+      ],
+      "vc_epsilon": [
+        0.5,
+        0.75,
+        1.0,
+        1.5,
+        2.0
+      ],
+      "welch_segment_s": [
+        0.5,
+        0.75,
+        1.0,
+        1.5,
+        2.0
+      ]
+    },
+    "baseline": {
+      "butterworth_cutoff_hz": 1.0,
+      "max_detection_gap_s": 1.0,
+      "min_observed_fraction": 0.0,
+      "vc_epsilon": 1.0,
+      "welch_segment_s": 1.0
+    },
+    "affected_families": {
+      "butterworth_cutoff_hz": [
+        "relative_phase",
+        "cross_correlation",
+        "vector_coding",
+        "coherence",
+        "spectral",
+        "cluster",
+        "team_sync",
+        "rsi"
+      ],
+      "max_detection_gap_s": [
+        "relative_phase",
+        "cross_correlation",
+        "vector_coding",
+        "coherence",
+        "spectral",
+        "cluster",
+        "team_sync",
+        "rsi"
+      ],
+      "min_observed_fraction": [
+        "relative_phase",
+        "cross_correlation",
+        "vector_coding",
+        "coherence",
+        "spectral",
+        "cluster",
+        "team_sync",
+        "rsi"
+      ],
+      "vc_epsilon": [
+        "vector_coding"
+      ],
+      "welch_segment_s": [
+        "coherence"
+      ]
+    },
+    "family_columns": {
+      "cluster": [
+        "cluster_team",
+        "team_id",
+        [
+          "coord_rho_group_mean"
+        ]
+      ],
+      "coherence": [
+        "pair",
+        "team_a_id",
+        [
+          "coord_coh_band_mean"
+        ]
+      ],
+      "cross_correlation": [
+        "pair",
+        "team_a_id",
+        [
+          "coord_xc_max_abs_r"
+        ]
+      ],
+      "relative_phase": [
+        "pair",
+        "team_a_id",
+        [
+          "coord_rp_resultant_length",
+          "coord_rp_pct_near_in_phase"
+        ]
+      ],
+      "rsi": [
+        "rsi",
+        "",
+        []
+      ],
+      "spectral": [
+        "spectral",
+        "team_id",
+        [
+          "coord_median_freq_cpm"
+        ]
+      ],
+      "team_sync": [
+        "team_sync",
+        "",
+        []
+      ],
+      "vector_coding": [
+        "pair",
+        "team_a_id",
+        [
+          "coord_vc_pct_in_phase",
+          "coord_vc_pct_anti_phase"
+        ]
+      ]
+    },
+    "objective_version": "3",
+    "min_effect_size": 0.005,
+    "geometry_version": "goal-relative-2",
+    "digest": "0af8eaba9d5f22b9e311019a8de40cc48effd254fa33385d8c51f2d7b0dcc7bf"
+  },
+  "run_commit": "c769e8604d45bb6e5078c1bcefec6bfa1067e318",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean"
+}

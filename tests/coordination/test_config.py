@@ -72,27 +72,31 @@ def test_no_tier_b_numeric_literal_in_config_source():
             assert not numeric, f"{node.target.id} has a numeric literal default; must read from the generated base"
 
 
-def test_interim_base_matches_R4_in_commit_1():
-    assert gen.BASE_SOURCE == "interim"
+def test_base_from_derivation_in_commit_2():
+    # Commit 2 regenerates the base from D1's pooled derivation: BASE_SOURCE flips interim -> derivation.
+    # The KEY STRUCTURE is invariant across the flip; the VALUES are the DGX-derived pooled numbers (validated
+    # by the authoritative run + CoordinationParams.__post_init__), so they are checked structurally here, not
+    # pinned to brittle run-specific literals.
+    assert gen.BASE_SOURCE == "derivation"
     base = gen.BASE_COORDINATION_PARAMS
-    assert base["butterworth_cutoff_hz"] == 0.4
-    assert (base["band_low_cpm"], base["band_high_cpm"]) == (0.22, 0.83)
-    assert base["welch_segment_s"] == 400.0
-    assert base["possession_gap_s"] == 2.0
-    assert base["max_detection_gap_s"] == 0.5
     mof = cast("dict[str, float]", base["min_observed_fraction"])
     vce = cast("dict[str, float]", base["vc_epsilon"])
     mss = cast("dict[str, float]", base["min_shift_s"])
     assert set(mof) == set(COORD_METHOD_FAMILIES)
     assert set(vce) == set(TEAM_SIGNALS)
     assert set(mss) == set(TEAM_SIGNALS) | {"player_x", "player_y", "cluster_amplitude"}
-    assert set(mof.values()) == {0.5}
-    assert set(vce.values()) == {0.0}
-    assert set(mss.values()) == {60.0}
+    assert cast("float", base["band_low_cpm"]) < cast("float", base["band_high_cpm"])  # ordered bands survive deriv
+    assert cast("float", base["butterworth_cutoff_hz"]) > 0 and cast("float", base["welch_segment_s"]) > 0
+    CoordinationParams()  # the derived base constructs a valid params (every __post_init__ bound holds)
 
 
-def test_generated_map_empty_in_commit_1():
-    assert gen.PROVIDER_COORDINATION_PARAMS == {}
+def test_generated_map_populated_in_commit_2():
+    # Commit 2 fills the per-provider map from the derivation (empty only at commit 1); every provider's
+    # partial override merges into a valid params.
+    providers = gen.PROVIDER_COORDINATION_PARAMS
+    assert set(providers) == {"gradientsports", "idsse", "skillcorner"}
+    for prov in providers:
+        CoordinationParams.for_provider(prov)
 
 
 def test_maps_complete_and_frozen():
@@ -164,7 +168,9 @@ def test_for_provider_merges_keywise(monkeypatch):
     monkeypatch.setattr(gen, "PROVIDER_COORDINATION_PARAMS", {"acme": partial})
     p = CoordinationParams.for_provider("acme")
     assert p.vc_epsilon["centroid_x"] == 0.7
-    assert p.vc_epsilon["centroid_y"] == 0.0  # untouched keys keep the base value
+    # untouched keys keep the base value (read from the generated base, robust to the commit-2 derivation flip)
+    base_vce = cast("dict[str, float]", gen.BASE_COORDINATION_PARAMS["vc_epsilon"])
+    assert p.vc_epsilon["centroid_y"] == base_vce["centroid_y"]
 
 
 def test_for_provider_unlisted_is_base():

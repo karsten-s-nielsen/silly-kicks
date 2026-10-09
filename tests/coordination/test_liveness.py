@@ -50,16 +50,19 @@ def _params(**kw):
 
 # The union of well-posed regimes (owner ruling): contiguous long matches for spectral/coherence (two lengths so
 # coord_coh_n_segments varies), a detection-aware match for the observed-fraction / player-count columns, and a
-# positive-epsilon match for the stationary count. Every regime here is one the interim params support.
+# positive-epsilon match for the stationary count. The detection-aware regime pins min_observed_fraction to 0.5:
+# the commit-2 derivation default is 1.0 (full observation), which would exclude every partially-observed window
+# and leave coord_n_players_mean constant -- the mechanism these columns exercise needs varied observation.
 def _union_fixtures():
     osc = {"provider": "sportec", "oscillation_cpm": 0.5, "phase_offset_deg": 40.0}
+    half_mof = {k: 0.5 for k in CoordinationParams().min_observed_fraction}
     return [
         ("syn2700", make_coordination_match(seconds=2700.0, **osc), _params()),
         ("syn1500", make_coordination_match(seconds=1500.0, **osc), _params()),
         (
             "skillcorner_vis",
             make_coordination_match(seconds=300.0, provider="skillcorner", visibility_drop=0.25),
-            _params(),
+            _params(min_observed_fraction=half_mof),
         ),
         (
             "vc_eps",
@@ -112,10 +115,6 @@ _IDSSE_HALF_NOT_LIVE: dict[str, str] = {
             "spectral.coord_n_segments",
         ),
         "below the spectral / coherence minima (test_committed_real_fixture_below_spectral_and_coherence_minima)",
-    ),
-    **dict.fromkeys(
-        ("pair.coord_vc_n_stationary", "pair_phase.coord_vc_n_stationary"),
-        "vc_epsilon == 0 at the interim params (test_interim_vc_epsilon_zeroes_the_stationary_count)",
     ),
     **dict.fromkeys(
         (
@@ -226,7 +225,8 @@ def test_idsse_half_xc_null_hinges_on_the_interim_min_shift(min_shift_s, expecte
     min_slice = min_slice_samples(round(params.xcorr_max_lag_s * fs))
     poss = possession_windows_from_frames(frames, n_phases=params.n_phases, params=params)
     assert len(poss) and ((poss["end_time_s"] - poss["start_time_s"]) * fs < min_slice).all()
-    assert set(params.min_shift_s.values()) == {60.0}  # the interim base (D1 derives the per-signal values)
+    # the default min_shift_s is now the D1-derived per-signal values (commit 2); this test pins it explicitly to
+    # 60/40 below to exercise the hinge, so it does not depend on the default.
     ps = sig.periods[0]
     for tm in ps.team_ids:
         lengths = [hi - lo for lo, hi in ps.segments[tm]]
@@ -252,11 +252,14 @@ def test_idsse_half_is_fully_observed_with_full_teams():
 
 
 def test_interim_vc_epsilon_zeroes_the_stationary_count():
-    """R2-class measured limitation: at the interim ``vc_epsilon == 0`` the strict ``<`` makes
-    coord_vc_n_stationary identically 0, so it is live only in the D2-calibrated ``vc_epsilon > 0`` regime."""
-    assert all(v == 0.0 for v in CoordinationParams().vc_epsilon.values())
+    """At ``vc_epsilon == 0`` the strict ``<`` makes coord_vc_n_stationary identically 0: the column is live only
+    in the ``vc_epsilon > 0`` regime (the commit-2 D1-derived default, which is why the real-data liveness smoke
+    now finds it live). vc_epsilon is PINNED to 0 here to exercise the zero-epsilon mechanism (the default is no
+    longer 0)."""
+    zero_eps = {k: 0.0 for k in CoordinationParams().vc_epsilon}
     f = make_coordination_match(seconds=300.0, provider="sportec", oscillation_cpm=0.5, phase_offset_deg=40.0)
-    res = compute_team_coordination(f, params=dataclasses.replace(CoordinationParams(), n_surrogates=0))
+    params = dataclasses.replace(CoordinationParams(), n_surrogates=0, vc_epsilon=zero_eps)
+    res = compute_team_coordination(f, params=params)
     for tbl in ("pair", "pair_phase"):
         s = pd.to_numeric(getattr(res, tbl)["coord_vc_n_stationary"], errors="coerce").dropna()
         assert (s == 0).all(), f"{tbl}.coord_vc_n_stationary not identically 0 at vc_epsilon==0"

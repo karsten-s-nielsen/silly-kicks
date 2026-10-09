@@ -127,7 +127,10 @@ def test_unclassified_provider_and_discarded_visibility_refused():
 # --------------------------------------------------------------------------- effective rate
 def test_effective_rate_default_raised_and_capped():
     f10, w10 = _valid_frames()
-    cs = build_coordination_signals(f10, windows=w10)
+    # pin the low cutoff explicitly: the mechanism is "cutoff 0.4 -> target 10" (the commit-2 derivation default
+    # cutoff is ~1.49, which is the raised/capped case below -- this first case is the native-matches branch).
+    low_cut = dataclasses.replace(CoordinationParams(), butterworth_cutoff_hz=0.4)
+    cs = build_coordination_signals(f10, windows=w10, params=low_cut)
     assert cs.fs == 10.0 and cs.rate_capped is False  # cutoff 0.4 -> target 10, native 10
 
     f25 = make_coordination_match(seconds=90.0, hz=25.0, provider="sportec")

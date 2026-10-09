@@ -66,7 +66,17 @@ def _dyad_signals(*, shared_island: bool):
     """900 s on a detection-aware provider. B is detected on a 10 s island between two detection gaps; A is either
     undetected over the island's whole neighbourhood (the island holds no slice of the dyad) or detected on the island
     too (the island is a 10 s slice of the dyad)."""
-    params = dataclasses.replace(CoordinationParams.for_provider("skillcorner"), n_surrogates=9)
+    # pin the interim-regime thresholds these fixtures were built for: mof 0.5 (the hidden dyad must still score --
+    # the commit-2 derivation default 1.0 would mark the partially-observed window insufficient) and min_shift 60 s
+    # (the 10 s island is the only run too short to shift; derivation's ~200 s per-signal min_shift would make every
+    # run too short, erasing the contrast this test turns on).
+    base = CoordinationParams.for_provider("skillcorner")
+    params = dataclasses.replace(
+        base,
+        n_surrogates=9,
+        min_observed_fraction={k: 0.5 for k in base.min_observed_fraction},
+        min_shift_s={k: 60.0 for k in base.min_shift_s},
+    )
     f = make_coordination_match(seconds=900.0, hz=_HZ, provider="skillcorner")
     assert _hide(f, _B, 300.0, _ISLAND[0]) and _hide(f, _B, _ISLAND[1], 400.0)
     if shared_island:

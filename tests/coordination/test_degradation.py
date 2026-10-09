@@ -128,7 +128,11 @@ def test_cluster_and_team_sync_refuse_iaaft_but_time_shift_computes():
     iaaft = dataclasses.replace(CoordinationParams(), n_surrogates=5, surrogate_method="iaaft", iaaft_max_iter=50)
     with pytest.raises(NotImplementedError, match=r"iaaft.*cluster"):
         compute_cluster_phase(_sig(f, params=iaaft))
-    shift = _sig(f, params=dataclasses.replace(CoordinationParams(), n_surrogates=5))
+    # pin min_shift small so the cluster (shifts player runs) + team-sync (shifts the amplitude) nulls COMPUTE on
+    # this 300 s synthetic segment; the commit-2 derivation default min_shift (~90-200 s per signal) would make them
+    # segment_too_short here, hiding the point (time_shift computes a real null while iaaft raises).
+    short_shift = {k: 0.5 for k in CoordinationParams().min_shift_s}
+    shift = _sig(f, params=dataclasses.replace(CoordinationParams(), n_surrogates=5, min_shift_s=short_shift))
     ct, _cp, ts, _r = compute_cluster_phase(shift)  # time_shift: a real null is computed here
     assert (ct["coord_cluster_surrogate_source"] == "computed").any()
     assert (ts["coord_team_sync_surrogate_source"] == "computed").any()

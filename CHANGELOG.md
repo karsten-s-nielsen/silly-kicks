@@ -5,6 +5,26 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.129.0] — 2026-10-08 — Team-coordination package (TF-58) (PR-S201, ADR-111/112/113/114/115)
+
+The temporal-coordination layer silly-kicks lacked: `silly_kicks.coordination` measures how the collective signals it already owns (team shape, defensive line) COUPLE over time. Tracking-only, descriptive, no VAEP path, no retrain — additive and non-breaking, on the merged 4.128.0 base. Corpus artifacts trace to their `run_commit` and carry their real match ids: an id is a non-reversible reference (a holder of the licensed data can verify a result against the source; someone without access cannot reconstruct anything from it), and the published statistics are derived aggregates. Reversibility is the only publish bar (ADR-116); ids are never pseudonymised.
+
+### Added
+
+- **`silly_kicks.coordination` (ADR-111):** `compute_team_coordination` / `build_coordination_signals` + seven construct families — relative phase (Hilbert), lagged cross-correlation, vector coding, spectral, coherence, cluster phase + SampEn, and RSI — with seeded surrogate nulls (spec §7.9 identities; `SILLY_KICKS_COORDINATION_REFERENCE_NUMERICS` as-built oracle). `compute_collective_variables` single-sources team shape + back line; windows via `period_windows` / `possession_windows_from_*`; run edges resampled on `grid_span`. A-09 ships per-construct reliability (linear ICC / rotation-invariant circular) + per-construct broadcast-occlusion error.
+- D1/D2/D3 corpus drivers (`derive_coordination_params` / `calibrate_coordination` / `validate_team_coordination`) + the numerics no-flip harness, on the `scripts/_driver.py` seam (resume, shards, provenance). The 980-match authoritative run (skillcorner 909 / gradientsports 64 / idsse 7) writes `docs/research/tf58_team_coordination/` (derivation / calibration / metrics / report / numerics_noflip + the generated `_provider_params_generated.py`); the no-flip check is clean (0 source flips).
+
+### Changed
+
+- **Reduce-memory (ADR-112):** categorical worker-combine (shared sorted `CategoricalDtype` + `observed=True`) on the corpus reduces; the occlusion-CI bootstrap becomes a match-grain cluster resample with a 20k-row cap (value-changing on `ci_by_bin`); F2/F3 derivation speed-ups.
+- **D2 layer-a per-variant share split (ADR-113):** the baseline's post-preparation variants write one share per `variant` (bounded per-worker peak), combined per variant and folded to one summary — `calibration.json` byte-identical.
+- **D2 reliability NA-entity parity (ADR-114):** the per-team reliability ICC now excludes NA team entities (the teamless Moura possession spectral signal), matching the D3 estimator (the A-35 same-estimator contract); `OBJECTIVE_VERSION` 2 → 3. Value-changing for the spectral family; no team data dropped.
+- **Numerics declarable geometry-gate exclusion (ADR-115):** `geometry_rate_gate` joins the closed `COORD_EXCLUSION_REASONS` vocabulary so the numerics reduce can DECLARE the 14 SkillCorner matches the spec-4.4 off-pitch admission gate excludes at load (ball/player off-pitch rate beyond the public-10 / 10 m floor = coordinate corruption). The conservation guard is intact; the bound is recorded in the artifact.
+
+### Hyrum
+
+- **Default coordination parameters change.** The generated `silly_kicks.coordination._provider_params_generated` flips from the commit-1 interim R4 placeholder (`BASE_SOURCE="interim"`) to the D1-derived pooled base + per-provider overrides for `gradientsports`/`idsse`/`skillcorner` (`BASE_SOURCE="derivation"`). Any consumer using `CoordinationParams()` or `CoordinationParams.for_provider()` defaults now gets the derived values — e.g. `butterworth_cutoff_hz` 0.4→~1.49, `welch_segment_s` 400→300, `min_observed_fraction` 0.5→1.0, `vc_epsilon` 0→>0, and per-signal `min_shift_s`. These are the authoritative calibration; the confirm's OAT selection did not clear the hypotheses gate, so the Tier-B (baseline) regime stands.
+
 ## [4.128.0!] — 2026-10-05 — F1b float32 frames + native DAS corpus re-fits + §7.3 downstream (PR-S200, ADR-106/107/108)
 
 The combined provenance cycle: the F1b float32 frame-storage schema and the native DAS engine both landed as code on `main`; this release re-fits every frame-geometry model and the downstream artifacts at one clean commit, and cuts the breaking version. **BREAKING (`!`)** — downstream must re-materialize; the lakehouse `<5` pin stays valid. Every artifact traces to its `run_commit` on `main`; no owner-tier match id enters the repo (weights and research aggregates are parameters-only, non-reversible).

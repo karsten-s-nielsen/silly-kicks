@@ -8,10 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from silly_kicks import __version__
-
 _CARDS = Path("docs/huggingface/model-cards")
 _W = Path("silly_kicks/tracking")
+# The release these bundled models were last F1b-re-fit at (ADR-106). The card's provenance / re-fit line tracks
+# that re-fit EVENT, not the live wheel version -- a no-retrain release (e.g. 4.129.0 / TF-58) does not re-stamp
+# them (re-stamping would fabricate a re-fit that never happened). A future re-fit of a bundle bumps this.
+_PROVENANCE_VERSION = "4.128.0"
 _NUM = re.compile(r"\d+(?:\.\d+)?")
 _GK_ROWS = {
     "Held-out CV euclidean MAE": [
@@ -81,7 +83,7 @@ def _provenance_line(metrics: dict) -> str:
     fields = [f"`run_commit={metrics['run_commit'][:7]}`"]
     fields += [f"`{k}: {metrics[k]}`" for k in ("corpus_visibility", "artifact_label") if k in metrics]
     fields += [f"{metrics[k]} {unit}" for k, unit in (("n_matches", "matches"), ("n_rows", "rows")) if k in metrics]
-    return f"**Provenance (silly-kicks {__version__}).** " + " · ".join(fields)
+    return f"**Provenance (silly-kicks {_PROVENANCE_VERSION}).** " + " · ".join(fields)
 
 
 def test_card_population_is_exact():
@@ -93,7 +95,9 @@ def test_card_population_is_exact():
 @pytest.mark.parametrize("card", sorted(_MIRRORS))
 def test_mirror_card_states_the_f1b_refit_paragraph(card):
     rel = _MIRRORS[card][0]
-    head = f"**F1b float32-frame re-fit (silly-kicks {__version__} / ADR-106; `training_commit={_short(rel)}`).**"
+    head = (
+        f"**F1b float32-frame re-fit (silly-kicks {_PROVENANCE_VERSION} / ADR-106; `training_commit={_short(rel)}`).**"
+    )
     assert _card(card).count(head) == 1
 
 
@@ -109,8 +113,9 @@ def test_mirror_card_table_row_equals_the_bundle(card, label):
 def test_hub_only_card_states_the_unchanged_note_for_its_bundled_sibling(card):
     rel = _HF_ONLY[card]
     note = (
-        f"In silly-kicks {__version__} the wheel's bundled `{Path(rel).name}` was re-fit on float32-stored frames "
-        f"(`training_commit={_short(rel)}`). This Hub artifact is unchanged: trained on float64 frames"
+        f"In silly-kicks {_PROVENANCE_VERSION} the wheel's bundled `{Path(rel).name}` was re-fit on "
+        f"float32-stored frames (`training_commit={_short(rel)}`). This Hub artifact is unchanged: "
+        f"trained on float64 frames"
     )
     assert _card(card).count(note) == 1
 
