@@ -3,7 +3,7 @@
   "discipline": "ADR-093 (OpenEvolve provenance + held-out validation); the evolve PROCESS is documented, not required to be bit-reproducible; the OUTPUT decision is committed",
   "run_commit": "pending-commit-1 (seed ships -> the committed silly_kicks/xsuccess/_features.py IS the Stage-A output; no code depends on a specific evolve-run SHA)",
   "run_tree_dirty": true,
-  "run_tree_note": "the DGX-Spark run used a non-git synced tree (~/silly-kicks-tf61) with --allow-dirty; the evolve output is a DECISION (seed vs evolved), reviewed by hand, not a bundled weight artifact",
+  "run_tree_note": "the DGX-Spark run used a non-git synced tree (<repo-tf61>) with --allow-dirty; the evolve output is a DECISION (seed vs evolved), reviewed by hand, not a bundled weight artifact",
   "date": "2026-09-15",
   "corpus": {
     "role": "DISCOVERY subsample only (feature-representation search needs signal, not full-corpus coverage); the FINAL bundled model trains on the full redistributable open-data corpus at Commit-2",

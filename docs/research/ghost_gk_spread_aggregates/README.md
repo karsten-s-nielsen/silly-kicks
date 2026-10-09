@@ -649,14 +649,14 @@ the end and lost everything at 48/480). The harness writes one JSON line per que
 `f.flush(); os.fsync(f.fileno())` inside `pool.imap_unordered`, so a kill loses at most one query,
 and resumes by skipping completed indices.
 
-Working dir on the DGX was `/tmp/aggprod`; banked filenames map to the run filenames as
+Working dir on the DGX was `<scratch>/aggprod`; banked filenames map to the run filenames as
 `08_ground_truth_prod.py` → `prod_gt.py`, `09_assemble_prod.py` → `assemble.py`,
 `10_collisions_prod.py` → `collisions.py`, `11_unseen_only_prod.py` → `unseen_only.py`, and
 `03/04/05_*.py` → `prod_analyse{,2,3}.py`.
 
 ```bash
-cd /tmp/aggprod
-nohup ~/Development/silly-kicks/.venv/bin/python prod_gt.py > prod_gt.log 2>&1 &
+cd <scratch>/aggprod
+nohup <repo>/.venv/bin/python prod_gt.py > prod_gt.log 2>&1 &
 # resumable: re-running skips completed indices, so a kill costs at most one query
 python assemble.py        # JSONL + prep.npz -> out/gt.npz, prints the mechanism block
 python prod_analyse.py    # = 03_score.py, path lines only differ
@@ -690,9 +690,9 @@ The production scorers differ from the 36k scorers by path lines only — verifi
 ```
 $ diff harness/03_score.py prod_analyse.py
 21c21
-< REPO = pathlib.Path(r"D:/Development/karstenskyt__silly-kicks_part-deux")
+< REPO = pathlib.Path(r"<repo-part-deux>")
 ---
-> REPO = pathlib.Path(r"/home/karsten/Development/silly-kicks")
+> REPO = pathlib.Path(r"<repo-root>")
 24c24
 < AGG = D.parent / "agg"
 ---

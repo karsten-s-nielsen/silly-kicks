@@ -128,7 +128,7 @@
   "k_neighbours_found": 4,
   "argmax_moved": false,
   "argmax_rule": "best neighbour mean - recorded mean > recorded CV standard error",
-  "store": "/home/karsten/tf24-store/s1.db",
+  "store": "tf24-store/s1.db",
   "run_commit": "2cecd2b0df458131db420c4b6e26b8dada18d014",
   "run_tree_dirty": false,
   "selection": {

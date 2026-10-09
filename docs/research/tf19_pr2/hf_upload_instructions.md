@@ -58,7 +58,7 @@ CV record referenced by `decision_table.md`.
 The full ghost-GK retrain lives on the DGX training box (not copied locally — it is ~200 MB):
 
 ```
-karsten@192.168.68.73:~/Development/sk_stageB_448/ghost_full/ghost_gk_v1/
+karsten@192.168.68.73:<stageB>/ghost_full/ghost_gk_v1/
     SHA256SUMS
     metadata.json
     metrics.json
@@ -72,7 +72,7 @@ karsten@192.168.68.73:~/Development/sk_stageB_448/ghost_full/ghost_gk_v1/
 `SHA256SUMS`). Pull the four served files down first, e.g.:
 
 ```
-scp karsten@192.168.68.73:~/Development/sk_stageB_448/ghost_full/ghost_gk_v1/{SHA256SUMS,metadata.json,metrics.json,rfcde_weights.npz} <local_staging_dir>/
+scp karsten@192.168.68.73:<stageB>/ghost_full/ghost_gk_v1/{SHA256SUMS,metadata.json,metrics.json,rfcde_weights.npz} <local_staging_dir>/
 ```
 
 ## Repo creation + upload call pattern

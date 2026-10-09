@@ -107,9 +107,9 @@ any commit before 4.73.0, so the checkout deletes the very thing you are running
 worktree at the older commit:
 
 ```
-git worktree add --detach /tmp/rc4-pre <pre-fix commit>
-cp scripts/measure_rc4_orientation.py /tmp/rc4-pre/scripts/
-cd /tmp/rc4-pre && python scripts/measure_rc4_orientation.py --label prefix --allow-dirty
+git worktree add --detach <scratch>/rc4-pre <pre-fix commit>
+cp scripts/measure_rc4_orientation.py <scratch>/rc4-pre/scripts/
+cd <scratch>/rc4-pre && python scripts/measure_rc4_orientation.py --label prefix --allow-dirty
 ```
 
 `--allow-dirty` is REQUIRED there, and the resulting artifact will record `run_tree_dirty: true` —
