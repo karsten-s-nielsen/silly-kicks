@@ -39,6 +39,33 @@ _SHOTS = (36.0, 84.0, 132.0, 180.0)
 _TACKLES = (60.0, 108.0, 156.0, 204.0)
 _PROV = {"commit": "test", "dirty": False, "tree_state": "clean", "tree_hash": "test"}
 
+#: CI-speed cap on the reliability + occlusion bootstraps -- ~90% of this file's runtime (614s + 143s).
+#: The gate compares the object-dtype leg against the sorted-categorical leg at the SAME seed+draws, so
+#: the draw count CANCELS and byte-identity is invariant to it (verified: identical pass at 25 vs the
+#: prod 400). Every categorical-sensitive path -- pd.unique / rng.choice / group relabel / icc1 /
+#: weighted-median groupby -- still fires each draw, so dtype-safety coverage is unchanged. Prod stays
+#: 400: RELIABILITY_BOOTSTRAP_DRAWS is a DEF-TIME default (reliability_cell binds it at import, so patch
+#: the FUNCTION, not the constant); _OCCLUSION_CI_DRAWS is read at CALL time inside the resample loop (so
+#: setattr takes). Blast radius checked: nothing outside these two bootstraps reads either constant.
+_CI_BOOTSTRAP_DRAWS = 25
+
+
+@pytest.fixture(autouse=True)
+def _cap_bootstrap_draws(monkeypatch):
+    """Cap both bootstraps to _CI_BOOTSTRAP_DRAWS for CI cost; leg-vs-leg byte-identity is unaffected."""
+    import scripts._coordination_reliability as _rel
+    import scripts.derive_coordination_params as _dcp
+
+    _orig_ci = _rel._bootstrap_ci
+    monkeypatch.setattr(
+        _rel,
+        "_bootstrap_ci",
+        lambda samples, groups, kind, seed, draws: _orig_ci(
+            samples, groups, kind, seed, min(draws, _CI_BOOTSTRAP_DRAWS)
+        ),
+    )
+    monkeypatch.setattr(_dcp, "_OCCLUSION_CI_DRAWS", min(_dcp._OCCLUSION_CI_DRAWS, _CI_BOOTSTRAP_DRAWS))
+
 
 def _match(game: int, team_ids: tuple[int, int], seed: int):
     frames = make_coordination_match(
