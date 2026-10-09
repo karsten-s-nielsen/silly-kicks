@@ -90,9 +90,12 @@ B-Windows) is the recorded next lever if latency/cost later warrant it.
   and `docs/superpowers/specs/2026-09-25-ci-runtime-slow-decouple-design.md`.
 
 ### Known limits (stated, not discovered)
-- **Windows is install/numba-bound**; sharding cannot divide the 1:49 install, so the SLA there rests on
-  the numba/pip caches (cold-cache first run may sit higher — a steady-state claim).
-- The `.test_durations` balance is tuned for the ubuntu primary leg; other legs may run hotter shards.
+- **Windows runs ~2.4x ubuntu and is EXEC-bound** (pip install ~1:49 is the minor part); sharding plus the
+  ubuntu/windows leg-aware `.test_durations` flatten it. The numba/pip caches still matter (cold-cache first
+  run sits higher — a steady-state claim).
+- The `.test_durations` is LEG-AWARE: `max(ubuntu, windows)` for matrix tests (windows binds, ~2.4x
+  ubuntu) and ubuntu weight for `@slow` tests (the slow job runs ubuntu), so each job's actual leg is
+  flattened; ubuntu matrix shards run slightly uneven but far under budget.
 - Concurrency headroom is against an **account-wide** cap shared with other automation; a future N-bump
   or 5th matrix leg is bounded by it.
 
