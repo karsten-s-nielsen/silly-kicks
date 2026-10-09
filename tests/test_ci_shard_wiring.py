@@ -83,6 +83,20 @@ def test_every_sharded_command_pins_collection_order() -> None:
         assert "-p no:randomly" in cmd, f"sharded command must pin collection order: {cmd}"
 
 
+def test_sharded_commands_use_least_duration_algorithm() -> None:
+    """pytest-split's default ``duration_based_chunks`` degenerated at ``--splits 16`` (test-windows group
+    16 got 0 tests -> an all-skipped group exits 1; measured: groups of 825/2397/0). ``least_duration`` (LPT)
+    balances by duration and never empties a group (measured: 722/728/729). Pin it on EVERY sharded
+    invocation -- both the bulk run and the ``--co`` node-ID collection, which must agree -- so the split
+    cannot regress to the order-preserving default."""
+    cmds = _sharded_cmds()
+    assert cmds, "no sharded commands found -- discovery is broken"
+    for cmd in cmds:
+        assert "--splitting-algorithm least_duration" in cmd, (
+            f"sharded command must use least_duration (duration_based_chunks degenerates at high --splits): {cmd}"
+        )
+
+
 def test_no_collection_shuffling_plugin_in_test_extra() -> None:
     # pytest-randomly (or any shuffle plugin) auto-activates and would break the shard partition; keep
     # it out entirely. Plain text scan on purpose -- `tomllib` is py3.11+ and ABSENT on the CI 3.10 leg

@@ -28,7 +28,9 @@ it gets more shards to keep its per-shard wall-clock near ubuntu's, with NO test
 Each shard runs on its own runner (the `xdist -n auto` memory-kill on the 4-core/7GB runners is why
 intra-job parallelism was reverted). Each leg balances on its OWN committed durations file via
 `--durations-path`: **`.test_durations.ubuntu`** (test-ubuntu + the ubuntu `slow` job) and
-**`.test_durations.windows`** (test-windows). **Without a committed file pytest-split's count-mode split
+**`.test_durations.windows`** (test-windows), both with `--splitting-algorithm least_duration` (pytest-split's
+LPT bin-packer; the default `duration_based_chunks` degenerated at `--splits 16`, emptying a trailing group
+-> an all-skipped group exits 1). **Without a committed file pytest-split's count-mode split
 is NON-DETERMINISTIC (shard sizes drift run-to-run and can under-cover), so both are committed.** Both are
 **CI-MEASURED**, never local (a local `--store-durations` mis-balances — CI is ~2× local and per-OS /
 per-interpreter timings differ). **To regenerate:** temporarily add a `durations-capture` job PER OS (full

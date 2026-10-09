@@ -86,7 +86,7 @@ jobs:
       # Bulk suite, DURATION-SHARDED. `-p no:randomly` pins collection order (the partition is only valid if
       # every shard collects identically); balanced by the committed .test_durations.ubuntu. Slow-test gating
       # (ADR-023): the `not e2e and not slow` selection; the @slow tail runs once in the dedicated `slow` job.
-      - run: pytest tests/ -m "not e2e and not slow" --splits 6 --group ${{ matrix.shard }} --durations-path .test_durations.ubuntu -p no:randomly --benchmark-skip --tb=short --durations=25
+      - run: pytest tests/ -m "not e2e and not slow" --splits 6 --group ${{ matrix.shard }} --durations-path .test_durations.ubuntu --splitting-algorithm least_duration -p no:randomly --benchmark-skip --tb=short --durations=25
       # Public-API doctest (PR-S124), version-sensitive repr -> runs on EVERY leg, but NOT sharded, so shard 1
       # only (once per leg). Gated by test_ci_doctest_wired.py.
       - if: ${{ matrix.shard == 1 }}
@@ -106,7 +106,7 @@ jobs:
       # Node-ID lists for shard-reconcile. `shell: bash` for grep/sort. Each shard uploads its set; shard 1
       # also uploads the leg's FULL set (no --splits); reconcile asserts union(shards) == full, disjoint, per leg.
       - shell: bash
-        run: pytest tests/ -m "not e2e and not slow" --splits 6 --group ${{ matrix.shard }} --durations-path .test_durations.ubuntu -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
+        run: pytest tests/ -m "not e2e and not slow" --splits 6 --group ${{ matrix.shard }} --durations-path .test_durations.ubuntu --splitting-algorithm least_duration -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: shard-nodeids-ubuntu-latest-${{ matrix.python-version }}-${{ matrix.shard }}
@@ -148,7 +148,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv pip install -e ".[kloppy,xgboost,test]"
-      - run: pytest tests/ -m "not e2e and not slow" --splits 16 --group ${{ matrix.shard }} --durations-path .test_durations.windows -p no:randomly --benchmark-skip --tb=short --durations=25
+      - run: pytest tests/ -m "not e2e and not slow" --splits 16 --group ${{ matrix.shard }} --durations-path .test_durations.windows --splitting-algorithm least_duration -p no:randomly --benchmark-skip --tb=short --durations=25
       - if: ${{ matrix.shard == 1 }}
         run: pytest --doctest-modules silly_kicks/ --ignore-glob="*/_[!_]*.py" --tb=short
       - if: ${{ matrix.shard == 1 }}
@@ -161,7 +161,7 @@ jobs:
           name: pandas-major-windows-latest-3.12
           path: pandas-major.txt
       - shell: bash
-        run: pytest tests/ -m "not e2e and not slow" --splits 16 --group ${{ matrix.shard }} --durations-path .test_durations.windows -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
+        run: pytest tests/ -m "not e2e and not slow" --splits 16 --group ${{ matrix.shard }} --durations-path .test_durations.windows --splitting-algorithm least_duration -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: shard-nodeids-windows-latest-3.12-${{ matrix.shard }}
@@ -202,11 +202,11 @@ jobs:
         with:
           enable-cache: true
       - run: uv pip install -e ".[kloppy,xgboost,test]"
-      - run: pytest tests/ -m "slow and not e2e" --splits 4 --group ${{ matrix.slow-shard }} --durations-path .test_durations.ubuntu -p no:randomly --benchmark-skip --tb=short --durations=25
+      - run: pytest tests/ -m "slow and not e2e" --splits 4 --group ${{ matrix.slow-shard }} --durations-path .test_durations.ubuntu --splitting-algorithm least_duration -p no:randomly --benchmark-skip --tb=short --durations=25
       # reconcile artifacts (proofs #2/#3): each slow-shard uploads its node-ID set; slow-shard 1 also
       # uploads the slow FULL set and the combined `not e2e` (incl slow) set for the conservation check.
       - shell: bash
-        run: pytest tests/ -m "slow and not e2e" --splits 4 --group ${{ matrix.slow-shard }} --durations-path .test_durations.ubuntu -p no:randomly --co -q | grep -E "^tests/.*::" | sort > slow-shard-nodeids.txt
+        run: pytest tests/ -m "slow and not e2e" --splits 4 --group ${{ matrix.slow-shard }} --durations-path .test_durations.ubuntu --splitting-algorithm least_duration -p no:randomly --co -q | grep -E "^tests/.*::" | sort > slow-shard-nodeids.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: slow-shard-nodeids-${{ matrix.slow-shard }}
