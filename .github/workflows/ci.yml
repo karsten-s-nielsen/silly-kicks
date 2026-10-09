@@ -49,10 +49,10 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12"]
         # Duration-sharded via pytest-split (--splits/--group), one shard per parallel job on its own
-        # runner -- so the `xdist -n auto` memory-kill (see the bulk-step comment) cannot recur. N=3,
-        # kept consistent with `--splits 3` by tests/test_ci_shard_wiring.py; the runtime
+        # runner -- so the `xdist -n auto` memory-kill (see the bulk-step comment) cannot recur. N=5,
+        # kept consistent with `--splits 5` by tests/test_ci_shard_wiring.py; the runtime
         # shard-reconcile job proves the shards partition each leg's suite (union == full, disjoint).
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5]
         exclude:
           - os: windows-latest
             python-version: "3.10"
@@ -102,7 +102,7 @@ jobs:
       # Bulk suite, DURATION-SHARDED across parallel jobs. xdist `-n auto` was reverted: on the
       # 4-core/7GB CI runners it regressed py3.12 to a memory/JIT-pressure kill (4x heavy ML imports +
       # 4x numba compiles + the ghost-GK suite), the opposite of the 16-core local speedup. Sharding
-      # gives the parallelism xdist could not -- each `--splits 3 --group <shard>` runs on its OWN
+      # gives the parallelism xdist could not -- each `--splits 5 --group <shard>` runs on its OWN
       # runner, so there is no shared-memory contention. `-p no:randomly` pins collection order (the
       # partition is only valid if every shard collects identically); the split is balanced by the
       # committed `.test_durations`. Perf budgets are deterministic structural guards (no wall-clock);
@@ -110,12 +110,12 @@ jobs:
       #
       # Slow-test gating (ADR-023): every leg runs the SAME `not e2e and not slow` selection, so no leg
       # is structurally heavier. The platform-/interpreter-INVARIANT heavy tests (@pytest.mark.slow) run
-      # ONCE in the dedicated `slow` job below (ubuntu-3.12, sharded x2), decoupled from this matrix.
+      # ONCE in the dedicated `slow` job below (ubuntu-3.12, sharded x3), decoupled from this matrix.
       # Version-sensitive tests (golden/snapshot/absolute) are deliberately NOT marked slow -- they stay
       # on all legs (OS + interpreter axes). Guarded by tests/test_ci_slow_gating_wired.py +
       # tests/test_ci_slow_reconcile_wired.py; pytest-split re-computes the split WITHIN the marker
       # selection, so the 3 shards always cover exactly that set.
-      - run: pytest tests/ -m "not e2e and not slow" --splits 3 --group ${{ matrix.shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
+      - run: pytest tests/ -m "not e2e and not slow" --splits 5 --group ${{ matrix.shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
       # Public-API doctest enforcement (PR-S124). Initial scope: the PUBLIC surface only --
       # `--ignore-glob="*/_[!_]*.py"` skips single-underscore private modules while KEEPING dunder
       # `__init__.py`, so runnable examples on non-underscore modules are executed and stay honest.
@@ -148,7 +148,7 @@ jobs:
       # shard. Each shard uploads its own set; shard 1 also uploads that leg's FULL set (no --splits),
       # and shard-reconcile asserts union(shards) == full and pairwise-disjoint, per leg.
       - shell: bash
-        run: pytest tests/ -m "not e2e and not slow" --splits 3 --group ${{ matrix.shard }} -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
+        run: pytest tests/ -m "not e2e and not slow" --splits 5 --group ${{ matrix.shard }} -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: shard-nodeids-${{ matrix.os }}-${{ matrix.python-version }}-${{ matrix.shard }}
@@ -162,8 +162,8 @@ jobs:
           name: full-nodeids-${{ matrix.os }}-${{ matrix.python-version }}
           path: full-nodeids.txt
 
-  # ADR-023: the platform-/interpreter-INVARIANT heavy tail (@pytest.mark.slow, ~250 tests / ~13.6 min)
-  # runs ONCE here, sharded x2, on the primary interpreter -- decoupled from the symmetric `test` matrix
+  # ADR-023: the platform-/interpreter-INVARIANT heavy tail (@pytest.mark.slow, ~261 tests / ~17.8 min)
+  # runs ONCE here, sharded x3, on the primary interpreter -- decoupled from the symmetric `test` matrix
   # so no matrix leg is structurally heavier. Balanced by the SAME committed .test_durations (pytest-split
   # filters to the -m selection). Wiring pinned by test_ci_slow_gating_wired / _shard_wiring / _slow_reconcile_wired.
   slow:
@@ -171,7 +171,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slow-shard: [1, 2]
+        slow-shard: [1, 2, 3]
     env:
       SILLY_KICKS_ASSERT_INVARIANTS: "1"
       NUMBA_CACHE_DIR: ${{ github.workspace }}/.numba_cache
@@ -186,11 +186,11 @@ jobs:
           path: ${{ github.workspace }}/.numba_cache
           key: numba-ubuntu-latest-3.12-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py', 'silly_kicks/coordination/**/*_numba*.py') }}
       - run: pip install -e ".[kloppy,xgboost,test]"
-      - run: pytest tests/ -m "slow and not e2e" --splits 2 --group ${{ matrix.slow-shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
+      - run: pytest tests/ -m "slow and not e2e" --splits 3 --group ${{ matrix.slow-shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
       # reconcile artifacts (proofs #2/#3): each slow-shard uploads its node-ID set; slow-shard 1 also
       # uploads the slow FULL set and the combined `not e2e` (incl slow) set for the conservation check.
       - shell: bash
-        run: pytest tests/ -m "slow and not e2e" --splits 2 --group ${{ matrix.slow-shard }} -p no:randomly --co -q | grep -E "^tests/.*::" | sort > slow-shard-nodeids.txt
+        run: pytest tests/ -m "slow and not e2e" --splits 3 --group ${{ matrix.slow-shard }} -p no:randomly --co -q | grep -E "^tests/.*::" | sort > slow-shard-nodeids.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: slow-shard-nodeids-${{ matrix.slow-shard }}
@@ -313,7 +313,7 @@ jobs:
           path: combined/
       - name: Shards must PARTITION each leg's suite (union == full, pairwise-disjoint)
         env:
-          EXPECTED_N: "3"   # keep consistent with the shard axis; test_ci_shard_wiring.py pins the axis to 1..N
+          EXPECTED_N: "5"   # keep consistent with the shard axis; test_ci_shard_wiring.py pins the axis to 1..N
         run: |
           python - <<'PY'
           import os, pathlib, sys
@@ -357,7 +357,7 @@ jobs:
               if missing: errs.append(f"{lg}: {len(missing)} test(s) in NO shard e.g. {sorted(missing)[:3]}")
               if extra:   errs.append(f"{lg}: {len(extra)} test(s) not in full set e.g. {sorted(extra)[:3]}")
 
-          # --- proof #2: the slow job's 2 shards partition the `slow and not e2e` set ---
+          # --- proof #2: the slow job's 3 shards partition the `slow and not e2e` set ---
           slow_shard_sets = [load(f) for f in pathlib.Path("slow-shards").rglob("slow-shard-nodeids.txt")]
           slow_full_files = list(pathlib.Path("slow-full").rglob("slow-full-nodeids.txt"))
           combined_files  = list(pathlib.Path("combined").rglob("combined-full-nodeids.txt"))
