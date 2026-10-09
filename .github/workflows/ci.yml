@@ -45,104 +45,55 @@ jobs:
       # config-driven include: silly_kicks + tests + scripts (pyproject [tool.pyright])
       - run: pyright
 
-  test:
-    runs-on: ${{ matrix.os }}
+  # Duration-sharded test matrix. Ubuntu and windows shard INDEPENDENTLY (ADR-074 amendment): windows
+  # runs ~2.4x ubuntu on this suite, so it gets MORE shards (16) than ubuntu (6) -- more runners where
+  # the bottleneck is, with NO test dropped from either OS. Each leg balances on its OWN CI-measured
+  # durations file (.test_durations.ubuntu / .test_durations.windows via `--durations-path`); the former
+  # single ubuntu/windows blended .test_durations is retired (it could not flatten both legs at once).
+  # fail-fast: false -- one shard failing must NOT cancel the others; shard-reconcile wants the full picture.
+  test-ubuntu:
+    runs-on: ubuntu-latest
     strategy:
-      # fail-fast: false -- one shard failing must NOT cancel the others; the full picture (which
-      # shard/leg is red, the shard-reconcile partition) is what we want. See the CI-parallelization ADR.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12"]
-        # Duration-sharded via pytest-split (--splits/--group), one shard per parallel job on its own
-        # runner -- so the `xdist -n auto` memory-kill (see the bulk-step comment) cannot recur. N=12,
-        # kept consistent with `--splits 12` by tests/test_ci_shard_wiring.py; the runtime
-        # shard-reconcile job proves the shards partition each leg's suite (union == full, disjoint).
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-        exclude:
-          - os: windows-latest
-            python-version: "3.10"
-          - os: windows-latest
-            python-version: "3.11"
+        # N_ubuntu=6, kept consistent with `--splits 6` by tests/test_ci_shard_wiring.py.
+        shard: [1, 2, 3, 4, 5, 6]
     env:
-      # Strict mode: promote the in-converter direction-of-play invariant
-      # assertion in `silly_kicks.spadl.utils._finalize_output` (PR-S22 /
-      # ADR-006) from default-warn to raise, AND promote the input-convention
-      # validator's `on_mismatch` resolution from "warn" to "raise". Catches
-      # home_team_id-heuristic regressions in test fixtures and any future
-      # loader-shape drift in consumer pipelines that pin against silly-kicks
-      # main. See feedback_home_team_id_heuristic_fragile.md.
+      # Strict mode (PR-S22 / ADR-006): promote the in-converter direction-of-play invariant AND the
+      # input-convention validator's on_mismatch from warn to raise. See feedback_home_team_id_heuristic_fragile.
       SILLY_KICKS_ASSERT_INVARIANTS: "1"
-      # Lever C: persist numba's compiled @njit kernels across runs (actions/cache below). Most
-      # impactful on the install/numba-bound windows leg, whose 1:49 install sharding cannot divide.
       NUMBA_CACHE_DIR: ${{ github.workspace }}/.numba_cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-          # Caches the pip wheel-DOWNLOAD cache (not the built/installed env, and not same-commit
-          # parallel jobs -- they race to populate; the win is subsequent commits). Test jobs only;
-          # the lint job's exact typing pins (ADR-057) are untouched.
           cache: pip
-      # Lever C -- restore/persist numba's on-disk compiled @njit kernels. The three hashFiles patterns
-      # cover ALL 6 numba files: 4 @njit-DECORATED in tracking (_numba_kernels, _ghost_gk_numba,
-      # _ball_carrier_numba, _das_numba via the tracking glob) + coordination/_kernels/_numba (via the
-      # coordination glob) + 1 CALL-form (_turnover.py `_njit(cache=_NUMBA_CACHE)(...)`, listed explicitly).
-      # The on-disk cache is OPT-IN in the library (tests/tracking/test_numba_cache_gating.py): the job-level
-      # NUMBA_CACHE_DIR below is what turns it on here.
-      # Pinned by tests/test_ci_shard_wiring.py::test_numba_cache_key_covers_all_njit_files so a NEW @njit
-      # file fails CI until the key is extended. A narrow key (not silly_kicks/**/*.py) is deliberate: it
-      # survives across PRs that touch non-numba code, which helps the windows floor.
+      # Lever C -- restore/persist numba's on-disk compiled @njit kernels. The hashFiles patterns cover ALL
+      # @njit files (tracking glob + coordination glob + the _turnover.py call-form). Pinned by
+      # tests/test_ci_shard_wiring.py::test_numba_cache_key_covers_all_njit_files so a NEW @njit file fails CI.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.numba_cache
-          key: numba-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py', 'silly_kicks/coordination/**/*_numba*.py') }}
-      # DAS is a NATIVE engine (ADR-107): `accessible-space` is no longer installed on any CI leg.
-      # The TF-28 DAS + gkdv DAS-arm suites run on every leg (they no longer importorskip a library);
-      # their numerics are pinned against the committed golden oracle
-      # (tests/tracking/_fixtures/das_golden/, checksummed with no library needed). The dev-only
-      # `das-reference` extra (pinned accessible-space==2.0.15) is installed only where the oracle is
-      # regenerated, where the corpus parity driver runs, and in the `das-reference-contract` job -- not here.
+          key: numba-ubuntu-latest-${{ matrix.python-version }}-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py', 'silly_kicks/coordination/**/*_numba*.py') }}
+      # DAS is a NATIVE engine (ADR-107): `accessible-space` is not installed on any matrix leg; its numerics
+      # are pinned against the committed golden oracle. uv installs ~10-30x faster than pip (byte-identical env).
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
       - run: uv pip install -e ".[kloppy,xgboost,test]"
-      # Bulk suite, DURATION-SHARDED across parallel jobs. xdist `-n auto` was reverted: on the
-      # 4-core/7GB CI runners it regressed py3.12 to a memory/JIT-pressure kill (4x heavy ML imports +
-      # 4x numba compiles + the ghost-GK suite), the opposite of the 16-core local speedup. Sharding
-      # gives the parallelism xdist could not -- each `--splits 12 --group <shard>` runs on its OWN
-      # runner, so there is no shared-memory contention. `-p no:randomly` pins collection order (the
-      # partition is only valid if every shard collects identically); the split is balanced by the
-      # committed `.test_durations`. Perf budgets are deterministic structural guards (no wall-clock);
-      # the benchmark *measurements* run single-threaded in the standalone `benchmark` job for clean timing.
-      #
-      # Slow-test gating (ADR-023): every leg runs the SAME `not e2e and not slow` selection, so no leg
-      # is structurally heavier. The platform-/interpreter-INVARIANT heavy tests (@pytest.mark.slow) run
-      # ONCE in the dedicated `slow` job below (ubuntu-3.12, sharded x4), decoupled from this matrix.
-      # Version-sensitive tests (golden/snapshot/absolute) are deliberately NOT marked slow -- they stay
-      # on all legs (OS + interpreter axes). Guarded by tests/test_ci_slow_gating_wired.py +
-      # tests/test_ci_slow_reconcile_wired.py; pytest-split re-computes the split WITHIN the marker
-      # selection, so the 3 shards always cover exactly that set.
-      - run: pytest tests/ -m "not e2e and not slow" --splits 12 --group ${{ matrix.shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
-      # Public-API doctest enforcement (PR-S124). Initial scope: the PUBLIC surface only --
-      # `--ignore-glob="*/_[!_]*.py"` skips single-underscore private modules while KEEPING dunder
-      # `__init__.py`, so runnable examples on non-underscore modules are executed and stay honest.
-      # Private-module examples are kept CORRECT (the whole package sweep is clean) but are
-      # deliberately NOT executed here, to bound CI wall-clock. Runs on EVERY leg because doctest
-      # output (repr) is version-sensitive; verified green on py3.10 + py3.14. No `addopts` in
-      # pyproject, and `testpaths` is ignored when a path is passed, so no `-o` override is needed.
-      # NOT sharded (a separate invocation over MODULES, not the test suite) -- so it runs on each
-      # leg's shard 1 only (once per leg), gated by test_ci_doctest_wired.py.
+      # Bulk suite, DURATION-SHARDED. `-p no:randomly` pins collection order (the partition is only valid if
+      # every shard collects identically); balanced by the committed .test_durations.ubuntu. Slow-test gating
+      # (ADR-023): the `not e2e and not slow` selection; the @slow tail runs once in the dedicated `slow` job.
+      - run: pytest tests/ -m "not e2e and not slow" --splits 6 --group ${{ matrix.shard }} --durations-path .test_durations.ubuntu -p no:randomly --benchmark-skip --tb=short --durations=25
+      # Public-API doctest (PR-S124), version-sensitive repr -> runs on EVERY leg, but NOT sharded, so shard 1
+      # only (once per leg). Gated by test_ci_doctest_wired.py.
       - if: ${{ matrix.shard == 1 }}
         run: pytest --doctest-modules silly_kicks/ --ignore-glob="*/_[!_]*.py" --tb=short
-      # Record which pandas MAJOR this leg actually resolved. pandas is pinned
-      # `>=2.1.1,!=3.0.4` with no upper bound, so pip picks the newest compatible version per
-      # interpreter and pandas 3 needs Python >= 3.11 -- which is why ubuntu-3.10 lands on
-      # pandas 2 and every other leg on pandas 3. That differential coverage was never declared,
-      # only inherited; the `pandas-span` job below asserts it still exists. Recorded on shard 1
-      # ONLY -- the artifact name has no shard component, so N shards would collide and
-      # upload-artifact@v4 hard-fails on the duplicate. Gated by test_ci_pandas_span_wired.py.
+      # Record which pandas MAJOR this leg resolved (ubuntu-3.10 -> pandas 2, 3.11/3.12 -> pandas 3). The
+      # `pandas-span` job asserts the pd2+pd3 span still exists. Shard 1 only (artifact name has no shard
+      # component). Gated by test_ci_pandas_span_wired.py.
       - if: ${{ matrix.shard == 1 }}
         name: Record resolved pandas major
         run: |
@@ -150,17 +101,15 @@ jobs:
       - if: ${{ matrix.shard == 1 }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pandas-major-${{ matrix.os }}-${{ matrix.python-version }}
+          name: pandas-major-ubuntu-latest-${{ matrix.python-version }}
           path: pandas-major.txt
-      # Node-ID lists for the shard-reconcile job. `shell: bash` is REQUIRED: windows-latest defaults
-      # to pwsh where `grep` is absent and `sort` is Sort-Object -- the pipe would redden every Windows
-      # shard. Each shard uploads its own set; shard 1 also uploads that leg's FULL set (no --splits),
-      # and shard-reconcile asserts union(shards) == full and pairwise-disjoint, per leg.
+      # Node-ID lists for shard-reconcile. `shell: bash` for grep/sort. Each shard uploads its set; shard 1
+      # also uploads the leg's FULL set (no --splits); reconcile asserts union(shards) == full, disjoint, per leg.
       - shell: bash
-        run: pytest tests/ -m "not e2e and not slow" --splits 12 --group ${{ matrix.shard }} -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
+        run: pytest tests/ -m "not e2e and not slow" --splits 6 --group ${{ matrix.shard }} --durations-path .test_durations.ubuntu -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: shard-nodeids-${{ matrix.os }}-${{ matrix.python-version }}-${{ matrix.shard }}
+          name: shard-nodeids-ubuntu-latest-${{ matrix.python-version }}-${{ matrix.shard }}
           path: shard-nodeids.txt
       - if: ${{ matrix.shard == 1 }}
         shell: bash
@@ -168,12 +117,67 @@ jobs:
       - if: ${{ matrix.shard == 1 }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: full-nodeids-${{ matrix.os }}-${{ matrix.python-version }}
+          name: full-nodeids-ubuntu-latest-${{ matrix.python-version }}
+          path: full-nodeids.txt
+
+  # Windows leg, sharded x16 (vs ubuntu x6) -- windows runs ~2.4x ubuntu, so more shards keep its per-shard
+  # wall-clock near ubuntu's. Only python 3.12 on windows (3.10/3.11 were always excluded). Balanced on
+  # .test_durations.windows. Same steps as test-ubuntu; artifact names carry the literal windows-latest-3.12
+  # leg so shard-reconcile's "<os>-<py>" parse is unchanged.
+  test-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # N_windows=16, kept consistent with `--splits 16` by tests/test_ci_shard_wiring.py.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    env:
+      SILLY_KICKS_ASSERT_INVARIANTS: "1"
+      NUMBA_CACHE_DIR: ${{ github.workspace }}/.numba_cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.numba_cache
+          key: numba-windows-latest-3.12-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py', 'silly_kicks/coordination/**/*_numba*.py') }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv pip install -e ".[kloppy,xgboost,test]"
+      - run: pytest tests/ -m "not e2e and not slow" --splits 16 --group ${{ matrix.shard }} --durations-path .test_durations.windows -p no:randomly --benchmark-skip --tb=short --durations=25
+      - if: ${{ matrix.shard == 1 }}
+        run: pytest --doctest-modules silly_kicks/ --ignore-glob="*/_[!_]*.py" --tb=short
+      - if: ${{ matrix.shard == 1 }}
+        name: Record resolved pandas major
+        run: |
+          python -c "import pandas, pathlib; pathlib.Path('pandas-major.txt').write_text(pandas.__version__.split('.')[0])"
+      - if: ${{ matrix.shard == 1 }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pandas-major-windows-latest-3.12
+          path: pandas-major.txt
+      - shell: bash
+        run: pytest tests/ -m "not e2e and not slow" --splits 16 --group ${{ matrix.shard }} --durations-path .test_durations.windows -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shard-nodeids-windows-latest-3.12-${{ matrix.shard }}
+          path: shard-nodeids.txt
+      - if: ${{ matrix.shard == 1 }}
+        shell: bash
+        run: pytest tests/ -m "not e2e and not slow" -p no:randomly --co -q | grep -E "^tests/.*::" | sort > full-nodeids.txt
+      - if: ${{ matrix.shard == 1 }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: full-nodeids-windows-latest-3.12
           path: full-nodeids.txt
 
   # ADR-023: the platform-/interpreter-INVARIANT heavy tail (@pytest.mark.slow, ~261 tests / ~9.3 min)
   # runs ONCE here, sharded x4, on the primary interpreter -- decoupled from the symmetric `test` matrix
-  # so no matrix leg is structurally heavier. Balanced by the SAME committed .test_durations (pytest-split
+  # so no matrix leg is structurally heavier. Balanced by the committed .test_durations.ubuntu (pytest-split
   # filters to the -m selection). Wiring pinned by test_ci_slow_gating_wired / _shard_wiring / _slow_reconcile_wired.
   slow:
     runs-on: ubuntu-latest
@@ -198,11 +202,11 @@ jobs:
         with:
           enable-cache: true
       - run: uv pip install -e ".[kloppy,xgboost,test]"
-      - run: pytest tests/ -m "slow and not e2e" --splits 4 --group ${{ matrix.slow-shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
+      - run: pytest tests/ -m "slow and not e2e" --splits 4 --group ${{ matrix.slow-shard }} --durations-path .test_durations.ubuntu -p no:randomly --benchmark-skip --tb=short --durations=25
       # reconcile artifacts (proofs #2/#3): each slow-shard uploads its node-ID set; slow-shard 1 also
       # uploads the slow FULL set and the combined `not e2e` (incl slow) set for the conservation check.
       - shell: bash
-        run: pytest tests/ -m "slow and not e2e" --splits 4 --group ${{ matrix.slow-shard }} -p no:randomly --co -q | grep -E "^tests/.*::" | sort > slow-shard-nodeids.txt
+        run: pytest tests/ -m "slow and not e2e" --splits 4 --group ${{ matrix.slow-shard }} --durations-path .test_durations.ubuntu -p no:randomly --co -q | grep -E "^tests/.*::" | sort > slow-shard-nodeids.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: slow-shard-nodeids-${{ matrix.slow-shard }}
@@ -231,7 +235,7 @@ jobs:
   # pandas is established practice here. This job observes what each leg INSTALLED, which is the
   # only place the span is actually visible.
   pandas-span:
-    needs: test
+    needs: [test-ubuntu, test-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -304,7 +308,7 @@ jobs:
   # machine after an install flake). Complements the pre-flight tests/test_ci_shard_wiring.py. Modeled
   # on pandas-span (fails loud on zero artifacts rather than passing having observed NOTHING).
   shard-reconcile:
-    needs: [test, slow]
+    needs: [test-ubuntu, test-windows, slow]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -331,12 +335,14 @@ jobs:
           path: combined/
       - name: Shards must PARTITION each leg's suite (union == full, pairwise-disjoint)
         env:
-          EXPECTED_N: "12"   # keep consistent with the shard axis; test_ci_shard_wiring.py pins the axis to 1..N
+          UBUNTU_SPLITS: "6"    # per-leg shard counts; test_ci_shard_wiring.py pins each axis to 1..N
+          WINDOWS_SPLITS: "16"
         run: |
           python - <<'PY'
           import os, pathlib, sys
 
-          N = int(os.environ["EXPECTED_N"])
+          UB = int(os.environ["UBUNTU_SPLITS"]); WIN = int(os.environ["WINDOWS_SPLITS"])
+          def expected_n(leg): return WIN if leg.startswith("windows") else UB
           # artifact dir names: shard-nodeids-<os>-<py>-<shard> and full-nodeids-<os>-<py>. leg = "<os>-<py>"
           # (e.g. ubuntu-latest-3.12); <os>/<py> contain '-'/'.', so parse by stripping the known prefix
           # and (for shards) the trailing -<shard>, never by a fragile regex.
@@ -365,7 +371,8 @@ jobs:
               groups, full = shards.get(lg), fulls.get(lg)
               if groups is None: errs.append(f"{lg}: full present but NO shard artifacts"); continue
               if full is None:   errs.append(f"{lg}: shard artifacts present but NO full to compare"); continue
-              if len(groups) != N: errs.append(f"{lg}: {len(groups)} shard artifacts, expected {N} (a shard is missing)")
+              n = expected_n(lg)
+              if len(groups) != n: errs.append(f"{lg}: {len(groups)} shard artifacts, expected {n} (a shard is missing)")
               seen = set()
               for g in groups:
                   dup = seen & g
@@ -412,7 +419,7 @@ jobs:
               # diverging node IDs; never "fix" it by weakening this guard.
               sys.exit("::error::shard partition broken (or cross-runner collection divergence):\n" + "\n".join(errs))
           print(
-              f"OK: {len(fulls)} legs x {N} shards partition; slow x{len(slow_shard_sets)} partitions; "
+              f"OK: {len(fulls)} legs partition (ubuntu x{UB}, windows x{WIN}); slow x{len(slow_shard_sets)} partitions; "
               f"non-slow U slow == not-e2e (conservation held)"
           )
           PY

@@ -1,11 +1,12 @@
 """Structural guard: the sharded CI matrix is internally consistent and deterministic.
 
-Sharding the suite with ``pytest-split`` is only a valid PARTITION if (a) the shard axis is contiguous
-``1..N``, (b) ``--splits N`` matches ``N``, (c) collection order is pinned (no shuffle plugin) so every
-shard collects identically, and (d) no test silently runs in zero shards. This is the pre-flight
-complement to the runtime ``shard-reconcile`` job (which proves the node-ID partition on the real run).
-Same idiom as ``test_ci_slow_gating_wired`` / ``test_ci_pandas_span_wired``. See the CI-parallelization
-ADR.
+Sharding the suite with ``pytest-split`` is only a valid PARTITION if (a) each shard axis is contiguous
+``1..N``, (b) ``--splits N`` matches that axis, (c) collection order is pinned (no shuffle plugin) so every
+shard collects identically, and (d) no test silently runs in zero shards. Since the asymmetric-sharding
+refactor there are TWO matrix jobs -- ``test-ubuntu`` (``--splits 6``) and ``test-windows`` (``--splits 16``,
+windows runs ~2.4x ubuntu) -- plus the ``slow`` job (``--splits 4``); each is checked independently. This is
+the pre-flight complement to the runtime ``shard-reconcile`` job (which proves the node-ID partition per leg).
+Same idiom as ``test_ci_slow_gating_wired`` / ``test_ci_pandas_span_wired``. See the CI-parallelization ADR.
 """
 
 from __future__ import annotations
@@ -18,6 +19,9 @@ import yaml
 
 _REPO = pathlib.Path(__file__).resolve().parent.parent
 _CI = yaml.safe_load((_REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+
+#: the three duration-sharded jobs and the matrix axis each shards over.
+_SHARDED = [("test-ubuntu", "shard"), ("test-windows", "shard"), ("slow", "slow-shard")]
 
 
 def _defines_njit(src: str) -> bool:
@@ -45,38 +49,33 @@ def _defines_njit(src: str) -> bool:
 
 
 def _sharded_cmds() -> list[str]:
-    jobs = [_CI["jobs"]["test"]]
-    if "slow" in _CI["jobs"]:
-        jobs.append(_CI["jobs"]["slow"])
     return [
         s["run"]
-        for job in jobs
-        for s in job["steps"]
+        for job_name, _ in _SHARDED
+        for s in _CI["jobs"][job_name]["steps"]
         if "run" in s and "--splits" in s["run"] and "pytest tests/" in s["run"]
     ]
 
 
 def test_shard_axis_is_contiguous_1_to_N() -> None:
-    shards = _CI["jobs"]["test"]["strategy"]["matrix"]["shard"]
-    assert shards == list(range(1, len(shards) + 1)), f"test shard axis must be 1..N contiguous, got {shards}"
-    slow_shards = _CI["jobs"]["slow"]["strategy"]["matrix"]["slow-shard"]
-    assert slow_shards == list(range(1, len(slow_shards) + 1)), (
-        f"slow-shard axis must be 1..N contiguous, got {slow_shards}"
-    )
+    for job_name, axis in _SHARDED:
+        shards = _CI["jobs"][job_name]["strategy"]["matrix"][axis]
+        assert shards == list(range(1, len(shards) + 1)), (
+            f"{job_name} {axis} axis must be 1..N contiguous, got {shards}"
+        )
 
 
 def test_splits_value_matches_shard_count() -> None:
-    checks = [
-        (_CI["jobs"]["test"], len(_CI["jobs"]["test"]["strategy"]["matrix"]["shard"]), "matrix.shard"),
-        (_CI["jobs"]["slow"], len(_CI["jobs"]["slow"]["strategy"]["matrix"]["slow-shard"]), "matrix.slow-shard"),
-    ]
-    for job, n, group_var in checks:
+    for job_name, axis in _SHARDED:
+        job = _CI["jobs"][job_name]
+        n = len(job["strategy"]["matrix"][axis])
+        group_var = f"matrix.{axis}"
         cmds = [s["run"] for s in job["steps"] if "run" in s and "--splits" in s["run"] and "pytest tests/" in s["run"]]
-        assert cmds, f"no sharded pytest commands found for group var {group_var}"
+        assert cmds, f"no sharded pytest commands found in {job_name}"
         for cmd in cmds:
             m = re.search(r"--splits\s+(\d+)", cmd)
-            assert m and int(m.group(1)) == n, f"--splits must equal shard count {n}: {cmd}"
-            assert f"--group ${{{{ {group_var} }}}}" in cmd, f"missing per-shard --group {group_var}: {cmd}"
+            assert m and int(m.group(1)) == n, f"{job_name}: --splits must equal shard count {n}: {cmd}"
+            assert f"--group ${{{{ {group_var} }}}}" in cmd, f"{job_name}: missing per-shard --group {group_var}: {cmd}"
 
 
 def test_every_sharded_command_pins_collection_order() -> None:
@@ -97,22 +96,24 @@ def test_no_collection_shuffling_plugin_in_test_extra() -> None:
 
 def test_benchmark_is_a_standalone_job_not_on_a_shard() -> None:
     assert "benchmark" in _CI["jobs"], "benchmark must be its own parallel job (spec N1)"
-    test_runs = " ".join(s.get("run", "") for s in _CI["jobs"]["test"]["steps"])
-    assert "--benchmark-only" not in test_runs, "benchmark-only must NOT sit on a sharded test step"
+    for job_name in ("test-ubuntu", "test-windows"):
+        runs = " ".join(s.get("run", "") for s in _CI["jobs"][job_name]["steps"])
+        assert "--benchmark-only" not in runs, f"benchmark-only must NOT sit on a sharded {job_name} step"
 
 
-def test_shard_reconcile_job_exists_and_needs_test_and_slow() -> None:
+def test_shard_reconcile_job_exists_and_needs_the_sharded_jobs() -> None:
     job = _CI["jobs"].get("shard-reconcile")
     assert job is not None, "shard-reconcile job must exist"
     needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
-    assert "test" in needs and "slow" in needs, f"shard-reconcile must need both test and slow, got {needs}"
+    for required in ("test-ubuntu", "test-windows", "slow"):
+        assert required in needs, f"shard-reconcile must need {required}, got {needs}"
 
 
 def test_numba_cache_key_covers_all_njit_files() -> None:
     """Every @njit file (decorator OR call form) must be in the numba actions/cache hashFiles(), or its
-    recompiled blob is never saved (cache HIT => no upload) and Lever C silently no-ops for it -- worst
-    on the binding windows leg. The ``*_numba*`` naming is NOT relied on (``_turnover.py`` breaks it via
-    the call form); this pins coverage so a NEW @njit file fails CI until the key is extended (P5/P10)."""
+    recompiled blob is never saved (cache HIT => no upload) and Lever C silently no-ops for it. The
+    ``*_numba*`` naming is NOT relied on (``_turnover.py`` breaks it via the call form); this pins coverage
+    so a NEW @njit file fails CI until the key is extended (P5/P10)."""
     njit_files = sorted(
         str(p.relative_to(_REPO)).replace("\\", "/")
         for p in (_REPO / "silly_kicks").rglob("*.py")
@@ -122,9 +123,9 @@ def test_numba_cache_key_covers_all_njit_files() -> None:
     assert "silly_kicks/xtgk/_turnover.py" in njit_files, (
         "detector no longer finds the call-form njit file (_turnover.py) -- it has drifted"
     )
-    # BOTH jobs that compile the kernels (test + the dedicated slow job) must cover every @njit file,
-    # or Lever C silently no-ops for the uncovered ones in that job.
-    for job_name in ("test", "slow"):
+    # EVERY job that compiles the kernels (both matrix legs + the dedicated slow job) must cover every @njit
+    # file, or Lever C silently no-ops for the uncovered ones in that job.
+    for job_name in ("test-ubuntu", "test-windows", "slow"):
         cache = [s for s in _CI["jobs"][job_name]["steps"] if "actions/cache" in str(s.get("uses", ""))]
         assert cache, f"no numba actions/cache step in the {job_name} job"
         patterns = re.findall(r"'([^']+)'", str(cache[0]["with"]["key"]))

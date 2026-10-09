@@ -1,32 +1,25 @@
 """Structural guard: CI's leg set must still span both pandas majors.
 
-``pyproject.toml`` pins ``pandas>=2.1.1,!=3.0.4`` with NO upper bound, so pip resolves the newest
-compatible pandas per interpreter -- and pandas 3 requires Python >= 3.11 (verified against the
-PyPI index: 3.0.5 declares ``requires_python >=3.11``, 2.3.3 declares ``>=3.9``). Measured on CI run
-31316804815: ubuntu-3.10 -> pandas 2.3.3, every other leg -> 3.0.5.
+``pyproject.toml`` pins ``pandas>=2.1.1,!=3.0.4`` with NO upper bound, so pip resolves the newest compatible
+pandas per interpreter -- and pandas 3 requires Python >= 3.11 (3.0.5 declares ``requires_python >=3.11``,
+2.3.3 declares ``>=3.9``). So ubuntu-3.10 -> pandas 2, every other leg -> pandas 3.
 
-That differential coverage is REAL but was ACCIDENTAL -- nothing declared it, so it could vanish
-with no diff and no signal. This guard declares it. The repo already has one measured instance of a
-silent pandas-3 behaviour change (DAS going all-NaN), which is the class this coverage exists to
-expose.
+That differential coverage is REAL but was ACCIDENTAL -- nothing declared it, so it could vanish with no
+diff. This guard declares it. The repo already has one measured instance of a silent pandas-3 behaviour
+change (DAS going all-NaN), which is the class this coverage exists to expose.
 
-**This asserts over the RESOLVED LEG SET, never the ``python-version`` axis.** GitHub computes legs
-as os x python-version MINUS ``exclude`` PLUS ``include``, and ``exclude`` is already the pruning
-mechanism in use here (two windows legs). Adding ``{os: ubuntu-latest, python-version: "3.10"}`` to
-``exclude`` collapses the pandas-2 span while leaving ``"3.10"`` in the axis -- an axis-based
-assertion would pass. ``tests/test_ci_slow_gating_wired.py`` already reads the matrix rather than
-trusting the axes; this follows it.
+Since the asymmetric-sharding refactor the matrix is split into ``test-ubuntu`` (os=ubuntu-latest x
+python-version axis) and ``test-windows`` (os=windows-latest, python 3.12 fixed). The leg set is built from
+BOTH. **This asserts over the RESOLVED LEG SET, never a python-version axis alone** -- removing the 3.10 leg
+collapses the pandas-2 span, and that must fail here.
 
-**What this guard CANNOT see:** a span collapse caused by a dependency constraint rather than a
-matrix edit -- e.g. adding ``pandas<3`` to ``pyproject.toml``, after which every leg resolves
-pandas 2 while ``ci.yml`` is untouched. That hazard is real (this repo already pins ``!=3.0.4`` for
-a segfault) and is covered by the ``pandas-span`` aggregation job in ``ci.yml``, which observes what
-each leg actually installed. The two are complementary; neither subsumes the other.
+**What this guard CANNOT see:** a span collapse caused by a dependency constraint rather than a matrix edit
+(e.g. adding ``pandas<3`` to ``pyproject.toml``). That hazard is covered by the ``pandas-span`` aggregation
+job in ``ci.yml``, which observes what each leg actually installed. The two are complementary.
 """
 
 from __future__ import annotations
 
-import itertools
 import pathlib
 
 import yaml
@@ -34,133 +27,123 @@ import yaml
 _REPO = pathlib.Path(__file__).resolve().parent.parent
 _CI = _REPO / ".github" / "workflows" / "ci.yml"
 
-#: pandas 3 requires Python >= 3.11, so a leg below it resolves pandas 2 and a leg at or above it
-#: resolves pandas 3. This is the ASSUMPTION that makes a structural check a valid proxy for the
-#: span. If pandas changes its minimum Python, THIS CONSTANT is what moves -- not the assertion,
-#: and never by redefining the boundary to match a matrix that lost its leg.
+#: the sharded matrix jobs whose legs resolve pandas.
+_MATRIX_JOBS = ("test-ubuntu", "test-windows")
+
+#: pandas 3 requires Python >= 3.11, so a leg below it resolves pandas 2 and a leg at or above it resolves
+#: pandas 3. This is the ASSUMPTION that makes a structural check a valid proxy for the span. If pandas
+#: changes its minimum Python, THIS CONSTANT is what moves -- not the assertion, and never by redefining the
+#: boundary to match a matrix that lost its leg.
 _PANDAS3_MIN_PY = (3, 11)
 
 
-def _pyver(leg: dict) -> tuple[int, ...]:
-    return tuple(int(p) for p in str(leg["python-version"]).split("."))
+def _pyver(py: str) -> tuple[int, ...]:
+    return tuple(int(p) for p in str(py).split("."))
 
 
-def resolved_legs(matrix: dict) -> list[dict]:
-    """``os`` x ``python-version``, MINUS ``exclude``, PLUS ``include`` -- GitHub's own order."""
-    base = [{"os": os_, "python-version": py} for os_, py in itertools.product(matrix["os"], matrix["python-version"])]
-    for ex in matrix.get("exclude", []):
-        base = [leg for leg in base if not all(leg.get(k) == v for k, v in ex.items())]
-    for inc in matrix.get("include", []):
-        for leg in base:
-            if all(leg.get(k) == v for k, v in inc.items() if k in leg):
-                leg.update(inc)
-    return base
-
-
-def _matrix() -> dict:
-    return yaml.safe_load(_CI.read_text(encoding="utf-8"))["jobs"]["test"]["strategy"]["matrix"]
+def _legs(wf: dict) -> list[tuple[str, str]]:
+    """``(os, python)`` legs across both matrix jobs. python comes from the ``python-version`` matrix axis
+    when present (ubuntu), else the job's ``setup-python`` literal (windows)."""
+    legs: list[tuple[str, str]] = []
+    for job_name in _MATRIX_JOBS:
+        job = wf["jobs"][job_name]
+        os_ = str(job["runs-on"])
+        matrix = job["strategy"]["matrix"]
+        if "python-version" in matrix:
+            pys = [str(p) for p in matrix["python-version"]]
+        else:
+            setup = [s for s in job["steps"] if "setup-python" in str(s.get("uses", ""))]
+            assert setup, f"{job_name}: no python-version axis and no setup-python step to read it from"
+            pys = [str(setup[0]["with"]["python-version"])]
+        legs += [(os_, py) for py in pys]
+    return legs
 
 
 def test_ci_leg_set_spans_both_pandas_majors() -> None:
-    legs = resolved_legs(_matrix())
-    below = [leg for leg in legs if _pyver(leg) < _PANDAS3_MIN_PY]
-    at_or_above = [leg for leg in legs if _pyver(leg) >= _PANDAS3_MIN_PY]
-
+    legs = _legs(yaml.safe_load(_CI.read_text(encoding="utf-8")))
+    below = [leg for leg in legs if _pyver(leg[1]) < _PANDAS3_MIN_PY]
+    at_or_above = [leg for leg in legs if _pyver(leg[1]) >= _PANDAS3_MIN_PY]
     assert below and at_or_above, (
-        f"CI's resolved leg set no longer straddles Python "
-        f"{_PANDAS3_MIN_PY[0]}.{_PANDAS3_MIN_PY[1]}, so every leg resolves the SAME pandas major "
-        f"and the differential coverage this repo relies on is gone. "
-        f"legs={[(leg['os'], leg['python-version']) for leg in legs]}. "
-        f"ASSUMPTION: pandas 3 requires Python >= {_PANDAS3_MIN_PY[0]}.{_PANDAS3_MIN_PY[1]}. If "
-        f"pandas changed that, fix _PANDAS3_MIN_PY -- do NOT delete this assertion, and do not "
-        f"'fix' it by moving the boundary to match a matrix that lost its old leg."
+        f"CI's resolved leg set no longer straddles Python {_PANDAS3_MIN_PY[0]}.{_PANDAS3_MIN_PY[1]}, so "
+        f"every leg resolves the SAME pandas major and the differential coverage this repo relies on is "
+        f"gone. legs={legs}. ASSUMPTION: pandas 3 requires Python >= {_PANDAS3_MIN_PY[0]}.{_PANDAS3_MIN_PY[1]}. "
+        f"If pandas changed that, fix _PANDAS3_MIN_PY -- do NOT delete this assertion, and do not 'fix' it by "
+        f"moving the boundary to match a matrix that lost its old leg."
     )
 
 
-def test_resolved_legs_honours_exclude_not_just_the_axis() -> None:
-    """Non-vacuity for the resolver: ``exclude`` must actually remove a leg.
-
-    Without this, ``resolved_legs`` could ignore ``exclude`` entirely and the guard above would
-    still pass on today's matrix -- while missing the likeliest way the span gets destroyed, since
-    ``exclude`` is the pruning mechanism this workflow already uses.
-    """
-    matrix = {
-        "os": ["ubuntu-latest"],
-        "python-version": ["3.10", "3.12"],
-        "exclude": [{"os": "ubuntu-latest", "python-version": "3.10"}],
-    }
-    assert [leg["python-version"] for leg in resolved_legs(matrix)] == ["3.12"]
+def test_leg_builder_reads_the_pandas2_leg_not_just_the_axis() -> None:
+    """Non-vacuity: the span must rest on a REAL resolved leg below 3.11 (ubuntu-3.10), so dropping that
+    python from the test-ubuntu axis would flip ``test_ci_leg_set_spans_both_pandas_majors`` red."""
+    legs = _legs(yaml.safe_load(_CI.read_text(encoding="utf-8")))
+    assert ("ubuntu-latest", "3.10") in legs, (
+        f"the pandas-2 span rests on ubuntu-latest/3.10; it is not in the resolved legs {legs}"
+    )
 
 
-def test_resolved_legs_applies_include_without_inventing_legs() -> None:
-    """``include`` decorates matching legs (the repo uses it to flag the primary leg); it must not
-    silently add or drop one, or the span could be miscounted in either direction."""
-    matrix = {
-        "os": ["ubuntu-latest"],
-        "python-version": ["3.10", "3.12"],
-        "include": [{"os": "ubuntu-latest", "python-version": "3.12", "primary": True}],
-    }
-    legs = resolved_legs(matrix)
-    assert len(legs) == 2
-    assert [leg.get("primary") for leg in legs] == [None, True]
-
-
-def test_the_aggregation_job_exists_and_needs_test() -> None:
-    """Without ``needs: test`` the job runs before the artifacts exist and passes vacuously.
-
-    The job's own script guards that too (it exits non-zero on zero artifacts), but the dependency
-    is what makes the artifacts exist at all -- losing it turns a real gate into a no-op that still
-    reports success.
-    """
+def test_the_aggregation_job_exists_and_needs_the_matrix_jobs() -> None:
+    """Without ``needs`` on the matrix jobs the aggregation runs before the artifacts exist and passes
+    vacuously. The job's own script also exits non-zero on zero artifacts, but the dependency is what makes
+    the artifacts exist at all."""
     wf = yaml.safe_load(_CI.read_text(encoding="utf-8"))
     job = wf["jobs"].get("pandas-span")
     assert job is not None, (
-        "the pandas-span aggregation job is gone. The structural guard above reads ci.yml only, so "
-        "without this job a pandas upper bound in pyproject.toml collapses the span invisibly."
+        "the pandas-span aggregation job is gone. The structural guard above reads ci.yml only, so without "
+        "this job a pandas upper bound in pyproject.toml collapses the span invisibly."
     )
-    assert job["needs"] == "test"
+    needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
+    for required in _MATRIX_JOBS:
+        assert required in needs, f"pandas-span must need {required} (else it runs before artifacts exist), got {needs}"
 
 
-def test_every_test_leg_records_its_pandas_major() -> None:
-    """The aggregation asserts over a UNION; a leg that records nothing shrinks it silently."""
+def test_every_matrix_job_records_its_pandas_major_per_leg() -> None:
+    """The aggregation asserts over a UNION; a leg that records nothing shrinks it silently, and two legs
+    sharing one artifact name collide (upload-artifact@v4 hard-fails on a duplicate)."""
     wf = yaml.safe_load(_CI.read_text(encoding="utf-8"))
-    steps = wf["jobs"]["test"]["steps"]
-    assert any("Record resolved pandas major" in str(s.get("name", "")) for s in steps), (
-        "no leg records its resolved pandas major, so the aggregation job has nothing to union"
-    )
-    uploads = [
-        s
-        for s in steps
-        if "upload-artifact" in str(s.get("uses", "")) and "pandas-major" in str(s.get("with", {}).get("name", ""))
-    ]
-    assert uploads, "the recorded pandas major is never uploaded, so no other job can see it"
-    # The artifact name must vary per leg, or every leg overwrites one artifact and the union
-    # collapses to a single entry -- which would read as a lost span rather than a naming bug.
-    name = str(uploads[0]["with"]["name"])
-    assert "matrix.os" in name and "matrix.python-version" in name, (
-        f"artifact name {name!r} is not per-leg; every leg would collide on one artifact"
+    names: list[str] = []
+    for job_name in _MATRIX_JOBS:
+        steps = wf["jobs"][job_name]["steps"]
+        assert any("Record resolved pandas major" in str(s.get("name", "")) for s in steps), (
+            f"{job_name}: no leg records its resolved pandas major, so the aggregation has nothing to union"
+        )
+        uploads = [
+            s
+            for s in steps
+            if "upload-artifact" in str(s.get("uses", "")) and "pandas-major" in str(s.get("with", {}).get("name", ""))
+        ]
+        assert uploads, f"{job_name}: the recorded pandas major is never uploaded, so no other job can see it"
+        names.append(str(uploads[0]["with"]["name"]))
+    # test-ubuntu's name must vary per python (its axis); test-windows is a single literal leg. Either way the
+    # two jobs' names must not collide, or legs would overwrite one artifact and the union would collapse.
+    ub_name = next(n for n in names if "ubuntu" in n)
+    assert "matrix.python-version" in ub_name, f"test-ubuntu pandas-major name {ub_name!r} is not per-python leg"
+    win_name = next(n for n in names if "windows" in n)
+    assert win_name != ub_name and "matrix.python-version" not in win_name, (
+        f"test-windows pandas-major name {win_name!r} must be a distinct single-leg literal"
     )
 
 
 def test_pandas_major_record_and_upload_are_shard_1_gated() -> None:
-    """Under sharding, the record + upload run on shard 1 ONLY. The artifact name has NO shard
-    component, so if all N shards of a leg recorded it they would collide on one name and
-    upload-artifact@v4 hard-fails on the duplicate. Pins the ``matrix.shard == 1`` gate on both steps."""
+    """Under sharding, record + upload run on shard 1 ONLY. The artifact name has NO shard component, so if
+    all N shards of a leg recorded it they would collide and upload-artifact@v4 hard-fails. Pins the
+    ``matrix.shard == 1`` gate on both steps, in both matrix jobs."""
 
     def guard(s: dict) -> str:
         g = "".join(str(s.get("if", "")).split())
         g = g[3:-2] if g.startswith("${{") and g.endswith("}}") else g
         return g.replace("'", "").replace('"', "")
 
-    steps = yaml.safe_load(_CI.read_text(encoding="utf-8"))["jobs"]["test"]["steps"]
-    record = [s for s in steps if "Record resolved pandas major" in str(s.get("name", ""))]
-    uploads = [
-        s
-        for s in steps
-        if "upload-artifact" in str(s.get("uses", "")) and "pandas-major" in str(s.get("with", {}).get("name", ""))
-    ]
-    assert record and uploads, "pandas-major record/upload steps missing"
-    for s in record + uploads:
-        assert "matrix.shard==1" in guard(s), (
-            f"pandas-major step must be shard-1-gated (else N shards collide on one artifact name), got {guard(s)!r}"
-        )
+    wf = yaml.safe_load(_CI.read_text(encoding="utf-8"))
+    for job_name in _MATRIX_JOBS:
+        steps = wf["jobs"][job_name]["steps"]
+        record = [s for s in steps if "Record resolved pandas major" in str(s.get("name", ""))]
+        uploads = [
+            s
+            for s in steps
+            if "upload-artifact" in str(s.get("uses", "")) and "pandas-major" in str(s.get("with", {}).get("name", ""))
+        ]
+        assert record and uploads, f"{job_name}: pandas-major record/upload steps missing"
+        for s in record + uploads:
+            assert "matrix.shard==1" in guard(s), (
+                f"{job_name}: pandas-major step must be shard-1-gated (else N shards collide), got {guard(s)!r}"
+            )

@@ -21,23 +21,22 @@ walks `.venv/` and `calibration_runs/` and reports ~234 vendored errors that are
 which is enough noise to hide the real ones. `pyright` runs **bare** (config-driven include), and
 neither tool is on PATH — use `python -m`.
 
-CI **duration-shards** the bulk suite across parallel jobs via `pytest-split` (ADR-074)
-(`--splits 12 --group ${{ matrix.shard }}`, matrix `os × python × shard[1..12]`), each shard on its
-own runner (the `xdist -n auto` memory-kill on the 4-core/7GB runners is why intra-job parallelism
-was reverted — sharding gives the parallelism without the shared-memory contention). The split is
-balanced by the committed **`.test_durations`**; **without it pytest-split's count-mode split is
-NON-DETERMINISTIC (measured: shard sizes drift run-to-run and can under-cover), so `.test_durations`
-is committed.** The committed file is **CI-MEASURED** (a local `--store-durations` mis-balances — CI
-is ~2× local and per-py-version relative timings differ; measured: a local-durations shard ran 11:26
-vs 5:50 on CI, whereas the CI-measured file balances the shards evenly). **To
-regenerate:** temporarily re-add a `durations-capture` job (full `pytest -m "not e2e"
---store-durations` under the warm numba cache, `include-hidden-files: true` on the upload since
-`.test_durations` is a dotfile) on BOTH an ubuntu and a windows capture, blend LEG-AWARE -- `max(ubuntu, windows)` for matrix tests (windows binds, ~2.4x ubuntu), ubuntu weight for `@slow` tests (the slow job runs on ubuntu) -- commit, and remove the
-job (a permanent ~20-min serial capture would become the wall-clock bottleneck). Regenerate when the
-suite shifts materially or a shard drifts toward budget; the balance is LEG-AWARE -- `max(ubuntu, windows)` for matrix tests
-(windows binds, ~2.4x ubuntu) and ubuntu weight for `@slow` tests (the slow job runs ubuntu). Each job's
-leg is flattened; ubuntu matrix shards run uneven but far under budget — acceptable, the runtime
-`shard-reconcile` job still proves completeness). `-p no:randomly` pins collection order (a shuffle plugin would break the partition;
+CI **duration-shards** the bulk suite across parallel jobs via `pytest-split` (ADR-074). Ubuntu and
+windows shard INDEPENDENTLY (asymmetric sharding): `test-ubuntu` runs `--splits 6` (matrix
+`python × shard[1..6]`), `test-windows` runs `--splits 16` — windows runs ~2.4× ubuntu on this suite, so
+it gets more shards to keep its per-shard wall-clock near ubuntu's, with NO test dropped from either OS.
+Each shard runs on its own runner (the `xdist -n auto` memory-kill on the 4-core/7GB runners is why
+intra-job parallelism was reverted). Each leg balances on its OWN committed durations file via
+`--durations-path`: **`.test_durations.ubuntu`** (test-ubuntu + the ubuntu `slow` job) and
+**`.test_durations.windows`** (test-windows). **Without a committed file pytest-split's count-mode split
+is NON-DETERMINISTIC (shard sizes drift run-to-run and can under-cover), so both are committed.** Both are
+**CI-MEASURED**, never local (a local `--store-durations` mis-balances — CI is ~2× local and per-OS /
+per-interpreter timings differ). **To regenerate:** temporarily add a `durations-capture` job PER OS (full
+`pytest -m "not e2e" --store-durations` under the warm numba cache, `include-hidden-files: true` since the
+dotfile), download each `test-durations-ci-<os>` artifact to `.test_durations.<os>`, commit, remove the
+jobs. Regenerate when the suite shifts materially or a shard drifts toward budget; because each OS has its
+OWN file, each leg is balanced DIRECTLY — no cross-OS blend (the earlier single `.test_durations` could not
+flatten both legs at once). The runtime `shard-reconcile` job still proves completeness per leg. `-p no:randomly` pins collection order (a shuffle plugin would break the partition;
 `tests/test_ci_shard_wiring.py` bans it). Coverage is proved two ways: the static
 `tests/test_ci_shard_wiring.py` (contiguous `1..N`, `--splits == N`, `-p no:randomly`, numba-cache
 key covers all `@njit` files) and the runtime `shard-reconcile` job (node-ID `union == full ∧
