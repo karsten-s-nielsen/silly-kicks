@@ -10,6 +10,10 @@ __all__ = [
     "SPORTEC_SPADL_COLUMNS",
     "BoundaryMetrics",
     "ConversionReport",
+    "CoordinateAxisStats",
+    "CoordinateDiagnosis",
+    "CoordinateDiagnosisParams",
+    "CoordinateTableDiagnosis",
     "CoverageMetrics",
     "DetectionResult",
     "InputConvention",
@@ -26,6 +30,7 @@ __all__ = [
     "config",
     "coverage_metrics",
     "detect_input_convention",
+    "diagnose_coordinates",
     "gradientsports",
     "kloppy",
     "opta",
@@ -44,6 +49,13 @@ __all__ = [
 
 from ..tracking.direction import require_et_direction
 from . import config, gradientsports, opta, statsbomb, wyscout
+from ._coordinate_diagnosis import (
+    CoordinateAxisStats,
+    CoordinateDiagnosis,
+    CoordinateDiagnosisParams,
+    CoordinateTableDiagnosis,
+    diagnose_coordinates,
+)
 from .config import actiontypes_df, bodyparts_df, results_df
 from .orientation import (
     ABSOLUTE_FRAME_HOME_RIGHT,

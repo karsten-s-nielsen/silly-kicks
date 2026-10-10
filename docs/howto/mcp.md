@@ -46,10 +46,12 @@ untrustworthy memo — silent degradation is the exact defect the tripwire exist
   the RC4 NULL-label no-op), `MISMATCH` (label present but contradicts geometry — a defensive
   future-regression check; consistent adapters ship coord-label-consistent frames), else `OK`.
 - **`diagnose_provider(provider, match_ref, aspect)`** — a provider data-quality probe.
-  `aspect ∈ {keeper, convention, id_dtype}`: `keeper`→`validate_gk_position_clamp`
+  `aspect ∈ {keeper, convention, id_dtype, coords}`: `keeper`→`validate_gk_position_clamp`
   (`GkClampDiagnosis`), `convention`→`detect_input_convention`, `id_dtype`→`validate_id_dtypes`
-  (the `str()`-on-float ADR-019 trap). `findings` is JSON-safe for every aspect; `flags` surfaces the
-  diagnosis booleans.
+  (the `str()`-on-float ADR-019 trap), `coords`→`diagnose_coordinates` (a scale/units + bounds/NaN
+  tripwire over the SPADL actions and/or tracking frames — NOT orientation, use `check_orientation`
+  for that; off-pitch TRACKING positions are reported as INFO, never a defect). `findings` is
+  JSON-safe for every aspect; `flags` surfaces the diagnosis booleans.
 - **`validate_construct_validity(metric_family)`** — surfaces a family's RECORDED
   construct-validity verdict from its committed `docs/research/<family>/…json` memo (no corpus re-run).
   Families: `gk_decision`, `territorial_defense` (both return the recorded verdict + provenance);

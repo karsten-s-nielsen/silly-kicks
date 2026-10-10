@@ -5,6 +5,18 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.130.0] — 2026-10-09 — agent-support Phase 3 (MCP `coords` aspect + howto link-check)
+
+### Added
+
+- **`silly_kicks.spadl.diagnose_coordinates`:** a read-only, pure coordinate-integrity tripwire (pandas in, frozen `CoordinateDiagnosis` out; zero I/O, zero mutation). Classifies the coordinate scale/units of a match's SPADL actions and/or tracking frames by an aspect-ratio + magnitude heuristic (`spadl_meters` / `normalized_0_1` / `scale_0_100` / `suspect` / `undetermined`, bands pre-registered) and reports out-of-pitch / gross-out-of-range / all-coords-NaN / start-NaN fractions. Frozen flag tokens: `coords_scale_suspect`, `actions_out_of_pitch`, `coords_gross_out_of_range`, `coords_all_nan`, `actions_start_nan`. It does NOT measure orientation (use the MCP `check_orientation` tool); off-pitch TRACKING positions are reported as INFO, never a defect (only ACTIONS are clipped to the pitch by contract). The companion `CoordinateDiagnosisParams.for_provider(provider)` is a neutral-v1 seam (same tolerances for every provider; promotable later with no API break).
+- **MCP `diagnose_provider` `coords` aspect:** binds `diagnose_coordinates` (adapter-only — the server adds no analysis beyond `_json_safe`). `diagnose_provider` now covers `{keeper, convention, id_dtype, coords}`; the server stays a three-tool read-only tripwire.
+- **`tests/test_howto_links_wired.py` link-check guard:** a structural test (no `ci.yml` edit) that resolves references across `docs/howto/*.md` + `docs/context/*.md` — markdown links + `.md` anchors, `ADR-NNN` files, `silly_kicks|tests|scripts/*.py` code paths (HARD; a `:NNN` line suffix beyond EOF is SOFT), and bare `docs/*.md` prose paths — with a non-vacuity floor (measured live: ADR 465 / code 120 / docp 39) and its own broken-reference precondition test.
+
+### Fixed
+
+- **Doc-rot:** the "a liveness gate's fixture needs its own precondition test" idiom was mis-cited as ADR-032 (which is actually pitch-control-at-target) in `AGENTS.md` and `docs/context/conventions-core.md`; corrected to ADR-056 (byte-neutral).
+
 ## [4.129.0] — 2026-10-08 — Team-coordination package (TF-58) (PR-S201, ADR-111/112/113/114/115)
 
 The temporal-coordination layer silly-kicks lacked: `silly_kicks.coordination` measures how the collective signals it already owns (team shape, defensive line) COUPLE over time. Tracking-only, descriptive, no VAEP path, no retrain — additive and non-breaking, on the merged 4.128.0 base. Corpus artifacts trace to their `run_commit` and carry their real match ids: an id is a non-reversible reference (a holder of the licensed data can verify a result against the source; someone without access cannot reconstruct anything from it), and the published statistics are derived aggregates. Reversibility is the only publish bar (ADR-116); ids are never pseudonymised.

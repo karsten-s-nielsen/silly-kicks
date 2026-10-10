@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.129.0 (PR-S201): team-coordination package (TF-58).** `silly_kicks.coordination` ships the temporal-coordination layer silly-kicks lacked — relative phase, lagged cross-correlation, vector coding, spectral/coherence and cluster-phase (tracking-only, descriptive, no VAEP path, no retrain) — with D1/D2/D3 corpus drivers and A-09 per-construct reliability + occlusion (ADR-111/112/113/114/115; corpus artifacts in `docs/research/tf58_team_coordination/`). Release detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.130.0: agent-support Phase 3 (MCP `coords` aspect + howto link-check).** `silly_kicks.spadl.diagnose_coordinates` adds a read-only, pure coordinate-integrity tripwire (scale/units heuristic + bounds/NaN over SPADL actions and/or tracking frames — not orientation); the MCP `diagnose_provider` gains a `coords` aspect that binds it (adapter-only, still three read-only tools); and `tests/test_howto_links_wired.py` is a CI guard that resolves `docs/howto` + `docs/context` references (ADR files / code paths / doc paths / markdown links + anchors). Release detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
