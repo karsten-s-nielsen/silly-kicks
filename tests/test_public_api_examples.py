@@ -145,6 +145,7 @@ _PUBLIC_MODULE_FILES = (
     # match or a live MCP client, so they are exercised by tests/mcp/ and deferred per-symbol in
     # _EXAMPLES_DEBT below; registered here so the derived public surface stays accounted (no doctest).
     "silly_kicks/mcp/server.py",
+    "silly_kicks/spadl/_coordinate_diagnosis.py",
     "silly_kicks/spadl/utils.py",
     "silly_kicks/spadl/base.py",
     "silly_kicks/spadl/orientation.py",
@@ -1223,6 +1224,10 @@ _SKIP_SYMBOLS = frozenset(
         "CoverageMetrics",  # TypedDict
         "ConversionReport",  # TypedDict
         "CausalEstimate",  # frozen dataclass — fields are the documentation (DetectionResult precedent)
+        "CoordinateAxisStats",  # frozen dataclass — robust per-axis coord stats; fields are the documentation
+        "CoordinateDiagnosis",  # frozen dataclass — top-level diagnose_coordinates result; fields are the documentation
+        "CoordinateDiagnosisParams",  # frozen config dataclass + neutral-v1 for_provider() seam (OpportunityConfig)
+        "CoordinateTableDiagnosis",  # frozen dataclass — per-table coord diagnosis; fields are the documentation
         "DetectionResult",  # frozen dataclass — fields are the documentation
         "GhostGridSpec",  # frozen dataclass — ghost-GK label grid; fields are the documentation (TF-60 PR3, internal)
         "InputConvention",  # str-Enum — members are the documentation

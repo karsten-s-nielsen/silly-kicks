@@ -160,7 +160,7 @@ def check_orientation(match_ref: str, provider: str | None = None) -> dict:
 
 
 def _diagnose(loaded: Any, aspect: str) -> Any:
-    from silly_kicks.spadl import detect_input_convention
+    from silly_kicks.spadl import detect_input_convention, diagnose_coordinates
     from silly_kicks.tracking import validate_gk_position_clamp, validate_id_dtypes
 
     if aspect == "keeper":
@@ -171,10 +171,14 @@ def _diagnose(loaded: Any, aspect: str) -> Any:
         from silly_kicks.spadl import config as _cfg
 
         return detect_input_convention(loaded.actions, match_col="game_id", x_max=float(_cfg.field_length))
-    raise ValueError(f"unknown aspect {aspect!r}; known: keeper|convention|id_dtype")
+    if aspect == "coords":
+        return diagnose_coordinates(getattr(loaded, "actions", None), getattr(loaded, "frames", None))
+    raise ValueError(f"unknown aspect {aspect!r}; known: keeper|convention|id_dtype|coords")
 
 
 def _flags(aspect: str, diag: Any) -> list[str]:
+    if aspect == "coords":  # the lib seam already produces the frozen flag tokens; adapter passes them through
+        return list(getattr(diag, "flags", []))
     flags: list[str] = []
     if aspect == "keeper" and getattr(diag, "clamped", False):
         flags.append("gk_clamped")
@@ -186,7 +190,12 @@ def _flags(aspect: str, diag: Any) -> list[str]:
 
 
 def diagnose_provider(provider: str, match_ref: str, aspect: str) -> dict:
-    """Provider data-quality probe. ``aspect`` ∈ {keeper, convention, id_dtype} (lib binds)."""
+    """Provider data-quality probe. ``aspect`` ∈ {keeper, convention, id_dtype, coords} (lib binds).
+
+    ``coords`` binds :func:`silly_kicks.spadl.diagnose_coordinates` — a scale/units + bounds/NaN
+    tripwire over the SPADL actions and/or tracking frames. It does NOT measure orientation
+    (use ``check_orientation``) and treats off-pitch TRACKING positions as INFO, not a defect.
+    """
     loaded = _load.load_match(match_ref, provider)
     diag = _diagnose(loaded, aspect)
     return {
