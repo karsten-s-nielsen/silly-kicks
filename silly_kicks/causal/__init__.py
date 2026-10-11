@@ -26,6 +26,12 @@ from silly_kicks.causal.opportunities import (
     xcross_config,
 )
 from silly_kicks.causal.power import InjectionSpec, att_power_curve
+from silly_kicks.causal.sensitivity import (
+    SensitivityResult,
+    e_value,
+    marginal_sensitivity,
+    sensitivity_analysis,
+)
 
 __all__ = [
     "GK_ABLATION_MIN_SHIFT",
@@ -36,15 +42,19 @@ __all__ = [
     "CausalEstimate",
     "InjectionSpec",
     "OpportunityConfig",
+    "SensitivityResult",
     "abadie_imbens_se",
     "att_power_curve",
     "build_opportunities",
+    "e_value",
     "estimate_atnt",
     "estimate_att",
     "fit_propensity",
     "layer2_config",
+    "marginal_sensitivity",
     "placebo_shift",
     "propensity_match",
+    "sensitivity_analysis",
     "shot_arm_config",
     "smd_balance",
     "xcross_config",

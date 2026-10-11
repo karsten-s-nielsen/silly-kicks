@@ -175,6 +175,25 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   Econometrica 74(1):235-267, supplies the matching standard errors both the harness
   and its power simulator use.
 
+- Unmeasured-confounding sensitivity (silly_kicks/causal/sensitivity.py, TF-71, ADR-117).
+  Attribution: VanderWeele, T. J., & Ding, P. (2017). "Sensitivity Analysis in
+  Observational Research: Introducing the E-value." Annals of Internal Medicine
+  167(4):268-274 (the E-value, a faithful closed form on the risk ratio); Zhao, Q.,
+  Small, D. S., & Bhattacharya, B. B. (2019). "Sensitivity Analysis for Inverse
+  Probability Weighting Estimators via the Percentile Bootstrap." JRSS-B 81(4):735-761
+  (the marginal sensitivity model + valid percentile bootstrap; silly-kicks reimplements the
+  published ZSB algorithm on a Hajek-IPW ATT, oracle-validated against its reference
+  implementation `bootsens` -- Qingyuan Zhao, github.com/qingyuanzhao/bootsens).
+  Otsu, T., & Rai, Y. (2017), JASA 112(520):1720-1732, is the
+  matching-ATE wild bootstrap cited as the alternative NOT taken (Option A puts the MSM on
+  the IPW estimand, where ZSB's theorem holds). Abadie, A., & Imbens, G. W. (2008),
+  Econometrica 76(6):1537-1557, is why the matching bootstrap is invalid -- the reason the
+  MSM rides the Hajek-IPW estimand rather than the matched estimator. A dev-only pinned-Docker
+  R run (tools/oracle/ipw/) regenerates the committed numeric oracle
+  (tests/causal/fixtures/ipw_oracle.json); the oracle numbers are facts, not copyrightable.
+  `bootsens` is GPL-3 and is INSTALLED into that ephemeral dev Docker image only (pinned by commit
+  SHA) -- NOT vendored into or distributed by this MIT repo, which keeps silly-kicks MIT-clean.
+
 - Peters, A., Parmar, N., Davies, M., & James, N. (2026). "When Timing Matters:
   Evaluating Temporal Leakage in Machine Learning Models of Football Pass
   Turnovers." Research Quarterly for Exercise and Sport.

@@ -55,6 +55,7 @@ def input_contract() -> dict:
     reference would raise NameError at call time.
     """
     from silly_kicks.causal import SHOT_ARM_CONFOUNDERS, shot_arm_config
+    from silly_kicks.causal.sensitivity import DEFAULT_ALPHA, DEFAULT_GAMMAS, DEFAULT_N_BOOT
     from silly_kicks.tracking import _geometry as _geo
 
     return declare_inputs(
@@ -64,8 +65,37 @@ def input_contract() -> dict:
             "gk_block": shot_arm_config({}).gk_block,
         },
         geometry_version=_geo.GEOMETRY_VERSION,
-        extractors=("silly_kicks.tracking._xshot_occurrence",),
+        extractors=("silly_kicks.tracking._xshot_occurrence", "silly_kicks.causal.sensitivity"),
+        sensitivity={
+            "gammas": list(DEFAULT_GAMMAS),
+            "n_boot": DEFAULT_N_BOOT,
+            "alpha": DEFAULT_ALPHA,
+            "reg_adjust": False,
+        },  # TF-71: declare the new dependency (ADR-056)
     )
+
+
+def _sensitivity_block(Z, X, Y, *, seed: int, **kwargs) -> dict:
+    """TF-71 unmeasured-confounding sensitivity for the harness memo (JSON-safe). The matched ATT stays
+    the headline; this is the ZSB IPW-MSM + E-value companion, with the construct-validity caveat.
+    `**kwargs` (gammas / n_boot / alpha / reg_adjust) pass through; the harness uses the defaults."""
+    import dataclasses
+    import math
+
+    from silly_kicks.causal.sensitivity import sensitivity_analysis
+
+    r = sensitivity_analysis(
+        np.asarray(Z, dtype=int), np.asarray(X, dtype=float), np.asarray(Y, dtype=float), seed=seed, **kwargs
+    )
+    d = dataclasses.asdict(r)
+    if not math.isfinite(d["gamma_star"]):
+        d["gamma_star"] = "inf"  # JSON-safe (never emit a bare Infinity token)
+    d["caveat"] = (
+        "MSM on the IPW-ATT (faithful ZSB); gamma_star is a property of the IPW-ATT, NOT a certificate "
+        "for the matched ATT (point agreement is necessary, not sufficient). E-value on the IPW RR. Does "
+        "not establish causality or detect model misspecification."
+    )
+    return d
 
 
 def _col_means_ignoring_missing(X: np.ndarray, miss: np.ndarray) -> np.ndarray:
@@ -182,6 +212,8 @@ def analyze(opp: pd.DataFrame, *, seed: int = 0, n_seeds: int = 200) -> dict:
     smd_improved = bool(att_full.balance["smd_post"].abs().max() < att_full.balance["smd_pre"].abs().max())
     claim_supported = bool(overlap >= _OVERLAP_MIN and smd_improved)
 
+    sensitivity = _sensitivity_block(Z, X_full, Y, seed=seed)  # TF-71: IPW-MSM + E-value companion
+
     gate = _entanglement_gate(opp)
     if gate["measurable"]:
         entanglement, refusal_reason = ("clears" if clears else "inside_band"), None
@@ -205,6 +237,7 @@ def analyze(opp: pd.DataFrame, *, seed: int = 0, n_seeds: int = 200) -> dict:
         "att_with_gk": {"estimate": att_full.estimate, "se": att_full.se},
         "atnt_with_gk": {"estimate": atnt_full.estimate, "se": atnt_full.se},
         "gk_ablation_shift": gk_shift,
+        "sensitivity": sensitivity,  # TF-71 (stale until the owner-run corpus regen; see TODO)
         "placebo_band_p95": placebo_cluster["band_p95"],  # the GATE band (cluster)
         "placebo_band_p95_cluster": placebo_cluster["band_p95"],
         "placebo_band_p95_row": placebo_row["band_p95"],
