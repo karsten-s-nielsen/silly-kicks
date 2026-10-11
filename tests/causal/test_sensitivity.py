@@ -164,16 +164,28 @@ def test_planted_confounder_fixture_precondition():
     assert abs(naive) > 0.02
 
 
+def _coverage_rep(seed: int) -> int:
+    """One planted-confounder replication: does the MSM CI at the true Gamma cover the true ATT (0)?
+
+    Fully determined by ``seed`` (data + bootstrap), so the result is independent of execution order
+    and the pooled coverage count is identical serial or parallel. Module-level + picklable so the
+    joblib/loky workers in the coverage gate can call it."""
+    Z, X, Y, _ = _planted(seed, lam=_TRUE_LAMBDA)
+    r = S.sensitivity_analysis(Z, X, Y, gammas=(0.0, _TRUE_LAMBDA), n_boot=200, seed=seed)
+    return int(r.msm_ci_lo[-1] <= 0.0 <= r.msm_ci_hi[-1])
+
+
 @pytest.mark.slow
 def test_planted_confounder_coverage():
-    reps, covered = 500, 0
-    lam = _TRUE_LAMBDA
-    gammas = (0.0, lam)
-    for seed in range(reps):
-        Z, X, Y, _ = _planted(seed, lam=lam)
-        r = S.sensitivity_analysis(Z, X, Y, gammas=gammas, n_boot=200, seed=seed)
-        if r.msm_ci_lo[-1] <= 0.0 <= r.msm_ci_hi[-1]:
-            covered += 1
+    # 500 reps x 200-boot is the pre-registered gate (reps>=500, floor>=0.90, n_boot pinned). Each rep
+    # is independent and seed-determined, so we fan the loop across cores: loky pins inner BLAS threads
+    # (no oversubscription) and the summed coverage count is byte-identical to the serial loop. The
+    # single pooled assertion stays in ONE test (pytest-split shards are separate machines; a pooled
+    # statistic cannot span them) — parallelism is the only lever that keeps the invariant intact.
+    from joblib import Parallel, delayed
+
+    reps = 500
+    covered = sum(Parallel(n_jobs=-1)(delayed(_coverage_rep)(seed) for seed in range(reps)))
     assert covered / reps >= 0.90
 
 
