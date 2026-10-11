@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+from typing import cast
 
 import numpy as np
 import pytest
@@ -185,7 +186,8 @@ def test_planted_confounder_coverage():
     from joblib import Parallel, delayed
 
     reps = 500
-    covered = sum(Parallel(n_jobs=-1)(delayed(_coverage_rep)(seed) for seed in range(reps)))
+    results = cast("list[int]", Parallel(n_jobs=-1)(delayed(_coverage_rep)(seed) for seed in range(reps)))
+    covered = sum(results)
     assert covered / reps >= 0.90
 
 
