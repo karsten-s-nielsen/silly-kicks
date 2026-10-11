@@ -221,6 +221,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/causal/matching.py",
     "silly_kicks/causal/opportunities.py",
     "silly_kicks/causal/power.py",
+    "silly_kicks/causal/sensitivity.py",
     # gkdv (TF-19 PR-3): the four modules that DEFINE its public surface. The registry
     # previously named `gkdv/__init__.py`, which has zero top-level defs -- a vacuous entry
     # that read as coverage while all four of these were unchecked. `test_no_registered_entry_
@@ -1235,6 +1236,7 @@ _SKIP_SYMBOLS = frozenset(
         "PitchControlParams",  # type alias union — components have examples
         "PointScore",  # frozen dataclass — plain per-fold score container, fields are the documentation
         "Selection",  # frozen dataclass — plain selection-result container, fields are the documentation
+        "SensitivityResult",  # frozen result dataclass (TF-71) — fields are the documentation
     }
 )
 

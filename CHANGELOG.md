@@ -5,6 +5,13 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.131.0] — 2026-10-11 — TF-71 causal unmeasured-confounding sensitivity (ADR-117)
+
+### Added
+
+- **`silly_kicks.causal.sensitivity`:** unmeasured-confounding sensitivity for the propensity-matching estimator (ADR-015), pure + deterministic. `sensitivity_analysis` / `marginal_sensitivity` / `e_value` return a frozen `SensitivityResult`. The **marginal sensitivity model** (Zhao–Small–Bhattacharya 2019) and the **E-value** (VanderWeele & Ding 2017) are both computed on a **Hájek-IPW ATT**, reimplementing the published ZSB algorithm (the paper's extrema + percentile bootstrap), **oracle-validated** against the ZSB reference implementation `bootsens/R/ipw.R` (GPL-3, never vendored), with ZSB's valid percentile bootstrap (resample + refit, no rematch) — an optional AIPW/doubly-robust variant via `reg_adjust`. The matched ATT stays the headline estimate; the IPW-ATT carries the sensitivity, and a matched-vs-IPW agreement gap + overlap guard drive a NO-GO (reported, not shipped as a robustness claim) when they diverge beyond one Abadie–Imbens SE or overlap fails. `gamma_star` is a property of the IPW-ATT, never a certificate for the matched ATT. Faithfulness is pinned by a Dockerized `ipw.R` reference oracle (`tools/oracle/ipw/`, pinned `rocker/r-ver`; targets committed in `tests/causal/fixtures/ipw_oracle.json`).
+- `scripts/validate_xcross_causal.py` + `scripts/validate_xshot_causal.py` emit the sensitivity block in their `metrics.json`. **The committed `docs/research/xcross_causal/metrics.json` and `docs/research/tf19_entanglement/metrics.json` read stale (`StaleArtifactWarning`, non-failing) until an owner-run corpus regen** (tracked in TODO) — this cycle is code + tests only, no corpus run.
+
 ## [4.130.0] — 2026-10-09 — agent-support Phase 3 (MCP `coords` aspect + howto link-check)
 
 ### Added
