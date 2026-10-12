@@ -215,6 +215,7 @@ def _apply_domain(
     carrier: pd.DataFrame,
     goal_map: GoalMap,
     params: GkdvParams,
+    scored_frame_keys: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split the frame keys into ``(eligible, dropped)`` per the spec §4.1 domain.
 
@@ -335,15 +336,45 @@ def _apply_domain(
     # confident 105.0 the old code produced. Still deliberately WITHOUT an all-miss raise: an
     # untestable raise is not a guard, it is unexercised code.
 
-    # --- stride (cost control, spec §5) -------------------------------------------------
+    # --- stride (cost control, spec §5) OR injected whole-unit survivor set (ADR-119) ---
     # Counted as a drop reason, NOT silently discarded, so the report still conserves.
     # v1 does not segment possessions: the stride runs over the ordered eligible frames
     # within each (game_id, period_id). Documented limitation, not a hidden approximation.
-    stride = int(params.possession_stride)
-    if stride > 1:
-        surviving = work.index[reason.isna()]
-        rank = work.loc[surviving].groupby(["game_id", "period_id"], dropna=False).cumcount()
-        reason.loc[surviving[(rank % stride != 0).to_numpy()]] = _DROP_STRIDE
+    #
+    # The stride survivor SELECTION is a whole-unit rank (a cumcount over the globally-ordered
+    # eligible frames), so windowing the scoring shifts the phase and keeps a DIFFERENT set of
+    # frames (idsse canary: whole-unit 12421,12426,... vs windowed 12420,12425,...). For windowed
+    # Stage-2 scoring the caller computes the selection ONCE whole-unit
+    # (``select_gkdv_scored_frames``) and injects it here as ``scored_frame_keys``: the per-frame
+    # domain above still runs (pinning the context the serving/arms need), only the global
+    # cumcount is bypassed. Eligible-pre-stride frames NOT in the injected set are stride-skipped
+    # -- same drop reason, same conservation, just decided whole-unit. ``scored_frame_keys=None``
+    # keeps the internal stride and is byte-identical for every existing caller.
+    surviving = work.index[reason.isna()]
+    if scored_frame_keys is not None:
+        # Canonical composite keys on BOTH sides (ADR-019): a raw tuple-set membership test is a
+        # raw `==` in disguise and would silently drop every frame on a dtype mismatch.
+        keep = set(
+            zip(
+                _id_key(scored_frame_keys["game_id"]),
+                _id_key(scored_frame_keys["period_id"]),
+                _id_key(scored_frame_keys["frame_id"]),
+                strict=True,
+            )
+        )
+        surv_keys = zip(
+            _id_key(work.loc[surviving, "game_id"]),
+            _id_key(work.loc[surviving, "period_id"]),
+            _id_key(work.loc[surviving, "frame_id"]),
+            strict=True,
+        )
+        drop = np.array([k not in keep for k in surv_keys], dtype=bool)
+        reason.loc[surviving[drop]] = _DROP_STRIDE
+    else:
+        stride = int(params.possession_stride)
+        if stride > 1:
+            rank = work.loc[surviving].groupby(["game_id", "period_id"], dropna=False).cumcount()
+            reason.loc[surviving[(rank % stride != 0).to_numpy()]] = _DROP_STRIDE
 
     work["drop_reason"] = reason
     eligible = work[work["drop_reason"].isna()].drop(columns=["drop_reason"]).reset_index(drop=True)
@@ -462,6 +493,59 @@ def _write_back(frames: pd.DataFrame, *, provenance: pd.DataFrame, params: GkdvP
     return out
 
 
+def select_gkdv_scored_frames(
+    frames: pd.DataFrame,
+    *,
+    carrier: pd.DataFrame | None = None,
+    goal_map: GoalMap | None = None,
+    params: GkdvParams = _DEFAULT_PARAMS,
+) -> pd.DataFrame:
+    """The whole-unit frame keys that gkdv would score (the stride survivor selection).
+
+    PURE: never mutates ``frames``.
+
+    The ``possession_stride`` survivor set is a whole-unit rank -- a ``cumcount`` over the
+    globally-ordered eligible frames of each ``(game_id, period_id)`` (spec §5). A windowed caller
+    cannot reproduce it window-by-window: re-ranking over a smaller eligible set shifts the phase and
+    keeps DIFFERENT frames. This runs the §4.1 domain + stride ONCE over the whole unit and returns
+    the survivor keys, to inject into every window via
+    :func:`build_ghost_frames`'s ``scored_frame_keys=``. It is cheap -- the domain has no
+    pitch-control / DAS grids, so a positions-only whole-unit pass is bounded.
+
+    ``carrier`` / ``goal_map`` default-``None`` resolve internally (mirroring
+    :func:`build_ghost_frames`); pass the SAME instances you pass to the windowed
+    ``build_ghost_frames`` calls so the whole-unit selection and the windowed domain agree.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per scored frame, columns ``game_id, period_id, frame_id``.
+
+    Examples
+    --------
+    Score two windows under one whole-unit survivor set, byte-identical to whole-unit::
+
+        from silly_kicks.gkdv import build_ghost_frames, select_gkdv_scored_frames
+        from silly_kicks.tracking import infer_ball_carrier, resolve_defended_goals
+
+        carrier = infer_ball_carrier(unit_frames)
+        goal_map = resolve_defended_goals(unit_frames)
+        survivors = select_gkdv_scored_frames(unit_frames, carrier=carrier, goal_map=goal_map)
+        # per window:
+        build_ghost_frames(window_frames, home_team_id=1, carrier=carrier, goal_map=goal_map,
+                           scored_frame_keys=survivors)
+    """
+    from silly_kicks.tracking import infer_ball_carrier
+
+    src = frames  # never mutated
+    if carrier is None:
+        carrier = infer_ball_carrier(src)
+    if goal_map is None:
+        goal_map = _pin_defended_goal(src)
+    eligible, _dropped = _apply_domain(src, carrier=carrier, goal_map=goal_map, params=params)
+    return eligible[list(_FRAME_KEYS)].reset_index(drop=True)
+
+
 def build_ghost_frames(
     frames: pd.DataFrame,
     *,
@@ -469,6 +553,7 @@ def build_ghost_frames(
     home_team_id: int | str,
     carrier: pd.DataFrame | None = None,
     goal_map: GoalMap | None = None,
+    scored_frame_keys: pd.DataFrame | None = None,
     params: GkdvParams = _DEFAULT_PARAMS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, GkdvReport]:
     """Build the ghost-keeper counterfactual frames plus per-frame provenance.
@@ -513,6 +598,16 @@ def build_ghost_frames(
         byte-identical for a caller that scores the whole unit in one call. The same instance feeds
         BOTH the §4.1 domain filter and the ghost-serving flip, so a windowed caller must inject it
         to keep both consistent.
+    scored_frame_keys : pd.DataFrame, optional
+        The whole-unit stride survivor selection (``game_id, period_id, frame_id``) from
+        :func:`select_gkdv_scored_frames`, pinned ONCE over the whole unit. The ``possession_stride``
+        survivor set is a whole-unit rank (a ``cumcount`` over the globally-ordered eligible frames),
+        so scoring a window re-ranks over a smaller eligible set and keeps a DIFFERENT phase; a whole-
+        unit GoalMap/carrier does not fix it (the rank is independent of both). When provided, the
+        internal stride is replaced by "keep the eligible frames whose key is in this set" -- the
+        per-frame §4.1 domain still runs, so a key outside the domain is NOT resurrected. When omitted
+        (``None``) the internal stride runs and the result is byte-identical for every existing caller
+        (ADR-119).
 
     Returns
     -------
@@ -555,7 +650,9 @@ def build_ghost_frames(
 
     if goal_map is None:
         goal_map = _pin_defended_goal(src)  # ONE instance, spec §4.2
-    eligible, dropped = _apply_domain(src, carrier=carrier, goal_map=goal_map, params=params)
+    eligible, dropped = _apply_domain(
+        src, carrier=carrier, goal_map=goal_map, params=params, scored_frame_keys=scored_frame_keys
+    )
 
     served = serve_ghost_gk_positions(
         src,
