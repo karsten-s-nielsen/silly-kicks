@@ -35,7 +35,7 @@ from silly_kicks.spadl import config as spadlconfig
 from . import _geometry as _geo
 from . import _provider_visibility as _pv
 from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
-from ._gk_resolve import resolve_defended_goals
+from ._gk_resolve import GoalMap, resolve_defended_goals
 from ._velocity_availability import (
     variant_key_for_velocity as _variant_key_for_velocity,
 )
@@ -2831,6 +2831,7 @@ def serve_ghost_gk_positions(
     actions: pd.DataFrame | None = None,
     carrier: pd.DataFrame | None = None,
     link_frame_ids: set[int] | None = None,
+    goal_map: GoalMap | None = None,
 ) -> pd.DataFrame:
     """Serve ghost-GK positions ONLY, with per-row clamp / out-of-training-box provenance.
 
@@ -2852,6 +2853,12 @@ def serve_ghost_gk_positions(
         LTR-normalized tracking frames (see :func:`compute_ghost_gk`).
     model, home_team_id, actions, carrier, link_frame_ids
         As :func:`compute_ghost_gk`.
+    goal_map : GoalMap, optional
+        Precomputed :func:`resolve_defended_goals` output used ONLY for the goal-relative ->
+        frame-coordinate flip (``ghost_x`` is mirrored iff the defended goal is at high x). Inject
+        the whole-unit map when scoring frame windows so the flip does not drift with a per-window
+        mean-GK-x estimate; when omitted it is resolved here from ``frames`` (byte-identical for a
+        caller that passes the whole unit).
 
     Returns
     -------
@@ -2938,7 +2945,7 @@ def serve_ghost_gk_positions(
     # equivalence. A row whose end is unresolvable (served but guess-only miss) -> NaN, never a guess.
     _gr_x = positions[:, 0]
     _gr_y = positions[:, 1]
-    _goal_map = resolve_defended_goals(frames)
+    _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
     _defended = np.array(
         [
             (np.nan if (_e := _goal_map.get(g, p, t, allow_guess=True)) is None else float(_e))

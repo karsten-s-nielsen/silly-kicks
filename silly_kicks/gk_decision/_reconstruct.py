@@ -29,6 +29,7 @@ from silly_kicks import reflection
 from silly_kicks.id_compat import ids_isin, ids_match, same_id
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import (
+    GoalMap,
     action_ltr_goal_map,
     compute_packing_metrics_batch,
     link_actions_to_frames,
@@ -86,6 +87,7 @@ class ReconstructedOptionSet:
         frame_convention: Literal["per_action_ltr", "match_ltr"] = "per_action_ltr",
         links: pd.DataFrame | None = None,
         visible_area: pd.DataFrame | None = None,
+        goal_map: GoalMap | None = None,
     ) -> None:
         self._actions = actions
         self._frames = frames
@@ -95,6 +97,10 @@ class ReconstructedOptionSet:
         self._convention = frame_convention
         self._links = links
         self._visible_area = visible_area
+        # match_ltr only: the whole-match defended-goal map used for the frame reflection. Injected
+        # once (pinned over the whole unit) so windowed scoring does not re-estimate it per window;
+        # None -> resolved from frames in option_rows() (byte-identical for a whole-unit caller).
+        self._goal_map = goal_map
         self._drops = {"no_frame": 0, "fov_cropped": 0}
         self._link_cache: pd.DataFrame | None = None
 
@@ -259,7 +265,9 @@ class ReconstructedOptionSet:
         acts = self._actions[ids_isin(self._actions["player_id"], self._keeper_ids).to_numpy()]
         self._drops = {"no_frame": 0, "fov_cropped": 0}
         self._link_cache = None
-        match_map = resolve_defended_goals(self._frames) if self._convention == "match_ltr" else None
+        match_map = None
+        if self._convention == "match_ltr":
+            match_map = self._goal_map if self._goal_map is not None else resolve_defended_goals(self._frames)
         out = [rows for _, a in acts.iterrows() if (rows := self._rows_for_decision(a, acts, match_map)) is not None]
         if not out:
             return pd.DataFrame(columns=list(OPTION_ROW_COLUMNS))
