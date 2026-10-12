@@ -462,3 +462,7 @@ golden shifts, no retrain question, no re-materialization.
 * The D3 pin is renamed `test_no_module_infers_direction_from_team_identity` and asserts its
   population is EXACTLY empty over eight modules. **Empty is the correct steady state** — stated in
   the docstring so a future reader does not "fix" it by repopulating the set.
+
+## Amendment — 2026-10-11, silly-kicks 4.132.0: the serve layer was re-resolving — ADR-118
+
+ADR-055's "build ONCE per match, thread in" held through the per-frame feature functions but **not through the ghost-serving layer**: `serve_ghost_gk_positions` and `serve_ghost_outfield_positions` each re-resolved `resolve_defended_goals(frames)` internally for the goal-relative → frame-coordinate flip, and `build_ghost_frames` resolved the map twice (domain filter + serve). Within a whole-unit call these agree; a windowed caller (the luxury-lakehouse, under a serverless memory cap) would make each a per-window estimator and drift on the 7.1%-SkillCorner frames this ADR measures. **ADR-118** closes that by adding an optional `goal_map: GoalMap | None = None` to the five ghost/decision entry points and threading one injected instance into both the domain filter and every serve flip; `None` recomputes and is byte-identical. It is a separate ADR rather than an amendment edit because it adds a new, cross-cutting **injection surface** and a windowing contract that a maintainer will look for at the decision layer — see `ADR-118`.

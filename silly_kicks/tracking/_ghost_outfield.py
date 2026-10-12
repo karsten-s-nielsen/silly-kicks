@@ -1046,6 +1046,7 @@ def serve_ghost_outfield_positions(
     carrier: pd.DataFrame | None = None,
     n_rearguard: int = 4,
     visible_area: pd.DataFrame | None = None,
+    goal_map: GoalMap | None = None,
 ) -> pd.DataFrame:
     """Serve league-average ghost rearguard positions --- the ``tracking`` seam PR6 consumes.
 
@@ -1067,6 +1068,11 @@ def serve_ghost_outfield_positions(
     (``ghost_outfield_source="fov_cropped"``) --- otherwise the deepest-n VISIBLE players would be a
     fabricated rearguard (a cropped-out deep defender silently replaced by a promoted midfielder). With
     no ``visible_area`` (full-coverage tracking) every scored frame is ``computed``.
+
+    ``goal_map`` (optional): a precomputed :func:`resolve_defended_goals` map used ONLY for the
+    goal-relative -> frame-coordinate flip. Inject the whole-unit map when serving frame windows so the
+    flip does not drift with a per-window estimate; when omitted it is resolved from ``frames``
+    (byte-identical for a whole-unit caller). Mirrors :func:`serve_ghost_gk_positions`.
     """
     if len(frames) == 0:
         return pd.DataFrame(columns=_SERVE_OUTPUT_COLS)
@@ -1131,7 +1137,7 @@ def serve_ghost_outfield_positions(
     # np.where is the vectorized _gr_x/_gr_y (a per-row flip cannot use the scalar-flip helper);
     # the equivalence is pinned by the Task-4 serve inverse test.
     if len(out):
-        _gm = resolve_defended_goals(frames)
+        _gm = goal_map if goal_map is not None else resolve_defended_goals(frames)
         _defended = np.array(
             [
                 (np.nan if (_e := _gm.get(g, p, t, allow_guess=True)) is None else float(_e))

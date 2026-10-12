@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.131.0: TF-71 causal unmeasured-confounding sensitivity.** `silly_kicks.causal.sensitivity` adds the E-value (VanderWeele & Ding 2017) and the ZSB marginal sensitivity model on a Hájek-IPW ATT — reimplementing the published ZSB algorithm, oracle-validated against `bootsens/ipw.R` (dev-only pinned-Docker oracle), with a matched-vs-IPW agreement/overlap NO-GO and an optional AIPW variant; the two causal harnesses emit the sensitivity block. Release detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.132.0: GoalMap injection seam for windowed ghost scoring.** Optional `goal_map=` added to `gkdv.build_ghost_frames`, `tracking.serve_ghost_gk_positions`, `gk_decision.ReconstructedOptionSet` (match-LTR), `tracking.serve_ghost_outfield_positions`, and `restdefense.build_restdefense_ghost_frames` so a caller windowing Stage-2 scoring can pin the whole-unit defended-goal map once and reuse it across frame windows (each threaded into both the domain filter and the frame-coordinate flip). Every parameter defaults to `None` = internal recompute = byte-identical for existing callers. Pending tag. Release detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

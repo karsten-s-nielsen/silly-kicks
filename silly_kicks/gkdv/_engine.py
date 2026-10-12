@@ -468,6 +468,7 @@ def build_ghost_frames(
     model=None,
     home_team_id: int | str,
     carrier: pd.DataFrame | None = None,
+    goal_map: GoalMap | None = None,
     params: GkdvParams = _DEFAULT_PARAMS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, GkdvReport]:
     """Build the ghost-keeper counterfactual frames plus per-frame provenance.
@@ -503,6 +504,15 @@ def build_ghost_frames(
         ``GhostGkModel`` instance; pass ``model`` as an instance (or supply ``carrier``) if
         those params matter, since a variant NAME cannot be resolved without reaching into
         tracking privates.
+    goal_map : GoalMap, optional
+        Precomputed :func:`~silly_kicks.tracking.resolve_defended_goals` output, pinned ONCE over
+        the whole unit and reused for every window. The defended-goal end is a whole-unit estimator
+        (the mean GK x per game/period/team); resolved per window it is a smaller-sample estimator
+        that disagrees with the whole-unit value on sparse-detection providers (~7.1% of skillcorner
+        team-frames), which shifts the delta. When omitted it is resolved here from ``frames`` --
+        byte-identical for a caller that scores the whole unit in one call. The same instance feeds
+        BOTH the §4.1 domain filter and the ghost-serving flip, so a windowed caller must inject it
+        to keep both consistent.
 
     Returns
     -------
@@ -543,7 +553,8 @@ def build_ghost_frames(
         carrier_params = getattr(model, "carrier_params", None)
         carrier = infer_ball_carrier(src, **carrier_params) if carrier_params else infer_ball_carrier(src)
 
-    goal_map = _pin_defended_goal(src)  # ONE instance, spec §4.2
+    if goal_map is None:
+        goal_map = _pin_defended_goal(src)  # ONE instance, spec §4.2
     eligible, dropped = _apply_domain(src, carrier=carrier, goal_map=goal_map, params=params)
 
     served = serve_ghost_gk_positions(
@@ -552,6 +563,7 @@ def build_ghost_frames(
         home_team_id=home_team_id,
         carrier=carrier[[*_FRAME_KEYS, "ball_carrier_team_id"]],
         link_frame_ids=set(eligible["frame_id"].unique()),
+        goal_map=goal_map,
     )
     prov = _build_provenance(src, served=served, eligible=eligible, dropped=dropped)
     cf = _write_back(src, provenance=prov, params=params)

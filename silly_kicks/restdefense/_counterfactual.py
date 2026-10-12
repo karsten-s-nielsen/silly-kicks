@@ -160,6 +160,7 @@ def build_restdefense_ghost_frames(
     home_team_id: int | str,
     carrier: pd.DataFrame | None = None,
     visible_area: pd.DataFrame | None = None,
+    goal_map: GoalMap | None = None,
     params: RestDefenseParams = _DEFAULT_PARAMS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, RestDefenseGhostReport]:
     """Ghost the in-possession team A's OWN rearguard (or keeper) to a league-average model.
@@ -173,6 +174,11 @@ def build_restdefense_ghost_frames(
 
     ``which="rearguard"`` consumes :func:`serve_ghost_outfield_positions`; ``which="keeper"`` consumes
     :func:`serve_ghost_gk_positions` restricted to A's keeper (the model should be a ``sweeper`` variant).
+
+    ``goal_map`` (optional): a precomputed :func:`resolve_defended_goals` map, threaded into both the
+    domain filter and the ghost serve. Inject the whole-unit map when scoring frame windows so the
+    defended-end estimate does not drift per window; when omitted it is resolved from ``frames``
+    (byte-identical for a whole-unit caller). Mirrors ``gkdv.build_ghost_frames(goal_map=...)``.
 
     Examples
     --------
@@ -196,7 +202,11 @@ def build_restdefense_ghost_frames(
 
     src = frames  # never mutated
     car = _pin_carrier(src, carrier)
-    goal_map = resolve_defended_goals(src)
+    # ONE goal-map instance threaded into the domain filter AND whichever ghost serve runs -- both
+    # re-resolve it from the frames otherwise, so a windowed caller must inject the whole-unit map to
+    # keep the domain and the frame-coordinate flip consistent (gkdv's build_ghost_frames does the same).
+    if goal_map is None:
+        goal_map = resolve_defended_goals(src)
     eligible, dropped = _apply_domain(src, carrier=car, goal_map=goal_map, params=params, which=which)
 
     if which == "rearguard":
@@ -207,10 +217,11 @@ def build_restdefense_ghost_frames(
             carrier=car,
             n_rearguard=params.n_rearguard,
             visible_area=visible_area,
+            goal_map=goal_map,
         )
         served = served.rename(columns={"ghost_outfield_source": "ghost_source"})
     else:
-        served = serve_ghost_gk_positions(src, model=model, home_team_id=home_team_id, carrier=car)
+        served = serve_ghost_gk_positions(src, model=model, home_team_id=home_team_id, carrier=car, goal_map=goal_map)
         served = served.rename(columns={"gk_team_id": "team_id"})
         served["ghost_source"] = "computed"
         # The GK serve is keyed (frame, team) with NO player_id, but the provenance/write-back match

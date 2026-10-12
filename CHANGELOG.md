@@ -5,6 +5,16 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.132.0] — 2026-10-11 — GoalMap injection seam for windowed ghost scoring (ADR-118)
+
+Purely-additive seam so a caller that windows Stage-2 ghost scoring (to stay under a memory cap) can pin the whole-unit defended-goal map once and reuse it across windows (ADR-118, extending ADR-055). The defended-goal end is a whole-unit estimator (the mean GK x per game/period/team); resolved per window it is a smaller-sample estimator that disagrees with the whole-unit value on sparse-detection providers (~7.1 % of SkillCorner team-frames; `tracking/_gk_resolve.py`), which would shift the ghost delta. Every parameter defaults to `None` = the current internal recompute, so every existing caller is byte-identical and no output changes. Mirrors the existing `compute_rest_defense(..., goal_map=None)` seam.
+
+### Added
+
+- **`silly_kicks.gkdv.build_ghost_frames(..., goal_map=None)`** and **`silly_kicks.tracking.serve_ghost_gk_positions(..., goal_map=None)`:** optional pre-resolved `GoalMap` injection (from `resolve_defended_goals`, public via `silly_kicks.tracking`). `build_ghost_frames` recomputed the goal map in **two** places — the §4.1 domain filter and, via `serve_ghost_gk_positions`, the goal-relative → frame-coordinate flip — so the parameter is threaded into both: injecting only the domain map would have left the ghost positions on a per-window map and introduced a domain/serving inconsistency. `goal_map=None` resolves internally and is byte-identical to the pre-parameter behaviour.
+- **`silly_kicks.gk_decision.ReconstructedOptionSet(..., goal_map=None)`:** the same injection for the `match_ltr` frame reflection in `option_rows()`. `None` recomputes internally (byte-identical); the `per_action_ltr` branch never touches the goal map.
+- **`silly_kicks.restdefense.build_restdefense_ghost_frames(..., goal_map=None)`** and **`silly_kicks.tracking.serve_ghost_outfield_positions(..., goal_map=None)`:** the rest-defense ghost counterfactual had the identical latent drift — it re-resolved the goal map for the domain filter AND for each serve's frame-coordinate flip (`serve_ghost_outfield_positions` for the rearguard, `serve_ghost_gk_positions` for the keeper). `build_restdefense_ghost_frames` now threads one injected map into all three. `None` recomputes internally (byte-identical). (`compute_rest_defense`'s existing Layer-1 `goal_map=` seam is unchanged.)
+
 ## [4.131.0] — 2026-10-11 — TF-71 causal unmeasured-confounding sensitivity (ADR-117)
 
 ### Added
