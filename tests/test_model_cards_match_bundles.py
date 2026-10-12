@@ -10,10 +10,15 @@ import pytest
 
 _CARDS = Path("docs/huggingface/model-cards")
 _W = Path("silly_kicks/tracking")
-# The release these bundled models were last F1b-re-fit at (ADR-106). The card's provenance / re-fit line tracks
-# that re-fit EVENT, not the live wheel version -- a no-retrain release (e.g. 4.129.0 / TF-58) does not re-stamp
-# them (re-stamping would fabricate a re-fit that never happened). A future re-fit of a bundle bumps this.
+# The card's provenance / re-fit line tracks the re-fit EVENT per bundle, not the live wheel version -- a
+# no-retrain release (e.g. 4.129.0 / TF-58) does not re-stamp (that would fabricate a re-fit that never
+# happened). `_PROVENANCE_VERSION` is the LAST uniform re-fit (F1b float32, ADR-106) still carried by the
+# bundles NOT re-fit since (the receiver/gk_completion wheel cards + the byte-identical position_only
+# mirrors). `_TF65_VERSION` is the TF-65 velocity-gap re-fit (ADR-120) that re-stamped only the faithful
+# bundles (ghost default/sweeper, outfield default, xshot/xcross default). A future re-fit bumps the relevant one.
 _PROVENANCE_VERSION = "4.128.0"
+_TF65_VERSION = "4.134.0"
+_TF65_COMMIT7 = "a34e992"  # the TF-65 velocity-gap re-fit commit (short); dirs stamped this were re-fit this cycle
 _NUM = re.compile(r"\d+(?:\.\d+)?")
 _GK_ROWS = {
     "Held-out CV euclidean MAE": [
@@ -66,6 +71,35 @@ def _short(rel: str) -> str:
     return _json(rel, "metadata.json")["training_commit"][:7]
 
 
+def _refit_head(rel: str) -> str:
+    """The re-fit paragraph a card must carry, keyed on the bundle's actual training_commit: a dir
+    re-fit this cycle (TF-65 velocity-gap, `a34e992`) states ADR-120 / 4.134.0; one NOT re-fit this
+    cycle (the byte-identical position_only mirrors) keeps its prior F1b float32 line (ADR-106 / 4.128.0)."""
+    short = _short(rel)
+    if short == _TF65_COMMIT7:
+        return f"**TF-65 velocity-gap re-fit (silly-kicks {_TF65_VERSION} / ADR-120; `training_commit={short}`).**"
+    return f"**F1b float32-frame re-fit (silly-kicks {_PROVENANCE_VERSION} / ADR-106; `training_commit={short}`).**"
+
+
+def _hub_note(rel: str) -> str:
+    """The wheel-sibling note a Hub-only card must carry, keyed on the wheel bundle's training_commit:
+    a wheel sibling re-fit this cycle (TF-65, `a34e992`) states the velocity-gap re-fit + that this Hub
+    owner-tier artifact is unchanged this cycle; a byte-identical (not-re-fit) sibling keeps its prior
+    F1b float32 note."""
+    short, name = _short(rel), Path(rel).name
+    if short == _TF65_COMMIT7:
+        return (
+            f"In silly-kicks {_TF65_VERSION} the wheel's bundled `{name}` was re-fit on "
+            f"the corrected floor velocities (TF-65 / ADR-120, `training_commit={short}`). This Hub "
+            f"owner-tier artifact is unchanged this cycle"
+        )
+    return (
+        f"In silly-kicks {_PROVENANCE_VERSION} the wheel's bundled `{name}` was re-fit on "
+        f"float32-stored frames (`training_commit={short}`). This Hub artifact is unchanged: "
+        f"trained on float64 frames"
+    )
+
+
 def _row_value(text: str, label: str) -> str:
     """The value cell of the ONE table row whose label cell (bold stripped) is ``label``."""
     rows = [
@@ -93,12 +127,9 @@ def test_card_population_is_exact():
 
 
 @pytest.mark.parametrize("card", sorted(_MIRRORS))
-def test_mirror_card_states_the_f1b_refit_paragraph(card):
+def test_mirror_card_states_the_refit_paragraph(card):
     rel = _MIRRORS[card][0]
-    head = (
-        f"**F1b float32-frame re-fit (silly-kicks {_PROVENANCE_VERSION} / ADR-106; `training_commit={_short(rel)}`).**"
-    )
-    assert _card(card).count(head) == 1
+    assert _card(card).count(_refit_head(rel)) == 1
 
 
 @pytest.mark.parametrize(("card", "label"), [(c, lab) for c, (_rel, rows) in sorted(_MIRRORS.items()) for lab in rows])
@@ -112,12 +143,7 @@ def test_mirror_card_table_row_equals_the_bundle(card, label):
 @pytest.mark.parametrize("card", sorted(_HF_ONLY))
 def test_hub_only_card_states_the_unchanged_note_for_its_bundled_sibling(card):
     rel = _HF_ONLY[card]
-    note = (
-        f"In silly-kicks {_PROVENANCE_VERSION} the wheel's bundled `{Path(rel).name}` was re-fit on "
-        f"float32-stored frames (`training_commit={_short(rel)}`). This Hub artifact is unchanged: "
-        f"trained on float64 frames"
-    )
-    assert _card(card).count(note) == 1
+    assert _card(card).count(_hub_note(rel)) == 1
 
 
 @pytest.mark.parametrize("rel", _WHEEL_CARDS)

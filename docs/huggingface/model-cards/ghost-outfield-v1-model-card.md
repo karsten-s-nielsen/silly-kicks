@@ -66,7 +66,7 @@ velocity model.
 
 | Metric | Value |
 |---|---|
-| Held-out CV euclidean MAE | **6.00 m** (per-provider: Gradient Sports 6.14 / SkillCorner 5.92 / Sportec 6.33) |
+| Held-out CV euclidean MAE | **6.00 m** (per-provider: Gradient Sports 6.14 / SkillCorner 5.91 / Sportec 6.33) |
 | Per-possession CV MAE | in-possession 6.97 m / out-of-possession 5.03 m |
 | Per-slot CV MAE (slots 1&ndash;4) | 5.96 / 6.05 / 6.02 / 5.97 m |
 | Training corpus | 179 games / 4170920 rows |
@@ -113,6 +113,6 @@ citation.
   [silly-kicks](https://pypi.org/project/silly-kicks/) (v4.109.0+) &middot;
   [GitHub](https://github.com/karsten-s-nielsen/silly-kicks) &middot; ADR-087.
 
-## F1b re-fit (4.128.0)
+## TF-65 velocity-gap re-fit (4.134.0)
 
-**F1b float32-frame re-fit (silly-kicks 4.128.0 / ADR-106; `training_commit=3ca609f`).** Re-fit on float32-stored frames (the storage rounding exceeds the trained-model feature-contract atol); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.
+**TF-65 velocity-gap re-fit (silly-kicks 4.134.0 / ADR-120; `training_commit=a34e992`).** Re-fit on the dense-grid-corrected floor velocities (TF-65 removed fabricated through-gap velocity on broadcast providers — the prior F1b float32 re-fit at 4.128.0 / ADR-106 is superseded); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.

@@ -259,6 +259,6 @@ Features are extracted in **goal-relative coordinates**:
 - **Documentation**: [silly-kicks GitHub](https://github.com/karsten-s-nielsen/silly-kicks)
 - **Research program**: GKDV (GK Deterrent Value) &mdash; TF-15 through TF-19
 
-## Wheel sibling (4.128.0)
+## Wheel sibling (4.134.0)
 
-In silly-kicks 4.128.0 the wheel's bundled `default` was re-fit on float32-stored frames (`training_commit=3ca609f`). This Hub artifact is unchanged: trained on float64 frames, its predictions and weights are byte-identical to the previous release.
+In silly-kicks 4.134.0 the wheel's bundled `default` was re-fit on the corrected floor velocities (TF-65 / ADR-120, `training_commit=a34e992`). This Hub owner-tier artifact is unchanged this cycle: the velocity-gap re-fit touched only the wheel-bundled public variant; re-fitting this `full` Hub model on the corrected velocities is a tracked owner-run follow-up.

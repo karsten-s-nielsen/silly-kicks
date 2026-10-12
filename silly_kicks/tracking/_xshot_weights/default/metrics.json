@@ -1,5 +1,5 @@
 {
-  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
   "shipped_variant": "public",
@@ -83,17 +83,17 @@
   "candidates": {
     "public": {
       "params": {
-        "n_estimators": 335.65426121418693,
-        "max_depth": 4.468057411039496,
-        "learning_rate": 0.034353608505215925,
-        "min_child_weight": 17.336329154380362,
-        "reg_lambda": 4.176207465682148
+        "n_estimators": 202.14919588546763,
+        "max_depth": 4.296434653901519,
+        "learning_rate": 0.05776217048594245,
+        "min_child_weight": 5.846084315064026,
+        "reg_lambda": 3.6250261153630468
       },
       "metrics": {
-        "pr_auc": 0.3388040229135204,
-        "brier": 0.16320179998874665,
-        "log_loss": 0.4973072946071625,
-        "pr_auc_std": 0.01047564864945304,
+        "pr_auc": 0.34176527681232144,
+        "brier": 0.163087397813797,
+        "log_loss": 0.49711549282073975,
+        "pr_auc_std": 0.010866740306318571,
         "positive_rate": 0.22195815663715682,
         "base_rate_brier": 0.1726927333393922,
         "n_usable_folds": 5
@@ -111,5 +111,5 @@
     "log_loss_lt_uniform": true
   },
   "estimates_are_cv_not_shipped_fit": true,
-  "artifact_size_bytes": 634541
+  "artifact_size_bytes": 400404
 }

@@ -15,6 +15,10 @@ _ROOT = Path("silly_kicks/tracking")
 # Re-fit at the combined-cycle C2 release commit; the 6 reused dirs keep the F1b anchor 3ca609f.
 _M = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
 _REUSED = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
+# TF-65 velocity-gap re-fit (ADR-120, silly-kicks 4.134.0): the 5 faithful bundles re-fit on the
+# corrected floor velocities. position_only / sweeper_position_only are byte-identical no-ops (no
+# velocity read) and keep their prior anchor.
+_TF65 = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
 _WHEEL_EXCLUDED = {"full"}  # pyproject.toml:222 excludes the maintainer-local `full` dirs from the wheel
 _GHOST_PROVIDERS = ["gradientsports", "skillcorner", "sportec"]
 _PUBLIC_PROVIDERS = ["idsse", "skillcorner"]
@@ -75,17 +79,17 @@ POLICY: dict[str, dict[tuple[str, str], object]] = {
 # ADR anchor per dir: 7 re-fit at the C2 run commit, 6 reused at the F1b commit. training_commit lives
 # in metadata.json (ghost/gof/xshot/xcross); run_commit in metrics.json (gkc/receiver).
 _ANCHOR: dict[str, tuple[str, str, str]] = {
-    "_xshot_weights/default": ("metadata.json", "training_commit", _M),
+    "_xshot_weights/default": ("metadata.json", "training_commit", _TF65),
     "_xshot_weights/position_only": ("metadata.json", "training_commit", _M),
-    "_xcross_weights/default": ("metadata.json", "training_commit", _M),
+    "_xcross_weights/default": ("metadata.json", "training_commit", _TF65),
     "_xcross_weights/position_only": ("metadata.json", "training_commit", _M),
     "_ghost_gk_weights/position_only": ("metadata.json", "training_commit", _M),
     "_gk_completion_weights/skillcorner": ("metrics.json", "run_commit", _M),
     "_receiver_weights/default": ("metrics.json", "run_commit", _M),
-    "_ghost_gk_weights/default": ("metadata.json", "training_commit", _REUSED),
-    "_ghost_gk_weights/sweeper": ("metadata.json", "training_commit", _REUSED),
+    "_ghost_gk_weights/default": ("metadata.json", "training_commit", _TF65),
+    "_ghost_gk_weights/sweeper": ("metadata.json", "training_commit", _TF65),
     "_ghost_gk_weights/sweeper_position_only": ("metadata.json", "training_commit", _REUSED),
-    "_ghost_outfield_weights/default": ("metadata.json", "training_commit", _REUSED),
+    "_ghost_outfield_weights/default": ("metadata.json", "training_commit", _TF65),
     "_ghost_outfield_weights/position_only": ("metadata.json", "training_commit", _REUSED),
     "_gk_completion_weights/default": ("metrics.json", "run_commit", _REUSED),
 }

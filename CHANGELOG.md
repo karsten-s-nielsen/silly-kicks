@@ -5,6 +5,21 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.134.0] — 2026-10-12 — TF-65 kinematics-smoother foundation + velocity-gap fix (ADR-120)
+
+TF-65 kinematics-smoother foundation + the verified velocity-gap contamination fix (ADR-120) — the first of the cycle's two releases; the TF-64 GK detection-gate + xT-GK v1 retirement ship in the next. **Hyrum notice — value-changing on velocity-dependent outputs:** the dense-grid fix moves velocity values on broadcast providers (SkillCorner / Gradient Sports); downstream consumers must re-materialize DAS and re-fit velocity-derived artifacts against 4.134.0. The five faithful frame models (ghost-GK `default`/`sweeper`, ghost-outfield `default`, xshot-occurrence, xcross-attempt) are re-fit on the corrected floor velocities; the restricted Hub owner-tier variants (`sc_extended` xshot/xcross, `full` ghost, owner receiver) are a tracked owner-run follow-up.
+
+### Changed
+
+- **`tracking.preprocess` — dense-grid velocity-gap fix:** `smooth_frames`/`derive_velocities` reindex each `(game_id, period_id, is_ball, player_id)` group to its contiguous `frame_id` grid and segment at `> max_gap`, so a non-detection no longer sits adjacent to its pre/post-gap neighbour. This removes fabricated through-gap velocity (measured 500–850 m/s ball speed on broadcast providers) that fed ghost-GK, elastic-sync and the per-action linked-frame ball state. Contiguous single-detection-run data is byte-identical; velocity moves on broadcast providers (SkillCorner / Gradient Sports). The default point smoother stays Savitzky-Golay — a pre-registered in-cycle A/B found no finalist beat the SG + dense-grid floor (ADR-120).
+- **Retrained frame models** on the corrected floor velocities: ghost-GK (`default`, `sweeper`), ghost-outfield (`default`), xshot-occurrence and xcross-attempt (faithful). The `position_only` variants and the public velocity-independent receiver read no velocity and are byte-identical — kept as shipped.
+
+### Added
+
+- **Per-frame acceleration** (`accel_x` / `accel_y` / `accel`) and an always-on constant-acceleration Kalman/RTS **per-frame uncertainty** (`pos_var` / `vel_var` / `accel_var`, float32) in `tracking.preprocess` (`_kalman.py`), decoupled from the point smoother (gates TF-50). Components are `accel_x` / `accel_y`, not `ax` / `ay` (which collide with `_kernels` anchor columns).
+- **Butterworth and Kalman velocity smoother arms** (`SmoothingMethod += "kalman"`) alongside the default Savitzky-Golay.
+- **Soft `≤ 40 m/s` plausibility guard** (`PlausibilityWarning`; NaN + count, never raises); the `≤ 10 m/s²` acceleration bound is provisional.
+
 ## [4.133.0] — 2026-10-12 — gkdv stride-survivor injection for windowed ghost scoring (ADR-119)
 
 Purely-additive seam closing the **last** whole-unit dependency in gkdv windowed Stage-2 scoring (ADR-119, extending ADR-118/055). `GkdvParams.possession_stride=5` keeps every 5th *eligible* frame, ranked by a `cumcount` over the globally-ordered eligible frames of each `(game_id, period_id)` — a whole-unit rank. Windowing re-ranks over a smaller eligible set, so the phase shifts and a different set of frames survives (idsse canary: whole-unit `12421,12426,…` vs windowed `12420,12425,…`); the ADR-118 `goal_map`/`carrier` injection does not fix it (the rank is independent of both). A full look-ahead audit confirmed the stride rank is the sole remaining whole-unit op in the gkdv path; the pre-stride eligible SET is window-stable. The stride **value and semantics are unchanged** — the injected survivor set carries the stride already applied whole-unit — so there is no metric change, no retrain, and no re-materialize of existing gkdv artifacts. `scored_frame_keys=None` is the internal stride and is byte-identical for every existing caller.
