@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.132.0: GoalMap injection seam for windowed ghost scoring.** Optional `goal_map=` added to `gkdv.build_ghost_frames`, `tracking.serve_ghost_gk_positions`, `gk_decision.ReconstructedOptionSet` (match-LTR), `tracking.serve_ghost_outfield_positions`, and `restdefense.build_restdefense_ghost_frames` so a caller windowing Stage-2 scoring can pin the whole-unit defended-goal map once and reuse it across frame windows (each threaded into both the domain filter and the frame-coordinate flip). Every parameter defaults to `None` = internal recompute = byte-identical for existing callers. Pending tag. Release detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.133.0: gkdv stride-survivor injection for windowed ghost scoring.** New public `gkdv.select_gkdv_scored_frames` + optional `scored_frame_keys=` on `gkdv.build_ghost_frames` close the last whole-unit dependency in windowed gkdv scoring (ADR-119, extends ADR-118): `possession_stride` keeps every 5th eligible frame by a `cumcount` over the globally-ordered eligible frames — a whole-unit rank that shifts phase under windowing (the 4.132 `goal_map=`/`carrier=` injection does not fix it). The caller computes the survivor selection once whole-unit and injects it per window; the per-frame domain still runs, non-selected survivors are `stride_skipped` (conservation holds). `scored_frame_keys=None` keeps the internal stride = byte-identical for existing callers; stride value/semantics unchanged (no retrain, no re-materialize). Pending tag. Release detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

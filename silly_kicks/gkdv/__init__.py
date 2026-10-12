@@ -22,7 +22,13 @@ from ._arms import (
     delta_threat_suppression,
     delta_threat_suppression_batch,
 )
-from ._engine import GkdvParams, GkdvReport, build_ghost_frames, provenance_to_targets
+from ._engine import (
+    GkdvParams,
+    GkdvReport,
+    build_ghost_frames,
+    provenance_to_targets,
+    select_gkdv_scored_frames,
+)
 from ._metric import aggregate_by_keeper
 from ._probe import (
     impose_defending_keeper_dose,
@@ -57,4 +63,5 @@ __all__ = [
     "layer1_responsiveness_verdict",
     "paired_vector_controls",
     "provenance_to_targets",
+    "select_gkdv_scored_frames",
 ]
