@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.134.0: TF-65 kinematics-smoother foundation + velocity-gap fix (ADR-120).** `tracking.preprocess` gains a dense-grid `frame_id` reindex in `smooth_frames`/`derive_velocities` so a non-detection no longer fabricates through-gap velocity (the 500–850 m/s ball-speed contamination on broadcast providers that fed ghost-GK / elastic-sync / linked-frame ball state); per-frame acceleration (`accel_x`/`accel_y`/`accel`) + an always-on constant-acceleration Kalman/RTS uncertainty pass (`pos_var`/`vel_var`/`accel_var`); Butterworth + Kalman smoother arms (default stays Savitzky-Golay — a pre-registered in-cycle A/B found no finalist beat the SG + dense-grid floor); soft `≤40 m/s` plausibility guard. Five faithful frame models re-fit on the corrected floor velocities (ghost-GK `default`/`sweeper`, ghost-outfield `default`, xshot, xcross); `position_only` variants + the public velocity-independent receiver are byte-identical, kept. **First of the cycle's two releases** (TF-64 GK detection-gate + xT-GK v1 retirement ship in the next). **Hyrum:** velocity values move on broadcast providers → consumers re-materialize DAS + re-fit velocity-derived artifacts against 4.134.0. Follow-ups (owner-run): re-fit the restricted Hub owner-tier variants (`sc_extended` xshot/xcross, `full` ghost, owner receiver) on corrected velocities; xshot/xcross metadata `n_games` trainer-parity. Release detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.134.0: TF-65 kinematics-smoother foundation + velocity-gap fix (ADR-120).** `tracking.preprocess` gains a dense-grid `frame_id` reindex in `smooth_frames`/`derive_velocities` so a non-detection no longer fabricates through-gap velocity (the 500–850 m/s ball-speed contamination on broadcast providers that fed ghost-GK / elastic-sync / linked-frame ball state); per-frame acceleration (`accel_x`/`accel_y`/`accel`) + an always-on constant-acceleration Kalman/RTS uncertainty pass (`pos_var`/`vel_var`/`accel_var`); Butterworth + Kalman smoother arms (default stays Savitzky-Golay — a pre-registered in-cycle A/B found no finalist beat the SG + dense-grid floor); soft `≤40 m/s` plausibility guard. Five faithful frame models re-fit on the corrected floor velocities (ghost-GK `default`/`sweeper`, ghost-outfield `default`, xshot, xcross); `position_only` variants + the public velocity-independent receiver are byte-identical, kept. **First of the cycle's two releases** (TF-64 GK detection-gate + xT-GK v1 retirement ship in the next). **Hyrum:** velocity values move on broadcast providers → consumers re-materialize DAS + re-fit velocity-derived artifacts against 4.134.0. Deferred model re-fits consolidated under **Deferred velocity-model DGX re-fits** (Blocked or Deferred). Release detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -84,6 +84,19 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   prewarped signal-prep filter (negligible at the interim 0.4 Hz; D1 runs on the DGX, not yet executed). Adopt
   `prewarp=True` in `residual_cutoff_for_run` when the default flips, or sooner if D1 derives high cutoffs.
   Dovetails with TF-65 (kinematics-smoothing bake-off, which already eats a velocity-dependent retrain).
+- **Deferred velocity-model DGX re-fits (the single home for outstanding silly-kicks retrain/re-fit debt).**
+  The shipped SG + dense-grid floor (4.134.0, ADR-120) moved broadcast-provider velocities; 4.134.0 re-fit
+  only the PUBLIC-tier faithful models (ghost-GK `default`/`sweeper`, ghost-outfield `default`, xshot,
+  xcross), leaving these velocity-dependent artifacts on PRE-dense-grid weights, OWED a DGX re-fit on the
+  corrected floor velocities: (a) the restricted Hub owner-tier variants — `sc_extended` xshot/xcross,
+  `full` ghost, owner receiver (owner pining token; the faithful trainers, `--ship-variant` per tier);
+  (b) xshot/xcross metadata `n_games` trainer-parity (metadata-only, at the same re-fit). **Conditional
+  superset:** if the Butterworth exact-pre-warp default is ever flipped (bullet above), the velocity regime
+  changes again → ALL velocity models (incl. these) + the DAS golden re-fit together, so run (a)/(b)
+  standalone only while that flip stays deferred. **Not in scope here** (not silly-kicks DGX debt): lakehouse
+  `das_*`/gkdv/`V_opp` re-materialise (consumer-side), AtomicVAEP retrain (no bundled weights — lands on the
+  lakehouse, ADR-096), vector-reflection-ρ / `bekkers_pi` (Databricks-parked). Source: 4.134.0 follow-up
+  (ADR-120) + TF-65 §9. Owner-run; no library default changes.
 - **CI lever (B-Windows) — trim Windows to the platform-/version-sensitive subset (next latency/cost
   lever after the duration-sharding, ADR-074).** Sharding preserves ALL coverage; every leg runs its
   full suite in parallel shards. If minutes/cost — or principle — later warrant it, the next lever is to
