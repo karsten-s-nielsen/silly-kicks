@@ -91,7 +91,6 @@ _TRACKING_NEEDS_EXTRA = {
     # ADR-054 keeper-identity placement: takes `(actions, keeper_map)`, not `(actions, frames)`,
     # so the standard-signature test cannot call it -- its own branch builds a keeper_map.
     "add_defending_gk_player_id",
-    "add_xt_gk",
     "add_off_ball_run_values",
     # Cycle B: newly VISIBLE to the registry once discovery widened to the package. All three
     # were outside `tracking.features` and therefore outside the old scan; two of them were
@@ -699,27 +698,6 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         # branch stays SEPARATE from the no-kwarg group above because of the `result_id`
         # top-up, not because of the signature.
         out = helper(acts, frames)
-    elif name == "add_xt_gk":
-        import numpy as np
-
-        from silly_kicks.tracking._xt_gk import _gk_distribution_mask
-        from silly_kicks.xthreat import ExpectedThreat
-
-        # V1 (review #2): VERIFY (don't assume) this shared fixture has zero in-scope GK
-        # distributions, so get_xc is never reached. If the fixture ever gains a goalkick or
-        # a GK-actor pass, get_xc runs and the frame ball+player co-occurrence contract
-        # applies (a hard-crash path the DAS columns below do NOT cover) -- fail loudly here.
-        assert _gk_distribution_mask(actions, frames).sum() == 0, (
-            "add_xt_gk nan-safety branch assumes no in-scope GK distributions in the shared "
-            "fixture; it changed -- give this branch frames satisfying the full get_xc contract."
-        )
-        xt = ExpectedThreat(l=16, w=12)
-        xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
-        frames = frames.copy()  # defensive DAS columns (belt-and-suspenders; mask is empty)
-        frames["vx"] = 0.0
-        frames["vy"] = 0.0
-        frames["team_in_possession"] = 1
-        out = helper(actions, frames, xt)
     elif name == "add_off_ball_run_values":
         import numpy as np
 

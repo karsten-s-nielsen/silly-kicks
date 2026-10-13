@@ -221,21 +221,6 @@ def _feat_ghost_outfield(frames, actions, home_team_id):
     return data[list(GHOST_OUTFIELD_FEATURE_NAMES)], keys
 
 
-def _feat_gk_completion(frames, actions, home_team_id):
-    from silly_kicks.tracking._gk_completion import GK_COMPLETION_FEATURE_NAMES, prepare_gk_completion_training_data
-
-    if actions is None:
-        return None
-    feats, _y, _g = prepare_gk_completion_training_data(actions, frames=frames)
-    if len(feats) == 0:
-        return None
-    # gk-pass selection is action-domain based (coord-independent), so both arms yield identical rows in
-    # identical order -- a positional key is a valid identity, and only-in-one-arm counts stay 0 (a rare
-    # geometry-edge count change surfaces as selection-instability, never a silent misalignment).
-    keys = pd.DataFrame({"_row": np.arange(len(feats))})
-    return feats[list(GK_COMPLETION_FEATURE_NAMES)], keys
-
-
 def _feat_receiver(frames, actions, home_team_id):
     """One row per (pass, teammate): the public positions-only receiver features, keyed by
     ``(action_id, candidate_id)``.
@@ -278,7 +263,6 @@ _MODEL_ADAPTERS = {
     "xcross": _feat_xcross,
     "ghost_gk": _feat_ghost_gk,
     "ghost_outfield": _feat_ghost_outfield,
-    "gk_completion": _feat_gk_completion,
     "receiver": _feat_receiver,
 }
 

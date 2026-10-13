@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks.id_compat import ids_match
+from silly_kicks.tracking import resolve_detected_keeper_xy
 
 from ._columns import (
     RD_COMPACTNESS_X,
@@ -70,13 +71,27 @@ def _goal_relative_x(x: float, own_goal_x: float) -> float:
 
 
 def _gk_x(frame_rows: pd.DataFrame, team_id) -> float:
-    """The x of ``team_id``'s keeper in this frame (mean if several rows); NaN if none observed."""
+    """The x of ``team_id``'s DETECTED keeper in this frame; NaN if none observed/detected.
+
+    TF-64 detection-gate: on a detection-aware provider (SkillCorner) an UNDETECTED keeper -> NaN
+    (honest-NaN, not the ~80%-extrapolated position; anti-pattern E7, ADR-109). Fully-observed /
+    snapshot / unclassified providers are read as-observed (byte-identical) via
+    :func:`resolve_detected_keeper_xy`, which also NaNs an absent/ambiguous keeper.
+    """
     if "is_goalkeeper" not in frame_rows.columns:
         return math.nan
     mask = ids_match(frame_rows["team_id"], team_id).to_numpy() & bool_flag(frame_rows["is_goalkeeper"])
-    xs = frame_rows.loc[mask, "x"].to_numpy(dtype=float)
-    xs = xs[np.isfinite(xs)]
-    return float(xs.mean()) if xs.size else math.nan
+    x, _ = resolve_detected_keeper_xy(frame_rows.loc[mask])
+    return x
+
+
+def _gk_detected(frame_rows: pd.DataFrame, team_id) -> bool:
+    """True iff ``team_id``'s keeper is observed/detected this frame (TF-64 gate for the GK counts)."""
+    if "is_goalkeeper" not in frame_rows.columns:
+        return True
+    mask = ids_match(frame_rows["team_id"], team_id).to_numpy() & bool_flag(frame_rows["is_goalkeeper"])
+    x, _ = resolve_detected_keeper_xy(frame_rows.loc[mask])
+    return math.isfinite(x)
 
 
 def rd_num_superiority(frame_rows: pd.DataFrame, ctx: SampleContext, *, include_a_gk: bool = False):
@@ -154,10 +169,17 @@ def rd_shape_stagger(frame_rows: pd.DataFrame, ctx: SampleContext):
 
 def layer1_metrics(frame_rows: pd.DataFrame, ctx: SampleContext, *, params) -> dict:
     """All Layer-1 metrics for one sample, keyed by the ``RD_*`` column names."""
+    # TF-64: both keeper-inclusive headcounts read A's keeper position via count_goalside(include_gk=
+    # True) -> honest-NaN when A's keeper is undetected (SkillCorner). RD_NUM_SUPERIORITY_GK keeps its
+    # keeper-free sibling RD_NUM_SUPERIORITY computed (spec §7); RD_ZONE_OCCUPANCY has no keeper-free
+    # variant, so the whole headcount honest-NaNs (test-8-surfaced; the twin of rd_num_superiority_gk).
+    a_gk_detected = _gk_detected(frame_rows, ctx.team_id)
+    gk_num_superiority = rd_num_superiority(frame_rows, ctx, include_a_gk=True) if a_gk_detected else pd.NA
+    zone_occupancy = rd_zone_occupancy(frame_rows, ctx, params=params) if a_gk_detected else pd.NA
     return {
         RD_NUM_SUPERIORITY: rd_num_superiority(frame_rows, ctx, include_a_gk=False),
-        RD_NUM_SUPERIORITY_GK: rd_num_superiority(frame_rows, ctx, include_a_gk=True),
-        RD_ZONE_OCCUPANCY: rd_zone_occupancy(frame_rows, ctx, params=params),
+        RD_NUM_SUPERIORITY_GK: gk_num_superiority,
+        RD_ZONE_OCCUPANCY: zone_occupancy,
         RD_LINE_HEIGHT: rd_line_height(ctx),
         RD_LINE_HEIGHT_RELATIVE: rd_line_height_relative(ctx),
         RD_COMPACTNESS_X: float(ctx.compactness_x),

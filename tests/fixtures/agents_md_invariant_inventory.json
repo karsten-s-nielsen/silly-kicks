@@ -514,7 +514,7 @@
       "GkCompletionModel",
       "native_origin_is_trusted"
     ],
-    "dropped_with_owner_approval": null
+    "dropped_with_owner_approval": true
   },
   {
     "key": "xt-gk-v2",

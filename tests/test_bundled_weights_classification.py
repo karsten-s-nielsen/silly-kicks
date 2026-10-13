@@ -25,11 +25,6 @@ WEIGHTS_CLASSIFICATION: dict[str, tuple[str, str]] = {
     "silly_kicks/tracking/_ghost_gk_weights": ("frame_geometry", "ghost-GK regresses on frame positions"),
     "silly_kicks/tracking/_ghost_outfield_weights": ("frame_geometry", "ghost-outfield regresses on frame positions"),
     "silly_kicks/tracking/_receiver_weights": ("frame_geometry", "receiver model reads pre-pass frame positions"),
-    "silly_kicks/tracking/_gk_completion_weights": (
-        "frame_geometry",
-        "consumes frame geometry via the optional defender_density (receiver_zone_density); "
-        "the T10 feature-delta measurement confirms/reclassifies, retrain-conservative default",
-    ),
     # event-only -> SPADL action coords (float64), NOT retrained
     "silly_kicks/expected_passing/weights": ("event_only", "PassCompletion: event-only action geometry"),
     "silly_kicks/match_outcome/weights": ("event_only", "DependenceModel rho: event-only, no frames"),

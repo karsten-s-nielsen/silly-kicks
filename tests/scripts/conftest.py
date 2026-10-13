@@ -246,15 +246,3 @@ def mini_actions() -> pd.DataFrame:
 @pytest.fixture
 def mini_frames() -> pd.DataFrame:
     return _rq_mini_frames()
-
-
-def _fixture_with_all_rows_offpitch():
-    """A measure_match-shaped frame whose every row is gross-off-pitch (for the A2 failing side)."""
-    from validate_skillcorner_keeper_origin import EXPECTED_COLS
-
-    n = 3
-    row: dict[str, list] = {c: [np.nan] * n for c in EXPECTED_COLS}
-    row["is_gross_offpitch"] = [True] * n
-    row["xt_gk_origin_source"] = ["native"] * n
-    row["in_own_box"] = [False] * n
-    return pd.DataFrame(row, columns=EXPECTED_COLS)

@@ -42,7 +42,6 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from silly_kicks.xthreat import ExpectedThreat
 
-    from ._gk_completion import GkCompletionModel
     from ._line_breaking import LineBreakingParams
     from .pitch_control import PitchControlCache
 
@@ -86,13 +85,13 @@ from ._gk_resolve import (
     resolve_defended_goals,
 )
 from ._packing import PackingParams, secured_reception
+from ._provider_visibility import keeper_detected
 from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
 from ._visibility import add_visible_area_coverage
 from ._warnings import IgnoredSurfaceInputsWarning, SyntheticEPVWarning
 from ._xcross_attempt import xcross_attempt_xfns
 from ._xshot_occurrence import xshot_occurrence_xfns
-from ._xt_gk import XtGkParams, compute_xt_gk
 from .feature_framework import lift_to_states
 from .pressure import (
     AndrienkoParams,
@@ -124,7 +123,6 @@ __all__ = [
     "add_defensive_line",
     "add_elastic_sync",
     "add_ghost_gk",
-    "add_gk_completion",
     "add_gk_influence",
     "add_line_break",
     "add_obso",
@@ -471,8 +469,8 @@ def _append_engine_companions(
     own region inputs -- ``extras`` (per-metric params like the oval/link radii or the receiver
     radius) and, where the region anchor is NOT the raw action start, ``sx``/``sy`` -- then calls
     this once. The actor anchor DEFAULTS to the action's own ``start_x``/``start_y`` (the common
-    case); ``add_xt_gk`` overrides ``sx``/``sy`` with the RESOLVED GK origin, and
-    ``add_action_context`` supplies ``nearest_dist``. The END anchor (``ex``/``ey``, used by the
+    case); a companion whose region anchor is a resolved (non-start) position overrides ``sx``/``sy``,
+    and ``add_action_context`` supplies ``nearest_dist``. The END anchor (``ex``/``ey``, used by the
     receiver disk and the packing band) is always the action's ``end_x``/``end_y``.
 
     ``ctx`` may be a pre-resolved action<->frame context -- ``add_action_context`` already builds one
@@ -3508,6 +3506,12 @@ def _gk_influence_at_actions(
                 continue
 
             gk_pid = gk_rows.iloc[0]["player_id"]
+            if keeper_detected(frame_data, gk_pid) is not True:
+                # TF-64 detection-gate: the keeper is present-but-undetected on a detection-aware
+                # provider (SkillCorner) -> honest-NaN the gk_influence row rather than consume an
+                # ~80%-extrapolated position (E7, ADR-109). None caches like the no-gk-rows miss.
+                cache[cache_key] = None
+                continue
             gk_team = gk_rows.iloc[0]["team_id"]
             goal_x = _goal_map.get(
                 frame_data["game_id"].iloc[0], frame_data["period_id"].iloc[0], gk_team, allow_guess=True
@@ -3776,6 +3780,11 @@ def _closing_time_per_series(
         if gk_rows.empty:
             continue
         gk_pid = gk_rows.iloc[0]["player_id"]
+        if keeper_detected(frame_data, gk_pid) is not True:
+            # TF-64 detection-gate (the gk_closing_time_* lightweight path, twin of the
+            # add_gk_influence sites): undetected keeper on a detection-aware provider -> skip (NaN
+            # row), never a closing time off an ~80%-extrapolated keeper position (E7, ADR-109).
+            continue
         gk_team = gk_rows.iloc[0]["team_id"]
         goal_x = _goal_map.get(
             frame_data["game_id"].iloc[0], frame_data["period_id"].iloc[0], gk_team, allow_guess=True
@@ -4002,6 +4011,11 @@ def gk_influence_xfns(
                 cache[key] = None
                 return None
             gk_pid = gk_rows.iloc[0]["player_id"]
+            if keeper_detected(frame_data, gk_pid) is not True:
+                # TF-64 detection-gate (see the add_gk_influence twin): undetected keeper on a
+                # detection-aware provider -> honest-NaN, not an extrapolated position (E7, ADR-109).
+                cache[key] = None
+                return None
             gk_team = gk_rows.iloc[0]["team_id"]
             goal_x = _goal_map.get(
                 frame_data["game_id"].iloc[0], frame_data["period_id"].iloc[0], gk_team, allow_guess=True
@@ -6990,170 +7004,6 @@ def elastic_sync_xfns(*, params=None) -> list:
     return xfns_out
 
 
-@nan_safe_enrichment
-def add_xt_gk(
-    actions: pd.DataFrame,
-    frames: pd.DataFrame,
-    xt: ExpectedThreat,
-    *,
-    links: pd.DataFrame | None = None,
-    params: XtGkParams | None = None,
-    visible_area: pd.DataFrame | None = None,
-) -> pd.DataFrame:
-    """Add xT-GK columns (xt_gk_base/pev/rav/dzv/pressure + composite xt_gk + the three
-    provenance columns xt_gk_origin_source/xt_gk_dest_source/xt_gk_origin_confidence) per
-    GK-distribution action. ``xt`` is a REQUIRED pre-fitted ExpectedThreat (no self-fit --
-    leakage contract). The xT-GK math operates on LTR-normalized SPADL action coordinates and
-    takes NO direction argument. It formerly accepted a dead ``home_team_id`` "for
-    GK-feature-family signature parity (and CI-gate construction)"; ADR-055 re-keyed
-    ``add_gk_influence`` and ``add_cover_shadows`` off that parameter, at which point parity
-    meant matching the MINORITY -- and specifically matching ``add_ghost_gk``, which actually
-    READS its copy. A dead parameter that makes itself look live is worse than none, so 4.80.0
-    removed it. RAV uses a fitted GkCompletionModel (the bundled GS ``default``); the [das]
-    extra is no longer required.
-
-    When ``visible_area`` (an ``action_id`` -> polygon table) is supplied, TWO FOV-observability
-    companions are appended -- ``xt_gk_pressure_observed_fraction`` / ``_observed_source`` and
-    ``xt_gk_pev_observed_fraction`` / ``_observed_source`` (ADR-077) -- reporting how much of the
-    pressure region the provider actually observed. ``xt_gk_pressure`` (rho) and ``xt_gk_pev`` both
-    flow through ``pressure_on_actor`` centred on the RESOLVED GK origin, so both share the
-    method-dispatched pressure ROI: the Andrienko directional oval for
-    ``params.pressure_method == "andrienko_oval"`` (default), the effective-support disk for
-    ``"link_zones"``, and ``degenerate_region`` (NaN) for the velocity-derived ``"bekkers_pi"``.
-    The composite ``xt_gk`` gets NO companion (it mixes a region-dependent term with the
-    GK-geometry base/rav/dzv -- no honest single fraction, M1). Opt-in and additive: the six
-    xt_gk value columns are byte-identical with and without ``visible_area``, and ``xt_gk_xfns`` is
-    untouched, so no VAEP feature changes (ADR-077).
-
-    See NOTICE for full bibliographic citations (Eyestone xT-GK).
-    """
-    out = actions.copy()
-    pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
-
-    comp = compute_xt_gk(actions, frames, xt=xt, params=params, links=pointers)
-    for c in comp.columns:
-        out[c] = comp[c].to_numpy()
-
-    if visible_area is not None:
-        # The pressure ROI is centred on the RESOLVED GK origin (compute_xt_gk feeds
-        # pressure_on_actor sub_for_pressure["start_x"] = origin_x, NOT the raw start_x), so the
-        # RegionCtx anchor is xt_gk_origin_x/_y -- NaN on out-of-scope rows -> degenerate_region.
-        # compute_xt_gk always runs pressure_on_actor with DEFAULT pressure params (XtGkParams
-        # carries only the METHOD), so the oval / link radii come from the dataclass defaults.
-        p = params or XtGkParams()
-        ap = AndrienkoParams()
-        lp = LinkParams()
-        out = _append_engine_companions(
-            out,
-            actions,
-            frames,
-            registry_key="add_xt_gk",
-            visible_area=visible_area,
-            # Anchor is the RESOLVED GK origin, NOT the raw start_x (see the comment above).
-            sx=out["xt_gk_origin_x"].to_numpy(dtype=float),
-            sy=out["xt_gk_origin_y"].to_numpy(dtype=float),
-            extras={
-                "pressure_method": p.pressure_method,
-                "link_effective_radius": max(lp.r_hoz, lp.r_lz, lp.r_hz),
-                "oval_d_front": ap.d_front,
-                "oval_d_back": ap.d_back,
-                "goal_x": _kernels._GOAL_X,
-                "goal_y": _kernels._GOAL_Y_CENTER,
-            },
-            links=pointers,
-        )
-
-    # Idempotent provenance merge (skip if any provenance column already present).
-    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
-    existing = [c for c in provenance_cols if c in out.columns]
-    if not existing and len(pointers) > 0:
-        ptr_cols = pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
-    return out
-
-
-def xt_gk_xfns(
-    xt: ExpectedThreat,
-    *,
-    params: XtGkParams | None = None,
-) -> list:
-    """Factory returning one frame-aware VAEP transformer for xT-GK, closing over the
-    caller-fitted ``xt`` (no self-fit -- leakage contract). Emits xt_gk_*_a{i} per
-    gamestate slot. Takes no direction argument (see ``add_xt_gk`` for why the former
-    parity-motivated ``home_team_id`` was removed in 4.80.0).
-
-    The per-slot ``action_id`` rekey to a unique positional surrogate is required because
-    the sub-calls (pressure_on_actor / the completion-density linker) are action_id-keyed and
-    would fan out on a shifted gamestate slot that repeats the boundary action -- this is the
-    same mechanism resolve_frame_ids_by_position uses internally. Frame linkage is by time, so
-    values are unchanged; action_id is ephemeral here (only the value columns are returned).
-    """
-    from ._xt_gk import _OUTPUT_COLS
-
-    def _xt_gk_transformer(states, frames):
-        out = pd.DataFrame(index=states[0].index)
-        if frames is None:
-            for i in range(3):
-                for col in _OUTPUT_COLS:
-                    out[f"{col}_a{i}"] = np.nan
-            return out
-        for i, slot in enumerate(states[:3]):
-            safe = slot.copy()
-            safe["action_id"] = np.arange(len(safe))
-            comp = compute_xt_gk(safe, frames, xt=xt, params=params)
-            for col in _OUTPUT_COLS:
-                out[f"{col}_a{i}"] = comp[col].to_numpy()
-        return out
-
-    _xt_gk_transformer._frame_aware = True  # type: ignore[attr-defined]
-    _xt_gk_transformer.__name__ = "xt_gk"
-    return [_xt_gk_transformer]
-
-
-@nan_safe_enrichment
-def add_gk_completion(
-    actions: pd.DataFrame,
-    frames: pd.DataFrame,
-    *,
-    model: GkCompletionModel | None = None,
-    links: pd.DataFrame | None = None,
-) -> pd.DataFrame:
-    """Enrich SPADL actions with a ``gk_completion`` column: the GK-distribution
-    pass-completion probability (xT-GK RAV's P(success) model) for each in-scope GK
-    distribution (goalkick, GK-actor pass/throw_in); NaN for out-of-scope actions.
-    ``model=None`` -> bundled GS ``default``. NaN identifiers route to NaN output
-    (ADR-003); ``links`` skips internal linking.
-
-    For the lakehouse wide action-context table. Reuses the EXACT scoring path xT-GK's
-    RAV uses (``_completion_p``): geometry is resolved on the FULL action list (so a
-    NaN-destination goalkick's next-event destination is the next ACTUAL action --
-    train==serve parity) and the model scores only the masked GK-distribution rows, so
-    this column equals the P(success) RAV consumes. Emits the four linkage-provenance
-    columns idempotently.
-
-    See NOTICE for full bibliographic citations (Eyestone xT-GK).
-    """
-    from ._gk_geometry import resolve_gk_geometry
-    from ._xt_gk import _completion_p, _gk_distribution_mask
-
-    out = actions.copy()
-    pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
-
-    geom = resolve_gk_geometry(actions, frames=frames, links=pointers)
-    mask = _gk_distribution_mask(actions, frames)
-    vals = np.full(len(actions), np.nan, dtype=float)
-    if mask.any():
-        vals[mask] = _completion_p(actions, frames, geom, mask, pointers, model)
-    out["gk_completion"] = vals
-
-    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
-    existing = [c for c in provenance_cols if c in out.columns]
-    if not existing and len(pointers) > 0:
-        ptr_cols = pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
-    return out
-
-
 # ---------------------------------------------------------------------------
 # TF-48: post-shot goalmouth crossing geometry (ADR-030)
 # ---------------------------------------------------------------------------
@@ -7189,7 +7039,7 @@ def add_shot_goalmouth(
     (post-contact outcome leakage; ADR-030 guard). NaN identifiers resolve to
     "unresolved" rows (ADR-003 -- implemented here, the decorator is marker-only).
 
-    Pointer resolution deliberately uses the add_xt_gk-verbatim path, NOT
+    Pointer resolution deliberately uses the lightweight positional frame-id path, NOT
     _resolve_action_frame_context (the context helper additionally builds
     actor/opponent row joins TF-48 never consumes). Decision recorded in ADR-030.
 

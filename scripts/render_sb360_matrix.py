@@ -72,8 +72,6 @@ def _findings() -> list[tuple[str, str, str, str, str]]:
 #: `add_xshot_occurrence` is INCLUDED: it is shot-domain and its coverage bears on the same
 #: question, even though the fixture currently leaves it unexercised.
 GK_DOMAIN_ENTRIES: tuple[str, ...] = (
-    "add_xt_gk",
-    "add_gk_completion",
     "add_gk_influence",
     "add_pre_shot_gk_position",
     "add_pre_shot_gk_angle",

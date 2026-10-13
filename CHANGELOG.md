@@ -5,6 +5,22 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.135.0] — 2026-10-13 — TF-64 GK detection-gate + xT-GK v1 retirement (ADR-121)
+
+The cycle's SECOND release: the TF-64 GK detection-gate (ADR-109 wiring) + the xT-GK v1 retirement (ADR-121). No retrain — metrics/wiring + a module removal; no bundled-model training inputs moved. **Hyrum notice — value-changing on SkillCorner GK outputs + a public-surface removal:** (1) on a detection-aware provider (SkillCorner, ~17.6% keeper detection) the 14 audited keeper-position outputs + the `pre_shot_gk_*` family now honest-NaN / drop-and-count when the defending keeper is undetected, instead of consuming an ~80%-extrapolated position (anti-pattern E7); fully-observed / snapshot / unclassified providers are byte-identical. (2) xT-GK v1 is REMOVED — `compute_xt_gk` / `add_xt_gk` / `xt_gk_xfns` / `XtGkParams` / `XtGkReport` / `GkCompletionModel` / `compute_gk_completion` / `add_gk_completion` / the `_gk_completion_weights` bundle / the `resolve_gk_geometry` + `native_origin_is_trusted` + `flag_native_goalkick_out_of_region` shims / the `xt_gk*` + `gk_completion` glossary columns — move to xT-GK v2 (`xtgk.compute_xt_gk_v2`). The ADR-025 restart-coordinate engine (`resolve_restart_geometry`) is unaffected. Cross-repo: the lakehouse re-materializes the SkillCorner GK-mart outputs and migrates its `xt_gk*` columns to v2 (owner-coordinated).
+
+### Added
+
+- **TF-64 GK detection-gate (ADR-109 wiring).** Public keeper-row seams `keeper_detected` / `resolve_detected_keeper_xy` / `detection_aware_provider` (and `detected_mask` promoted public) over the shipped `detected_mask` primitive, derived from the frame's `source_provider` so no `provider` kwarg threads through the choke points. Wired into the 8 restdefense GK columns, `gk_decision` reconstruction-tier (counted `keeper_undetected` drop), the gkdv engine (`_DROP_KEEPER_UNDETECTED`), the 4 `gk_influence` features, the `gk_closing_time_*` lightweight path, `rd_zone_occupancy`, the `pre_shot_gk_*` family, and the goal-kick-origin restart path (`_gk_geometry._tracking_gk_xy`). A mechanical ADR-056 population gate (`test_keeper_position_reader_gate`) fails on any ungated-and-unlisted keeper-position reader. Glossary data-quality caveats on the 4 gated `gk_influence` columns + the `gk_decision` native tier.
+
+### Changed
+
+- **Detection-gated GK outputs honest-NaN on undetected SkillCorner keepers** (the 14 audited + `pre_shot_gk_*` + `rd_zone_occupancy` + `gk_closing_time_*`); the keeper-free `rd_num_superiority` is unaffected. Fully-observed / snapshot / unclassified providers are byte-identical; the general `assume_keeper_observed` opt-out is documented and never the default.
+
+### Removed
+
+- **xT-GK v1 (ADR-121).** The `_xt_gk.py` / `_gk_completion.py` modules + `_gk_completion_weights` bundle + the v1-exclusive `_gk_geometry` shims + the v1 trainer/validator/comparability scripts + the v1 public surface + the glossary/NOTICE/docs entries. v2 (`xtgk/`) is the sole xT-GK surface — velocity-blind, so unchanged by the 4.134.0 velocity re-fit, and retired rather than carried through a wasted retrain.
+
 ## [4.134.0] — 2026-10-12 — TF-65 kinematics-smoother foundation + velocity-gap fix (ADR-120)
 
 TF-65 kinematics-smoother foundation + the verified velocity-gap contamination fix (ADR-120) — the first of the cycle's two releases; the TF-64 GK detection-gate + xT-GK v1 retirement ship in the next. **Hyrum notice — value-changing on velocity-dependent outputs:** the dense-grid fix moves velocity values on broadcast providers (SkillCorner / Gradient Sports); downstream consumers must re-materialize DAS and re-fit velocity-derived artifacts against 4.134.0. The five faithful frame models (ghost-GK `default`/`sweeper`, ghost-outfield `default`, xshot-occurrence, xcross-attempt) are re-fit on the corrected floor velocities; the restricted Hub owner-tier variants (`sc_extended` xshot/xcross, `full` ghost, owner receiver) are a tracked owner-run follow-up.

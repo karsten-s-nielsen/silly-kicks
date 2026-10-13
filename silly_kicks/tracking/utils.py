@@ -27,6 +27,7 @@ from silly_kicks.id_compat import (
 from silly_kicks.reflection import TRACKING_REFLECTION_KINDS, reflect
 
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
+from ._provider_visibility import detected_mask, detection_aware_provider
 from ._visibility import VISIBLE_AREA_OBSERVED
 from ._warnings import GoalkeeperClampWarning
 from .schema import (
@@ -1314,6 +1315,16 @@ def _resolve_action_frame_context(
     if "defending_gk_player_id" in long.columns and "player_id_frame" in long.columns:
         gk_mask = _ids_equal_cols("player_id_frame", "defending_gk_player_id") & not_ball
         defending_gk_rows = long.loc[gk_mask].copy()
+        # TF-64 detection-gate (owner decision 2026-10-01: pre_shot_gk_* is GATED): drop keeper rows
+        # that are present-but-undetected on a detection-aware provider (SkillCorner), so the six
+        # pre_shot_gk_* features and both add_pre_shot_gk_* enrichers honest-NaN rather than read an
+        # ~80%-extrapolated keeper position (E7, ADR-109). One upstream gate feeds every consumer.
+        # `source_provider`/`visibility` are frames-only columns -> unsuffixed through the merge.
+        if not defending_gk_rows.empty and "visibility" in defending_gk_rows.columns:
+            _gk_provider = detection_aware_provider(defending_gk_rows)
+            if _gk_provider is not None:
+                _detected = detected_mask(defending_gk_rows["visibility"], provider=_gk_provider)
+                defending_gk_rows = defending_gk_rows.loc[_detected]
     else:
         defending_gk_rows = long.iloc[0:0].copy()
 

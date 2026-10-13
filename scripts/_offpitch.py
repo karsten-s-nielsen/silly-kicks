@@ -3,9 +3,9 @@
 A per-position boolean mask over the SPADL pitch rectangle [0, 105] x [0, 68] plus a
 tolerance margin for legitimately-off-pitch positions (a keeper stepping behind the goal
 line). Owned here because there is NO reusable off-pitch constant in the pining loader
-(measured: only the per-player ``is_visible`` detection bit exists). Imported by both
-``scripts/validate_skillcorner_keeper_origin.py`` (the S1 gross-off-pitch rate-gate) and
-``scripts/measure_box_constant_delta.py`` so the two use one implementation.
+(measured: only the per-player ``is_visible`` detection bit exists). Imported by
+``scripts/measure_box_constant_delta.py``. (The S1 gross-off-pitch rate-gate that was the
+other consumer was retired with xT-GK v1, ADR-121.)
 
 N-2 (open confirmation): align ``OFF_PITCH_MARGIN_M`` with ADR-024 S1's own gross-off-pitch
 fail-loud bound -- defined in the SkillCorner converter / resolver, not the loader -- or

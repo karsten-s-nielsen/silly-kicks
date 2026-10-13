@@ -53,6 +53,11 @@ _DROP_NO_GOAL_MAP = "no_goal_map_entry"
 _DROP_GOAL_MAP_DEGENERATE = "goal_map_degenerate"
 _DROP_BALL_FAR = "ball_far_from_attacked_goal"
 _DROP_NO_DEFENDING_GK = "no_defending_gk"
+# TF-64: a keeper PRESENT with finite but extrapolated coordinates (visibility False on a
+# detection-aware provider) passes the has_defending_gk finite-coord test; this reason drops-and-
+# counts it so Delta is never scored on an ~80%-extrapolated keeper (E7, ADR-109). Distinct from
+# _DROP_NO_DEFENDING_GK (keeper absent / NaN coords).
+_DROP_KEEPER_UNDETECTED = "keeper_undetected"
 _DROP_STRIDE = "stride_skipped"
 _DROP_NO_GHOST = "no_ghost_served"
 
@@ -298,6 +303,38 @@ def _apply_domain(
         )
     ]
 
+    # TF-64 detection-gate: a keeper present-but-undetected on a detection-aware provider (SkillCorner)
+    # has finite EXTRAPOLATED coords, so it passes `has_defending_gk`; exclude it from the detected set
+    # (function-local import -- the gkdv<->tracking idiom). Non-detection-aware providers and an empty
+    # keeper set leave `gk_det == gk_ok`, so `has_detected_defending_gk == has_defending_gk` and the
+    # new drop never fires (byte-identical).
+    from silly_kicks.tracking import detected_mask, detection_aware_provider
+
+    _gk_prov = detection_aware_provider(players)
+    if _gk_prov is None or gk_ok.empty:
+        gk_det = gk_ok
+    else:
+        gk_det = gk_ok[detected_mask(gk_ok["visibility"], provider=_gk_prov)]
+    gk_detected_present = set(
+        zip(
+            _id_key(gk_det["game_id"]),
+            _id_key(gk_det["period_id"]),
+            _id_key(gk_det["frame_id"]),
+            _id_key(gk_det["team_id"]),
+            strict=True,
+        )
+    )
+    work["has_detected_defending_gk"] = [
+        (g, p, f, t) in gk_detected_present
+        for g, p, f, t in zip(
+            _id_key(work["game_id"]),
+            _id_key(work["period_id"]),
+            _id_key(work["frame_id"]),
+            _id_key(work["defending_team_id"]),
+            strict=True,
+        )
+    ]
+
     # --- first-failing-reason cascade ---------------------------------------------------
     ball_dist = np.hypot(
         work["ball_x"].to_numpy(dtype=float) - work["attacked_goal_x"].to_numpy(dtype=float),
@@ -325,6 +362,12 @@ def _apply_domain(
     )
     _mark(~np.isfinite(ball_dist) | (ball_dist > float(params.domain_ball_to_goal_m)), _DROP_BALL_FAR)
     _mark(~work["has_defending_gk"].to_numpy(dtype=bool), _DROP_NO_DEFENDING_GK)
+    # TF-64: keeper present (has_defending_gk) but undetected (extrapolated) -> counted drop, after
+    # the absent-keeper reason so the two never collide in the first-failing cascade.
+    _mark(
+        work["has_defending_gk"].to_numpy(dtype=bool) & ~work["has_detected_defending_gk"].to_numpy(dtype=bool),
+        _DROP_KEEPER_UNDETECTED,
+    )
 
     # NOTE on `_DROP_NO_GOAL_MAP`: it is now a REACHABLE branch, and this note used to say the
     # opposite. Pre-ADR-055 the claim held -- `defended_goal_x` was total, returning some end for

@@ -557,9 +557,9 @@ class ReceiverModel:
         wdir = _WEIGHTS_ROOT / variant
         if not (wdir / "SHA256SUMS").exists():
             # "Resolved against what actually ships": a provider-preference key whose own variant is not
-            # bundled degrades to the public 'default' (like _gk_completion's alias, but DYNAMIC -- a future
-            # cycle that earns gs_owner simply ships the dir and it is used automatically). An UNKNOWN key
-            # still raises, so a typo is never silently served the default.
+            # bundled degrades to the public 'default' (DYNAMIC -- a future cycle that earns gs_owner
+            # simply ships the dir and it is used automatically). An UNKNOWN key still raises, so a typo
+            # is never silently served the default.
             if variant in _DEGRADABLE_VARIANT_KEYS:
                 warnings.warn(
                     f"No bundled receiver weights for {variant!r}; serving the public 'default' "

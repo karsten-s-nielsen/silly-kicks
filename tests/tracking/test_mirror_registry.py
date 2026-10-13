@@ -52,9 +52,10 @@ def test_registry_surface_is_the_expected_size():
 
     Dropped 35 -> 34 when the keeper-identity resolver was promoted to the public
     ``silly_kicks.keeper_identity`` module (breaking move, no shim): ``add_defending_gk_player_id``
-    left ``tracking.__all__`` with it.
+    left ``tracking.__all__`` with it. Dropped 34 -> 32 at the xT-GK v1 retirement (ADR-121):
+    ``add_xt_gk`` and ``add_gk_completion`` left ``tracking.__all__`` when v1 was removed.
     """
-    assert len(_public_add_names()) == 34, sorted(_public_add_names())
+    assert len(_public_add_names()) == 32, sorted(_public_add_names())
 
 
 @pytest.mark.parametrize("name", sorted(MIRROR_ENTRIES))

@@ -177,3 +177,122 @@ def test_keeper_detection_mask_delegates_to_detected_mask():
     np.testing.assert_array_equal(
         keeper_detection_mask(vis, provider="skillcorner"), detected_mask(vis, provider="skillcorner")
     )
+
+
+# --- TF-64: keeper-row wrappers (resolve_detected_keeper_xy / keeper_detected) + provider_of_frames
+# The public seam the GK detection-gate choke points consume (spec 2026-10-01 §3.1 verdict set).
+
+import math  # noqa: E402
+
+from silly_kicks.tracking._provider_visibility import (  # noqa: E402
+    detection_aware_provider,
+    keeper_detected,
+    resolve_detected_keeper_xy,
+)
+
+
+def _frame(provider, *, gk_vis: object = True, gk_present=True, n_keepers=1, gk_id=7, gk_xy=(5.0, 34.0)):
+    """A one-frame fixture with real tracking dtypes: ball + one outfielder (always detected) + the
+    defending keeper(s). ``gk_present=False`` drops the keeper row (undetected = MISSING row);
+    ``gk_vis`` is the present keeper's visibility (False = extrapolated present row, None = discarded)."""
+    # rows: (player_id, team_id, is_goalkeeper, is_ball, x, y, visibility)
+    rows: list[tuple] = [
+        (pd.NA, "A", False, True, 52.5, 34.0, True),  # ball
+        (9, "A", False, False, 40.0, 30.0, True),  # one detected outfielder (visibility not all-null)
+    ]
+    if gk_present:
+        rows.extend((gk_id + k, "B", True, False, gk_xy[0], gk_xy[1], gk_vis) for k in range(n_keepers))
+    pid, team, is_gk, is_ball, xs, ys, vis = (list(col) for col in zip(*rows, strict=True))
+    return pd.DataFrame(
+        {
+            "player_id": pd.array(pid, dtype="Int64"),
+            "team_id": pd.Series(team, dtype="category"),
+            "is_goalkeeper": pd.array(is_gk, dtype="boolean"),
+            "is_ball": pd.array(is_ball, dtype="boolean"),
+            "x": pd.array(xs, dtype="float32"),
+            "y": pd.array(ys, dtype="float32"),
+            "visibility": pd.array(vis, dtype="object"),
+            "source_provider": pd.Series([provider] * len(pid), dtype="category"),
+        }
+    )
+
+
+_KEEPER_GATE_OBSERVED = ("gradientsports", "sportec", "idsse", "metrica", "snapshot")
+
+
+@pytest.mark.parametrize("provider", _KEEPER_GATE_OBSERVED)
+def test_keeper_wrappers_observed_providers_return_position(provider):
+    # Fully-observed + SB360 snapshot: never gated. visibility content is ignored; (x,y) returned.
+    fr = _frame(provider, gk_vis=False)  # even a False flag is ignored on a non-detection-aware feed
+    assert resolve_detected_keeper_xy(fr) == (5.0, 34.0)
+    assert keeper_detected(fr, 7) is True
+
+
+def test_keeper_wrappers_skillcorner_detected():
+    fr = _frame("skillcorner", gk_vis=True)
+    assert resolve_detected_keeper_xy(fr) == (5.0, 34.0)
+    assert keeper_detected(fr, 7) is True
+
+
+def test_keeper_wrappers_skillcorner_undetected_present_row_is_nan_false():
+    # The E7 case: keeper row PRESENT but extrapolated (visibility False) -> honest-NaN / False.
+    fr = _frame("skillcorner", gk_vis=False)
+    x, y = resolve_detected_keeper_xy(fr)
+    assert math.isnan(x) and math.isnan(y)
+    assert keeper_detected(fr, 7) is False
+
+
+def test_keeper_wrappers_absent_keeper_is_nan_none():
+    fr = _frame("skillcorner", gk_present=False)
+    x, y = resolve_detected_keeper_xy(fr)
+    assert math.isnan(x) and math.isnan(y)
+    assert keeper_detected(fr, 7) is None  # None != observed (fail-closed)
+
+
+def test_keeper_wrappers_ambiguous_multi_keeper_is_nan_none():
+    fr = _frame("skillcorner", n_keepers=2)
+    x, y = resolve_detected_keeper_xy(fr)
+    assert math.isnan(x) and math.isnan(y)
+    # gk_id 7 is present-and-unique by player_id, but resolve uses is_goalkeeper (2 rows) -> NaN.
+    assert keeper_detected(fr, 8) is True  # keeper_detected keys on the id
+
+
+def test_keeper_wrappers_discarded_flag_present_null_raises():
+    # A PRESENT keeper row with null visibility on skillcorner = discarded detection flag -> raise.
+    fr = _frame("skillcorner", gk_vis=None)
+    with pytest.raises(ValueError, match=r"tracking\.skillcorner"):
+        resolve_detected_keeper_xy(fr)
+    with pytest.raises(ValueError, match=r"tracking\.skillcorner"):
+        keeper_detected(fr, 7)
+
+
+def test_keeper_wrappers_unclassified_provider_is_observed_not_gated():
+    # Unclassified source_provider (a synthetic test fixture, an un-wired feed) -> NOT gated: the
+    # gate activates ONLY for a detection-aware provider. No raise at consume time; byte-identical to
+    # pre-gate. (The fail-closed-on-unknown doctrine stays in detected_mask + the materializer guard.)
+    fr = _frame("skillcorner", gk_vis=False)
+    fr["source_provider"] = pd.Series(["synthetic"] * len(fr), dtype="object")
+    assert resolve_detected_keeper_xy(fr) == (5.0, 34.0)
+    assert keeper_detected(fr, 7) is True
+
+
+def test_keeper_wrappers_opt_out_reproduces_observed():
+    # assume_keeper_observed=True on an undetected skillcorner keeper -> observed (the general opt-out).
+    fr = _frame("skillcorner", gk_vis=False)
+    assert resolve_detected_keeper_xy(fr, assume_keeper_observed=True) == (5.0, 34.0)
+    assert keeper_detected(fr, 7, assume_keeper_observed=True) is True
+
+
+def test_detection_aware_provider_resolution():
+    assert detection_aware_provider(_frame("skillcorner")) == "skillcorner"
+    assert detection_aware_provider(_frame("sportec")) is None  # fully observed -> not gated
+    assert detection_aware_provider(_frame("snapshot")) is None  # SB360 freeze frame -> not gated
+    # mixed snapshot + skillcorner -> the detection-aware provider is surfaced
+    mixed = pd.concat([_frame("skillcorner"), _frame("snapshot")], ignore_index=True)
+    assert detection_aware_provider(mixed) == "skillcorner"
+    # unclassified sentinel -> None (not gated), no raise
+    syn = _frame("sportec")
+    syn["source_provider"] = pd.Series(["synthetic"] * len(syn), dtype="object")
+    assert detection_aware_provider(syn) is None
+    # absent column -> None
+    assert detection_aware_provider(pd.DataFrame({"x": [1.0]})) is None

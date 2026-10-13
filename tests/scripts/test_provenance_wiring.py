@@ -141,7 +141,6 @@ ARTIFACT_DRIVERS = (
     # (same class as the other weight trainers: stamps `training_commit` into the shipped
     # metadata.json + `run_commit`/`run_tree_dirty` into metrics.json).
     "train_ghost_outfield",
-    "train_gk_completion",
     "train_gk_retention",
     "train_xcross_attempt",
     "train_xshot_occurrence",
@@ -163,11 +162,6 @@ ARTIFACT_DRIVERS = (
     # which is the self-test the spec named: the cycle's own completeness gate catching the
     # cycle's own new driver before a human noticed.
     "measure_gs_shot_distribution",
-    # Keeper-box geometry & detection-quality cycle. Validates the shipped SkillCorner keeper-origin
-    # resolver on the pining corpus (`load_matches`) and writes `manifest_all.json` whose
-    # offpitch_rate / out_of_region_goalkick_rate become the ADR-024 CI rate-gate baselines -- cited
-    # numbers, so the tree they ran on has to be recorded.
-    "validate_skillcorner_keeper_origin",
     # The SB360 licensed-corpus validation driver. Consumes the licensed StatsBomb 360 corpus via
     # the pining loader (`load_statsbomb_matches`) and writes cited coverage/verdict numbers to
     # docs/research/sb360_licensed_coverage/ -- exactly the "external data -> cited artifact" class

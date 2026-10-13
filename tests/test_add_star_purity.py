@@ -551,7 +551,6 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             _std_invoke(F.add_ghost_gk, home_team_id=5),
         ),
     ],
-    "tracking:add_gk_completion": _one(_std_inputs, _std_invoke(F.add_gk_completion)),
     "tracking:add_gk_influence": _one(_xtf_inputs, _xtf_map_invoke(F.add_gk_influence)),
     "tracking:add_gradientsports_player_ids": _one(
         lambda: list(_gs_jersey_inputs()),
@@ -675,17 +674,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: tracking.add_xshot_occurrence(i[0], i[1], home_team_id=5, links=i[2]),
         ),
     ],
-    # ADR-077/ADR-033: the visible_area companion path reads a caller-supplied polygon ndarray (the
-    # pressure-ROI clip), so the conditional-column branch needs its own purity variant.
-    "tracking:add_xt_gk": [
-        ("no_visible_area", _xtf_inputs, _xtf_map_invoke(F.add_xt_gk)),
-        (
-            "with_visible_area",
-            _xtf_va_inputs,
-            lambda i: F.add_xt_gk(i[0], i[1], i[2], visible_area=i[3]),
-        ),
-    ],
-    # ---- atomic.tracking (add_sync_score at the package level; 16 feature mirrors below) ----
+    # ---- atomic.tracking (add_sync_score at the package level; 15 feature mirrors below) ----
     "atomic.tracking:add_sync_score": _one(
         lambda: [_atomic_actions(with_gk_role=False), _fresh_atomic_links()],
         lambda i: atr.add_sync_score(i[0], i[1]),
@@ -740,7 +729,6 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: atf.add_xshot_occurrence(i[0], i[1], home_team_id=5, links=i[2]),
         ),
     ],
-    "atomic.tracking:add_xt_gk": _one(_axtf_inputs, _xtf_map_invoke(atf.add_xt_gk)),
 }
 
 REGISTERED_NAMES = set(PURITY_ENTRIES)

@@ -416,6 +416,15 @@ the v1 rows). **The owner owns the cross-repo coordination** (lakehouse's v1 con
 `exec_visibility.py:467-472` module-path drift pin) — stated not a concern. A distinct commit (not folded
 into the kinematics C2 or TF-64 C3); own `/final-review` + owner approval + 2 impl re-reviews.
 
+[Amended 2026-10-13, owner-approved: the own-commit / own-review requirement in the paragraph above is
+**WAIVED** for this release. C3 (TF-64 detection-gate, §8) and C4 (this xT-GK v1 retirement) ship as ONE
+combined `4.135.0` commit (version bump + `CHANGELOG` + Hyrum notice folded in). Rationale: neither C3 nor
+C4 carries a retrain, weights change, or any trained-artifact provenance, so the provenance separation that
+motivated distinct commits does not apply here; and the "own `/final-review` + 2 impl re-reviews"
+requirement is satisfied in substance — the retirement was reviewed together with TF-64 by both independent
+impl reviewers (A and B, two rounds each) over the combined working tree, plus the session `/final-review`.
+The §10 phasing table's separate commit-3 row is superseded accordingly for this release only.]
+
 **Cross-repo (handed to the owner; NOT an in-repo deliverable):**
 - Lakehouse re-materialise (frames + the GK-output changes from TF-64) — consumer-side, runs where the
   lakehouse lives; the `<5` version pin holds.

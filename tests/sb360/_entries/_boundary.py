@@ -416,6 +416,12 @@ _RD_L2_GK_ABSENT_RATIONALE = (
     "(compute_threat_pc's attacked-goal is unresolvable) and the keeper-share/reachable metrics have "
     "no keeper, so BOTH legs are NaN -> no_signal, unexercisable on this roster."
 )
+_RD_GK_COUNT_ABSENT_RATIONALE = (
+    "TF-64 (ADR-109): the keeper-inclusive headcounts (rd_num_superiority_gk via count_goalside "
+    "include_gk; rd_zone_occupancy) honest-NaN when A's keeper is absent/undetected -- gk_absent "
+    "resolves no keeper -> the _gk variant is unavailable -> NaN both legs -> no_signal. The "
+    "keeper-free rd_num_superiority is unaffected (still observes `identical`)."
+)
 _RD_PROVENANCE_RATIONALE = (
     "SUBSTANTIVE: the Layer-2 pitch-control metrics DIFFER by design across the velocity legs (Leg A "
     "zero-velocity, Leg B velocity-bearing -- ADR-063 Tier-1 lift), so the entry substantively handles "
@@ -448,6 +454,10 @@ _entry(
                 )
                 for c in _RD_L1
             },
+            # TF-64: the two keeper-inclusive Layer-1 counts honest-NaN on gk_absent (no keeper to
+            # include); rd_num_superiority (keeper-free) stays `identical` via the comprehension above.
+            "rd_num_superiority_gk": AxisVerdict("no_signal", "not_exercised", rationale=_RD_GK_COUNT_ABSENT_RATIONALE),
+            "rd_zone_occupancy": AxisVerdict("no_signal", "not_exercised", rationale=_RD_GK_COUNT_ABSENT_RATIONALE),
             # space control is keeper-blind so it still computes (differs by design); the danger
             # integrals + keeper metrics have no orientation/keeper on the gk_absent roster.
             "rd_attacker_space_control": AxisVerdict(
@@ -469,8 +479,14 @@ _entry(
         **{c: ("support_data_defined" if c in _RD_GK_COLS else "no_support") for c in _RD_L1},
         "rd_attacker_space_control": "support_data_defined",
         "rd_danger_behind_line": "region_support",
-        "rd_danger_behind_line_gk": "support_data_defined",
-        "rd_gk_coverage_behind_line": "support_data_defined",
+        # TF-64: the GK-included danger leg is detection-gated -> NaN when the region-crop probe hides
+        # the keeper, so the probe measures no region response (no_support). The GK-blind
+        # rd_danger_behind_line is unchanged (region_support) -- it removes the keeper by a
+        # detection-agnostic id, never reading its position.
+        "rd_danger_behind_line_gk": "no_support",
+        # TF-64: the keeper coverage-share is detection-gated too -> NaN under the keeper-cropping
+        # probe -> no measurable region response (no_support).
+        "rd_gk_coverage_behind_line": "no_support",
         _RD_REACHABLE: "no_support",
     },
     applicability_deltas={
@@ -479,8 +495,8 @@ _entry(
         "rd_gk_to_line_distance": {"extreme": 4.187195584051494, "near": 0.0},
         "rd_attacker_space_control": {"extreme": 0.09693340625715541, "near": 0.1514530228682487},
         "rd_danger_behind_line": {"extreme": 0.0, "near": 53.55889976083222},
-        "rd_danger_behind_line_gk": {"extreme": 21.750992002529074, "near": 51.468371064050416},
-        "rd_gk_coverage_behind_line": {"extreme": 0.00318693089850397, "near": 14.992021306830027},
+        "rd_danger_behind_line_gk": {"extreme": 0.0, "near": 0.0},
+        "rd_gk_coverage_behind_line": {"extreme": 0.0, "near": 0.0},
         _RD_REACHABLE: {"extreme": 0.0, "near": 0.0},
     },
     verdict_provenance="substantive",

@@ -1,6 +1,6 @@
 """Pickle-free artifact I/O for the fitted possession-value surfaces (ADR-036 §4/G4).
 
-Mirrors the house convention (ghost-GK / xShot / GkCompletionModel): npz for arrays, JSON for
+Mirrors the house convention (ghost-GK / xShot): npz for arrays, JSON for
 metadata, SHA256SUMS for integrity. No pickle. A fitted grid, not an ADR-011 weights lifecycle.
 """
 

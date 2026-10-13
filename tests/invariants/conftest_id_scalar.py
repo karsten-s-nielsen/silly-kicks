@@ -416,6 +416,25 @@ def gamestates_2():
 # --------------------------------------------------------------------------------------
 
 
+def _gk_detect_frame() -> pd.DataFrame:
+    """One fully-observed frame whose single keeper has ``player_id == HOME``, for the
+    ``keeper_detected`` id-scalar invariance entry: the verdict must be identical whether ``gk_id``
+    is the numeric HOME or its string form (``ids_match`` canonicalises). Sportec is fully observed,
+    so the TF-64 detection-gate no-ops and the only axis under test is the ``gk_id`` dtype."""
+    return pd.DataFrame(
+        {
+            "player_id": pd.array([HOME, AWAY], dtype="Int64"),
+            "team_id": pd.Series(["B", "A"], dtype="category"),
+            "is_goalkeeper": pd.array([True, False], dtype="boolean"),
+            "is_ball": pd.array([False, False], dtype="boolean"),
+            "x": pd.array([5.0, 50.0], dtype="float32"),
+            "y": pd.array([34.0, 30.0], dtype="float32"),
+            "visibility": pd.array([True, True], dtype="object"),
+            "source_provider": pd.Series(["sportec", "sportec"], dtype="category"),
+        }
+    )
+
+
 @dataclass(frozen=True)
 class IdScalarEntry:
     """One public function that takes an id scalar.
@@ -785,6 +804,13 @@ def _tracking_primitive_entries() -> list[IdScalarEntry]:
             # (`ids_match(frames["team_id"], team_id)`) is unchanged.
             lambda s: T.select_back_line_players(tracking_frames(), s, True),
         ),
+        _e(
+            # TF-64: keeper_detected's `gk_id` is a player-id scalar resolved via ids_match; the
+            # verdict must not depend on its dtype. Fully-observed fixture -> the detection-gate
+            # no-ops, isolating the id axis.
+            "silly_kicks.tracking._provider_visibility.keeper_detected",
+            lambda s: T.keeper_detected(_gk_detect_frame(), s),
+        ),
         _e("silly_kicks.tracking._team_shape.compute_team_shape", lambda s: T.compute_team_shape(tracking_frames(), s)),
         _e(
             "silly_kicks.tracking._packing.compute_packing_metrics",
@@ -1044,24 +1070,6 @@ _XFNS_PLAIN = ("space_creation_xfns",)
 _XFNS_XT: tuple[str, ...] = ()
 
 
-def gk_distribution_case():
-    """``(actions, frames)`` for a live GK-distribution, reused from the xT-GK suite.
-
-    xT-GK scores ONLY goal-kicks / GK-actor passes / throw-ins, so the generic
-    outfield-pass fixture yields an all-NaN column. ``tests/tracking/test_xt_gk.py`` already
-    owns a vetted two-distribution fixture (a goal-kick + a back-pass by the keeper) whose
-    frames satisfy the DAS validator; single-sourcing it beats maintaining a second copy that
-    could drift out of the scoring domain silently. Home team is 1 there, not 5.
-    """
-    from tests.tracking.test_xt_gk import _frames_for, _gk_actions
-
-    actions = _gk_actions()
-    return actions, _frames_for(actions)
-
-
-GK_CASE_HOME = 1  # the xT-GK fixture's home team id
-
-
 def _tracking_feature_entries() -> list[IdScalarEntry]:
     import silly_kicks.atomic.tracking.features as AF
     import silly_kicks.tracking.features as F
@@ -1144,12 +1152,6 @@ def _tracking_feature_entries() -> list[IdScalarEntry]:
         )
     )
     return entries
-
-
-def _gk_gamestates():
-    from silly_kicks.vaep.feature_framework import gamestates
-
-    return gamestates(gk_distribution_case()[0], nb_prev_actions=2)
 
 
 def _atomic_gamestates(actions: pd.DataFrame):

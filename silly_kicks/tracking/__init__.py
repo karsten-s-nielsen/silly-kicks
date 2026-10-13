@@ -69,7 +69,6 @@ __all__ = [
     "GhostOutfieldModel",
     "GhostOutfieldVariant",
     "GkClampDiagnosis",
-    "GkCompletionModel",
     "GoalEndUnresolvedError",
     "GoalMap",
     "GoalkeeperClampWarning",
@@ -112,8 +111,6 @@ __all__ = [
     "XCrossFeatureSet",
     "XShotFeatureSet",
     "XShotOccurrenceModel",
-    "XtGkParams",
-    "XtGkReport",
     "acting_gk_from_frames",
     "action_ltr_goal_map",
     "actor_arc_length_pre_window",
@@ -129,7 +126,6 @@ __all__ = [
     "add_defensive_line",
     "add_elastic_sync",
     "add_ghost_gk",
-    "add_gk_completion",
     "add_gk_influence",
     "add_gradientsports_player_ids",
     "add_line_break",
@@ -154,7 +150,6 @@ __all__ = [
     "add_visible_area_coverage",
     "add_xcross_attempt",
     "add_xshot_occurrence",
-    "add_xt_gk",
     "align_events_to_frames",
     "back_line_high_x",
     "back_n_count",
@@ -169,7 +164,6 @@ __all__ = [
     "compute_defensive_credits",
     "compute_defensive_line",
     "compute_ghost_gk",
-    "compute_gk_completion",
     "compute_gk_influence",
     "compute_obso_surface",
     "compute_packing_metrics",
@@ -190,7 +184,6 @@ __all__ = [
     "compute_tti",
     "compute_xcross_attempt",
     "compute_xshot_occurrence",
-    "compute_xt_gk",
     "cover_shadow_xfns",
     "das_at_action",
     "das_xfns",
@@ -202,6 +195,8 @@ __all__ = [
     "derive_velocities",
     "detect_line_breaking",
     "detect_off_ball_runs",
+    "detected_mask",
+    "detection_aware_provider",
     "elastic_sync_xfns",
     "estimate_das_cost",
     "extract_ball_features",
@@ -226,6 +221,7 @@ __all__ = [
     "infer_positions",
     "intended_receiver_positions",
     "interpolate_frames",
+    "keeper_detected",
     "kloppy",
     "lane_control",
     "lateral_width",
@@ -280,7 +276,7 @@ __all__ = [
     "resample_uniform",
     "residual_analysis_cutoff",
     "resolve_defended_goals",
-    "resolve_gk_geometry",
+    "resolve_detected_keeper_xy",
     "resolve_intended_receiver",
     "resolve_restart_geometry",
     "run_tracking_features",
@@ -315,7 +311,6 @@ __all__ = [
     "value_off_ball_runs",
     "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
-    "xt_gk_xfns",
     "zero_velocity_if_unavailable",
 ]
 
@@ -378,8 +373,7 @@ from ._ghost_outfield import (
     GhostOutfieldVariant,
     serve_ghost_outfield_positions,
 )
-from ._gk_completion import GkCompletionModel, compute_gk_completion
-from ._gk_geometry import resolve_gk_geometry, resolve_restart_geometry
+from ._gk_geometry import resolve_restart_geometry
 from ._gk_influence import compute_gk_influence
 from ._line_breaking import LineBreakingParams, detect_line_breaking
 from ._obso import ObsoParams, ObsoSurface, compute_obso_surface, compute_pass_obso
@@ -391,6 +385,12 @@ from ._packing import (
 )
 from ._pausa import compute_pausa, compute_pausa_batch
 from ._player_influence import PlayerInfluence, compute_player_influence
+from ._provider_visibility import (
+    detected_mask,
+    detection_aware_provider,
+    keeper_detected,
+    resolve_detected_keeper_xy,
+)
 from ._receiver import (
     ReceiverModel,
     intended_receiver_positions,
@@ -448,7 +448,6 @@ from ._xshot_occurrence import (
     subsample_negatives,
     xshot_occurrence_xfns,
 )
-from ._xt_gk import XtGkParams, XtGkReport, compute_xt_gk
 from .defensive_credit import (
     DEFENSIVE_CREDIT_RULES,
     DefensiveCreditParams,
@@ -475,7 +474,6 @@ from .features import (
     add_defensive_line,
     add_elastic_sync,
     add_ghost_gk,
-    add_gk_completion,
     add_gk_influence,
     add_line_break,
     add_obso,
@@ -495,7 +493,6 @@ from .features import (
     add_space_creation,
     add_structural_pass,
     add_team_shape,
-    add_xt_gk,
     back_line_high_x,
     back_n_count,
     ball_carrier_at_action,
@@ -559,7 +556,6 @@ from .features import (
     structural_pass_xfns,
     team_shape_xfns,
     tracking_default_xfns,
-    xt_gk_xfns,
 )
 from .gradientsports import GradientsportsRosterReport, add_gradientsports_player_ids
 from .pitch_control import (

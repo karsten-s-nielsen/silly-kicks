@@ -1,6 +1,6 @@
 """Keeper-identity resolution for tracking frames (ADR-055 single-source).
 
-The tracking GK families (``add_pre_shot_gk_*`` / ``add_xt_gk`` / ``add_ghost_gk``) need the REAL
+The tracking GK families (``add_pre_shot_gk_*`` / ``add_ghost_gk``) need the REAL
 keeper identity, which SB360 freeze-frames do not carry (rows are numbered). This module is the ONE
 resolver. Its ``identity="native"`` path DELEGATES to ``defending_gk_from_frames`` /
 ``acting_gk_from_frames`` (which already return the keeper ``player_id`` from the frame); only the

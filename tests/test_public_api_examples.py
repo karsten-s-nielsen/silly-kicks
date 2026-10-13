@@ -137,6 +137,7 @@ _ROOT_MODULE = "silly_kicks"
 _PUBLIC_MODULE_FILES = (
     "silly_kicks/reflection.py",
     "silly_kicks/tracking/_ghost_outfield.py",
+    "silly_kicks/tracking/_provider_visibility.py",
     "silly_kicks/tracking/_visibility.py",
     "silly_kicks/reporting.py",
     "silly_kicks/feature_glossary.py",
@@ -282,7 +283,6 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/tracking/_das.py",
     "silly_kicks/tracking/_das_taxonomy.py",
     "silly_kicks/tracking/_ghost_gk.py",
-    "silly_kicks/tracking/_gk_completion.py",
     "silly_kicks/tracking/_gk_geometry.py",
     # compute_gk_influence exported for restdefense._danger (TF-60 PR2); its pre-existing
     # zone/return-type helpers are deferred one at a time in `_EXAMPLES_DEBT`.
@@ -297,7 +297,6 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/tracking/_velocity_availability.py",
     "silly_kicks/tracking/_xcross_attempt.py",
     "silly_kicks/tracking/_xshot_occurrence.py",
-    "silly_kicks/tracking/_xt_gk.py",
     "silly_kicks/tracking/direction.py",
     "silly_kicks/tracking/features.py",
     "silly_kicks/tracking/pressure.py",
@@ -474,6 +473,27 @@ _EXAMPLES_DEBT: dict[str, str] = {
     # exported for restdefense._danger). These three are INTERNAL ADR-063/067 helpers, in no __all__ --
     # they ride the module's discovery. Deferred rather than documented; the module is public only via
     # zero_velocity_if_unavailable, which carries a real example.
+    # --- TF-64: _provider_visibility.py became a public module (keeper_detected / resolve_detected_keeper_xy
+    # / detection_aware_provider / detected_mask exported for the GK detection-gate choke points). All are
+    # frame-/Series-consuming (a doctest needs a constructed tracking frame), exercised by
+    # tests/tracking/test_detection_aware_visibility.py + test_gk_detection_gate.py. Deferred per-symbol;
+    # dead_ball_observed / validate_provider already carry real doctests.
+    "silly_kicks/tracking/_provider_visibility.py::keeper_detected": (
+        "Frame-consuming keeper-row detection verdict; exercised by test_detection_aware_visibility.py."
+    ),
+    "silly_kicks/tracking/_provider_visibility.py::resolve_detected_keeper_xy": (
+        "Frame-consuming detected-keeper (x,y) resolver; exercised by test_detection_aware_visibility.py."
+    ),
+    "silly_kicks/tracking/_provider_visibility.py::detection_aware_provider": (
+        "Frame-consuming provider classifier; exercised by test_detection_aware_visibility.py."
+    ),
+    "silly_kicks/tracking/_provider_visibility.py::detected_mask": (
+        "Series-consuming per-row detection primitive; exercised by test_detection_aware_visibility.py."
+    ),
+    "silly_kicks/tracking/_provider_visibility.py::assert_detection_aware_visibility": (
+        "Internal fail-loud guard (entirely-null visibility, in no __all__); rides module discovery. "
+        "Exercised by test_detection_aware_visibility.py."
+    ),
     "silly_kicks/tracking/_velocity_availability.py::velocity_unavailable_by_design": (
         "Internal ADR-063 predicate: True iff every row declares speed_source='unavailable'. Not exported."
     ),
@@ -654,67 +674,12 @@ _EXAMPLES_DEBT: dict[str, str] = {
     "silly_kicks/tracking/preprocess/_velocity.py::derive_velocities": (
         "Adds vx / vy / speed from smoothed positions via the SG derivative; needs a real frame series."
     ),
-    # --- ADR-024 GK completion model: the whole fit / predict / persist / variant lifecycle ---
-    "silly_kicks/tracking/_gk_completion.py::serve_mode_from_lcb": (
-        "Pure per-type serve-mode gate (model vs base_rate) decided from a held-out AUC lower bound."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::extract_gk_completion_features": (
-        "The shared train==serve feature extractor for GK distributions -- both producers route through it."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::GkCompletionModel": (
-        "The ADR-024 logistic completion model, served pure-numpy from a pickle-free JSON+SHA256 artifact."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::GkCompletionModel.fit": (
-        "Fits the logistic coefficients on native-outcome rows only (an inferred label is positive-only)."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::GkCompletionModel.predict_proba": (
-        "Pure scorer -- sigmoid(X beta) with no serve-mode switching; the gate lives at the caller."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::GkCompletionModel.serve_mode_for_types": (
-        "Per-action-type serve mode baked into the artifact, fail-opening on a pre-gate 4.21.0 model."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::GkCompletionModel.base_rate_for_types": (
-        "Per-type calibrated base rates served in place of geometry when the type fails its AUC gate."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::GkCompletionModel.to_dict": (
-        "JSON-serialisable artifact payload -- coefficients, gate metrics and the version tag."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::GkCompletionModel.from_dict": (
-        "Rebuilds a model from its artifact payload, without touching the filesystem."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::GkCompletionModel.save": (
-        "Writes the pickle-free artifact (model.json plus its SHA256SUMS entry) to a directory."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::GkCompletionModel.load": (
-        "Loads and checksum-verifies an artifact directory, fail-opening on a pre-gate version tag."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::GkCompletionModel.from_variant": (
-        "Loads a bundled variant by key, aliasing the gs KEY onto the bundled default directory."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::variant_key_for_provider": (
-        "Pure provider-to-variant-key mapping: skillcorner gets its own weights, everything else gs."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::compute_gk_completion": (
-        "Standalone per-action completion probability, falling back to a per-type base rate when unscoreable."
-    ),
-    "silly_kicks/tracking/_gk_completion.py::prepare_gk_completion_training_data": (
-        "Training-data preparer sharing the domain predicate and geometry resolution with the serve path."
-    ),
-    # --- ADR-024 / ADR-025 restart and goal-kick geometry ---
-    "silly_kicks/tracking/_gk_geometry.py::native_origin_is_trusted": (
-        "The fail-safe provider allowlist deciding whether a native restart origin can be believed."
-    ),
-    "silly_kicks/tracking/_gk_geometry.py::resolve_gk_geometry": (
-        "Goal-kick origin and destination resolution cascade, emitting per-row provenance and confidence."
-    ),
+    # --- ADR-025 restart and goal-kick geometry ---
     "silly_kicks/tracking/_gk_geometry.py::resolve_restart_geometry": (
         "The single ADR-025 restart-geometry engine that add_restart_coordinates and the GK shim both use."
     ),
     "silly_kicks/tracking/_gk_geometry.py::apply_restart_tripwire": (
         "Geometry tripwire reverting an imputed restart origin that lands outside its lawful region."
-    ),
-    "silly_kicks/tracking/_gk_geometry.py::flag_native_goalkick_out_of_region": (
-        "S4 provenance flag for a NATIVE goal-kick origin outside the plausible region (warn, never revert)."
     ),
     # --- GK resolution seam (defending_gk_from_frames, its sibling, IS documented) ---
     "silly_kicks/tracking/_gk_resolve.py::acting_gk_from_frames": (
@@ -828,22 +793,6 @@ _EXAMPLES_DEBT: dict[str, str] = {
     "silly_kicks/tracking/_xshot_occurrence.py::xshot_occurrence_xfns": (
         "VAEP xfns factory emitting xshot_occurrence per gamestate slot."
     ),
-    # --- xT-GK v1, FROZEN pending the lakehouse migration to xtgk/ v2 ---
-    "silly_kicks/tracking/_xt_gk.py::XtGkReport": (
-        "Aggregate QA report for an xt_gk run -- provenance counts, variants and coverage."
-    ),
-    "silly_kicks/tracking/_xt_gk.py::XtGkReport.from_frame": (
-        "Builds the report from an xt_gk output frame's provenance columns."
-    ),
-    "silly_kicks/tracking/_xt_gk.py::XtGkParams": (
-        "The v1 normative parameter surface (gamma / delta / phi / eta), intent-set and never calibrated."
-    ),
-    "silly_kicks/tracking/_xt_gk.py::XtGkParams.for_philosophy": (
-        "The five provisional philosophy presets over the normative parameter surface."
-    ),
-    "silly_kicks/tracking/_xt_gk.py::compute_xt_gk": (
-        "The frozen v1 compute entry point; needs frames, a fitted xT grid and a GK-distribution domain."
-    ),
     # --- frame orientation (finalize_orientation, its sibling in the same module, IS documented) ---
     "silly_kicks/tracking/direction.py::compute_attacking_direction": (
         "Labels each frame with its team_attacking_direction from the kickoff-side flags."
@@ -861,15 +810,6 @@ _EXAMPLES_DEBT: dict[str, str] = {
     ),
     "silly_kicks/tracking/features.py::structural_pass_xfns": (
         "VAEP xfns factory for the three structural-pass primitives."
-    ),
-    "silly_kicks/tracking/features.py::add_xt_gk": (
-        "The v1 xT-GK aggregator, emitting the composite plus its component columns per GK distribution."
-    ),
-    "silly_kicks/tracking/features.py::xt_gk_xfns": (
-        "VAEP xfns factory for xT-GK v1; in no default list, so opting it in is a self-triggered retrain."
-    ),
-    "silly_kicks/tracking/features.py::add_gk_completion": (
-        "The lakehouse wide-table aggregator emitting gk_completion per in-scope GK distribution."
     ),
     # TF-3 actor pre-window movement
     "silly_kicks/tracking/features.py::actor_displacement_pre_window": (

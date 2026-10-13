@@ -96,10 +96,10 @@ def test_absent_model_skips_the_family_not_fabricates():
         frames,
         identity="roster",
         roster=ROSTER,
-        families=["add_xt_gk"],  # xt not supplied
+        families=["add_cover_shadows"],  # xt not supplied
     )
-    assert "add_xt_gk" in report.family_status
-    assert report.family_status["add_xt_gk"].startswith("skipped")
+    assert "add_cover_shadows" in report.family_status
+    assert report.family_status["add_cover_shadows"].startswith("skipped")
 
 
 def test_naming_the_keeper_does_not_make_velocity_metrics_score_on_sb360():
@@ -129,7 +129,7 @@ def test_duplicate_family_names_are_deduped_and_still_conserve():
     # DISTINCT families.
     actions, frames = _sb360_fixture()
     _out, report = run_tracking_features(
-        actions, frames, identity="roster", roster=ROSTER, families=["add_xt_gk", "add_xt_gk"]
+        actions, frames, identity="roster", roster=ROSTER, families=["add_cover_shadows", "add_cover_shadows"]
     )
     assert report.n_families_in == 1  # de-duped, not 2
     assert report.n_families_run + report.n_families_skipped == report.n_families_in
