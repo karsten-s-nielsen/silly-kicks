@@ -1354,14 +1354,17 @@ def _resolve_action_frame_context(
         # matters at all -- also carries the smoothed pair. Enumerating x/y/vx/vy alone
         # would leave a mirrored position sitting next to an unmirrored copy of itself,
         # which is D3b reconstituted inside D1's own fix.
-        _geometry_cols = ["x", "x_smoothed", "y", "y_smoothed", "vx", "vy"]
+        # TF-65: accel_x/accel_y are vectors too -- they negate with the positions/velocities under the
+        # action-LTR re-projection, exactly like vx/vy (ADR-045). accel (magnitude) + the variance
+        # columns are invariant, so they are not enumerated here.
+        _geometry_cols = ["x", "x_smoothed", "y", "y_smoothed", "vx", "vy", "accel_x", "accel_y"]
         out = reproject_to_action_ltr(
             rows,
             row_flip,
             x_cols=["x", "x_smoothed"],
             y_cols=["y", "y_smoothed"],
-            vx_cols=["vx"],
-            vy_cols=["vy"],
+            vx_cols=["vx", "accel_x"],
+            vy_cols=["vy", "accel_y"],
         )
         if _unresolved.any():
             # The SAME column list the re-projection covers: nulling a subset would leave a

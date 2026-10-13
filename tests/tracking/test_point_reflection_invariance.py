@@ -375,7 +375,8 @@ def test_every_geometry_column_on_the_context_is_enumerated_for_reprojection():
     ctx = _resolve_action_frame_context(a, f)
 
     # What _reproject_rows actually enumerates (keep in sync with utils.py:874).
-    enumerated = {"x", "y", "vx", "vy", "x_smoothed", "y_smoothed"}
+    # TF-65: accel_x/accel_y join the vector set (reprojected alongside vx/vy).
+    enumerated = {"x", "y", "vx", "vy", "x_smoothed", "y_smoothed", "accel_x", "accel_y"}
 
     for name in ("actor_rows", "opposite_rows_per_action", "defending_gk_rows"):
         rows = getattr(ctx, name)

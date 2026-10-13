@@ -90,10 +90,11 @@ def test_compute_ghost_gk_runs_on_extended_grid_mean_path():
 
 # --- Task 6: the two-sided saturation-vs-tracking gate ------------------------------------------
 def test_default_saturates_and_sweeper_tracks_upfield():
-    """Translate a clean scene upfield: the shipped default caps its predicted keeper at ~30 m while
-    the BUNDLED sweeper tracks past it. Direction, not magnitude -- the thresholds hold with wide
-    margin on the real weights (measured default 29.8 m vs sweeper 45.9 m at delta=25), which is what
-    lets them survive a future re-fit; do NOT tighten them to the current fit's magnitude."""
+    """Translate a clean scene upfield: the shipped default stays a near-goal estimator while the
+    BUNDLED sweeper tracks well past it. Direction, not magnitude -- the thresholds are wide-margin so
+    they survive a re-fit (measured, after the ADR-120 corrected-velocity re-fit: default 33.2 m vs
+    sweeper 45.4 m at delta=25, a +12 m margin; default 21.4 m in realistic play). Do NOT tighten them
+    to the current fit's magnitude -- the real invariant is the default << sweeper separation."""
     from silly_kicks.id_compat import canonical_id
     from silly_kicks.tracking import derive_velocities, serve_ghost_gk_positions
     from silly_kicks.tracking.preprocess import smooth_frames
@@ -111,8 +112,13 @@ def test_default_saturates_and_sweeper_tracks_upfield():
         svh = served[served["gk_team_id"].map(canonical_id) == canonical_id(home)]
         return float(svh["ghost_gr_x"].max())
 
-    d25 = pred_max(None, 25)  # shipped default: cannot exceed its 30 m ceiling
-    s25 = pred_max(sweeper, 25)  # bundled sweeper: places a keeper well past 30 m
-    assert d25 <= 31.0, f"default should saturate <=30 m, got {d25:.1f}"
-    assert s25 > 33.0, f"sweeper should track past 30 m, got {s25:.1f}"
-    assert s25 - d25 > 3.0, f"legs must measurably differ (non-vacuity), got {s25 - d25:.1f}"
+    d25 = pred_max(None, 25)  # shipped default: near-goal estimator (goal-relative grid-capped at 30 m)
+    s25 = pred_max(sweeper, 25)  # bundled sweeper: extended grid, tracks a keeper well upfield
+    # Construct = DIRECTION (default near-goal << sweeper upfield), not absolute magnitude. Bounds are
+    # wide-margin to survive a re-fit: the ADR-120 corrected-velocity re-fit improved the default
+    # (CV-euclidean MAE 1.200->1.127, every provider down) and shifted it +3.5 m in this artificial
+    # +25 m scene (to 33.2) but only +0.8 m in realistic play. The old <=31 bound was tight to the
+    # prior 29.8 fit -- exactly what this test's docstring warns against. The margin is the invariant.
+    assert d25 <= 38.0, f"default stays the near-goal estimator, got {d25:.1f}"
+    assert s25 > 40.0, f"sweeper should track well upfield, got {s25:.1f}"
+    assert s25 - d25 > 6.0, f"legs must measurably differ (non-vacuity), got {s25 - d25:.1f}"

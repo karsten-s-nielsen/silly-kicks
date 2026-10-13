@@ -44,8 +44,8 @@
     "gamma": 0.25
   },
   "sklearn_version": "1.9.0",
-  "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
-  "training_platform": "dgx-spark-aarch64",
+  "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+  "training_platform": "Linux-6.17.0-1014-nvidia-aarch64-with-glibc2.39",
   "corpus_provenance": {
     "providers": [
       "gradientsports",
@@ -53,7 +53,7 @@
       "sportec"
     ],
     "n_games": 179,
-    "n_rows": 36000
+    "n_rows": 1039502
   },
   "serve_estimator": "boosted_mean",
   "version": "1.3.0",
@@ -65,8 +65,8 @@
     "version": "chirality-probe-1",
     "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
     "outputs": [
-      3.2184940059,
-      35.7054786575
+      1.9234591569,
+      35.1766925002
     ]
   },
   "feature_contract": {

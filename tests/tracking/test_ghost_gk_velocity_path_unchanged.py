@@ -56,6 +56,14 @@ baseline is expected to move on. Measured effect on this fixture (``sb360-fixtur
 both-axes weights (4bda048) versus the SHIPPED float32-frame weights, 6 rows, all finite:
 **max |dx| 1.1511 m, max |dy| 2.1853 m, mean 1.1076 m, median 1.0077 m**.
 
+**RE-CAPTURED AGAIN at the TF-65 velocity-gap re-fit (ADR-120, 4.134.0) -- revisited, not absorbed.** The
+bundled ghost-GK `default` was re-fit on the dense-grid-corrected floor velocities
+(``training_commit=a34e992``), the DECLARED re-fit this baseline is expected to move on -- the velocity-gap
+fix removed fabricated through-gap velocity (500-850 m/s ball speed on broadcast providers) that feeds the
+ghost velocity features, so served positions move. Measured effect on this fixture (``sb360-fixture-2``), the
+prior F1b float32-frame weights (3ca609f) versus the SHIPPED velocity-corrected weights, 6 rows, all finite:
+**max |dx| 1.7440 m, max |dy| 2.5304 m, mean 1.2866 m, median 1.2543 m**.
+
 Corollary worth keeping: this is the ONLY committed golden that pins bundled-model OUTPUT.
 ``ghost_gk_kde_golden.npz`` stores input FEATURES (outputs are computed fresh) and
 ``ghost_gk_refactor_golden.npz`` uses locally-fit models, so neither moves on a re-fit -- verified

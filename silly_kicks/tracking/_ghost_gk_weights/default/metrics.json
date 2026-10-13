@@ -1,6 +1,6 @@
 {
   "n_games": 179,
-  "n_samples": 36000,
+  "n_samples": 1039502,
   "n_providers": 3,
   "providers": [
     "gradientsports",
@@ -15,24 +15,26 @@
     "beta": 0.0,
     "gamma": 0.25
   },
-  "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
-  "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+  "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+  "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
+  "reproducibility": "restricted",
+  "reproducibility_note": "Restricted: trained at training_commit a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
   "hyperparameters": {
     "n_estimators": 500,
     "max_depth": 8
   },
-  "cv_mae_x_mean": 0.22240016908317858,
-  "cv_mae_x_std": 0.005449637863204398,
-  "cv_mae_y_mean": 1.1260274663650474,
-  "cv_mae_y_std": 0.0327205490002249,
-  "cv_mae_euclidean_mean": 1.2003468634938175,
-  "cv_mae_euclidean_std": 0.0321323182151463,
+  "cv_mae_x_mean": 0.16589887638765838,
+  "cv_mae_x_std": 0.0030001343461871243,
+  "cv_mae_y_mean": 1.0754757258303134,
+  "cv_mae_y_std": 0.03293184892547,
+  "cv_mae_euclidean_mean": 1.127059374623758,
+  "cv_mae_euclidean_std": 0.03375836915026666,
   "per_provider_mae_euclidean": {
-    "gradientsports": 1.1211397167680013,
-    "skillcorner": 1.3022779383803378,
-    "sportec": 1.8515507341020896
+    "gradientsports": 1.0713382813448384,
+    "skillcorner": 1.1625960742606405,
+    "sportec": 1.6751893062581131
   },
   "grid_x_max": 30.0,
   "high_sweeper_stratum_mae_mean": NaN,
@@ -47,7 +49,7 @@
     "cross_fold_std_lt_05m": true,
     "artifact_size_lt_15mb": true
   },
-  "artifact_size_bytes": 753805,
+  "artifact_size_bytes": 2351081,
   "detection_selection_bias": {
     "keeper_depth_detected_mean": 5.05032336584333,
     "keeper_depth_undetected_mean": 15.526409788919468,

@@ -4,28 +4,28 @@
   "subsample_fps": 1.0,
   "n_games": 179,
   "n_rows": 4170920,
-  "cv_mae": 6.000595032035943,
+  "cv_mae": 6.000659221234316,
   "cv_mae_by_slot": {
-    "1": 5.959405661139569,
-    "2": 6.049552536570564,
-    "3": 6.022470694883978,
-    "4": 5.970951235549658
+    "1": 5.959177357167741,
+    "2": 6.049370463129207,
+    "3": 6.0213919263576114,
+    "4": 5.9726971382827045
   },
   "cv_mae_by_provider": {
-    "gradientsports": 6.1418284126423845,
-    "skillcorner": 5.915163098344834,
-    "sportec": 6.33161394344541
+    "gradientsports": 6.143317050479726,
+    "skillcorner": 5.9144740093659305,
+    "sportec": 6.333118624361591
   },
   "cv_mae_by_possession": {
-    "in_possession": 6.967479391451958,
-    "out_of_possession": 5.033710672619929
+    "in_possession": 6.968224548654058,
+    "out_of_possession": 5.0330938938145735
   },
   "coherence": {
     "n_groups": 1042730,
-    "ordering_fraction": 1.0,
-    "min_pairwise_distance_m": 0.5798191776097269
+    "ordering_fraction": 0.9999990409789686,
+    "min_pairwise_distance_m": 0.18236717039555905
   },
-  "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+  "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
   "run_tree_dirty": false,
-  "training_platform": "dgx-spark-aarch64"
+  "training_platform": null
 }

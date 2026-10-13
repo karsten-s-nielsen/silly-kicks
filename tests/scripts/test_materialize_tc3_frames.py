@@ -143,3 +143,70 @@ def test_the_missing_sidecar_message_reports_the_real_corpus_size(tmp_path):
     keys = iter([("skillcorner", "1"), ("skillcorner", "2"), ("skillcorner", "3")])
     with pytest.raises(SystemExit, match="2 of 3 shards"):
         collect_home_team_map(home, keys)
+
+
+def test_match_ids_json_constrains_corpus_and_keys_generation(tmp_path, monkeypatch):
+    """TF-65 C2: --match-ids-json loads a {provider:[ids]} roster, threads it to pining_source
+    (constraining the corpus to the F1b 179), and keys a distinct generation via a roster_sha in
+    token_inputs. Without the flag, no roster_sha (the full-catalog generation)."""
+    import sys
+
+    import scripts.materialize_tc3_frames as M
+    from scripts import _loader_pining as LP
+
+    captured: dict = {}
+
+    def fake_pining_source(providers, *, match_ids=None, max_per_provider=None, cache_dir=None, **kw):
+        captured["match_ids"] = match_ids
+        return [], (lambda ref: None)
+
+    class _StopError(Exception):
+        pass
+
+    def fake_for_each(refs, **kw):
+        captured["token_inputs"] = kw.get("token_inputs")
+        raise _StopError
+
+    monkeypatch.setattr(LP, "pining_source", fake_pining_source)
+    monkeypatch.setattr(LP, "resolve_cache_dir", lambda d: d)
+    monkeypatch.setattr(M, "for_each", fake_for_each)
+    monkeypatch.setattr(M, "git_provenance", lambda: {"commit": "deadbeef", "tree_dirty": False})
+    monkeypatch.setattr(M, "require_clean_tree", lambda prov, allow_dirty=False: None)
+
+    roster = {"gradientsports": ["10502"], "skillcorner": ["1021404"]}
+    rp = tmp_path / "roster.json"
+    rp.write_text(json.dumps(roster))
+
+    base = [
+        "materialize_tc3_frames.py",
+        "--cache-dir",
+        str(tmp_path),
+        "--out",
+        str(tmp_path / "o"),
+        "--providers",
+        "gradientsports",
+        "skillcorner",
+    ]
+    monkeypatch.setattr(sys, "argv", [*base, "--match-ids-json", str(rp)])
+    with pytest.raises(_StopError):
+        M.main()
+    assert captured["match_ids"] == roster
+    assert "roster_sha" in captured["token_inputs"]
+    sha_with = captured["token_inputs"]["roster_sha"]
+
+    captured.clear()
+    monkeypatch.setattr(sys, "argv", base)
+    with pytest.raises(_StopError):
+        M.main()
+    assert captured["match_ids"] is None
+    assert "roster_sha" not in captured["token_inputs"]
+
+    # a different roster -> a different generation key
+    roster2 = {"gradientsports": ["10503"]}
+    rp2 = tmp_path / "roster2.json"
+    rp2.write_text(json.dumps(roster2))
+    captured.clear()
+    monkeypatch.setattr(sys, "argv", [*base, "--match-ids-json", str(rp2)])
+    with pytest.raises(_StopError):
+        M.main()
+    assert captured["token_inputs"]["roster_sha"] != sha_with

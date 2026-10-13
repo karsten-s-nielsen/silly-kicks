@@ -24,8 +24,8 @@
   "n_estimators": 500,
   "max_depth": 8,
   "sklearn_version": "1.9.0",
-  "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
-  "training_platform": "dgx-spark-aarch64",
+  "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+  "training_platform": null,
   "corpus_provenance": {
     "n_games": 179,
     "n_rows": 4170920,
@@ -41,14 +41,14 @@
     "version": "outfield-chirality-1",
     "frame_sha256": "aa21057f7aad69edf97d501dd978e48d2cf494089ce54f64b7c0d68d7a705cab",
     "outputs": [
-      36.4860085169,
-      17.8698621381,
-      35.3486016255,
-      29.1320273139,
-      35.2211218662,
-      39.0233373537,
-      36.5086348892,
-      50.7404505802
+      37.6805359075,
+      18.1808452022,
+      36.4227292168,
+      29.5551168744,
+      36.3417344639,
+      38.9345116002,
+      37.5637267015,
+      51.0099722945
     ]
   },
   "feature_contract": {

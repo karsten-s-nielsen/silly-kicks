@@ -12,7 +12,9 @@ import pandas as pd
 
 from ._config_dataclass import PreprocessConfig
 
-_GROUP_KEYS = ["period_id", "is_ball", "player_id"]
+# game_id in the key so a two-game frame never interpolates across the game boundary (TF-65 §4.1a;
+# mirrors the A-31 fix in _smoothing.py). Single-game frames are byte-identical (game_id is constant).
+_GROUP_KEYS = ["game_id", "period_id", "is_ball", "player_id"]
 
 
 def _interp_per_group(
@@ -79,7 +81,7 @@ def interpolate_frames(
             "Only 'linear' is supported in PR-S24; cubic ships in TF-9-cubic when requested."
         )
 
-    sort_cols = ["period_id", "is_ball", "player_id", "frame_id"]
+    sort_cols = ["game_id", "period_id", "is_ball", "player_id", "frame_id"]  # game_id first (TF-65 §4.1a)
     sorted_frames = frames.sort_values(sort_cols, kind="mergesort").reset_index()
     original_index = sorted_frames["index"].to_numpy()
     sorted_frames = sorted_frames.drop(columns="index")
