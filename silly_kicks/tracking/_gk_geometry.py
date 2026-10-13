@@ -1,10 +1,10 @@
-"""Goal-kick geometry resolution for xT-GK (scoped; promotable -- see TODO general-enrichment).
+"""Restart-coordinate geometry resolution (ADR-025 general restart enrichment).
 
-Derives a goal-kick's origin/destination when the SPADL event omits them (real GS data:
-~67% NaN origin), WITHOUT mutating the shared ``actions`` frame. Conditional origin in
-confidence order (native -> in-area tracking-GK -> goal-area rule point); destination
-native -> next-event -> unresolved. Emits per-row source + continuous confidence. All tiers
-measured on owner data (spec 2026-06-08-xt-gk-goalkick-coverage-design.md). See NOTICE.
+Derives a restart's origin/destination (goal-kick, penalty, corner, throw-in) when the SPADL event
+omits them (real GS data: ~67% NaN goal-kick origin), WITHOUT mutating the shared ``actions`` frame.
+Conditional origin in confidence order (native -> tracking -> rule-point prior); destination native
+-> next-event -> tracking-ball -> unresolved. Emits per-row source + continuous confidence. Consumed
+by ``spadl.add_restart_coordinates``. See NOTICE.
 """
 
 from __future__ import annotations
@@ -50,63 +50,6 @@ _TRIPWIRE = {
     "corner": lambda x, y: x >= 100.0 and (y <= 5.0 or y >= 63.0),
     "throw_in": lambda x, y: y <= 3.0 or y >= 65.0,
 }
-
-# Provider-aware native-origin trust (CR 2026-06-30 H1). FAIL-SAFE allowlist: unknown / None / future
-# providers default to DISTRUST (route the GK-distribution origin through the detection-aware ladder);
-# only KNOWN full-tracking providers are trusted to carry a real keeper origin in start_x. A denylist
-# would let a new broadcast source silently corrupt origins (mirrors the access_tier privacy default).
-# The regression gate is preserved: every currently-tested full-tracking provider is named here ->
-# frozen native-first path -> byte-identical.
-_NATIVE_ORIGIN_TRUSTED = frozenset({"gradientsports", "idsse", "metrica", "sportec", "statsbomb", "wyscout"})
-
-
-def native_origin_is_trusted(provider: str | None) -> bool:
-    """True iff ``provider`` is a known full-tracking source whose SPADL ``start_x`` is a real keeper
-    position (not a broadcast ball-detection artifact). Unknown / None -> False (distrust)."""
-    return provider is not None and str(provider).lower() in _NATIVE_ORIGIN_TRUSTED
-
-
-def resolve_gk_geometry(
-    actions: pd.DataFrame,
-    *,
-    frames: pd.DataFrame | None,
-    links: pd.DataFrame | None = None,
-    distrust_native_origin: bool = False,
-) -> pd.DataFrame:
-    """Goal-kick coordinate derivation (the frozen pre-promotion contract). Returns a frame indexed
-    like ``actions`` with origin_x/origin_y/origin_source/origin_confidence + dest_x/dest_y/
-    dest_source. Only goal-kicks (type 22) get origin imputation; other rows pass native coords
-    through. ``actions`` is never mutated.
-
-    Thin delegation to :func:`resolve_restart_geometry` with ``impute_types=(goalkick,)`` -- so the
-    engine imputes GOAL-KICKS ONLY (non-goalkick rows are never imputed -> no revert needed) and runs
-    no tripwire (pure engine). The shim then renames to the legacy columns, drops the dest-confidence
-    column, and maps ``restart_prior`` -> ``goalkick_prior``. Public API; do NOT change the output
-    contract (4 internal callers + the xT-GK completion path depend on it byte-for-byte)."""
-    g = resolve_restart_geometry(
-        actions,
-        frames=frames,
-        links=links,
-        impute_types=(_GOALKICK,),
-        distrust_native_origin=distrust_native_origin,
-    )
-
-    # Whole-array numpy (no .loc-mask assignment -> index-independent, matches the original style).
-    osrc = g["start_coord_source"].to_numpy().astype(object).copy()
-    # label map: restart_prior -> goalkick_prior (goalkick rule-point). tracking_gk / native /
-    # next_event / unresolved pass through unchanged. NO tracking_ball->tracking_gk mapping.
-    osrc = np.where(osrc == "restart_prior", "goalkick_prior", osrc)
-
-    out = pd.DataFrame(index=actions.index)
-    out["origin_x"] = g["enriched_start_x"].to_numpy()
-    out["origin_y"] = g["enriched_start_y"].to_numpy()
-    out["origin_source"] = osrc
-    out["origin_confidence"] = g["start_coord_confidence"].to_numpy()
-    out["dest_x"] = g["enriched_end_x"].to_numpy()
-    out["dest_y"] = g["enriched_end_y"].to_numpy()
-    out["dest_source"] = g["end_coord_source"].to_numpy()
-    # DROP end_coord_confidence -- the frozen contract has origin_confidence only.
-    return out[["origin_x", "origin_y", "origin_source", "origin_confidence", "dest_x", "dest_y", "dest_source"]]
 
 
 def _next_event_start(actions: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
@@ -184,6 +127,7 @@ def _tracking_gk_xy(
     (x <= _GOAL_AREA_DEPTH in LTR own-half coords); NaN where unavailable or off-position."""
     from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH
     from ._kernels import resolve_frame_ids_by_position
+    from ._provider_visibility import detection_aware_provider
 
     n = len(actions)
     res = np.full((n, 2), np.nan, dtype=float)
@@ -194,6 +138,12 @@ def _tracking_gk_xy(
     # frame-sampled GK position must be point-reflected to land in action-LTR). Mirrors the sibling
     # `_tracking_gk_xy_detected`, which has always done this.
     flip = _resolve_flip(actions, frames, flip)
+    # TF-64 detection-gate: this is the DEFAULT (non-distrust) goal-kick-origin path that
+    # add_restart_coordinates (ADR-025) uses -- it reads the acting keeper's FRAME position, so on a
+    # detection-aware provider (SkillCorner) an undetected keeper must honest-NaN (fall through to the
+    # rule-based prior) rather than impute the origin from an ~80%-extrapolated position (E7, ADR-109).
+    # Non-detection-aware providers: prov is None -> byte-identical.
+    prov = detection_aware_provider(frames)
     for i in range(n):
         if not np.isfinite(fid[i]):
             continue
@@ -206,6 +156,8 @@ def _tracking_gk_xy(
         ]
         if gk.empty:
             continue
+        if prov is not None and not bool(_truthy_bool(gk["visibility"]).any()):
+            continue  # detection-aware + undetected keeper -> honest-NaN (falls to the rule prior)
         gx, gy = float(gk.iloc[0]["x"]), float(gk.iloc[0]["y"])
         if pd.isna(flip[i]):
             # Direction unresolved -> skip, exactly as a missing frame or absent keeper
@@ -239,7 +191,7 @@ def _tracking_gk_xy_detected(
     nearest-in-time, ties -> at-or-before (origin wants the pre-release keeper position).
     The detected position is sampled in the FRAME convention (``convert_to_frames`` is
     home-attacks-right) and **re-projected to action-LTR** (ADR-028) before the clamp/return, since
-    ``compute_xt_gk`` consumes the origin in the acting-team-LTR frame -- the two agree for home
+    a GK-distribution origin is consumed in the acting-team-LTR frame -- the two agree for home
     actions and are a 180-degree point reflection apart for away actions. Without this, away-team
     origins land at the wrong end of the pitch. ``clamp_goal_area`` then requires the (re-projected,
     action-LTR) x <= ``_GOAL_AREA_DEPTH`` (goal-kick semantics) else NaN.
@@ -401,8 +353,8 @@ def resolve_restart_geometry(
     WARNINGS (amended 4.71.0, ADR-051 RC2): this engine emits no *policy* warning of its own, but it
     is no longer warning-FREE. Resolving ADR-028 orientation requires ``acting_team_attacks_rtl``,
     which emits :class:`~silly_kicks.tracking.OrientationUnresolvedWarning` when no action's
-    direction resolves -- so the ``resolve_gk_geometry`` shim CAN now surface that warning on the
-    ``compute_xt_gk`` path when it is handed unoriented frames. That is intended: unoriented frames
+    direction resolves -- so this engine CAN surface that warning when it is handed unoriented
+    frames. That is intended: unoriented frames
     mean the re-projection silently could not happen, which is precisely the condition RC2 exists to
     make audible, and it is exactly the state the geometry is unreliable in. The flag is computed
     ONCE per call and threaded, so a call emits at most one such warning rather than one per helper.
@@ -411,18 +363,18 @@ def resolve_restart_geometry(
 
     PRECONDITION: ``actions`` is in chronological ``(game_id, period_id, action_id)`` order (the
     ``next_event`` ``shift(-1)`` is positional). The public ``add_restart_coordinates`` sorts first;
-    callers passing pre-sorted SPADL streams (e.g. ``compute_xt_gk``) satisfy this.
+    callers passing pre-sorted SPADL streams satisfy this.
 
     ``impute_types``: action-type ids eligible for imputation past ``native``. ``None`` = all types
-    (the general default). The ``resolve_gk_geometry`` shim passes ``(goalkick,)`` so non-goalkick
-    rows are NEVER imputed (parity: matches the frozen goalkick-only contract; perf: zero
-    ``_tracking_ball_xy`` work on the frozen hot path).
+    (the general default); ``(goalkick,)`` restricts imputation to goal-kicks so non-goalkick
+    rows are NEVER imputed (the frozen goalkick-only contract; zero ``_tracking_ball_xy`` work on
+    that hot path).
 
     Origin tiers (confidence order): native -> [goalkick: in-area tracking_gk; non-goalkick:
     tracking_ball] -> restart_prior (goalkick/penalty/corner/throw_in only) -> unresolved.
     Destination tiers: native -> next_event (full-frame positional) -> tracking_ball (non-goalkick
-    only) -> unresolved. tracking_ball is gated OFF for goal-kicks (origin AND dest) so
-    ``resolve_gk_geometry`` stays byte-identical (spec section 4.1 invariant).
+    only) -> unresolved. tracking_ball is gated OFF for goal-kicks (origin AND dest) -- the
+    goalkick-only imputation contract (spec section 4.1 invariant).
 
     See NOTICE; spec 2026-06-10-general-restart-coordinate-enrichment-design.md.
     """
@@ -558,7 +510,7 @@ def apply_restart_tripwire(out: pd.DataFrame) -> int:
     (non-``native``) coords that violate -> reverted to NaN, source ``tripwire_reverted``, confidence
     0.0. Native violations warn only (provider truth, never reverted). Destinations are NOT guarded in
     Phase 1 (spec section 6). Returns the reversion count. PURE policy step -- called by
-    ``add_restart_coordinates``, never by the engine (so the frozen ``resolve_gk_geometry`` path stays
+    ``add_restart_coordinates``, never by the engine (so the engine's imputation path stays
     silent + revert-free)."""
     tid = out["type_id"].to_numpy()
     sx = out["enriched_start_x"].to_numpy().copy()
@@ -590,23 +542,3 @@ def apply_restart_tripwire(out: pd.DataFrame) -> int:
     out["enriched_start_x"], out["enriched_start_y"] = sx, sy
     out["start_coord_source"], out["start_coord_confidence"] = ssrc, sconf
     return reverts
-
-
-def flag_native_goalkick_out_of_region(actions: pd.DataFrame, geom: pd.DataFrame) -> np.ndarray:
-    """S4 (CR 2026-06-30): per-row bool flag for a NATIVE goal-kick origin beyond the penalty area
-    (x > ``_GOAL_AREA_DEPTH`` in LTR own-half coords) -- physically implausible (a goal kick is taken
-    from the goal area). Warns (data-quality signal pointing upstream); NEVER reverts/crashes (one bad
-    row must not fail a match). Countable: the caller sums it into an observable report field."""
-    tid = actions["type_id"].to_numpy()
-    ox = geom["origin_x"].to_numpy(float)
-    src = geom["origin_source"].to_numpy().astype(object)
-    flags = (tid == _GOALKICK) & (src == "native") & np.isfinite(ox) & (ox > _GOAL_AREA_DEPTH)
-    n = int(flags.sum())
-    if n:
-        warnings.warn(
-            f"resolve_gk_geometry: {n} native goal-kick origin(s) beyond the penalty area "
-            f"(x > {_GOAL_AREA_DEPTH}); data-quality signal (provider may feed ball-location as "
-            "origin -- route through native_origin_is_trusted/the distrust ladder). Not reverted.",
-            stacklevel=2,
-        )
-    return flags

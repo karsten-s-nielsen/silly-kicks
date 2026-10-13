@@ -40,23 +40,16 @@ FRAME_SCORING_ENTRIES = [
         "XCROSS_FEATURE_NAMES_FAITHFUL",
     ),
     ("silly_kicks.tracking._ghost_gk", "_serve_positions_core", "GhostGkModel", "GHOST_GK_FEATURE_NAMES"),
-    (
-        "silly_kicks.tracking._gk_completion",
-        "compute_gk_completion",
-        "GkCompletionModel",
-        "GK_COMPLETION_FEATURE_NAMES",
-    ),
 ]
 # frame-served fitted models with NO velocity feature (frame-served is fine; nothing to fabricate).
 # AST-verified against the feature constant by test_no_velocity_exemption_holds.
-_NO_VELOCITY_FEATURE = {"compute_gk_completion"}
+_NO_VELOCITY_FEATURE: set[str] = set()
 
 _TRACKING_DIR = Path(T.__file__).parent
 _MODEL_CLASS_NAMES = {
     "XShotOccurrenceModel",
     "XCrossAttemptModel",
     "GhostGkModel",
-    "GkCompletionModel",
     "GkRetentionModel",
 }
 
@@ -207,16 +200,6 @@ _GUARD_EXEMPT: dict[tuple[str, str], str] = {
     ),
     ("_model_eval", "_targets_deltas"): (
         "model-agnostic GK-substitution eval probe (ADR-037), not a production serve path"
-    ),
-    ("features", "add_gk_completion"): (
-        "aggregator over the velocity-FREE GkCompletionModel (no velocity feature to fabricate)"
-    ),
-    ("_xt_gk", "_completion_p"): ("scores the velocity-FREE GkCompletionModel (no velocity feature to fabricate)"),
-    ("_xt_gk", "_resolve_completion_for_frames"): (
-        "resolves the velocity-FREE GkCompletionModel (no velocity feature to fabricate)"
-    ),
-    ("_xt_gk", "compute_xt_gk"): (
-        "xt_gk v1 metric; scores the velocity-FREE GkCompletionModel (no velocity feature to fabricate)"
     ),
     ("_xshot_occurrence", "_resolve_xshot_model_for_frames"): (
         "velocity-keyed variant resolver (cat. d): returns (model, key), never extracts/predicts; the "

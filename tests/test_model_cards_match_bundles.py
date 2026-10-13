@@ -52,7 +52,7 @@ _HF_ONLY = {
     "xcross-attempt-v1": "_xcross_weights/default",
     "xcross-attempt-position-only-v1": "_xcross_weights/position_only",
 }
-_WHEEL_CARDS = ["_receiver_weights/default", "_gk_completion_weights/default", "_gk_completion_weights/skillcorner"]
+_WHEEL_CARDS = ["_receiver_weights/default"]
 
 
 def _card(name: str) -> str:

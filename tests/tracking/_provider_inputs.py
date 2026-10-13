@@ -82,7 +82,15 @@ def load_provider_frames(provider: str) -> pd.DataFrame:
         )
     df = pd.read_parquet(SLIM_DIR / f"{provider}_slim.parquet")
     frames = df[df["__kind"] == "frame"].drop(columns=["__kind"]).reset_index(drop=True)
-    return frames[[c for c in frames.columns if c in _FRAME_KEEP_COLS]].copy()
+    out = frames[[c for c in frames.columns if c in _FRAME_KEEP_COLS]].copy()
+    # The committed slims predate `visibility` preservation (the column is entirely null). The
+    # detection contract is that an UNDETECTED player is an ABSENT row, so every row PRESENT in a
+    # slim is a detected observation -> fill a null detection flag with True. This lets the TF-64
+    # detection-gate (ADR-109) no-op on these fixtures (the compute is exercised exactly as before),
+    # while the gate's undetected->NaN behaviour is covered by dedicated controlled-fixture tests.
+    if "visibility" in out.columns and out["visibility"].isna().all():
+        out["visibility"] = True
+    return out
 
 
 def _to_action_ltr(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.DataFrame:

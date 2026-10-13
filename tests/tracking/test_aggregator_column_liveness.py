@@ -628,7 +628,6 @@ ENTRIES: dict[str, object] = {
     "add_defensive_line": _std(F.add_defensive_line, n=4),
     "add_elastic_sync": _run_elastic_sync,
     "add_ghost_gk": _std(F.add_ghost_gk, home_team_id=5),
-    "add_gk_completion": _std(F.add_gk_completion),
     "add_gk_influence": _xtf_map(F.add_gk_influence),
     "add_gradientsports_player_ids": _run_gradientsports_player_ids,
     "add_line_break": _std(F.add_line_break),
@@ -664,7 +663,6 @@ ENTRIES: dict[str, object] = {
     "add_team_shape": _std(F.add_team_shape),
     "add_xcross_attempt": _std(tracking.add_xcross_attempt, home_team_id=5),
     "add_xshot_occurrence": _std(tracking.add_xshot_occurrence, home_team_id=5),
-    "add_xt_gk": _xtf_nohome(F.add_xt_gk),
 }
 
 
@@ -738,20 +736,12 @@ def test_aggregator_columns_live(name):
     # columns are exempt: object/bool/int by dtype, plus the four documented
     # linkage-provenance floats (legitimately constant when every action links at
     # offset 0 / quality 1; their merge semantics are gated by the provenance-skip
-    # guard, not here). The four xT-GK resolved-coordinate AUDIT floats
-    # (xt_gk_origin_x/_y, xt_gk_dest_x/_y) are provenance too — they are the coords the
-    # grid lookups used, NOT a metric, and are legitimately constant across goal-kicks
-    # that share the (5.5, 34) rule-point origin (~67% of real goal-kicks are imputed).
-    # The non-null check above still applies. The check targets metrics.
+    # guard, not here). The non-null check above still applies. The check targets metrics.
     provenance = {
         "frame_id",
         "time_offset_seconds",
         "link_quality_score",
         "n_candidate_frames",
-        "xt_gk_origin_x",
-        "xt_gk_origin_y",
-        "xt_gk_dest_x",
-        "xt_gk_dest_y",
     }
     declared = STRUCTURAL_CONSTANTS.get(name, {})
     flat = [

@@ -24,7 +24,7 @@ pytestmark = pytest.mark.e2e
 
 #: Geometry/positional companioned aggregators that score on velocity-less freeze-frames with only
 #: (actions, frames, links, visible_area) -- no fitted model / xt / xg input. Deliberately excludes
-#: add_player_influence / add_xt_gk / add_defensive_credit (model/grid inputs) to keep the e2e robust;
+#: add_player_influence / add_defensive_credit (model/grid inputs) to keep the e2e robust;
 #: their companions are covered by the committed FOV unit tests + the licensed-corpus driver.
 _MODEL_FREE_COMPANIONED = (
     "add_action_context",
@@ -158,7 +158,7 @@ def test_fov_companions_are_live_and_honest_on_the_licensed_corpus():
         pytest.skip("no fov_cropped match in the loaded licensed corpus -- nothing to assert")
     # The corpus-level floor for the looped aggregators (any one may skip on a given match): these two
     # asserts are the ONLY guarantee here that a companion was scored + is live. Per-aggregator presence
-    # for the model-input families deliberately left out of this loop (add_player_influence / add_xt_gk /
+    # for the model-input families deliberately left out of this loop (add_player_influence /
     # add_defensive_credit) is covered by the committed FOV unit tests, not this owner-run backstop.
     assert any_companion_scored, "no FOV companion column was scored on any cropped licensed match"
     assert any_partial_across_corpus, (

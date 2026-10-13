@@ -60,10 +60,10 @@ _UNPROVENANCED: dict[str, str] = {
         "same as its prefix sibling: provenance lives at `_provenance.commit`."
     ),
     "docs/research/xtgk_comparability/comparability_report.json": (
-        "written by `scripts/_xtgk_comparability.py`, a PRIVATE module -- underscore-prefixed, so "
-        "it is outside the artifact-driver population by construction and no source-side gate can "
-        "reach it. A genuine gap, recorded here so it is visible; closing it means giving the "
-        "comparability pass a public driver."
+        "an ORPHANED committed record: its producing private driver (`scripts/_xtgk_comparability.py`) "
+        "was retired together with xT-GK v1, so nothing re-emits it and no source-side gate can reach "
+        "it. The report itself is a historical artifact kept for the record; it carries no run "
+        "provenance and has no live driver to stamp one."
     ),
     "docs/research/xtgk_possession_value/gate.json": (
         "produced by `validate_xtgk_possession_value`, which Cycle B wired to the provenance guard "

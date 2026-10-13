@@ -125,9 +125,7 @@ _M_VISIBILITY = "silly_kicks.tracking._visibility"
 _M_ELASTIC = "silly_kicks.tracking._elastic_sync"
 _M_GK_GEOMETRY = "silly_kicks.tracking._gk_geometry"
 _M_GK_RESOLVE = "silly_kicks.tracking._gk_resolve"
-_M_GK_COMPLETION = "silly_kicks.tracking._gk_completion"
 _M_GHOST_GK = "silly_kicks.tracking._ghost_gk"
-_M_XT_GK = "silly_kicks.tracking._xt_gk"
 _M_DEFENSIVE_CREDIT = "silly_kicks.tracking.defensive_credit._orchestration"
 _M_PRESS_COMMITMENT = "silly_kicks.tracking._press_commitment"
 _M_XSHOT = "silly_kicks.tracking._xshot_occurrence"
@@ -155,7 +153,6 @@ _A_ANZER_BAUER = "Anzer, G., & Bauer, P. (2021)"  # shot xG / GK-position / xGOT
 _A_LUCEY = "Lucey, P., Bialkowski, A."  # defenders-in-triangle / nearest-defender
 _A_POWER = "Power, P., Ruiz, H."  # receiver-zone risk/reward
 _A_ELASTIC = "arXiv:2608.30227"  # Kim 2026 ELASTIC v2 (extended Needleman-Wunsch)
-_A_GK_GEOMETRY = "Eyestone, J. (2025)"  # xT-GK
 _A_GHOST_GK = "arXiv:2406.17220"  # Dutta 2024 NFL Ghosts (RFCDE density ghosting)
 _A_DEFENSIVE_CREDIT = "arXiv:2606.19931"  # Bischofberger 2026 xDT turnover sizing
 _A_PRESS_COMMITMENT = "TF-51 v2 pressure-commitment cue"  # practitioner concept (PSG/Luis Enrique; Sumpter)
@@ -1094,7 +1091,9 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     FeatureColumn(
         name="gk_pitch_control_share_weighted",
         definition=(
-            "Defending goalkeeper's threat-weighted share of pitch control at the frame (dominance where it matters)."
+            "Defending goalkeeper's threat-weighted share of pitch control at the frame (dominance where it matters). "
+            "Data quality: honest-NaN when the keeper is not detected on a detection-aware provider "
+            "(SkillCorner), rather than computed from an extrapolated position (TF-64/ADR-109)."
         ),
         unit="ratio",
         emitting_module=_M_GK_INFLUENCE,
@@ -1102,21 +1101,33 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     ),
     FeatureColumn(
         name="gk_reachable_area_m2",
-        definition="Pitch area (m^2) the defending goalkeeper uniquely reaches first at the frame.",
+        definition=(
+            "Pitch area (m^2) the defending goalkeeper uniquely reaches first at the frame. "
+            "Data quality: honest-NaN when the keeper is not detected on a detection-aware provider "
+            "(SkillCorner), rather than computed from an extrapolated position (TF-64/ADR-109)."
+        ),
         unit="m^2",
         emitting_module=_M_GK_INFLUENCE,
         attribution=_A_SPEARMAN_2018,
     ),
     FeatureColumn(
         name="gk_closing_time_min_s__six_yard_box",
-        definition="Minimum time (s) for the defending goalkeeper to reach the six-yard-box zone.",
+        definition=(
+            "Minimum time (s) for the defending goalkeeper to reach the six-yard-box zone. "
+            "Data quality: honest-NaN when the keeper is not detected on a detection-aware provider "
+            "(SkillCorner), rather than computed from an extrapolated position (TF-64/ADR-109)."
+        ),
         unit="seconds",
         emitting_module=_M_GK_INFLUENCE,
         attribution=_A_SPEARMAN_2018,
     ),
     FeatureColumn(
         name="gk_closing_time_mean_s__six_yard_box",
-        definition="Mean time (s) for the defending goalkeeper to reach points across the six-yard-box zone.",
+        definition=(
+            "Mean time (s) for the defending goalkeeper to reach points across the six-yard-box zone. "
+            "Data quality: honest-NaN when the keeper is not detected on a detection-aware provider "
+            "(SkillCorner), rather than computed from an extrapolated position (TF-64/ADR-109)."
+        ),
         unit="seconds",
         emitting_module=_M_GK_INFLUENCE,
         attribution=_A_SPEARMAN_2018,
@@ -1477,14 +1488,6 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="xT",
         emitting_module=_M_SPADL_UTILS,
     ),
-    # -- GK distribution completion model -------------------------------------------------------
-    FeatureColumn(
-        name="gk_completion",
-        definition="Modelled probability that the goalkeeper's distribution is completed to a teammate.",
-        unit="probability",
-        emitting_module=_M_GK_COMPLETION,
-        higher_is_better=True,
-    ),
     # -- Ghost-GK positioning model (TF-18) -----------------------------------------------------
     FeatureColumn(
         name="ghost_gk_x",
@@ -1517,126 +1520,6 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="dimensionless",
         emitting_module=_M_GHOST_GK,
         attribution=_A_GHOST_GK,
-    ),
-    # -- xT-GK v1 (Eyestone) --------------------------------------------------------------------
-    FeatureColumn(
-        name="xt_gk",
-        definition="Expected Threat for Goalkeepers: composite value of a goalkeeper distribution action.",
-        unit="xT",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_base",
-        definition="Origin term of xT-GK: negative expected threat of the ball's starting zone.",
-        unit="xT",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_pev",
-        definition="Pressure-Escape Value: threat gained by moving the ball to a safer zone under pressure.",
-        unit="xT",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_rav",
-        definition=(
-            "Risk-Adjusted Value: completion-probability-weighted expected threat of the distribution's destination."
-        ),
-        unit="xT",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_dzv",
-        definition="Defensive-Zone Value: revaluation increment applied to distributions from deep defensive zones.",
-        unit="xT",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_pressure",
-        definition="Pressure on the goalkeeper at the moment of distribution (feeds the pressure-escape term).",
-        unit="dimensionless",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_origin_x",
-        definition=(
-            "Resolved x-coordinate (m) of the distribution's origin used for the grid lookup (often imputed for "
-            "goal-kicks)."
-        ),
-        unit="metres",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_origin_y",
-        definition="Resolved y-coordinate (m) of the distribution's origin used for the grid lookup.",
-        unit="metres",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_dest_x",
-        definition="Resolved x-coordinate (m) of the distribution's destination used for the grid lookup.",
-        unit="metres",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_dest_y",
-        definition="Resolved y-coordinate (m) of the distribution's destination used for the grid lookup.",
-        unit="metres",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_origin_source",
-        definition=(
-            "Provenance tier of the resolved origin (native / tracking_gk / goalkick_prior / next_event / unresolved)."
-        ),
-        unit="dimensionless",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_dest_source",
-        definition="Provenance tier of the resolved destination (native / next_event / unresolved).",
-        unit="dimensionless",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_origin_confidence",
-        definition="Confidence (0-1) of the resolved origin coordinate.",
-        unit="ratio",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_completion_variant",
-        definition="Which completion-model variant scored the distribution (e.g. gs / skillcorner).",
-        unit="dimensionless",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_completion_source",
-        definition="Whether the completion probability came from the model or a per-type base rate.",
-        unit="dimensionless",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
-    ),
-    FeatureColumn(
-        name="xt_gk_native_goalkick_out_of_region",
-        definition="Data-quality flag: True if the provider's native goal-kick origin fell outside the goal area.",
-        unit="dimensionless",
-        emitting_module=_M_XT_GK,
-        attribution=_A_GK_GEOMETRY,
     ),
     # -- Per-event defensive credit (TF-51) -----------------------------------------------------
     FeatureColumn(
@@ -2184,7 +2067,11 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         definition=(
             "GK build-up decision value: EV(chosen distribution option) minus the mean EV of the options "
             "available -- positive = the keeper chose a better-than-average option (EV = pass-completion x "
-            "(1 + opponents bypassed)). Scores the CHOICE, normalising out the team-created option set."
+            "(1 + opponents bypassed)). Scores the CHOICE, normalising out the team-created option set. "
+            "Data quality (TF-64): the SkillCorner NATIVE tier reads the vendor's opaque Game-Intelligence "
+            "feed, not an auditable frame keeper row, so its per-detection quality cannot be verified -- "
+            "treat native-tier GK decisions on SkillCorner as caveat-only. The reconstruction tier IS "
+            "detection-gated (undetected keeper -> counted drop, ADR-109)."
         ),
         unit="dimensionless",
         emitting_module=_M_GK_DECISION,

@@ -25,7 +25,6 @@ _FRAME_GEOMETRY_MODELS = [
     "GhostGkModel",
     "GhostOutfieldModel",
     "ReceiverModel",
-    "GkCompletionModel",
 ]
 
 

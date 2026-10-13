@@ -21,6 +21,7 @@ from silly_kicks.tracking import (
     compute_pitch_control,
     compute_threat_pc,
     compute_threat_pc_batch,
+    keeper_detected,
     zero_velocity_if_unavailable,
 )
 
@@ -48,12 +49,33 @@ def _zone(ctx, params):
 
 
 def _resolve_a_keeper_id(frame_rows, team_id):
-    """The player_id of team A's keeper in this frame, or None if not exactly one is observed."""
+    """The player_id of team A's keeper in this frame, or None if not exactly one is observed.
+
+    Detection-AGNOSTIC (restored): this id is used to REMOVE the keeper for the GK-blind
+    ``rd_danger_behind_line`` counterfactual, which must stay keeper-blind regardless of detection --
+    removing a row never consumes its position, so there is no E7 hazard here. The TF-64 gate lives
+    in :func:`_detected_a_keeper_id`, used only by the keeper-POSITION-reading metrics.
+    """
     if "is_goalkeeper" not in frame_rows.columns:
         return None
     mask = ids_match(frame_rows["team_id"], team_id).to_numpy() & bool_flag(frame_rows["is_goalkeeper"])
     ids = frame_rows.loc[mask, "player_id"].dropna().unique()
     return ids[0] if len(ids) == 1 else None
+
+
+def _detected_a_keeper_id(frame_rows, team_id):
+    """Team A's keeper id for the keeper-POSITION-reading Layer-2 metrics (``rd_danger_behind_line_gk``
+    / ``rd_gk_coverage_behind_line`` / ``rd_gk_reachable_coverage_m2``), or None when it must honest-NaN.
+
+    TF-64 detection-gate: returns the resolved id iff the keeper is DETECTED; None when absent/ambiguous
+    OR present-but-undetected on a detection-aware provider (SkillCorner) -- so those metrics NaN instead
+    of consuming an ~80%-extrapolated position (E7, ADR-109). Fully-observed / snapshot / unclassified
+    providers pass through (keeper_detected returns True), so the gate no-ops there.
+    """
+    a = _resolve_a_keeper_id(frame_rows, team_id)
+    if a is None:
+        return None
+    return a if keeper_detected(frame_rows, a) is True else None
 
 
 def _gk_share_in_zone(surface, gk_id, team_id, lo, hi):
@@ -110,7 +132,8 @@ def layer2_metrics(frame_rows, ctx, *, xt, goal_map, params, pitch_control_cache
         return out
     lo, hi = zone
     frame = zero_velocity_if_unavailable(frame_rows, method=_SPEARMAN)
-    a_keeper = _resolve_a_keeper_id(frame, ctx.team_id)
+    a_keeper = _resolve_a_keeper_id(frame, ctx.team_id)  # ungated id, for the GK-blind keeper removal
+    a_keeper_pos = _detected_a_keeper_id(frame, ctx.team_id)  # TF-64-gated, for keeper-position reads
 
     # #1 space control + #4 gk coverage share (ONE canonical decompose surface for team A).
     # Cacheable: the frame is UNMODIFIED and attacking=A is canonical, so cache.surface (keyed on
@@ -122,8 +145,8 @@ def layer2_metrics(frame_rows, ctx, *, xt, goal_map, params, pitch_control_cache
             else compute_pitch_control(frame, ctx.team_id, method=_SPEARMAN, decompose=True)
         )
         out[RD_ATTACKER_SPACE_CONTROL] = 1.0 - surf_a.control_in_region(lo, hi, 0.0, _PITCH_HEIGHT)
-        if a_keeper is not None:
-            out[RD_GK_COVERAGE_BEHIND_LINE] = _gk_share_in_zone(surf_a, a_keeper, ctx.team_id, lo, hi)
+        if a_keeper_pos is not None:
+            out[RD_GK_COVERAGE_BEHIND_LINE] = _gk_share_in_zone(surf_a, a_keeper_pos, ctx.team_id, lo, hi)
     except (GoalEndUnresolvedError, ValueError):
         pass
 
@@ -138,7 +161,7 @@ def layer2_metrics(frame_rows, ctx, *, xt, goal_map, params, pitch_control_cache
         try:
             out[RD_DANGER_BEHIND_LINE_GK] = (
                 compute_threat_pc(frame, attacking_team_id=ctx.opponent_id, xt=xt, goal_map=goal_map, field_weight=w)
-                if a_keeper is not None
+                if a_keeper_pos is not None
                 else _NAN
             )
             frame_no_gk = frame[~ids_match(frame["player_id"], a_keeper).to_numpy()] if a_keeper is not None else frame
@@ -149,12 +172,12 @@ def layer2_metrics(frame_rows, ctx, *, xt, goal_map, params, pitch_control_cache
             pass
 
     # #5 reachable ∩ Z (needs xt for the compute_gk_influence seam; the reachable value itself ignores xt)
-    if a_keeper is not None:
+    if a_keeper_pos is not None:
         try:
             out[RD_GK_REACHABLE_COVERAGE_M2] = compute_gk_influence(
                 frame,
                 attacking_team_id=ctx.opponent_id,
-                gk_player_id=a_keeper,
+                gk_player_id=a_keeper_pos,
                 xt=xt,
                 goal_map=goal_map,
                 region=(lo, hi, 0.0, _PITCH_HEIGHT),
@@ -184,15 +207,16 @@ def batch_threat_values(prepared, *, xt, goal_map, params):
             plan.append(None)
             continue
         frame = zero_velocity_if_unavailable(frame_rows, method=_SPEARMAN)
-        a_keeper = _resolve_a_keeper_id(frame, ctx.team_id)
+        a_keeper = _resolve_a_keeper_id(frame, ctx.team_id)  # ungated id, for the GK-blind removal
+        a_keeper_pos = _detected_a_keeper_id(frame, ctx.team_id)  # TF-64-gated, for the GK-included leg
         w = build_w_field(ctx.own_goal_x, params.w_field_params) if params.danger_field_weight else None
         gk_idx = None
-        if a_keeper is not None:
+        if a_keeper_pos is not None:
             gk_idx = len(items)
             items.append((frame, ctx.opponent_id, goal_map, w))
-            frame_no_gk = frame[~ids_match(frame["player_id"], a_keeper).to_numpy()]
-        else:
-            frame_no_gk = frame
+        # The GK-blind leg removes the keeper by its detection-AGNOSTIC id (removing a row consumes no
+        # position -> no E7), so it stays keeper-blind whether or not the keeper was detected.
+        frame_no_gk = frame[~ids_match(frame["player_id"], a_keeper).to_numpy()] if a_keeper is not None else frame
         blind_idx = len(items)
         items.append((frame_no_gk, ctx.opponent_id, goal_map, w))
         plan.append((gk_idx, blind_idx))

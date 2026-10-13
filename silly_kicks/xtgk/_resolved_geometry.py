@@ -6,8 +6,8 @@ The GK-distribution domain's canonical SPADL coords are NOT trustworthy:
 * **SkillCorner** -- the native goal-kick origin is the broadcast BALL detection, not the keeper
   (ADR-024 / PR-S104): PRESENT, finite, and ~10-20 m wrong.
 
-v1 (``tracking/_xt_gk.py``) resolves both via ``resolve_gk_geometry``, and the lakehouse persists the
-result as ``fct_action_context.xt_gk_origin_x/_y`` + ``xt_gk_dest_x/_y`` (PR-S101). v2 never read
+The retired v1 xT-GK (ADR-121) resolved both via its own geometry helper, and the lakehouse persists
+the result as ``fct_action_context.xt_gk_origin_x/_y`` + ``xt_gk_dest_x/_y`` (PR-S101). v2 never read
 them. This module is the ONE callable that injects them, so the rule lives in a single place rather
 than as a prose contract two consumers must each re-derive -- which is exactly how the bug happened.
 

@@ -1,8 +1,8 @@
 """Train the GK-distribution retention model (rho) for xT-GK v2 (ADR-036 SPart 3).
 
-Mirror of train_gk_completion.py, but the label is retains() (NOT completion) and EVERY shipped
-variant is calibration-gated (ece<=0.10 AND |reliability_slope-1|<=0.25). GS(WC2022) 'default' +
-SkillCorner variant via the same GS-transfer-or-bundle decision. The __main__ owner-run (real
+Structured like the house per-variant distribution trainers, but the label is retains() (NOT
+completion) and EVERY shipped variant is calibration-gated (ece<=0.10 AND |reliability_slope-1|<=0.25).
+GS(WC2022) 'default' + SkillCorner variant via the same GS-transfer-or-bundle decision. The __main__ owner-run (real
 pining/Databricks load, per-variant fit + gate, save under _retention_weights/) is NOT exercised in
 CI -- only the pure prepare/gate/CV helpers below are unit-tested.
 """

@@ -195,28 +195,3 @@ def test_public_export_and_docstring_example():
 
     assert "gk_distribution_mask" in T.__all__
     assert T.gk_distribution_mask is gk_distribution_mask
-
-
-def test_v1_shim_byte_identical_golden():
-    """The frozen v1 _gk_distribution_mask must equal a pinned golden that INCLUDES a native GK
-    open-play pass (exercises is_open & actor_is_gk, not just the goal-kick term)."""
-    from silly_kicks.tracking._xt_gk import _gk_distribution_mask
-
-    actions = pd.DataFrame(
-        [
-            _action(0, _GOALKICK, 10, 5, 10.0),  # goalkick by non-GK -> True
-            _action(1, _PASS, 1, 5, 20.0),  # GK open-play pass -> True (the risky branch)
-            _action(2, _PASS, 10, 5, 20.0),  # outfielder pass -> False
-            _action(3, _SHOT, 1, 5, 20.0),  # GK shot -> False
-            _action(4, _THROW_IN, 1, 5, 20.0),  # GK throw-in -> True
-        ]
-    )
-    out = _gk_distribution_mask(actions, _one_keeper_frames())
-    golden = np.array([True, True, False, False, True])
-    assert isinstance(out, np.ndarray) and out.dtype == np.bool_
-    assert out.tolist() == golden.tolist()
-    # The golden is non-trivial on the GK-pass branch (rows 1 & 4 are non-goalkick True):
-    non_goalkick_true = out[[1, 2, 3, 4]].sum()
-    assert non_goalkick_true == 2  # rows 1 (pass) and 4 (throw_in)
-    # And equals the public native path exactly:
-    assert out.tolist() == gk_distribution_mask(actions, _one_keeper_frames(), resolve_gk="native").tolist()

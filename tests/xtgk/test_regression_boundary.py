@@ -27,18 +27,3 @@ def test_v2_metric_does_not_import_v1_xt_gk():
 
     src = inspect.getsource(v2_metric)
     assert "tracking._xt_gk" not in src and "tracking/_xt_gk" not in src
-
-
-def test_v1_output_columns_unchanged():
-    # Guard: v2 landing must not change v1 output column names (lakehouse/UI Hyrum).
-    from silly_kicks.tracking import _xt_gk as v1
-
-    assert v1._OUTPUT_COLS == ["xt_gk_base", "xt_gk_pev", "xt_gk_rav", "xt_gk_dzv", "xt_gk_pressure", "xt_gk"]
-
-
-def test_v2_columns_disjoint_from_frozen_v1_columns():
-    # H1: v2 must NOT reuse v1's xt_gk_pev/rav/dzv (frozen, lakehouse/UI-read).
-    from silly_kicks.tracking import _xt_gk as v1
-    from silly_kicks.xtgk import _metric as v2
-
-    assert set(v1._OUTPUT_COLS).isdisjoint(set(v2._OUTPUT_COLS))

@@ -124,9 +124,11 @@ def detected_mask(visibility: pd.Series, *, provider: str, assume_observed: bool
       (:func:`assert_detection_aware_visibility`), then ``visibility.fillna(False)`` (detected
       ``True``; extrapolated / per-row-null ``False``).
 
-    PRIVATE symbol (this module is single-underscore). Its only consumer here is the intra-``tracking``
-    :func:`keeper_detection_mask`; future cross-package consumers (TF-58, the GK detection-gate) add
-    their own ``docs/PRIVATE_CONSUMERS.md`` allowlist rows in their PRs (D1-PLAN-07).
+    PUBLIC (exported via ``silly_kicks.tracking.__all__``): the shared detection primitive for every
+    consumer -- the intra-``tracking`` :func:`keeper_detection_mask`, the TF-64 keeper-row wrappers,
+    and cross-package vectorized consumers (gkdv's detected-keeper presence set). Exported rather than
+    kept private so cross-package callers import a public seam (the GK detection-gate S3 decision)
+    instead of a ``docs/PRIVATE_CONSUMERS.md`` allowlist row on a single-underscore module.
     """
     validate_provider(provider)
     if assume_observed:
@@ -135,3 +137,96 @@ def detected_mask(visibility: pd.Series, *, provider: str, assume_observed: bool
         return np.ones(len(visibility), dtype=bool)
     assert_detection_aware_visibility(visibility, provider=provider)
     return visibility.fillna(False).astype(bool).to_numpy()
+
+
+# --- TF-64 GK detection-gate: public keeper-row wrappers over detected_mask (ADR-109) -----------
+# The keeper-metric wiring ADR-109 explicitly deferred ("the ~14 GK outputs ... a separate, later
+# change"). These two wrappers are that seam: a keeper-position consumer passes the frame it already
+# holds, and the wrapper returns the defending keeper's detected position (or NaN) / a per-keeper
+# detection verdict, so an undetected SkillCorner keeper goes honest-NaN/drop instead of being read
+# as an ~80%-extrapolated position (anti-pattern E7).
+
+
+def detection_aware_provider(frames: pd.DataFrame) -> str | None:
+    """The detection-aware provider of a frame slice, or ``None`` when the slice is not gated.
+
+    The keeper detection-gate ACTIVATES only for a provider in :data:`_DETECTION_AWARE_PROVIDERS`
+    (currently ``skillcorner``). Every other frame set -- fully observed, SB360 ``snapshot``, or a
+    ``source_provider`` this taxonomy does not classify (synthetic test fixtures, a not-yet-wired
+    feed) -- is read AS-OBSERVED, byte-identical to the pre-gate behaviour (spec §2 scope = SkillCorner;
+    test 5 "fully-observed unaffected"). Returns the detection-aware provider name present in the
+    slice (so a caller can hand it to :func:`detected_mask`), else ``None``.
+
+    Deliberately NON-raising on an unclassified ``source_provider`` (unlike :func:`validate_provider`):
+    a keeper-metric consumer must not crash on an arbitrary provider, and the gate only engages for
+    the one detection-aware feed. A detection-aware provider ALWAYS stamps ``source_provider`` (the
+    native builder / materializer contract), so a real SkillCorner slice is never silently un-gated;
+    the discarded-flag build error stays fail-loud at the materializer guard and inside
+    :func:`detected_mask` (the entirely-null trap), which the gate reaches only for ``skillcorner``.
+    """
+    if "source_provider" not in frames.columns:
+        return None
+    provs = {str(p).lower() for p in pd.unique(frames["source_provider"].dropna())}
+    hit = sorted(provs & _DETECTION_AWARE_PROVIDERS)
+    return hit[0] if hit else None
+
+
+def _keeper_rows_verdict(
+    keeper_rows: pd.DataFrame, *, provider: str | None, assume_keeper_observed: bool
+) -> bool | None:
+    """Shared verdict for the defending-keeper candidate rows of ONE frame (spec §3.1).
+
+    ``keeper_rows`` is the already-filtered keeper candidate set (the caller selects ``is_goalkeeper &
+    ~is_ball``, optionally for one team). ``provider`` is the detection-aware provider name (from
+    :func:`detection_aware_provider`) or ``None`` (the slice is not gated). Returns ``True`` (detected
+    / observed), ``False`` (detection-aware, keeper present but NOT detected -> extrapolated), or
+    ``None`` (keeper row absent or not exactly one -> not-observed; **never** read as observed).
+
+    - ``provider is None`` (not detection-aware) or ``assume_keeper_observed=True`` (the general
+      opt-out; logged by the caller, never default) -> ``True`` iff exactly one keeper row, else
+      ``None`` (no detection flag to consult).
+    - detection-aware: exactly one keeper row required (else ``None``); the verdict is
+      :func:`detected_mask` over that row's ``visibility`` (a present-but-entirely-null flag raises,
+      surfacing a discarded detection flag; ADR-109).
+    """
+    if provider is None or assume_keeper_observed:
+        return True if len(keeper_rows) == 1 else None
+    if len(keeper_rows) != 1:
+        return None
+    return bool(detected_mask(keeper_rows["visibility"], provider=provider)[0])
+
+
+def keeper_detected(frame_rows: pd.DataFrame, gk_id: object, *, assume_keeper_observed: bool = False) -> bool | None:
+    """Was keeper ``gk_id`` actually DETECTED in ``frame_rows``? (spec §3.1, ADR-109).
+
+    ``frame_rows`` is the frame (all players, carrying ``source_provider``); the keeper row is
+    selected by ``gk_id`` (dtype-safe via :func:`silly_kicks.id_compat.ids_match`, never raw ``==``)
+    and ``~is_ball``, the provider derived via :func:`detection_aware_provider`. Returns ``True`` /
+    ``False`` / ``None``. **Callers must map BOTH ``False`` and ``None`` to honest-NaN/drop** --
+    treating ``None`` ("not observed") as observed is the fail-OPEN E7 hole this forbids.
+    """
+    from silly_kicks.id_compat import ids_match
+
+    provider = detection_aware_provider(frame_rows)
+    kr = frame_rows[~frame_rows["is_ball"].astype(bool) & ids_match(frame_rows["player_id"], gk_id).to_numpy()]
+    return _keeper_rows_verdict(kr, provider=provider, assume_keeper_observed=assume_keeper_observed)
+
+
+def resolve_detected_keeper_xy(
+    frame_rows: pd.DataFrame, *, assume_keeper_observed: bool = False
+) -> tuple[float, float]:
+    """The DETECTED defending-keeper position in ``frame_rows``, or ``(nan, nan)`` (spec §3.1).
+
+    ``frame_rows`` is the keeper candidate set for one team (caller pre-filters ``is_goalkeeper``, as
+    the existing ``_gk_x``/``defending_gk_rows`` sites already do; ``~is_ball`` is enforced here). The
+    provider is derived from the slice via :func:`detection_aware_provider`. Returns the single
+    detected keeper's ``(x, y)``; returns ``(nan, nan)`` when the keeper is absent, ambiguous (not
+    exactly one), or present-but-undetected on a detection-aware provider -- so the dependent metric
+    honest-NaNs rather than consuming an extrapolated position.
+    """
+    provider = detection_aware_provider(frame_rows)
+    kr = frame_rows[frame_rows["is_goalkeeper"].astype(bool) & ~frame_rows["is_ball"].astype(bool)]
+    if _keeper_rows_verdict(kr, provider=provider, assume_keeper_observed=assume_keeper_observed) is not True:
+        return (float("nan"), float("nan"))
+    row = kr.iloc[0]
+    return (float(row["x"]), float(row["y"]))

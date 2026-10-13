@@ -1,8 +1,8 @@
 """RetentionModel port + GkRetentionModel adapter (ADR-036 §Part 3).
 
-P(retain | s,a) for GK distributions. Injected into the v2 metric (same discipline as
-compute_xt_gk's completion=). Jeffrey's xR-GK later = a second adapter satisfying this port.
-Logistic, sklearn at fit, pure-numpy serve, pickle-free JSON+SHA256 -- mirrors GkCompletionModel.
+P(retain | s,a) for GK distributions. Injected into the v2 metric as a port-satisfying adapter.
+Jeffrey's xR-GK later = a second adapter satisfying this port.
+Logistic, sklearn at fit, pure-numpy serve, pickle-free JSON+SHA256 (the house model convention).
 """
 
 from __future__ import annotations

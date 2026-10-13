@@ -32,6 +32,7 @@ from silly_kicks.tracking import (
     GoalMap,
     action_ltr_goal_map,
     compute_packing_metrics_batch,
+    keeper_detected,
     link_actions_to_frames,
     region_observed_fraction,
     resolve_defended_goals,
@@ -101,7 +102,7 @@ class ReconstructedOptionSet:
         # once (pinned over the whole unit) so windowed scoring does not re-estimate it per window;
         # None -> resolved from frames in option_rows() (byte-identical for a whole-unit caller).
         self._goal_map = goal_map
-        self._drops = {"no_frame": 0, "fov_cropped": 0}
+        self._drops = {"no_frame": 0, "fov_cropped": 0, "keeper_undetected": 0}
         self._link_cache: pd.DataFrame | None = None
 
     def drop_counts(self) -> dict[str, int]:
@@ -177,6 +178,13 @@ class ReconstructedOptionSet:
             krow = frame[frame["is_actor"].astype("boolean").fillna(False).to_numpy(dtype=bool)]
         if krow.empty:
             self._drops["no_frame"] += 1
+            return None
+        if keeper_detected(frame, a["player_id"]) is not True:
+            # TF-64 detection-gate: keeper present-but-undetected on a detection-aware provider
+            # (SkillCorner) -> a counted drop parallel to fov_cropped; never value a reconstruction
+            # on an ~80%-extrapolated keeper position (E7, ADR-109). SB360 ("snapshot") + fully
+            # observed feeds are not detection-aware -> never dropped here.
+            self._drops["keeper_undetected"] += 1
             return None
         keeper_xy = (float(krow.iloc[0]["x"]), float(krow.iloc[0]["y"]))
         if self._visible_area is not None:  # ADR-077 FOV completeness around the keeper neighbourhood
@@ -263,7 +271,7 @@ class ReconstructedOptionSet:
             rows = reconstructed_option_set.option_rows()
         """
         acts = self._actions[ids_isin(self._actions["player_id"], self._keeper_ids).to_numpy()]
-        self._drops = {"no_frame": 0, "fov_cropped": 0}
+        self._drops = {"no_frame": 0, "fov_cropped": 0, "keeper_undetected": 0}
         self._link_cache = None
         match_map = None
         if self._convention == "match_ltr":

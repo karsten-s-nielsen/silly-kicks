@@ -281,7 +281,11 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: which were not evidence (same shape as the ADR-051 packing re-key at 45 -> 49). `das_source` moves
 #: `differs` -> `identical` on gk_absent (both legs emit the same unscoreable token), NOT a not_exercised
 #: tuple. defender_absent / gk_one_end keep one keeper -> the map resolves -> unchanged (all_nan / differs).
-NOT_EXERCISED_BUDGET = 49
+#: RAISED 49 -> 51 by the TF-64 GK detection-gate (ADR-109): the keeper-inclusive Layer-1 headcounts
+#: `rd_num_superiority_gk` + `rd_zone_occupancy` now honest-NaN on `gk_absent` (no keeper to include ->
+#: None -> NaN) instead of silently equalling the keeper-free count (+2, gk_absent ONLY). Same honest
+#: coverage-loss shape as the DAS re-key above; the keeper-free `rd_num_superiority` is unaffected.
+NOT_EXERCISED_BUDGET = 51
 
 
 def _entry(

@@ -214,30 +214,6 @@ def link_zones_support_region(i, ctx: RegionCtx):
     return _kernels._inscribed_disk(cx, cy, float(ctx.extras["link_effective_radius"]))
 
 
-def xt_gk_pressure_region(i, ctx: RegionCtx):
-    """Method-dispatched pressure ROI for the xT-GK pressure-bearing columns (ADR-077, Task 5).
-
-    ``compute_xt_gk`` derives both ``rho`` (``xt_gk_pressure``) and the PEV forward gain
-    (``xt_gk_pev``) through ``pressure_on_actor(method=params.pressure_method)`` centred on the
-    RESOLVED GK origin (``xt_gk_origin_x/_y``), NOT the raw ``start_x`` -- so the observability
-    region is the SAME region that pressure method integrates over. The method is dispatched PER
-    ACTION from ``ctx.extras['pressure_method']`` so the registry entry stays STATIC (P7):
-
-    * ``andrienko_oval`` -> the directional oval (:func:`andrienko_oval_region`).
-    * ``link_zones``     -> the effective-support disk (:func:`link_zones_support_region`).
-    * ``bekkers_pi`` / anything unsupported -> :data:`_NO_REGION` (``degenerate_region``): Bekkers
-      Pressing Intensity is a velocity-derived TTI model with no fixed spatial ROI, and on the
-      velocity-less freeze frames this seam serves it is honest-NaN anyway -- there is no region
-      to observe.
-    """
-    method = ctx.extras["pressure_method"]
-    if method == "andrienko_oval":
-        return andrienko_oval_region(i, ctx)
-    if method == "link_zones":
-        return link_zones_support_region(i, ctx)
-    return _NO_REGION
-
-
 #: Full pitch height for the packing band (``add_visible_area_coverage`` uses the same source).
 _PITCH_WIDTH = float(spadlconfig.field_width)
 
@@ -546,27 +522,8 @@ OBSERVABILITY_REGISTRY: dict[str, tuple[ObservabilityEntry, ...]] = {
     # ``off_ball_xt_team`` = the ATTACKING/possession team's off-ball threat -> its attacking half
     # (HIGH end). The other player-influence columns are not region-based counts and are uncompanioned.
     "add_player_influence": (ObservabilityEntry("off_ball_xt_team", attacking_half_region),),
-    # xT-GK pressure-bearing columns (Task 5): ``rho`` (xt_gk_pressure) AND the PEV forward gain
-    # (xt_gk_pev) both flow through ``pressure_on_actor`` centred on the RESOLVED GK origin, so both
-    # take the method-dispatched pressure ROI. The GK-geometry / completion columns
-    # (xt_gk_base/_rav/_dzv) are NOT pressure-region-dependent -> uncompanioned; the composite
-    # ``xt_gk`` is EXEMPT (below, M1). ``ctx.extras`` carries pressure_method + the oval/link radii.
-    "add_xt_gk": (
-        ObservabilityEntry("xt_gk_pressure", xt_gk_pressure_region),
-        ObservabilityEntry("xt_gk_pev", xt_gk_pressure_region),
-    ),
 }
-_OBSERVABILITY_EXEMPT: dict[str, str] = {
-    # M1: the composite xt_gk is a region-dependent ``gamma*pev`` term ADDED to the GK-geometry /
-    # completion base/rav/dzv terms; the region-dependent part is already covered by the
-    # xt_gk_pressure / xt_gk_pev companions, and there is no honest SINGLE observed-fraction for the
-    # whole composite (mixing a region-supported and a geometry-supported term).
-    "xt_gk": (
-        "composite of a region-dependent gamma*pev term and GK-geometry base/rav/dzv; the "
-        "region-dependent part is covered by the xt_gk_pressure/xt_gk_pev companions; no honest "
-        "single fraction (M1)."
-    ),
-}
+_OBSERVABILITY_EXEMPT: dict[str, str] = {}
 # Task 8 (ADR-077): the ghost-keeper POSITION columns are the output of a LEARNED (ghost-GK) model,
 # not a region integral. Their FOV dependence is the model's WHOLE-FRAME receptive field -- there is
 # no single clean region-of-interest to integrate a visible-area fraction over, and a whole-pitch

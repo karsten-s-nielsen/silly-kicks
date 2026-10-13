@@ -317,7 +317,7 @@ def _keeper_pass_actions(game_id: str, t0: float) -> pd.DataFrame:
     """Two full SPADL keeper passes (one completed, one not) by the ghost-GK scene's team-1 keeper ``p1``.
 
     Realistic enough that every model is MEASURED (or legitimately empty) on the fixture: an action without
-    `action_id`/`player_id`, or a keeper-pass set with one outcome class, makes gk_completion and receiver
+    `action_id`/`player_id`, or a keeper-pass set with one outcome class, makes receiver
     error on every match, which the unmeasured-model guard (rightly) refuses.
     """
     from silly_kicks.spadl import config as spc
@@ -374,7 +374,7 @@ def test_main_writes_provenance_stamped_metrics(tmp_path, monkeypatch):
 
     metrics = json.loads((out / "metrics.json").read_text())
     assert metrics["atol"] == _ATOL
-    assert set(metrics["models"]) == {"xshot", "xcross", "ghost_gk", "ghost_outfield", "gk_completion", "receiver"}
+    assert set(metrics["models"]) == {"xshot", "xcross", "ghost_gk", "ghost_outfield", "receiver"}
     assert isinstance(metrics["run_tree_dirty"], bool)
     assert metrics["run_commit"]
     # every model carries the selection-instability block (the key-alignment fix's reported quantity)

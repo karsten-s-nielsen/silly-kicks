@@ -127,7 +127,7 @@ def compute_player_influence(
     # Lazy import (ADR-041): a MODULE-level xthreat import here closes a real cycle --
     # xthreat/_grid imports spadl.config, spadl/__init__ imports tracking, and
     # tracking/__init__ imports this module, so `import silly_kicks.xthreat` would re-enter
-    # xthreat while it is still initializing. Same idiom as tracking/_xt_gk.py.
+    # xthreat while it is still initializing.
     from silly_kicks.xthreat import physical_grid
 
     # Physically-oriented (ascending-y) threat grid -- ADR-041. The raw

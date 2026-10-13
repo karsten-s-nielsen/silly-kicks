@@ -3,8 +3,8 @@
 Logistic ``P(complete | origin -> target geometry)``. Trained with sklearn (imported
 function-locally inside :meth:`PassCompletionModel.fit` ONLY); served pure-numpy from a
 pickle-free JSON + SHA256SUMS artifact with a chirality probe and a feature contract, so
-inference imports no sklearn and loading is fail-closed (ADR-011 / ADR-040 / ADR-050 idiom, mirrored
-from ``silly_kicks/tracking/_gk_completion.py`` but kept event-only -- no tracking import).
+inference imports no sklearn and loading is fail-closed (ADR-011 / ADR-040 / ADR-050 idiom, kept
+event-only -- no tracking import).
 
 See NOTICE for full bibliographic citations.
 """

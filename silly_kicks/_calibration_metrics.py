@@ -1,8 +1,8 @@
 """Pure-numpy calibration metrics (ECE + reliability slope). No optuna, no ``[calibration]`` extra
--- importable by the xtgk retention model + the v2 validation suite + the GK-completion trainer.
+-- importable by the xtgk retention model + the v2 validation suite + the pass/win-probability trainers.
 
-Bodies single-sourced here (formerly duplicated in scripts/train_gk_completion.py). See ADR-036
-§Part 3 (the rho calibration gate) and ADR-024 (the completion trainer's gate).
+Bodies single-sourced here (one implementation shared across the drivers). See ADR-036
+§Part 3 (the rho calibration gate).
 """
 
 from __future__ import annotations

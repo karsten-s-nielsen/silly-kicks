@@ -65,7 +65,6 @@ FAMILY_MODEL_REQUIREMENTS: dict[str, str] = {
     "add_gk_influence": "xt_positional",
     "add_off_ball_run_values": "xt_positional",
     "add_player_influence": "xt_positional",
-    "add_xt_gk": "xt_positional",
     "add_obso": "xt_keyword",
     "add_pausa": "xt_keyword",
     "add_space_creation": "xt_keyword",
@@ -98,7 +97,7 @@ class TrackingFeaturesReport:
     ...     n_families_in=2,
     ...     n_families_run=1,
     ...     n_families_skipped=1,
-    ...     family_status={"add_team_shape": "ran", "add_xt_gk": "skipped: xt not supplied"},
+    ...     family_status={"add_team_shape": "ran", "add_obso": "skipped: xt not supplied"},
     ...     keeper_report=None,
     ... )
     >>> report.n_families_run + report.n_families_skipped == report.n_families_in

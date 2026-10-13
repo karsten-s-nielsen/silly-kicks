@@ -86,7 +86,7 @@ def zero_velocity_if_unavailable(frames: pd.DataFrame, *, method: str = "spearma
 
     Policy lives HERE at the edge; the ``compute_pitch_control`` dispatch stays a pure engine
     that raises when it cannot compute (the same rule that puts the ghost clamp at the serving
-    seam and the ``xt_gk`` base-rate switch in ``compute_xt_gk``, not in ``predict_*``).
+    seam, not in ``predict_*``).
 
     The zero-velocity COPY intentionally LEAVES ``speed_source == SPEED_SOURCE_UNAVAILABLE`` in
     place, so it is internally inconsistent if passed ONWARD (a consumer reading ``speed_source``

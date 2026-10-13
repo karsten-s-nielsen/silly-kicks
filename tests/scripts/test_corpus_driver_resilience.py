@@ -374,8 +374,8 @@ def test_corpus_set_contains_the_known_loaders_non_vacuous():
 
 def test_all_script_trees_includes_private_scripts():
     trees = clr.all_script_trees()
-    assert "_xtgk_comparability" in trees and "_loader_pining" in trees, "private scripts not scanned"
-    assert "_xtgk_comparability" not in iter_scripts(), "the public walker must still skip private"
+    assert "_loader_databricks" in trees and "_loader_pining" in trees, "private scripts not scanned"
+    assert "_loader_databricks" not in iter_scripts(), "the public walker must still skip private"
 
 
 # --- Step 3: Rule A (ledgered, both ways) + plants ----------------------------------------
@@ -449,12 +449,10 @@ def test_rule_c_green_plants():
 
 
 def test_rule_c_named_green_sites_stay_green():
-    """Sites that iterate ids WITHOUT loading must not be flagged (spec section 5.5). These four are
+    """Sites that iterate ids WITHOUT loading must not be flagged (spec section 5.5). These two are
     green at 4ac26d0; `_loader_pining_to_cache.main` is flagged until Task 15 moves its load loop."""
     live = {f"{v.module}.{v.func}" for v in clr.rule_c()}
     for site in (
-        "train_gk_completion._corpus_taxonomy",
-        "train_gk_completion.main",
         "train_xcross_attempt._corpus_fingerprint",
         "train_xshot_occurrence._corpus_fingerprint",
     ):

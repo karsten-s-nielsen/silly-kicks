@@ -59,17 +59,6 @@ POLICY: dict[str, dict[tuple[str, str], object]] = {
     "_ghost_gk_weights/sweeper_position_only": _ghost_policy(),
     "_ghost_outfield_weights/default": _gof_policy("default"),
     "_ghost_outfield_weights/position_only": _gof_policy("position_only"),
-    "_gk_completion_weights/default": {
-        ("metrics.json", "providers"): ["gradientsports"],
-        ("metrics.json", "artifact_label"): "full",  # owner decision 2026-08-02 (test_gk_completion_taxonomy.py:48)
-    },
-    "_gk_completion_weights/skillcorner": {
-        ("metrics.json", "variant"): "skillcorner",
-        ("metrics.json", "n_matches"): 10,
-        ("metrics.json", "artifact_label"): "public",
-        ("metrics.json", "all_public"): True,
-        ("metrics.json", "requested_match_ids"): bundled_public_arm_pairs(("skillcorner",)),
-    },
     "_receiver_weights/default": {
         ("metrics.json", "providers_trained"): ["statsbomb"],
         ("metrics.json", "corpus_visibility"): "restricted",  # D7: licensed SB360; weights non-reversible
@@ -84,14 +73,12 @@ _ANCHOR: dict[str, tuple[str, str, str]] = {
     "_xcross_weights/default": ("metadata.json", "training_commit", _TF65),
     "_xcross_weights/position_only": ("metadata.json", "training_commit", _M),
     "_ghost_gk_weights/position_only": ("metadata.json", "training_commit", _M),
-    "_gk_completion_weights/skillcorner": ("metrics.json", "run_commit", _M),
     "_receiver_weights/default": ("metrics.json", "run_commit", _M),
     "_ghost_gk_weights/default": ("metadata.json", "training_commit", _TF65),
     "_ghost_gk_weights/sweeper": ("metadata.json", "training_commit", _TF65),
     "_ghost_gk_weights/sweeper_position_only": ("metadata.json", "training_commit", _REUSED),
     "_ghost_outfield_weights/default": ("metadata.json", "training_commit", _TF65),
     "_ghost_outfield_weights/position_only": ("metadata.json", "training_commit", _REUSED),
-    "_gk_completion_weights/default": ("metrics.json", "run_commit", _REUSED),
 }
 
 _UNDERIVABLE: tuple[str, ...] = ()

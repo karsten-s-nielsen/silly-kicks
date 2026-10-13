@@ -24,14 +24,6 @@ silly_kicks/xsuccess/weights/** binary
 # verification, not churn prevention: without it Windows autocrlf flips model.json to CRLF on checkout
 # and the SHA-256 no longer matches SHA256SUMS -> MatchOutcomeIntegrityError (caught on windows CI).
 silly_kicks/match_outcome/weights/** binary
-# GK-completion (4.73.0), pinned NARROWLY -- only the SHA-verified pair, not the whole directory
-# like the three above. Its `_sha` normalizes CRLF before hashing, so verification was never at risk;
-# the pin exists to stop model.json flipping to CRLF on the next checkout and producing a spurious
-# diff. `metrics.json` and `MODEL_CARD.md` are deliberately LEFT AS TEXT: `superseded_coef` is
-# recorded in metrics.json precisely so a weights change is reviewable later, and a binary pin would
-# make exactly that unreadable in review.
-silly_kicks/tracking/_gk_completion_weights/*/model.json binary
-silly_kicks/tracking/_gk_completion_weights/*/SHA256SUMS binary
 # Expected-receiver model (4.90.0, ADR-066), pinned NARROWLY like GK-completion above -- only the
 # SHA-verified pair. `_sha` normalizes CRLF before hashing so verification is safe either way; the pin
 # just stops model.json flipping to CRLF on the next checkout and bloating diffs. `metrics.json` and

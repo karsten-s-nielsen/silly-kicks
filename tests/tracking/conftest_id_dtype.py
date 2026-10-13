@@ -216,7 +216,6 @@ AGGREGATORS = [
     _named(lambda a, f, home_team_id: _das(a, f), "add_das"),
     _named(lambda a, f, home_team_id: _defensive_credit(a, f), "add_defensive_credit"),
     _a(F.add_elastic_sync, "add_elastic_sync"),
-    _a(F.add_gk_completion, "add_gk_completion"),
     _a(F.add_obso, "add_obso"),
     _a(F.add_pausa, "add_pausa"),
     _a(F.add_pitch_control, "add_pitch_control"),
@@ -239,7 +238,6 @@ AGGREGATORS = [
     _axm(F.add_off_ball_run_values, "add_off_ball_run_values"),
     _axm(F.add_gk_influence, "add_gk_influence"),
     _axm(F.add_player_influence, "add_player_influence"),
-    _axm(F.add_xt_gk, "add_xt_gk"),
     # --- ALTERNATE-METHOD variants (Phase 2) -------------------------------------------
     # The registrations above call DEFAULT arguments only, so a method-dispatched branch was
     # never swept. That is not hypothetical: the ADR-027 defect lived in the Ward branch of

@@ -176,8 +176,8 @@ def _native_completion_result(
     * **stopgap**  -- neither native field: the ``same_team_next`` proxy, kept for VAEP ``result_id``
       coverage only.
 
-    Only the **native** tier is clean enough for GK-completion training (G1: inferred is
-    structurally positive-only -> would bias calibration; see prepare_gk_completion_training_data).
+    Only the **native** tier is clean enough for GK-distribution model training (G1: inferred is
+    structurally positive-only -> would bias calibration).
     Non-passlike rows are left at the fail default + ``stopgap`` tag; the converter's ``np.select``
     overrides them with their own explicit (clearance/foul/shot) result.
 

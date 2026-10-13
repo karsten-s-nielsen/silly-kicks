@@ -1,4 +1,4 @@
-"""Aggregate provenance QA for add_restart_coordinates output (mirrors XtGkReport / LinkReport)."""
+"""Aggregate provenance QA for add_restart_coordinates output (mirrors LinkReport)."""
 
 from __future__ import annotations
 

@@ -13,9 +13,7 @@ the module/consumer pairing is the durable part.
 
 | silly-kicks private | What is used | Consumer (luxury-lakehouse) | Why | Exit condition |
 |---|---|---|---|---|
-| `tracking/_xt_gk.py` | `XtGkParams`, **private fn** `_resolve_completion_for_frames` | `src/analytics/action_context/enrich.py:490` | No public seam exposes per-frame completion resolution | **Lakehouse migrates to xT-GK v2** (`xtgk.compute_xt_gk_v2`). v1 is already frozen and is removed ≥1 release after that migration. |
-| `tracking/_xt_gk.py` | `XtGkReport` | `src/analytics/action_context/pipeline.py:98` | Aggregate QA type is not re-exported publicly | Same v2 migration; or promote the report type if v2 keeps an equivalent |
-| `tracking/_ghost_gk.py`, `_xt_gk.py`, `_gk_completion.py`, `_gk_geometry.py` | **module PATHS as hardcoded strings** | `src/ingestion/exec_visibility.py:467-472` (their ADR-044 executor-env drift guard) | Needs stable module identities to detect executor-env drift | A public introspection surface for shipped-module identity, **or** an accepted standing pin coordinated on rename. **Highest-risk entry: degrades silently.** |
+| `tracking/_ghost_gk.py`, `_gk_geometry.py` | **module PATHS as hardcoded strings** | `src/ingestion/exec_visibility.py:467-472` (their ADR-044 executor-env drift guard) | Needs stable module identities to detect executor-env drift | A public introspection surface for shipped-module identity, **or** an accepted standing pin coordinated on rename. **Highest-risk entry: degrades silently.** (`_xt_gk.py`/`_gk_completion.py` removed from this pin — xT-GK v1 RETIRED, ADR-121; lakehouse drops their drift-guard strings.) |
 
 **Public output value changes** — not a private-module import, but the same blast-radius discipline:
 a public column whose VALUES moved (not its schema) can silently break a downstream consumer that

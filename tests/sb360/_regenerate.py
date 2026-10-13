@@ -54,9 +54,7 @@ FAMILY = {
     ],
     "gk": [
         "add_gk_influence",
-        "add_gk_completion",
         "add_ghost_gk",
-        "add_xt_gk",
         "add_pre_shot_gk_position",
         "add_pre_shot_gk_angle",
         "add_shot_goalmouth",

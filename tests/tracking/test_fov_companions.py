@@ -25,15 +25,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from silly_kicks.tracking._fov_registry import _OBSERVABILITY_EXEMPT, _PACKING_REGION_COUNT_COLUMNS, RegionCtx
-from silly_kicks.tracking._xt_gk import XtGkParams
+from silly_kicks.tracking._fov_registry import _PACKING_REGION_COUNT_COLUMNS, RegionCtx
 from silly_kicks.tracking.features import (
     add_defensive_line,
     add_packing,
     add_player_influence,
     add_pressure_on_actor,
     add_team_shape,
-    add_xt_gk,
 )
 from tests.tracking._fov_fixtures import tiny_actions, tiny_frames, tiny_visible_area
 
@@ -479,148 +477,6 @@ def test_player_influence_companion_unlinked_and_no_polygon():
     r3 = _row(nop, _NO_POLYGON_AID)
     assert nop[_PI_SRC].iloc[r3] == "no_polygon"
     assert np.isnan(nop[_PI_FRAC].iloc[r3])
-
-
-# ---------------------------------------------------------------------------
-# Task 5: add_xt_gk method-dispatched pressure-ROI companions (ADR-077, T2/N3/M1).
-#
-# Unlike the aggregators above, the pressure ROI is NOT drawn from the action's raw start/end: it
-# is centred on the RESOLVED GK origin (``compute_xt_gk`` feeds ``pressure_on_actor``
-# ``sub_for_pressure["start_x"] = origin_x``), and the SHAPE is method-dispatched -- the Andrienko
-# directional oval for ``pressure_method == "andrienko_oval"``, the Link effective-support disk for
-# ``"link_zones"``, and NO region (degenerate_region) for the velocity-derived ``"bekkers_pi"``.
-# Both pressure-bearing columns (``xt_gk_pressure`` = rho and ``xt_gk_pev``) share the region; the
-# composite ``xt_gk`` is EXEMPT (M1). The fixture's GK-distribution actions are action 0 (a pass by
-# the HOME keeper, player 10) and action 3 (a goalkick); action 3 is the primary scored row here.
-# ---------------------------------------------------------------------------
-
-_XT_GK_PRESS_FRAC = "xt_gk_pressure_observed_fraction"
-_XT_GK_PRESS_SRC = "xt_gk_pressure_observed_source"
-_XT_GK_PEV_FRAC = "xt_gk_pev_observed_fraction"
-_XT_GK_PEV_SRC = "xt_gk_pev_observed_source"
-_XT_GK_OUTPUT_COLS = ("xt_gk_base", "xt_gk_pev", "xt_gk_rav", "xt_gk_dzv", "xt_gk_pressure", "xt_gk")
-_GOALKICK_AID = 3  # the fixture's goalkick action (a GK distribution -> xt_gk scores it)
-
-
-def _fitted_xt_gk_grid():
-    """A tiny non-zero fitted xT (deterministic) -- ``compute_xt_gk`` requires a fitted grid."""
-    from silly_kicks.xthreat import ExpectedThreat
-
-    xt = ExpectedThreat(l=16, w=12)
-    xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
-    return xt
-
-
-def _gk_row(out: pd.DataFrame) -> int:
-    """Positional index of the goalkick action (``action_id == 3``)."""
-    return int(np.flatnonzero(out["action_id"].to_numpy() == _GOALKICK_AID)[0])
-
-
-def test_xt_gk_companion_absent_without_visible_area():
-    """Conditional: omitting ``visible_area`` produces NO xt_gk companion columns."""
-    a, f = tiny_actions(), tiny_frames()
-    base = add_xt_gk(a, f, _fitted_xt_gk_grid())
-    for col in (_XT_GK_PRESS_FRAC, _XT_GK_PRESS_SRC, _XT_GK_PEV_FRAC, _XT_GK_PEV_SRC):
-        assert col not in base.columns
-
-
-def test_xt_gk_primary_byte_identical():
-    """The companion path never touches the six xt_gk value columns (ADR-077, no VAEP retrain)."""
-    a, f = tiny_actions(), tiny_frames()
-    ids = list(a["action_id"])
-    base = add_xt_gk(a, f, _fitted_xt_gk_grid())
-    withva = add_xt_gk(a, f, _fitted_xt_gk_grid(), visible_area=_full_pitch(ids))
-    for col in _XT_GK_OUTPUT_COLS:
-        # assert_array_equal treats NaN == NaN as equal (out-of-scope rows are NaN).
-        np.testing.assert_array_equal(withva[col].to_numpy(), base[col].to_numpy())
-
-
-def test_xt_gk_andrienko_companion_present_and_populated():
-    """Default (andrienko_oval): both pressure-bearing companions present + populated; a crop that
-    straddles the directional oval yields a strict-interior fraction."""
-    a, f = tiny_actions(), tiny_frames()
-    xt = _fitted_xt_gk_grid()
-    ids = list(a["action_id"])
-
-    full = add_xt_gk(a, f, xt, visible_area=_full_pitch(ids))
-    for col in (_XT_GK_PRESS_FRAC, _XT_GK_PRESS_SRC, _XT_GK_PEV_FRAC, _XT_GK_PEV_SRC):
-        assert col in full.columns
-
-    r = _gk_row(full)
-    # The goalkick is scored (finite resolved origin) -> the oval is a real region, fully observed
-    # by the full-pitch polygon.
-    assert full[_XT_GK_PRESS_SRC].iloc[r] == "observed"
-    assert full[_XT_GK_PEV_SRC].iloc[r] == "observed"
-    assert float(full[_XT_GK_PRESS_FRAC].iloc[r]) == pytest.approx(1.0, abs=1e-9)
-    assert float(full[_XT_GK_PEV_FRAC].iloc[r]) == pytest.approx(1.0, abs=1e-9)
-
-    # Crop through the oval: it is centred on the RESOLVED GK origin and extends d_front=9 toward the
-    # goal (+x), so a crop at origin_x + 4 keeps the back half and cuts the front.
-    ox = float(full["xt_gk_origin_x"].iloc[r])
-    left = add_xt_gk(a, f, xt, visible_area=_left_crop(ids, right_x=ox + 4.0))
-    lf = float(left[_XT_GK_PRESS_FRAC].iloc[r])
-    assert left[_XT_GK_PRESS_SRC].iloc[r] == "observed"
-    assert 0.0 < lf < 1.0  # non-vacuity: the crop genuinely straddles the oval
-    # xt_gk_pev shares the SAME pressure region -> identical fraction.
-    assert float(left[_XT_GK_PEV_FRAC].iloc[r]) == pytest.approx(lf, abs=1e-12)
-
-
-def test_xt_gk_link_zones_companion_present_and_populated():
-    """N3: on ``pressure_method='link_zones'`` the companion is present-and-populated (a real
-    fraction < 1 under crop), NOT silently absent -- the Link effective-support disk is a genuine
-    convex, non-degenerate region."""
-    a, f = tiny_actions(), tiny_frames()
-    xt = _fitted_xt_gk_grid()
-    ids = list(a["action_id"])
-    params = XtGkParams(pressure_method="link_zones")
-
-    full = add_xt_gk(a, f, xt, params=params, visible_area=_full_pitch(ids))
-    r = _gk_row(full)
-    assert full[_XT_GK_PRESS_SRC].iloc[r] == "observed"
-    assert float(full[_XT_GK_PRESS_FRAC].iloc[r]) == pytest.approx(1.0, abs=1e-9)
-
-    # The link support disk has radius max(r_hoz, r_lz, r_hz) = 4 m; a crop at origin_x + 1.5 cuts it.
-    ox = float(full["xt_gk_origin_x"].iloc[r])
-    left = add_xt_gk(a, f, xt, params=params, visible_area=_left_crop(ids, right_x=ox + 1.5))
-    frac = left[_XT_GK_PRESS_FRAC]
-    assert frac.notna().any() and (frac.dropna() < 1.0).any()  # present + populated, NOT absent
-    assert 0.0 < float(frac.iloc[r]) < 1.0
-
-
-def test_xt_gk_bekkers_no_companion():
-    """``bekkers_pi`` is velocity-derived (honest-NaN on these freeze frames) with no fixed spatial
-    ROI -> the companion is ``degenerate_region`` / NaN, never a fabricated fraction."""
-    a, f = tiny_actions(), tiny_frames()
-    ids = list(a["action_id"])
-    out = add_xt_gk(
-        a, f, _fitted_xt_gk_grid(), params=XtGkParams(pressure_method="bekkers_pi"), visible_area=_full_pitch(ids)
-    )
-
-    r = _gk_row(out)
-    # The companion columns still EXIST (the aggregator was asked to companion), but every value is
-    # degenerate_region -- there is no region to observe.
-    assert out[_XT_GK_PRESS_SRC].iloc[r] == "degenerate_region"
-    assert out[_XT_GK_PEV_SRC].iloc[r] == "degenerate_region"
-    assert np.isnan(out[_XT_GK_PRESS_FRAC].iloc[r])
-    assert np.isnan(out[_XT_GK_PEV_FRAC].iloc[r])
-    # No scored row escapes the degenerate verdict for bekkers.
-    assert (out[_XT_GK_PRESS_SRC] == "degenerate_region").all()
-
-
-def test_no_composite_xt_gk_fraction():
-    """M1: the composite ``xt_gk`` gets NO ``xt_gk_observed_fraction`` -- it mixes a region-dependent
-    term with the GK-geometry base/rav/dzv, so there is no honest single fraction."""
-    a, f = tiny_actions(), tiny_frames()
-    ids = list(a["action_id"])
-    out = add_xt_gk(a, f, _fitted_xt_gk_grid(), visible_area=_full_pitch(ids))
-    assert "xt_gk_observed_fraction" not in out.columns
-    assert "xt_gk_observed_source" not in out.columns
-
-
-def test_xt_gk_in_exempt():
-    """M1: the composite is registered EXEMPT (so the Task 8 completeness gate accepts it)."""
-    assert "xt_gk" in _OBSERVABILITY_EXEMPT
-    assert isinstance(_OBSERVABILITY_EXEMPT["xt_gk"], str) and _OBSERVABILITY_EXEMPT["xt_gk"]
 
 
 # ---------------------------------------------------------------------------

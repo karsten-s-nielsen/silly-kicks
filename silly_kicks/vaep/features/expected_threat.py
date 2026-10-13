@@ -53,7 +53,7 @@ def xt_xfns(*, model: ExpectedThreat | str | None = None) -> list[FeatureTransfo
     # real cycle -- xthreat/_grid imports spadl.config, and spadl/__init__ imports
     # tracking, which imports vaep.feature_framework, which re-enters this module while
     # xthreat is still partially initialized. Function-local keeps the single-sourced
-    # guard without the edge (same idiom as tracking/_xt_gk.py's frozen cell-indexer).
+    # guard without the edge.
     from silly_kicks.xthreat import require_fitted_xt
 
     require_fitted_xt(model, caller="xt_xfns")
