@@ -15,38 +15,56 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         ruthless = softwareSystem "ruthless-efficiency" "Optuna/evolutionary optimization substrate (OptunaStrategy + CachedObjective)" "External"
         pining = softwareSystem "pining-for-the-data" "Gated mock provider REST API (SkillCorner/IDSSE public, Gradient Sports + SB360 owner-tier) over S3" "External"
         databricks = softwareSystem "Databricks Lakehouse" "bronze.* SPADL/tracking + spadl_actions xT corpus + dev_gold action/shot marts (fct_action_values/context, fct_shot_xg, dim_matches) for the xT-GK v2 gate + rho retention" "External"
+        hfStorage = softwareSystem "HF datasets + Storage Bucket" "HF Jobs re-fit storage (ADR-122): 3 private staged corpora (hf-refit-tc3/xshot/sb360) read-only + hf-refit-scratch Storage Bucket mounted read-write for resumable output/shards (--attempts resumes)." "External"
 
         // --- The System ---
         sillyKicks = softwareSystem "silly-kicks" "Classifies football actions into SPADL representation and values them via VAEP" {
 
-            spadl = container "silly_kicks.spadl" "SPADL event conversion (23 action types) from 7 providers + a kloppy gateway; enrichments (possessions, game state, GK analytics), block-detection columns, canonical pitch/penalty-area constants." "Python" "Library"
-            vaep = container "silly_kicks.vaep" "VAEP action valuation: features, action/possession/time-windowed labels, and gradient-boosted models. HybridVAEP removes result leakage; optional Expected-Threat feature factory." "Python" "Library"
-            tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, adapters, linkage, spatial/GKDV models, 31 action-coupled aggregators, run_tracking_features, native GK + native DAS engine (ADR-107/108), feature-contract guard." "Python" "Library"
-            atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 32-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
-            xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid; held-out transition-NLL evaluator; physical_grid resampling. ADR-041." "Python" "Library"
-            xtgk = container "silly_kicks.xtgk" "xT-GK v2: possession value V(z,p) (Markov surface + deep-zone gate), metric compute_xt_gk_v2 over 3 injected ports, resolved-GK-geometry edge (apply_resolved_gk_geometry), bundled rho weights." "Python" "Library"
-            gkdv = container "silly_kicks.gkdv" "GKDV v1 (TF-19): ghost-substitution engine (build_ghost_frames) + two gate-independent physics arms (delta-DAS, delta-threat-suppression) in attacker-value units (negative = deterrent). ADR-043." "Python" "Library"
-            restdefense = container "silly_kicks.restdefense" "TF-60 rest defense Layer 1: rearguard structure KPIs (numerical superiority, zone occupancy, line/GK height) at the in-possession action grid; GoalMap-oriented; SB360 FOV-aware. ADR-080." "Python" "Library"
-            shot_stopping = container "silly_kicks.shot_stopping" "TF-59 GK shot-stopping: Goals Prevented / GSAA per (keeper, match) from an INJECTED per-shot Post-Shot xG + the resolved defending keeper; own goals / blocked / shootout excluded. ADR-085." "Python" "Library"
-            territory = container "silly_kicks.territory" "TF-54 territorial dominance: opponent passes into a defender's trimmed own-half defensive hull, valued conceded (completed) vs prevented (failed) by an INJECTED fitted xT. Event-only." "Python" "Library"
-            duels = container "silly_kicks.duels" "TF-55 Glicko-2 duel ratings: per-(player, match) rating / deviation / volatility from ground-duel win/loss (native sportec winner-loser, else tackle / take_on adjacency); match = rating period." "Python" "Library"
-            expected_passing = container "silly_kicks.expected_passing" "Event-only Expected-Passing model (PassCompletionModel): P(pass completes | origin->target geometry); pickle-free JSON+SHA256 with chirality + feature-contract fail-closed load. TF-54b." "Python" "Library"
-            xsuccess = container "silly_kicks.xsuccess" "TF-61 event-only END-BLIND action-completion (XSuccessModel): P(success|context) over all on-ball types; calibrated XGBoost, pickle-free JSON+SHA256 fail-closed load; feeds VAEP.rate_adjusted." "Python" "Library"
-            territorial_defense = container "silly_kicks.territorial_defense" "TF-54b SB360 territorial-defense counterfactual -- DEMOTED to experimental (ADR-090: arm found instrument_void); no public surface, code retained privately for the redesign." "Python" "Library"
-            gk_decision = container "silly_kicks.gk_decision" "TF-62 GK build-up decision-quality (chosen-vs-available): decision_value = EV(chosen) - mean EV(available); option value = xPass x (1 + opponents bypassed); native SkillCorner GI tier (PR1)." "Python" "Library"
-            team_metrics = container "silly_kicks.team_metrics" "TF-52 event-only per-(game,team) team KPIs: Twelve match-report glossary + practitioner set (PPDA, field tilt, tempo, counter-press, build-up, breakout, switch press)." "Python" "Library"
-            match_outcome = container "silly_kicks.match_outcome" "TF-53 event-only per-(game,team) win/draw/loss + xPoints from injected per-shot xG: exact Poisson-binomial goal PMF; opt-in possession-collapse + Dixon-Coles dependence corrections." "Python" "Library"
-            win_probability = container "silly_kicks.win_probability" "TF-63 in-game win probability + xImpact: interval-hazard GLM feeds a self-contained Markov chain on score_diff; goal_leverage weights VAEP_adjusted into VAEP.rate_ximpact. Event-only. ADR-101." "Python" "Library"
-            causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
-            calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
-            providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze): Sportec/DFL + SB360 freeze-frames -> frames + visible_area; keeper-appearance extractors (4 providers) -> KeeperAppearances port. ADR-031/054/084." "Python" "Library"
-            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 521 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
-            keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
-            positioning = container "silly_kicks.positioning" "TF-56 prescriptive positioning optimiser: SA solver (optimise_positions) for the best REACHABLE shape + measured positioning_gap = threat(actual) - threat(optimum). compute_*; xt injected." "Python" "Library"
-            coordination = container "silly_kicks.coordination" "TF-58 team-coordination dynamics: relative phase, cross-correlation, vector coding, spectral, cluster phase, relative stretch between the two teams; per-segment surrogate baselines. ADR-110." "Python" "Library"
+            // Domain groups cluster the peer subpackages for readability (visual boundaries only; every
+            // subpackage stays a top-level container -- it is independently importable, NOT a component).
+            group "Event conversion" {
+                spadl = container "silly_kicks.spadl" "SPADL event conversion (23 action types) from 7 providers + a kloppy gateway; enrichments (possessions, game state, GK analytics), block-detection columns, canonical pitch/penalty-area constants." "Python" "Library"
+                atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 32-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
+                providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze): Sportec/DFL + SB360 freeze-frames -> frames + visible_area; keeper-appearance extractors (4 providers) -> KeeperAppearances port. ADR-031/054/084." "Python" "Library"
+            }
 
-            // Phase-2 agent-support server (shipped). Opt-in [mcp] extra; the core lib never imports it.
-            mcp = container "silly_kicks.mcp" "Read-only tripwire MCP server (FastMCP, stdio): check_orientation / diagnose_provider / validate_construct_validity — binds pure read-only seams / committed memos, never run()/main()." "Python (optional [mcp] extra)" "Library"
+            group "Valuation & threat" {
+                vaep = container "silly_kicks.vaep" "VAEP action valuation: features, action/possession/time-windowed labels, and gradient-boosted models. HybridVAEP removes result leakage; optional Expected-Threat feature factory." "Python" "Library"
+                xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid; held-out transition-NLL evaluator; physical_grid resampling. ADR-041." "Python" "Library"
+                xtgk = container "silly_kicks.xtgk" "xT-GK v2: possession value V(z,p) (Markov surface + deep-zone gate), metric compute_xt_gk_v2 over 3 injected ports, resolved-GK-geometry edge (apply_resolved_gk_geometry), bundled rho weights." "Python" "Library"
+            }
+
+            group "Tracking & spatial models" {
+                tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, adapters, linkage, spatial/GKDV models, 31 action-coupled aggregators, run_tracking_features, native GK + native DAS engine (ADR-107/108), feature-contract guard." "Python" "Library"
+                gkdv = container "silly_kicks.gkdv" "GKDV v1 (TF-19): ghost-substitution engine (build_ghost_frames) + two gate-independent physics arms (delta-DAS, delta-threat-suppression) in attacker-value units (negative = deterrent). ADR-043." "Python" "Library"
+                keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
+                positioning = container "silly_kicks.positioning" "TF-56 prescriptive positioning optimiser: SA solver (optimise_positions) for the best REACHABLE shape + measured positioning_gap = threat(actual) - threat(optimum). compute_*; xt injected." "Python" "Library"
+                coordination = container "silly_kicks.coordination" "TF-58 team-coordination dynamics: relative phase, cross-correlation, vector coding, spectral, cluster phase, relative stretch between the two teams; per-segment surrogate baselines. ADR-110." "Python" "Library"
+                restdefense = container "silly_kicks.restdefense" "TF-60 rest defense Layer 1: rearguard structure KPIs (numerical superiority, zone occupancy, line/GK height) at the in-possession action grid; GoalMap-oriented; SB360 FOV-aware. ADR-080." "Python" "Library"
+                territorial_defense = container "silly_kicks.territorial_defense" "TF-54b SB360 territorial-defense counterfactual -- DEMOTED to experimental (ADR-090: arm found instrument_void); no public surface, code retained privately for the redesign." "Python" "Library"
+            }
+
+            group "Event metrics" {
+                shot_stopping = container "silly_kicks.shot_stopping" "TF-59 GK shot-stopping: Goals Prevented / GSAA per (keeper, match) from an INJECTED per-shot Post-Shot xG + the resolved defending keeper; own goals / blocked / shootout excluded. ADR-085." "Python" "Library"
+                territory = container "silly_kicks.territory" "TF-54 territorial dominance: opponent passes into a defender's trimmed own-half defensive hull, valued conceded (completed) vs prevented (failed) by an INJECTED fitted xT. Event-only." "Python" "Library"
+                duels = container "silly_kicks.duels" "TF-55 Glicko-2 duel ratings: per-(player, match) rating / deviation / volatility from ground-duel win/loss (native sportec winner-loser, else tackle / take_on adjacency); match = rating period." "Python" "Library"
+                expected_passing = container "silly_kicks.expected_passing" "Event-only Expected-Passing model (PassCompletionModel): P(pass completes | origin->target geometry); pickle-free JSON+SHA256 with chirality + feature-contract fail-closed load. TF-54b." "Python" "Library"
+                xsuccess = container "silly_kicks.xsuccess" "TF-61 event-only END-BLIND action-completion (XSuccessModel): P(success|context) over all on-ball types; calibrated XGBoost, pickle-free JSON+SHA256 fail-closed load; feeds VAEP.rate_adjusted." "Python" "Library"
+                gk_decision = container "silly_kicks.gk_decision" "TF-62 GK build-up decision-quality (chosen-vs-available): decision_value = EV(chosen) - mean EV(available); option value = xPass x (1 + opponents bypassed); native SkillCorner GI tier (PR1)." "Python" "Library"
+                team_metrics = container "silly_kicks.team_metrics" "TF-52 event-only per-(game,team) team KPIs: Twelve match-report glossary + practitioner set (PPDA, field tilt, tempo, counter-press, build-up, breakout, switch press)." "Python" "Library"
+                match_outcome = container "silly_kicks.match_outcome" "TF-53 event-only per-(game,team) win/draw/loss + xPoints from injected per-shot xG: exact Poisson-binomial goal PMF; opt-in possession-collapse + Dixon-Coles dependence corrections." "Python" "Library"
+                win_probability = container "silly_kicks.win_probability" "TF-63 in-game win probability + xImpact: interval-hazard GLM feeds a self-contained Markov chain on score_diff; goal_leverage weights VAEP_adjusted into VAEP.rate_ximpact. Event-only. ADR-101." "Python" "Library"
+            }
+
+            group "Validation & tooling" {
+                causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
+                calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
+                glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 521 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+                // Phase-2 agent-support server (shipped). Opt-in [mcp] extra; the core lib never imports it.
+                mcp = container "silly_kicks.mcp" "Read-only tripwire MCP server (FastMCP, stdio): check_orientation / diagnose_provider / validate_construct_validity — binds pure read-only seams / committed memos, never run()/main()." "Python (optional [mcp] extra)" "Library"
+                // HF Jobs training harness (ADR-122): dev tooling (like calibration + scripts/), not a runtime lib.
+                hfJobs = container "scripts/hf_jobs" "HF Jobs training harness (ADR-122): launches each trainer as an ephemeral HF Job, head-to-head-scores fresh vs committed on a shared holdout (no-regression floor), retrieves weights for PR-back." "Python (dev tooling)" "Library"
+            }
         }
 
         // --- Relationships: Context level ---
@@ -173,6 +191,12 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         mcp -> calibration "Binds scripts/measure_rc4_orientation.measure() (check_orientation) + reads committed docs/research validity memos (validate_construct_validity); never run()/main()" "Python import / file read"
         mcp -> tracking "Binds read-only lib diagnostics validate_gk_position_clamp + validate_id_dtypes (diagnose_provider keeper/id_dtype) via" "Python import"
         mcp -> spadl "Binds read-only lib diagnostic detect_input_convention (diagnose_provider convention) via" "Python import"
+
+        // --- Relationships: HF Jobs training harness (ADR-122) ---
+        maintainer -> hfJobs "Re-fits the 9 bundled models as 15 per-variant ephemeral HF Jobs (per-variant head-to-head no-regression floor; owner-gated spend) via" "scripts/hf_jobs/launch.py"
+        hfJobs -> hfHub "Launches one ephemeral CPU Job per trainer variant (hf CLI >= v2.2; --attempts auto-retry) on" "hf jobs run"
+        hfJobs -> hfStorage "Reads the 3 staged corpora (hf download) + mounts the scratch bucket read-write for resumable output/shards; weights retrieved locally (hf cp), no in-job upload, on" "-v hf://buckets/...:/scratch"
+        hfJobs -> pining "Materializes owner-tier corpora (on DGX/local, then pushed to the private HF datasets) from" "_loader_pining"
     }
 
     views {
