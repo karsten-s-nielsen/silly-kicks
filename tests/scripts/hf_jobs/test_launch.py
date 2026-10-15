@@ -26,7 +26,7 @@ def test_install_includes_huggingface_hub_for_in_job_hf_download():
     # and the python:3.12 base lacks it (mini-wave ModuleNotFoundError). Install it explicitly.
     for name, spec in reg.REGISTRY.items():
         inner = build_inner_command(
-            spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/tc3", sb360_repo="ns/sb360"
+            spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/tc3", probe_repo="ns/probe"
         )
         assert "huggingface_hub" in inner, name
 
@@ -68,7 +68,7 @@ def test_headtohead_gates_the_given_variant():
 def test_match_outcome_fresh_dir_is_the_out_dir_itself():
     spec, b = _default("match_outcome_dependence")
     inner = build_inner_command(spec, b, tag="r", run_key="r1")
-    assert "--fresh-dir /scratch/r1/match_outcome_dependence/default --metrics-json" in inner
+    assert "--fresh-dir /scratch/r1/match_outcome_dependence/default --feature-set faithful --metrics-json" in inner
 
 
 def test_public_single_variant_payload():
@@ -87,10 +87,37 @@ def test_public_single_variant_payload():
 def test_trainers_run_as_modules_never_as_file_paths():
     for name, spec in reg.REGISTRY.items():
         inner = build_inner_command(
-            spec, spec.builds[0], tag="relref", run_key="r1", corpus_repo="ns/tc3", sb360_repo="ns/sb360"
+            spec, spec.builds[0], tag="relref", run_key="r1", corpus_repo="ns/tc3", probe_repo="ns/probe"
         )
         assert f"python -m {spec.module}" in inner, name
         assert "python scripts/train_" not in inner, name
+
+
+def test_xcross_threads_agnostic_probe_data_dir_never_pining():
+    # ADR-123: the held-out TF-19 probe comes from a STAGED per-game probe dataset (--probe-data-dir),
+    # never in-job pining. launch downloads probe_repo and threads --probe-data-dir; no manifest/--providers.
+    spec = reg.REGISTRY["xcross_attempt"]
+    inner = build_inner_command(
+        spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/xshot", probe_repo="ns/xcross-probe"
+    )
+    assert "hf download ns/xcross-probe --repo-type dataset --local-dir /tmp/probe" in inner
+    assert "--probe-data-dir /tmp/probe" in inner
+    assert "SILLY_KICKS_PINING_MANIFEST_DIR" not in inner and "--probe-match-ids-json" not in inner
+    assert "--providers" not in inner
+
+
+def test_xcross_without_probe_repo_is_a_loud_error():
+    import pytest
+
+    spec = reg.REGISTRY["xcross_attempt"]
+    with pytest.raises(ValueError, match="needs probe_repo"):
+        build_inner_command(spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/xshot")
+
+
+def test_xshot_has_no_probe_data_dir():
+    spec = reg.REGISTRY["xshot_occurrence"]
+    inner = build_inner_command(spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/xshot")
+    assert "--probe-data-dir" not in inner and "probe" not in inner.replace("xshot", "")
 
 
 def test_owner_flat_downloads_corpus_and_resolves_gen_dir():
@@ -106,34 +133,35 @@ def test_owner_pergame_repackages_flat_to_per_game_in_job():
     spec, b = _default("xshot_occurrence")
     inner = build_inner_command(spec, b, tag="relref", run_key="r1", corpus_repo="ns/xshot")
     assert "python -m scripts.hf_jobs.repackage /tmp/corpus /tmp/pergame" in inner
+    # repackage now emits {game}/actions.parquet itself (Task 3); the fragile in-job symlink workaround is gone.
+    assert "symlink_to" not in inner
     assert "--data-dir /tmp/pergame --output-dir /scratch/r1/xshot_occurrence/default" in inner
     assert "--fresh-dir /scratch/r1/xshot_occurrence/default/xshot_occurrence_v1" in inner
 
 
-def test_owner_sb360_is_offline_no_token_no_network():
+def test_receiver_is_dataset_agnostic_no_pining_in_job():
+    # ADR-123: receiver reads the STAGED flat corpus via --data-dir (the eval shape); NO pining manifest,
+    # NO --cache-dir, NO --match-ids-json, NO sb360_repo. How the dataset was staged is off-job.
     spec, b = _default("receiver_model")
-    inner = build_inner_command(spec, b, tag="relref", run_key="r1", corpus_repo="ns/tc3", sb360_repo="ns/sb360")
-    assert "hf download ns/sb360 --repo-type dataset --local-dir /tmp/sb360" in inner
-    assert "export SILLY_KICKS_PINING_MANIFEST_DIR=/tmp/sb360/manifest" in inner
-    assert "--cache-dir /tmp/sb360/cache" in inner and "--match-ids-json /tmp/sb360/match_ids.json" in inner
+    inner = build_inner_command(spec, b, tag="relref", run_key="r1", corpus_repo="ns/sb360")
+    assert "hf download ns/sb360 --repo-type dataset --local-dir /tmp/corpus" in inner
+    assert "--data-dir /tmp/corpus" in inner
     assert "--shard-root /scratch/r1/receiver_model/default/scratch" in inner  # extraction scratch in the bucket
     assert "--provider statsbomb --feature-set public" in inner
     assert "--fresh-dir /scratch/r1/receiver_model/default/model" in inner
-    assert (
-        "hf download ns/tc3 --repo-type dataset --local-dir /tmp/corpus" in inner
-        and "--corpus-dir /tmp/corpus" in inner
-    )
+    assert "--corpus-dir /tmp/corpus" in inner  # head-to-head eval reads the same staged flat corpus
+    # the pining-era leak is GONE
+    assert "SILLY_KICKS_PINING_MANIFEST_DIR" not in inner
+    assert "--match-ids-json" not in inner and "/tmp/sb360" not in inner  # noqa: S108 -- asserting ABSENCE
 
 
 def test_owner_trainer_without_corpus_repo_is_a_loud_error():
     import pytest
 
-    spec, b = _default("ghost_gk")
-    with pytest.raises(ValueError, match="needs corpus_repo"):
-        build_inner_command(spec, b, tag="t", run_key="r")
-    rspec, rb = _default("receiver_model")
-    with pytest.raises(ValueError, match="needs sb360_repo"):
-        build_inner_command(rspec, rb, tag="t", run_key="r", corpus_repo="ns/tc3")
+    for name in ("ghost_gk", "receiver_model", "xshot_occurrence"):
+        spec, b = _default(name)
+        with pytest.raises(ValueError, match="needs corpus_repo"):
+            build_inner_command(spec, b, tag="t", run_key="r")
 
 
 def test_argv_mounts_bucket_sets_attempts_and_keeps_the_dash_dash_marker():
@@ -228,10 +256,10 @@ def test_inner_command_is_syntactically_valid_bash():
         import pytest
 
         pytest.skip("bash not available")
-    for name in ("win_probability", "ghost_gk", "xshot_occurrence", "receiver_model"):
+    for name in ("win_probability", "ghost_gk", "xshot_occurrence", "xcross_attempt", "receiver_model"):
         spec = reg.REGISTRY[name]
         inner = build_inner_command(
-            spec, spec.builds[0], tag="relref", run_key="r1", corpus_repo="ns/tc3", sb360_repo="ns/sb360"
+            spec, spec.builds[0], tag="relref", run_key="r1", corpus_repo="ns/tc3", probe_repo="ns/probe"
         )
         r = subprocess.run([bash, "-n", "-c", inner], capture_output=True, text=True)  # noqa: S603
         assert r.returncode == 0, f"{name}: invalid bash: {r.stderr}"

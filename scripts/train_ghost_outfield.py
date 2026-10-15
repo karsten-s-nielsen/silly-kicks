@@ -178,6 +178,26 @@ def parse_args(argv=None):
         help="Permit a dev run on a dirty tree; the artifact still records dirty:true (never launders it).",
     )
     ap.add_argument("--training-platform", default=None)
+    # Map/reduce fan-out (ADR-123), mirroring train_ghost_gk: extract --shard-index -> --fold -> --assemble.
+    # No --build-cache phase (unlike ghost_gk): this trainer keeps no whole-corpus feature cache; `data` is a
+    # cheap concat of the (resumed) shards, rebuilt identically by the fold workers and the reduce.
+    ap.add_argument(
+        "--shard-index",
+        default=None,
+        help="I/N: extract only this disjoint subset of the discovered parquet files (fan-out worker); "
+        "writes its shards to the shared shard_root and exits before the concat/CV.",
+    )
+    ap.add_argument(
+        "--fold",
+        type=int,
+        default=None,
+        help="Run ONLY CV fold K over the (resumed) shards, write {shard_root}/folds/fold_K.json, then exit.",
+    )
+    ap.add_argument(
+        "--assemble",
+        action="store_true",
+        help="Reduce: concat shards, aggregate folds/fold_*.json, final fit + save + metrics, then exit.",
+    )
     return ap.parse_args(argv)
 
 
@@ -244,9 +264,23 @@ def _cross_validate(data: pd.DataFrame, *, feature_set: _FeatureSet, n_estimator
     ``GroupKFold`` only if the stratification is infeasible (e.g. a provider with fewer games than
     folds), warning so the reduction is visible, never silent.
     """
-    from sklearn.model_selection import GroupKFold, StratifiedGroupKFold
+    splits, providers = _cv_splits(data, cv_folds)
+    if splits is None:
+        return None, {}, {}, {}
+    fold_dicts = [
+        _run_one_fold_of(
+            data, providers, tr, te, feature_set=feature_set, n_estimators=n_estimators, max_depth=max_depth
+        )
+        for tr, te in splits
+    ]
+    return _aggregate_folds(fold_dicts)
 
-    from silly_kicks.tracking._ghost_outfield import GhostOutfieldModel
+
+def _cv_splits(data: pd.DataFrame, cv_folds: int):
+    """The deterministic CV split list + the provider array (ADR-123: computed identically by the serial
+    run, the --fold workers and the --assemble reduce, so a fanned CV equals a serial one). ``(None, _)``
+    when the corpus has < 2 games (CV infeasible)."""
+    from sklearn.model_selection import GroupKFold, StratifiedGroupKFold
 
     groups = data["game_id"].astype(str).to_numpy()
     providers = (
@@ -256,11 +290,10 @@ def _cross_validate(data: pd.DataFrame, *, feature_set: _FeatureSet, n_estimator
     )
     n_groups = len(set(groups.tolist()))
     if n_groups < 2:
-        return None, {}, {}, {}
+        return None, providers
     n_splits = min(cv_folds, n_groups)
     try:
-        splitter = StratifiedGroupKFold(n_splits=n_splits)
-        splits = list(splitter.split(data, y=providers, groups=groups))
+        splits = list(StratifiedGroupKFold(n_splits=n_splits).split(data, y=providers, groups=groups))
     except ValueError as exc:
         import warnings
 
@@ -270,35 +303,51 @@ def _cross_validate(data: pd.DataFrame, *, feature_set: _FeatureSet, n_estimator
             stacklevel=2,
         )
         splits = list(GroupKFold(n_splits=n_splits).split(data, groups=groups))
+    return splits, providers
 
-    fold_euclid: list[float] = []
-    slot_euclid: dict[int, list[float]] = {}
+
+def _run_one_fold_of(data, providers, tr, te, *, feature_set, n_estimators, max_depth) -> dict:
+    """One CV fold's euclidean-MAE partials (overall + per-slot/provider/possession), as plain floats so a
+    fanned fold worker can persist them to JSON and the reduce can aggregate byte-identically."""
+    from silly_kicks.tracking._ghost_outfield import GhostOutfieldModel
+
+    train, test = data.iloc[tr], data.iloc[te]
+    m = GhostOutfieldModel(n_estimators=n_estimators, max_depth=max_depth, feature_set=feature_set)._fit_extracted(
+        train
+    )
+    preds = m.predict_mean(test)
+    d = np.sqrt((preds[:, 0] - test["target_x"].to_numpy()) ** 2 + (preds[:, 1] - test["target_y"].to_numpy()) ** 2)
+    te_slots = test["slot_index"].to_numpy()
+    te_provs = providers[te]
+    te_poss = test["team_in_possession"].to_numpy()
+    return {
+        "fold_euclid": float(np.mean(d)),
+        "per_slot": {str(int(s)): float(np.mean(d[te_slots == s])) for s in sorted(set(te_slots.tolist()))},
+        "per_provider": {p: float(np.mean(d[te_provs == p])) for p in sorted(set(te_provs.tolist()))},
+        "per_possession": {
+            ("in_possession" if pv == 1.0 else "out_of_possession"): float(np.mean(d[te_poss == pv]))
+            for pv in sorted(set(te_poss.tolist()))
+        },
+    }
+
+
+def _aggregate_folds(fold_dicts: list[dict]):
+    """Mean the per-fold partials into (cv_mae, per_slot, per_provider, per_possession) -- the same
+    reduction the inline loop did, so serial == fanned."""
+    slot_euclid: dict[str, list[float]] = {}
     prov_euclid: dict[str, list[float]] = {}
     poss_euclid: dict[str, list[float]] = {}
-    for tr, te in splits:
-        train, test = data.iloc[tr], data.iloc[te]
-        m = GhostOutfieldModel(n_estimators=n_estimators, max_depth=max_depth, feature_set=feature_set)._fit_extracted(
-            train
-        )
-        preds = m.predict_mean(test)
-        d = np.sqrt((preds[:, 0] - test["target_x"].to_numpy()) ** 2 + (preds[:, 1] - test["target_y"].to_numpy()) ** 2)
-        fold_euclid.append(float(np.mean(d)))
-        te_slots = test["slot_index"].to_numpy()
-        for slot in sorted(set(te_slots.tolist())):
-            slot_euclid.setdefault(int(slot), []).append(float(np.mean(d[te_slots == slot])))
-        te_provs = providers[te]
-        for prov in sorted(set(te_provs.tolist())):
-            prov_euclid.setdefault(prov, []).append(float(np.mean(d[te_provs == prov])))
-        # Per possession regime: the model serves the IN-POSSESSION slice for rest defense, so its
-        # in-possession MAE is the acceptance-relevant number (distinct from the out-of-possession line).
-        te_poss = test["team_in_possession"].to_numpy()
-        for pv in sorted(set(te_poss.tolist())):
-            label = "in_possession" if pv == 1.0 else "out_of_possession"
-            poss_euclid.setdefault(label, []).append(float(np.mean(d[te_poss == pv])))
-    per_slot = {str(int(s)): float(np.mean(v)) for s, v in sorted(slot_euclid.items())}
+    for fd in fold_dicts:
+        for s, v in fd["per_slot"].items():
+            slot_euclid.setdefault(s, []).append(v)
+        for p, v in fd["per_provider"].items():
+            prov_euclid.setdefault(p, []).append(v)
+        for k, v in fd["per_possession"].items():
+            poss_euclid.setdefault(k, []).append(v)
+    per_slot = {s: float(np.mean(v)) for s, v in sorted(slot_euclid.items(), key=lambda kv: int(kv[0]))}
     per_provider = {p: float(np.mean(v)) for p, v in sorted(prov_euclid.items())}
     per_possession = {k: float(np.mean(v)) for k, v in sorted(poss_euclid.items())}
-    return float(np.mean(fold_euclid)), per_slot, per_provider, per_possession
+    return float(np.mean([fd["fold_euclid"] for fd in fold_dicts])), per_slot, per_provider, per_possession
 
 
 def main(argv=None):
@@ -332,6 +381,18 @@ def main(argv=None):
         print(f"ERROR: No .parquet files found in {args.data_dir}", file=sys.stderr)
         sys.exit(1)
     print(f"Discovered {len(parquets)} tracking parquet(s) in {args.data_dir}")
+
+    # Map/reduce extract fan-out (ADR-123): slice to this worker's disjoint file subset (each flat parquet
+    # is one game -> a file-index partition is a disjoint cover). --fold / --assemble run the FULL list.
+    if args.shard_index is not None:
+        from scripts._driver import shard_select
+
+        _si, _sn = (int(x) for x in args.shard_index.split("/"))
+        parquets = shard_select(parquets, _si, _sn)
+        print(f"Shard {_si}/{_sn}: extracting {len(parquets)} of the discovered parquet files")
+        if not parquets:
+            print(f"ERROR: shard {args.shard_index} selects no files", file=sys.stderr)
+            sys.exit(1)
 
     from scripts._driver import for_each, shard_path
 
@@ -368,6 +429,11 @@ def main(argv=None):
     )
     if res.failures:
         print(f"WARN: {len(res.failures)} match(es) failed during extraction: {res.failures}")
+    # Map/reduce extract fan-out (ADR-123): a --shard-index worker has written its subset's shards to the
+    # shared shard_root; concat + CV + fit belong to --assemble. Exit so N workers compose without racing.
+    if args.shard_index is not None and not args.assemble:
+        print(f"Shard {args.shard_index}: extraction complete ({res.skipped} resumed); exiting before CV.")
+        return
     # `res.shard_keys`, not `res.keys`: a failed match (this driver WARNs and continues rather than
     # raising) has no shard, so reading `res.keys` would FileNotFoundError on it (ADR-052 D13 / the
     # cycle's interp-11 combine contract). Byte-identical to `res.keys` when nothing failed.
@@ -382,9 +448,39 @@ def main(argv=None):
 
     from silly_kicks.tracking._ghost_outfield import GhostOutfieldModel, ghost_rearguard_coherence
 
-    cv_mae, cv_mae_by_slot, cv_mae_by_provider, cv_mae_by_possession = _cross_validate(
-        data, feature_set=fs, n_estimators=args.n_estimators, max_depth=args.max_depth, cv_folds=args.cv_folds
-    )
+    # Map/reduce CV (ADR-123): --fold K runs one fold from the identically-computed split and persists it;
+    # --assemble aggregates the fanned fold_*.json; a plain serial run uses the inline _cross_validate.
+    fold_dir = shard_root / "folds"
+    if args.fold is not None:
+        splits, providers = _cv_splits(data, args.cv_folds)
+        if splits is None:
+            print("ERROR: CV infeasible (<2 games); --fold needs >=2 games", file=sys.stderr)
+            sys.exit(2)
+        if not (0 <= args.fold < len(splits)):
+            print(f"ERROR: --fold {args.fold} out of range [0,{len(splits)})", file=sys.stderr)
+            sys.exit(2)
+        fold_dir.mkdir(parents=True, exist_ok=True)
+        _tr, _te = splits[args.fold]
+        _d = _run_one_fold_of(
+            data, providers, _tr, _te, feature_set=fs, n_estimators=args.n_estimators, max_depth=args.max_depth
+        )
+        (fold_dir / f"fold_{args.fold}.json").write_text(json.dumps(_d), encoding="utf-8")
+        print(f"Fold {args.fold} done -> {fold_dir / f'fold_{args.fold}.json'}")
+        return
+
+    if args.assemble:
+        splits, _providers = _cv_splits(data, args.cv_folds)
+        if splits is None:
+            cv_mae, cv_mae_by_slot, cv_mae_by_provider, cv_mae_by_possession = None, {}, {}, {}
+        else:
+            _fold_dicts = [
+                json.loads((fold_dir / f"fold_{k}.json").read_text(encoding="utf-8")) for k in range(len(splits))
+            ]
+            cv_mae, cv_mae_by_slot, cv_mae_by_provider, cv_mae_by_possession = _aggregate_folds(_fold_dicts)
+    else:
+        cv_mae, cv_mae_by_slot, cv_mae_by_provider, cv_mae_by_possession = _cross_validate(
+            data, feature_set=fs, n_estimators=args.n_estimators, max_depth=args.max_depth, cv_folds=args.cv_folds
+        )
     print(f"CV euclidean MAE: {cv_mae}  per-slot: {cv_mae_by_slot}")
     print(f"  per-provider: {cv_mae_by_provider}  per-possession: {cv_mae_by_possession}")
 

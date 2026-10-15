@@ -81,6 +81,16 @@ def flat_to_pergame(flat_dir: str | Path, out_dir: str | Path) -> int:
         apath = actions_dir / shard.name
         actions = pd.read_parquet(apath) if apath.exists() else pd.DataFrame(columns=["type_id"])
         _shots_frame(actions, shot_ids, id_to_name).to_parquet(gdir / "shots.parquet")
+        # xcross's _iter_matches_from_dir reads {game}/actions.parquet (the FULL SPADL actions, to extract
+        # crosses); emit it (symlink like frames.parquet -- the _actions shards are large) when present.
+        if apath.exists():
+            alink = gdir / "actions.parquet"
+            if alink.exists() or alink.is_symlink():
+                alink.unlink()
+            try:
+                os.symlink(apath.resolve(), alink)
+            except (OSError, NotImplementedError):  # unprivileged symlink (e.g. Windows CI) -> copy
+                shutil.copy(apath, alink)
         written += 1
     return written
 

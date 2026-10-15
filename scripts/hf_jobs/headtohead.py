@@ -408,7 +408,7 @@ def _require_corpus(corpus_dir: Path | None) -> Path:
     return Path(corpus_dir)
 
 
-def build_eval(name: str, corpus_dir: Path | None) -> dict:
+def build_eval(name: str, corpus_dir: Path | None, *, feature_set: str = "faithful") -> dict:
     """Assemble the REAL eval bundle (the one the floor's δ comparison is meaningful on).
 
     Fail-loud: raises ``EvalDataUnavailableError`` when the data source is not reachable — the job must
@@ -416,6 +416,11 @@ def build_eval(name: str, corpus_dir: Path | None) -> dict:
     Delegates to the trainers' own feature extractors / loaders. First executed + verified at P1 on HF
     (statsbombpy) and P2 on HF/DGX (owner corpus); the local suite proves the scoring path with
     ``synthetic_bundle`` and proves THIS stays fail-loud when the source is absent.
+
+    ``feature_set`` selects the eval feature vintage for the xgboost occurrence classifiers
+    (xshot/xcross), so a velocity-free ``position_only`` booster is scored on a matching frame
+    (``predict_proba`` is strict on ``feature_names``; ADR-123 / spec §5). Ignored by the public evals
+    and the ghost/receiver builders (ghost's ``predict_mean`` reindexes to the model's own names).
     """
     from scripts.hf_jobs.registry import get
 
@@ -423,7 +428,7 @@ def build_eval(name: str, corpus_dir: Path | None) -> dict:
     if spec.source == "public":
         _require_statsbombpy()
         return _build_public_eval(name)
-    return _build_owner_eval(name, _require_corpus(corpus_dir))
+    return _build_owner_eval(name, _require_corpus(corpus_dir), feature_set=feature_set)
 
 
 def _public_eval_win_probability() -> dict:  # pragma: no cover - needs statsbombpy + scripts/ (P1 on HF)
@@ -594,9 +599,12 @@ def _with_type_name(actions: pd.DataFrame) -> pd.DataFrame:
     return actions.assign(type_name=actions["type_id"].map(name_by_id))
 
 
-def _owner_eval_classifier(shards, home, actions_dir, prepare) -> dict:
+def _owner_eval_classifier(shards, home, actions_dir, prepare, feature_set: str = "faithful") -> dict:
     """Shared owner-eval for the xgboost occurrence classifiers (xshot/xcross): per game, frames + actions
-    -> ``prepare_<model>_training_data`` -> (features, 0/1 labels, game-id groups)."""
+    -> ``prepare_<model>_training_data`` -> (features, 0/1 labels, game-id groups).
+
+    ``feature_set`` is threaded to ``prepare`` so the eval frame matches the scored variant's vintage
+    (26-feat position_only vs 27-feat faithful); xgboost ``predict_proba`` is strict on feature names."""
     feats_list, y_list, groups = [], [], []
     for f in shards:
         frames = pd.read_parquet(f)
@@ -605,7 +613,9 @@ def _owner_eval_classifier(shards, home, actions_dir, prepare) -> dict:
         apath = actions_dir / f.name
         if hid is None or not apath.exists():
             continue
-        feats, labels, grp = prepare(frames, _with_type_name(pd.read_parquet(apath)), home_team_id=hid)
+        feats, labels, grp = prepare(
+            frames, _with_type_name(pd.read_parquet(apath)), home_team_id=hid, feature_set=feature_set
+        )
         if len(feats) == 0:
             continue
         feats_list.append(feats.reset_index(drop=True))
@@ -620,16 +630,16 @@ def _owner_eval_classifier(shards, home, actions_dir, prepare) -> dict:
     }
 
 
-def _owner_eval_xshot(shards, home, actions_dir) -> dict:
+def _owner_eval_xshot(shards, home, actions_dir, feature_set: str = "faithful") -> dict:
     from silly_kicks.tracking._xshot_occurrence import prepare_xshot_training_data
 
-    return _owner_eval_classifier(shards, home, actions_dir, prepare_xshot_training_data)
+    return _owner_eval_classifier(shards, home, actions_dir, prepare_xshot_training_data, feature_set)
 
 
-def _owner_eval_xcross(shards, home, actions_dir) -> dict:
+def _owner_eval_xcross(shards, home, actions_dir, feature_set: str = "faithful") -> dict:
     from silly_kicks.tracking._xcross_attempt import prepare_xcross_training_data
 
-    return _owner_eval_classifier(shards, home, actions_dir, prepare_xcross_training_data)
+    return _owner_eval_classifier(shards, home, actions_dir, prepare_xcross_training_data, feature_set)
 
 
 def _owner_eval_ghost_outfield(shards, home, actions_dir) -> dict:
@@ -691,7 +701,12 @@ _OWNER_EVAL_BUILDERS: dict[str, Callable[[list[Path], dict, Path], dict]] = {
 }
 
 
-def _build_owner_eval(name: str, corpus_dir: Path) -> dict:
+#: Owner evals whose feature frame must match the scored variant's vintage (xgboost strict feature_names).
+#: The others (ghost_gk/ghost_outfield via predict_mean reindex, receiver) ignore feature_set.
+_FEATURE_SET_EVALS = frozenset({"xshot_occurrence", "xcross_attempt"})
+
+
+def _build_owner_eval(name: str, corpus_dir: Path, *, feature_set: str = "faithful") -> dict:
     builder = _OWNER_EVAL_BUILDERS.get(name)
     if builder is None:
         raise EvalDataUnavailableError(
@@ -699,6 +714,9 @@ def _build_owner_eval(name: str, corpus_dir: Path) -> dict:
             "prepare_<model>_training_data -> features+labels+groups); implemented + verified at P2 (gated)."
         )
     shards, home, actions_dir = _owner_shards(corpus_dir)
+    if name in _FEATURE_SET_EVALS:
+        vintage_builder = cast("Callable[[list[Path], dict, Path, str], dict]", builder)
+        return vintage_builder(shards, home, actions_dir, feature_set)
     return builder(shards, home, actions_dir)
 
 
@@ -708,9 +726,11 @@ def main() -> None:
     ap.add_argument("--committed-dir", type=Path, required=True)
     ap.add_argument("--fresh-dir", type=Path, required=True)
     ap.add_argument("--corpus-dir", type=Path, default=None)
+    ap.add_argument("--feature-set", default="faithful", help="Eval feature vintage (faithful|position_only).")
     ap.add_argument("--metrics-json", type=Path, required=True)
     a = ap.parse_args()
-    bundle = build_eval(a.trainer, a.corpus_dir)  # fail-loud: real data or EvalDataUnavailableError, never synthetic
+    # fail-loud: real data or EvalDataUnavailableError, never synthetic; feature_set matches the variant vintage.
+    bundle = build_eval(a.trainer, a.corpus_dir, feature_set=a.feature_set)
     paired = SCORERS[a.trainer](a.committed_dir, a.fresh_dir, bundle)
     existing = json.loads(a.metrics_json.read_text()) if a.metrics_json.exists() else {}
     existing.update(paired)

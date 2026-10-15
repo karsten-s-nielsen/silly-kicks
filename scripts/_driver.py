@@ -219,6 +219,20 @@ def shard_path(generation, key) -> pathlib.Path:
     return pathlib.Path(generation) / f"{join_key(key)}.parquet"
 
 
+def shard_select(seq, index, n):
+    """Disjoint-cover slice for ``--shard-index I/N``: ``list(seq)[index::n]``.
+
+    The union over ``index in range(n)`` is exactly ``seq`` with no overlap -- the invariant every
+    fan-out extraction relies on (and the determinism tests assert with >=2 shards). Order-preserving
+    so a resumed/reduced pass that re-walks the whole corpus sees the same per-shard membership.
+    """
+    if n < 1:
+        raise ValueError(f"n must be >= 1, got {n}")
+    if not (0 <= index < n):
+        raise ValueError(f"index must be in [0, {n}), got {index}")
+    return list(seq)[index::n]
+
+
 def write_shard(path, frame, *, tag: str) -> None:
     """Write one item's result, atomically. A ``None`` or empty frame STILL writes a file.
 

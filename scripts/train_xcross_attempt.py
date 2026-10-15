@@ -858,7 +858,16 @@ def main(argv=None) -> None:
         "--probe-match-ids-json",
         default=None,
         help='JSON {"gradientsports": ["10502", ...]}: matches loaded ONLY for the TF-19 substitution probe, in '
-        "a separate pass whose rows are discarded -- a held-out probe for a public-only fit (combined-cycle D5c).",
+        "a separate pass whose rows are discarded -- a held-out probe for a public-only fit (combined-cycle D5c). "
+        "PINING path (local/DGX only -- needs --providers). The HF/agnostic path uses --probe-data-dir instead.",
+    )
+    ap.add_argument(
+        "--probe-data-dir",
+        default=None,
+        help="ADR-123 dataset-AGNOSTIC held-out TF-19 probe: a staged per-game parquet dir ({game}/frames.parquet "
+        "+ actions.parquet, with source_provider set) for the probe matches. The separate probe pass captures the "
+        "cohort from this data (no pining, no --providers, no manifest) -- how it was staged is off-job. Mutually "
+        "exclusive with --probe-match-ids-json; both make the main extraction's in-line probe empty.",
     )
     ap.add_argument(
         "--match-ids-json",
@@ -933,6 +942,13 @@ def main(argv=None) -> None:
     ap.add_argument(
         "--study-list", default=None, help="JSON list of study tags to run from --shard-root (launcher worker)"
     )
+    ap.add_argument(
+        "--shard-index",
+        default=None,
+        help="I/N (ADR-123): extract only this disjoint subset of the TRAINING match refs to the shared "
+        "shard_root (art/shards) and exit BEFORE the cache/probe/persist. Requires --probe-match-ids-json "
+        "(a resumed prep loses the in-line probe cohort; the held-out probe is its own GS pass). Reduce = --assemble.",
+    )
     args = ap.parse_args(argv)
 
     # Parallel study path (5c): a worker runs one study, the reduce assembles them -- both operate on an
@@ -993,6 +1009,14 @@ def main(argv=None) -> None:
                 f"--probe-match-ids-json names {len(_overlap)} match(es) the training corpus can also load; "
                 "a held-out probe must be disjoint from training"
             )
+
+    # Map/reduce fan-out (ADR-123): extraction fan-out requires the held-out probe pass, because a resumed
+    # prep's in-line probe cohort comes back EMPTY (ADR-119). Fail fast, before any corpus work. The HF path
+    # uses --probe-data-dir (agnostic); --probe-match-ids-json is the pining path (local/DGX).
+    if args.shard_index is not None and not (args.probe_match_ids_json or args.probe_data_dir):
+        ap.error("--shard-index requires --probe-match-ids-json or --probe-data-dir (held-out TF-19 probe is separate)")
+    if args.probe_match_ids_json and args.probe_data_dir:
+        ap.error("--probe-match-ids-json and --probe-data-dir are mutually exclusive (pining vs staged-data probe)")
 
     out = Path(args.output_dir)
     art = out / "xcross_attempt_v1"
@@ -1056,6 +1080,26 @@ def main(argv=None) -> None:
         else:
             home_map = json.loads(Path(args.home_teams).read_text()) if args.home_teams else None
             source, load = _iter_matches_from_dir(Path(args.data_dir), home_map), None
+        # Map/reduce extract fan-out (ADR-123): a --shard-index worker extracts only its disjoint TRAINING
+        # ref subset to the shared shard_root and exits before the cache/probe/persist. Require
+        # --probe-match-ids-json so the prep's resumed main-extraction captures NO in-line probe cohort (it
+        # would come back empty on resume -- ADR-119); the held-out TF-19 probe is the separate GS pass below.
+        if args.shard_index is not None:  # guarded early (requires --probe-match-ids-json)
+            from scripts._driver import shard_select
+
+            _si, _sn = (int(x) for x in args.shard_index.split("/"))
+            _subset = shard_select(list(source), _si, _sn)
+            _extract(
+                _subset,
+                args.horizon_seconds,
+                feature_set=args.feature_set,
+                load=load,
+                shard_root=art / "shards",
+                probe_providers=(),  # no in-line probe: the held-out probe is the separate GS pass in prep
+                probe_comparison_providers=(),
+            )
+            print(f"Shard {args.shard_index}: extracted {len(_subset)} refs to shards; exiting pre-cache.")
+            return
         t0 = time.time()
         X, y, groups, providers, match_ids, probe_bundle = _extract(
             source,
@@ -1065,12 +1109,12 @@ def main(argv=None) -> None:
             # Shards live BESIDE the feature cache, under the same per-corpus `--output-dir`, so
             # the "fresh --output-dir per corpus" discipline the fingerprint enforces covers them.
             shard_root=art / "shards",
-            probe_providers=() if args.probe_match_ids_json else tuple(probe_provs),
+            probe_providers=() if (args.probe_match_ids_json or args.probe_data_dir) else tuple(probe_provs),
             probe_comparison_providers=tuple(comparison_provs),
         )
         if args.probe_match_ids_json:
             # D5(c): the TF-19 probe cohort comes from a SEPARATE pass over probe-only matches (e.g. GS
-            # 10502/10503) whose feature rows are discarded -- they can never enter training.
+            # 10502/10503) whose feature rows are discarded -- they can never enter training. PINING path.
             from _loader_pining import pining_source
 
             probe_allow = json.load(open(args.probe_match_ids_json))
@@ -1080,6 +1124,22 @@ def main(argv=None) -> None:
                 args.horizon_seconds,
                 feature_set=args.feature_set,
                 load=p_load,
+                shard_root=art / "probe_shards",
+                probe_providers=tuple(probe_provs),
+                probe_comparison_providers=(),
+            )
+            probe_bundle = (p_bundle[0], probe_bundle[1], probe_bundle[2] + p_bundle[2])
+        elif args.probe_data_dir:
+            # ADR-123 AGNOSTIC held-out probe: same separate-pass discipline, but the probe matches come
+            # from a STAGED per-game parquet dir (source_provider set) -- no pining, no --providers, no
+            # manifest. _iter_matches_from_dir yields (prov, name, actions, frames, home); _extract captures
+            # the cohort for every match whose prov is in probe_providers (the staged GS parquet carries it).
+            p_source = _iter_matches_from_dir(Path(args.probe_data_dir))
+            *_discarded, p_bundle = _extract(
+                p_source,
+                args.horizon_seconds,
+                feature_set=args.feature_set,
+                load=None,
                 shard_root=art / "probe_shards",
                 probe_providers=tuple(probe_provs),
                 probe_comparison_providers=(),
@@ -1143,7 +1203,7 @@ def main(argv=None) -> None:
     # and the 5c parallel-path shard_root/study/assemble) are excluded so they never fork the store key;
     # every other CLI arg is an input the tuning depends on. Persisted in the study config below so the
     # parallel workers and the reduce key their stores on the SAME identity as a serial run.
-    resume_knobs = {"output_dir", "n_trials", "allow_dirty", "shard_root", "study", "assemble"}
+    resume_knobs = {"output_dir", "n_trials", "allow_dirty", "shard_root", "study", "assemble", "shard_index"}
     objective_inputs = {
         "driver": "train_xcross_attempt",
         "args": {k: v for k, v in vars(args).items() if k not in resume_knobs},

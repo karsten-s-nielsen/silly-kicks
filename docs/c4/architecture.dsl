@@ -15,7 +15,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         ruthless = softwareSystem "ruthless-efficiency" "Optuna/evolutionary optimization substrate (OptunaStrategy + CachedObjective)" "External"
         pining = softwareSystem "pining-for-the-data" "Gated mock provider REST API (SkillCorner/IDSSE public, Gradient Sports + SB360 owner-tier) over S3" "External"
         databricks = softwareSystem "Databricks Lakehouse" "bronze.* SPADL/tracking + spadl_actions xT corpus + dev_gold action/shot marts (fct_action_values/context, fct_shot_xg, dim_matches) for the xT-GK v2 gate + rho retention" "External"
-        hfStorage = softwareSystem "HF datasets + Storage Bucket" "HF Jobs re-fit storage (ADR-122): 3 private staged corpora (hf-refit-tc3/xshot/sb360) read-only + hf-refit-scratch Storage Bucket mounted read-write for resumable output/shards (--attempts resumes)." "External"
+        hfStorage = softwareSystem "HF datasets + Storage Bucket" "HF Jobs re-fit storage (ADR-122/123): private staged NEUTRAL parquet corpora (flat tc3/xshot/xcross-probe/sb360) read-only + hf-refit-scratch Storage Bucket read-write for resumable per-phase output." "External"
 
         // --- The System ---
         sillyKicks = softwareSystem "silly-kicks" "Classifies football actions into SPADL representation and values them via VAEP" {
@@ -62,8 +62,8 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
                 glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 521 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
                 // Phase-2 agent-support server (shipped). Opt-in [mcp] extra; the core lib never imports it.
                 mcp = container "silly_kicks.mcp" "Read-only tripwire MCP server (FastMCP, stdio): check_orientation / diagnose_provider / validate_construct_validity — binds pure read-only seams / committed memos, never run()/main()." "Python (optional [mcp] extra)" "Library"
-                // HF Jobs training harness (ADR-122): dev tooling (like calibration + scripts/), not a runtime lib.
-                hfJobs = container "scripts/hf_jobs" "HF Jobs training harness (ADR-122): launches each trainer as an ephemeral HF Job, head-to-head-scores fresh vs committed on a shared holdout (no-regression floor), retrieves weights for PR-back." "Python (dev tooling)" "Library"
+                // HF Jobs training harness (ADR-122/123): dev tooling (like calibration + scripts/), not a runtime lib.
+                hfJobs = container "scripts/hf_jobs" "HF Jobs harness (ADR-122/123): per-trainer parallel map/reduce on cpu-upgrade; dataset-agnostic in-job (staged neutral parquet, never pining); head-to-head no-regression floor; DGX e2e RSS gate." "Python (dev tooling)" "Library"
             }
         }
 
@@ -192,11 +192,12 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         mcp -> tracking "Binds read-only lib diagnostics validate_gk_position_clamp + validate_id_dtypes (diagnose_provider keeper/id_dtype) via" "Python import"
         mcp -> spadl "Binds read-only lib diagnostic detect_input_convention (diagnose_provider convention) via" "Python import"
 
-        // --- Relationships: HF Jobs training harness (ADR-122) ---
-        maintainer -> hfJobs "Re-fits the 9 bundled models as 15 per-variant ephemeral HF Jobs (per-variant head-to-head no-regression floor; owner-gated spend) via" "scripts/hf_jobs/launch.py"
-        hfJobs -> hfHub "Launches one ephemeral CPU Job per trainer variant (hf CLI >= v2.2; --attempts auto-retry) on" "hf jobs run"
-        hfJobs -> hfStorage "Reads the 3 staged corpora (hf download) + mounts the scratch bucket read-write for resumable output/shards; weights retrieved locally (hf cp), no in-job upload, on" "-v hf://buckets/...:/scratch"
-        hfJobs -> pining "Materializes owner-tier corpora (on DGX/local, then pushed to the private HF datasets) from" "_loader_pining"
+        // --- Relationships: HF Jobs training harness (ADR-122/123) ---
+        maintainer -> hfJobs "Re-fits the 9 bundled models as a parallel map/reduce per trainer on cpu-upgrade (per-variant head-to-head floor; DGX e2e RSS gate; owner-gated spend) via" "scripts/hf_jobs/run_pipeline"
+        hfJobs -> hfHub "Launches each map/reduce phase as an ephemeral cpu-upgrade Job (hf CLI >= v2.2; --attempts auto-retry) on" "hf jobs run"
+        hfJobs -> hfStorage "Reads the staged neutral parquet corpora (hf download) + mounts the scratch bucket read-write for resumable per-phase output/shards; weights retrieved locally (hf cp), no in-job upload, on" "-v hf://buckets/...:/scratch"
+        // ADR-123: pining is the OWNER's off-HF staging tool (DGX), never the in-job code -- the harness is dataset-agnostic.
+        maintainer -> pining "Stages owner-tier corpora to neutral parquet ON THE DGX (off-HF), then pushes only the parquet to the private HF datasets, from" "_loader_pining"
     }
 
     views {

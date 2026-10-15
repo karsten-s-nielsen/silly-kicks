@@ -61,7 +61,7 @@ def test_cli_e2e_writes_pair_plus_stamp_and_floor_admits(tmp_path, monkeypatch):
     monkeypatch.setattr(
         headtohead,
         "build_eval",
-        lambda name, corpus_dir: synthetic_bundle(name, pathlib.Path(committed)),
+        lambda name, corpus_dir, *, feature_set="faithful": synthetic_bundle(name, pathlib.Path(committed)),
     )
     mj = tmp_path / "metrics.json"
     monkeypatch.setattr(

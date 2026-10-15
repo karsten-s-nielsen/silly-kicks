@@ -39,6 +39,31 @@ def test_repackage_makes_per_game_dirs_with_bare_names_and_filtered_shots(tmp_pa
     assert {"game_id", "period_id", "team_id", "time_seconds"} <= set(shots.columns)
 
 
+def test_repackage_emits_full_actions_parquet_per_game(tmp_path):
+    # xcross's _iter_matches_from_dir reads {game}/actions.parquet (the FULL SPADL actions, to extract
+    # crosses); the repackage must emit it, not only shots.parquet.
+    flat, out = tmp_path / "corpus", tmp_path / "pergame"
+    flat.mkdir()
+    _write_flat(flat)
+
+    flat_to_pergame(flat, out)
+    gdir = out / "gradientsports-10502"
+    assert (gdir / "actions.parquet").exists()
+    actions = pd.read_parquet(gdir / "actions.parquet")
+    assert len(actions) == 3  # the FULL actions table (not the 1 shot), as xcross needs
+    assert list(actions["type_id"]) == [11, 0, 21]
+
+
+def test_repackage_omits_actions_parquet_when_no_actions(tmp_path):
+    # No _actions shard -> no actions.parquet (nothing to link); shots.parquet still written empty.
+    flat, out = tmp_path / "corpus", tmp_path / "pergame"
+    gen = flat / "shards" / "g"
+    gen.mkdir(parents=True)
+    pd.DataFrame({"source_provider": ["idsse"], "game_id": ["X1"]}).to_parquet(gen / "idsse__X1.parquet")
+    flat_to_pergame(flat, out)
+    assert not (out / "idsse-X1" / "actions.parquet").exists()
+
+
 def test_repackage_tolerates_a_match_with_no_actions(tmp_path):
     flat, out = tmp_path / "corpus", tmp_path / "pergame"
     gen = flat / "shards" / "g"

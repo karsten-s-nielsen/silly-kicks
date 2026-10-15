@@ -37,6 +37,11 @@ class VariantBuild:
     run_args: tuple[str, ...]
     committed_path: str
     fresh_subdir: str
+    #: The feature vintage this variant was fit at. The head-to-head eval extracts features at THIS
+    #: set so a velocity-free (position_only) booster is scored on a matching frame -- xgboost
+    #: predict_proba is strict on feature_names (the floor-crash fix, ADR-123 / spec §5). Default
+    #: "faithful" for the velocity-bearing variants and the public trainers.
+    feature_set: str = "faithful"
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,10 @@ class TrainerSpec:
     metric_direction: str  # "lower_better" | "higher_better"
     delta: float  # pinned per-trainer regression tolerance
     databricks_blocked: bool = False
+    #: This trainer reproduces a held-out TF-19 probe from a STAGED per-game probe dataset (ADR-123
+    #: dataset-agnostic: --probe-data-dir, never in-job pining). launch downloads probe_repo -> /tmp/probe
+    #: and threads --probe-data-dir. Only xcross (the committed GS 10502/10503 held-out probe).
+    probe: bool = False
 
     @property
     def weights_paths(self) -> tuple[str, ...]:
@@ -129,9 +138,9 @@ REGISTRY: dict[str, TrainerSpec] = {
         name="ghost_gk",
         module="scripts.train_ghost_gk",
         source="owner_flat",
-        flavor="cpu-performance",
+        flavor="cpu-upgrade",  # owner directive 2026-10-14: cpu-upgrade only
         extras=(),
-        timeout="6h",
+        timeout="3h",  # assemble-phase ceiling; extraction + CV folds fan out (shorter) per-phase in launch
         output_flag="--output-dir",
         base_args=(),
         # 4 variants, each writing {output-dir}/ghost_gk_v1, so each needs its OWN output dir (launch
@@ -145,6 +154,7 @@ REGISTRY: dict[str, TrainerSpec] = {
                 ("--feature-set", "position_only"),
                 "tracking/_ghost_gk_weights/position_only",
                 "ghost_gk_v1",
+                feature_set="position_only",
             ),
             VariantBuild(
                 "sweeper",
@@ -157,6 +167,7 @@ REGISTRY: dict[str, TrainerSpec] = {
                 ("--feature-set", "position_only", "--grid-x-max", "52.5", "--variant", "sweeper_position_only"),
                 "tracking/_ghost_gk_weights/sweeper_position_only",
                 "ghost_gk_v1",
+                feature_set="position_only",
             ),
         ),
         primary_metric="cv_mae_euclidean",
@@ -167,9 +178,9 @@ REGISTRY: dict[str, TrainerSpec] = {
         name="ghost_outfield",
         module="scripts.train_ghost_outfield",
         source="owner_flat",
-        flavor="cpu-performance",
+        flavor="cpu-upgrade",  # owner directive 2026-10-14: cpu-upgrade only
         extras=(),
-        timeout="6h",
+        timeout="3h",  # assemble-phase ceiling; extraction + CV folds fan out per-phase in launch
         output_flag="--output-dir",
         base_args=(),
         # 2 variants; the trainer writes {output-dir}/{variant}, so the variant is in the path -- a shared
@@ -181,6 +192,7 @@ REGISTRY: dict[str, TrainerSpec] = {
                 ("--variant", "position_only"),
                 "tracking/_ghost_outfield_weights/position_only",
                 "position_only",
+                feature_set="position_only",
             ),
         ),
         primary_metric="cv_mae",
@@ -191,9 +203,9 @@ REGISTRY: dict[str, TrainerSpec] = {
         name="xshot_occurrence",
         module="scripts.train_xshot_occurrence",
         source="owner_pergame",
-        flavor="cpu-xl",
+        flavor="cpu-upgrade",  # owner directive 2026-10-14: cpu-upgrade only
         extras=(),
-        timeout="4h",
+        timeout="2h",  # assemble-phase ceiling; extraction + HPO studies fan out per-phase in launch
         output_flag="--output-dir",
         base_args=("--n-trials", "50"),
         builds=(
@@ -205,6 +217,7 @@ REGISTRY: dict[str, TrainerSpec] = {
                 ("--feature-set", "position_only"),
                 "tracking/_xshot_weights/position_only",
                 "xshot_occurrence_v1",
+                feature_set="position_only",
             ),
         ),
         primary_metric="pr_auc",
@@ -215,11 +228,12 @@ REGISTRY: dict[str, TrainerSpec] = {
         name="xcross_attempt",
         module="scripts.train_xcross_attempt",
         source="owner_pergame",
-        flavor="cpu-xl",
+        flavor="cpu-upgrade",  # owner directive 2026-10-14: cpu-upgrade only
         extras=(),
-        timeout="4h",
+        timeout="2h",  # assemble-phase ceiling; extraction + HPO studies fan out per-phase in launch
         output_flag="--output-dir",
         base_args=("--n-trials", "50"),
+        probe=True,  # held-out TF-19 probe from a staged per-game probe dataset (ADR-123: --probe-data-dir, no pining)
         builds=(
             VariantBuild(
                 "default", ("--feature-set", "faithful"), "tracking/_xcross_weights/default", "xcross_attempt_v1"
@@ -229,6 +243,7 @@ REGISTRY: dict[str, TrainerSpec] = {
                 ("--feature-set", "position_only"),
                 "tracking/_xcross_weights/position_only",
                 "xcross_attempt_v1",
+                feature_set="position_only",
             ),
         ),
         primary_metric="pr_auc",
@@ -239,12 +254,13 @@ REGISTRY: dict[str, TrainerSpec] = {
         name="receiver_model",
         module="scripts.train_receiver_model",
         source="owner_sb360",
-        flavor="cpu-xl",
+        flavor="cpu-upgrade",  # owner directive 2026-10-14: cpu-upgrade only
         extras=(),
-        timeout="4h",
+        timeout="2h",  # assemble-phase ceiling; extraction fans out per-phase in launch
         output_flag="--out",
-        # --shard-root (extraction SCRATCH) + --cache-dir (staged SB360 artifacts) + the offline manifest
-        # env are injected by launch; here only the variant-shaping flags + the SB360 corpus selection.
+        # ADR-123 dataset-AGNOSTIC: launch injects --data-dir (the STAGED flat corpus) + --shard-root
+        # (extraction scratch in the bucket). NO pining manifest / --cache-dir / --match-ids-json in-job.
+        # --provider still selects the labeling strategy; --feature-set public is the shipped variant.
         base_args=("--provider", "statsbomb", "--feature-set", "public"),
         builds=(VariantBuild("default", (), "tracking/_receiver_weights/default", "model"),),
         primary_metric="top1",

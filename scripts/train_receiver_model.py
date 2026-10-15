@@ -379,6 +379,31 @@ def _corpus_source(provider: str, cache_dir, match_ids: dict | None = None):
     return refs, load
 
 
+def _data_dir_source(data_dir):
+    """ADR-123 dataset-AGNOSTIC corpus as ``(refs, load)``: the STAGED flat per-match frames + ``_actions``
+    (``shards/<gen>/<key>.parquet`` + ``_actions/<key>.parquet``, or flat ``*.parquet`` + ``_actions/``) --
+    the same shape the head-to-head receiver eval reads. ``load`` yields ``(match_id, actions, frames)``,
+    identical to ``_corpus_source``. NO pining, NO manifest, NO ``--providers``: how the dataset was staged
+    (pining on a DGX, statsbombpy, anyone's loader) is off-job and not the in-job code's concern."""
+    import glob
+    from collections import namedtuple
+
+    data_dir = pathlib.Path(data_dir)
+    Ref = namedtuple("Ref", ["match_id", "frames_path", "actions_path"])
+    frame_shards = [pathlib.Path(p) for p in sorted(glob.glob(str(data_dir / "shards" / "*" / "*.parquet")))]
+    if not frame_shards:
+        frame_shards = [pathlib.Path(p) for p in sorted(glob.glob(str(data_dir / "*.parquet")))]
+    adir = data_dir / "_actions"
+    refs = [Ref(match_id=f.stem, frames_path=f, actions_path=adir / f.name) for f in frame_shards]
+
+    def load(ref):
+        frames = pd.read_parquet(ref.frames_path)
+        actions = pd.read_parquet(ref.actions_path) if ref.actions_path.exists() else pd.DataFrame()
+        return (ref.match_id, actions, frames)
+
+    return refs, load
+
+
 def _resolve_deployment(public_bundle, owner_model, provider, cache_dir, shard_root, out_dir, prov_commit) -> dict:
     """M-A(ii): pool per-match public-vs-owner failed-pass accuracy over the trained provider's corpus and
     reduce to ONE :func:`deployment_decision`. A SECOND sharded pass (its own generation), resumable."""
@@ -412,12 +437,25 @@ def _namespace_game_ids(rows, provider):
     return rows.assign(game_id=f"{provider}:" + rows["game_id"].astype(str))
 
 
-def _extract_provider_rows(provider, feature_set, shard_root, cache_dir, out_path, tag, match_ids=None):
+def _extract_provider_rows(
+    provider, feature_set, shard_root, cache_dir, out_path, tag, match_ids=None, shard_index=None, data_dir=None
+):
     """Shard + reconcile one provider's candidate rows with ITS per-provider labeling strategy (Q4), and
     return ``(rows, coverage_counters)``. Primary and pool providers get DISTINCT generations (the token
-    keys on ``provider``), so they never collide under one ``shard_root``."""
+    keys on ``provider``), so they never collide under one ``shard_root``.
+
+    ``data_dir`` (ADR-123): read the STAGED flat corpus (``_data_dir_source``) instead of live pining -- the
+    dataset-agnostic in-job path. ``provider`` still selects the per-provider labeling strategy + keys the
+    shard generation. ``shard_index`` ("I/N", ADR-123): extract only this disjoint subset of the match refs
+    to the shared ``shard_root`` and return EMPTY rows (an extract-only fan-out worker -- the reduce
+    reconciles + fits over all the shards). The partition is a disjoint cover of the refs."""
     strategy = labeling_strategy_for_provider(provider)
-    refs, load = _corpus_source(provider, cache_dir, match_ids)
+    refs, load = _data_dir_source(data_dir) if data_dir is not None else _corpus_source(provider, cache_dir, match_ids)
+    if shard_index is not None:
+        from scripts._driver import shard_select
+
+        _i, _n = (int(x) for x in shard_index.split("/"))
+        refs = shard_select(refs, _i, _n)
     res = for_each(
         refs,
         key=lambda ref: ref.match_id,  # pre-migration key was the match_id; _KEY_EXCEPTIONS
@@ -434,6 +472,9 @@ def _extract_provider_rows(provider, feature_set, shard_root, cache_dir, out_pat
         counters=_coverage_counters,
         label=tag,
     )
+    if shard_index is not None:
+        # Extract-only fan-out worker: shards are written to the shared shard_root; the reduce reconciles.
+        return pd.DataFrame(), dict(res.counters)
     # Per-provider parquet keeps RAW ids; the returned in-memory rows -- what the model fits + the manifest
     # counts -- are provider-namespaced so a pooled corpus stays collision-free (F3).
     rows = _namespace_game_ids(reconcile(res.shard_dir, out_path, tag=tag), provider)
@@ -462,6 +503,14 @@ def main() -> None:
     )
     ap.add_argument("--cache-dir", default=None, help="pining cache dir for a tracking provider (owner variant)")
     ap.add_argument(
+        "--data-dir",
+        type=pathlib.Path,
+        default=None,
+        help="ADR-123 dataset-AGNOSTIC corpus: read the STAGED flat per-match frames + _actions "
+        "(shards/<gen>/*.parquet + _actions/, the head-to-head eval shape) instead of live pining. NO "
+        "pining/manifest/--providers in-job; --provider still selects the labeling strategy. The HF path.",
+    )
+    ap.add_argument(
         "--match-ids-json",
         default=None,
         help='JSON {"statsbomb": [id, ...]} restricting the PRIMARY provider\'s corpus (e.g. the 30-match '
@@ -483,6 +532,13 @@ def main() -> None:
         "waste (ADR-052: for_each resumes work, not item production).",
     )
     ap.add_argument("--allow-dirty", action="store_true")
+    ap.add_argument(
+        "--shard-index",
+        default=None,
+        help="I/N (ADR-123): extract only this disjoint subset of the PRIMARY provider's match refs to the "
+        "shared --shard-root and exit before the reconcile/fit (extract fan-out worker). The reduce (no "
+        "--shard-index) resumes every shard and fits. Not supported with --pool-provider.",
+    )
     ap.add_argument("--min-rows", type=int, default=1)
     # A corpus-volume floor so a partial download cannot silently bundle a model. Injectable; RAISE it to
     # the corpus's expected pass volume for a production bundling run (mirrors build_rq_pass_scores).
@@ -493,6 +549,28 @@ def main() -> None:
     require_clean_tree(prov, allow_dirty=args.allow_dirty)
 
     args.out.mkdir(parents=True, exist_ok=True)
+
+    # Map/reduce extract fan-out (ADR-123): a --shard-index worker extracts its disjoint ref subset to the
+    # shared --shard-root and exits before the reconcile/fit; the reduce (no --shard-index) assembles + fits.
+    if args.shard_index is not None:
+        if args.pool_provider:
+            raise SystemExit("--shard-index (extract fan-out) does not support --pool-provider; fan the primary")
+        _extract_provider_rows(
+            args.provider,
+            args.feature_set,
+            args.shard_root,
+            args.cache_dir,
+            args.out / "candidate_rows.parquet",
+            "all",
+            match_ids=json.loads(pathlib.Path(args.match_ids_json).read_text(encoding="utf-8"))
+            if args.match_ids_json
+            else None,
+            shard_index=args.shard_index,
+            data_dir=args.data_dir,
+        )
+        print(f"Shard {args.shard_index}: extraction complete; exiting before reconcile/fit (reduce assembles).")
+        return
+
     if args.owner_rows is not None:
         # Lean path: reuse the RAW-id per-provider parquet; only the deployment gate re-parses the provider.
         # Namespace exactly as _extract_provider_rows would, so this is a faithful drop-in (and composes with
@@ -511,6 +589,7 @@ def main() -> None:
             match_ids=json.loads(pathlib.Path(args.match_ids_json).read_text(encoding="utf-8"))
             if args.match_ids_json
             else None,
+            data_dir=args.data_dir,
         )
 
     # `reconcile` returns a COLUMN-LESS frame when no shard is non-empty, so guard `both_classes` on

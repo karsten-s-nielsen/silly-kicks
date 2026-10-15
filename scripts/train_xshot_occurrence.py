@@ -765,6 +765,13 @@ def main(argv=None) -> None:
     ap.add_argument(
         "--study-list", default=None, help="JSON list of study tags to run from --shard-root (launcher worker)"
     )
+    ap.add_argument(
+        "--shard-index",
+        default=None,
+        help="I/N (ADR-123): extract only this disjoint subset of the match refs to the shared per-match "
+        "shard_root (art/shards) and exit BEFORE the whole-corpus cache/persist. A fan-out of the per-match "
+        "extraction; the full --prep-only run then resumes every shard. The reduce is --assemble.",
+    )
     args = ap.parse_args(argv)
 
     # Parallel study path (5c): a worker runs one study, the reduce assembles them. Both operate on an
@@ -850,6 +857,18 @@ def main(argv=None) -> None:
             )
         else:
             source, load = _iter_matches_from_dir(Path(args.data_dir)), None
+        # Map/reduce extract fan-out (ADR-123): a --shard-index worker extracts only its disjoint ref subset
+        # to the shared shard_root (art/shards) and exits before the whole-corpus cache/persist. The full
+        # --prep-only run then resumes every shard. (No probe cohort is lost: the re-fit threads
+        # --probe-match-ids-json, so the main extraction captures no probe -- the probe is its own GS pass.)
+        if args.shard_index is not None:
+            from scripts._driver import shard_select
+
+            _si, _sn = (int(x) for x in args.shard_index.split("/"))
+            _subset = shard_select(list(source), _si, _sn)
+            _extract(_subset, args.horizon_seconds, shard_root=art / "shards", feature_set=args.feature_set, load=load)
+            print(f"Shard {args.shard_index}: extracted {len(_subset)} refs to shards; exiting pre-cache.")
+            return
         t0 = time.time()
         # Shards live BESIDE the feature cache, under the same per-corpus `--output-dir`, so the
         # "fresh --output-dir per corpus" discipline the fingerprint enforces covers them too.
@@ -897,7 +916,7 @@ def main(argv=None) -> None:
     # and the 5c parallel-path shard_root/study/assemble) are excluded so they never fork the store key;
     # every other CLI arg is an input the tuning depends on. Persisted in the study config below so the
     # parallel workers and the reduce key their stores on the SAME identity as a serial run.
-    resume_knobs = {"output_dir", "n_trials", "allow_dirty", "shard_root", "study", "assemble"}
+    resume_knobs = {"output_dir", "n_trials", "allow_dirty", "shard_root", "study", "assemble", "shard_index"}
     objective_inputs = {
         "driver": "train_xshot_occurrence",
         "args": {k: v for k, v in vars(args).items() if k not in resume_knobs},
