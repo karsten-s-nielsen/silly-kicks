@@ -2,7 +2,7 @@
 
 Maintained fork of socceraction — SPADL event conversion + VAEP action valuation for soccer analytics.
 
-> **Maintaining this file.** `AGENTS.md` is the always-loaded, class-1 surface: CURRENT terse rules + pointers ONLY. Rationale / history / measurement lives on-demand in `docs/context/<domain>.md` (read it when the rule bites). A Key-conventions bullet is ≤ 600 chars and carries an `ADR-NNN` ref or a `docs/context/` pointer. Enforced by `tests/test_agents_md_budget.py` (byte target/ceiling + per-bullet char cap + a per-invariant completeness check against `tests/fixtures/agents_md_invariant_inventory.json`, snapshotted from `CLAUDE.md`@77286f4). Canonical filename is `AGENTS.md`; `CLAUDE.md` is a one-line `@AGENTS.md` importer for Claude Code. Full design: `docs/superpowers/specs/2026-09-24-agents-md-restructure-design.md`.
+> **Maintaining this file.** `AGENTS.md` = always-loaded class-1 surface: CURRENT terse rules + pointers ONLY; rationale/history/measurement lives on-demand in `docs/context/<domain>.md`. A Key-conventions bullet is ≤ 600 chars and carries an `ADR-NNN` ref or a `docs/context/` pointer. Enforced by `tests/test_agents_md_budget.py` (byte ceiling + per-bullet char cap + per-invariant completeness vs `tests/fixtures/agents_md_invariant_inventory.json`, snapshotted `CLAUDE.md`@77286f4). `CLAUDE.md` is the one-line `@AGENTS.md` importer. Design: `docs/superpowers/specs/2026-09-24-agents-md-restructure-design.md`.
 
 ## Architecture
 
@@ -42,6 +42,7 @@ Hexagonal: all core functions are pure (pandas in, pandas out), zero I/O, zero g
 | TF-48 | `_shot_goalmouth.py` | `compute_shot_goalmouth`/`add_shot_goalmouth` — no xfns (post-contact leakage) |
 | TF-49 | `_packing.py` | `compute_packing_metrics`/`add_packing`/`packing_xfns` (no default list) |
 | TF-51 | `defensive_credit/` | `compute_defensive_credits`/`add_defensive_credit`/`compute_bravery`/`add_press_commitment` — no xfns |
+| TF-79 | `_ball_contact.py` | `detect_ball_contacts`/`add_ball_contacts`/`first_contact_in_window`/`BallContactParams` — no xfns (ADR-124) |
 | -- | `_visibility.py` | `point_observed`/`region_observed_fraction`/`add_visible_area_coverage` — no xfns |
 | -- | orchestrator | `run_tracking_features` (provider-agnostic producer; not an aggregator) |
 

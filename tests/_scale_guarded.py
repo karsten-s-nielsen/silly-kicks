@@ -80,6 +80,11 @@ SCALE_GUARDED: dict[str, str] = {
     # point) scales the GAME dimension so a per-game full-frame rescan would be O(games^2). The mandatory regression
     # companion proves the counter distinguishes (a rescan shim monkeypatched into the loop goes super-linear).
     "silly_kicks.coordination._signals._build_coordination_signals": "test_build_coordination_signals_is_subquadratic",
+    # TF-79 ball-contact: detect_ball_contacts groups the ball rows by period and the non-ball rows by
+    # (period, frame_id) ONCE (ADR-068), then .get the players per candidate contact in the loop. The
+    # growth fixture is a zigzag whose candidate count scales with the frame count, so a per-candidate
+    # `frames[frames.frame_id==fid]` rescan would be O(candidates*frames) == quadratic; group_rows keeps it linear.
+    "silly_kicks.tracking._ball_contact.detect_ball_contacts": "test_detect_ball_contacts_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.

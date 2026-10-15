@@ -115,6 +115,7 @@ _M_TEAM_SHAPE = "silly_kicks.tracking._team_shape"
 _M_SHAPE_GRAPH = "silly_kicks.tracking._shape_graph"
 _M_DEFENSIVE_LINE = "silly_kicks.tracking._defensive_line"
 _M_DAS = "silly_kicks.tracking._das"
+_M_BALL_CONTACT = "silly_kicks.tracking._ball_contact"
 _M_PRESSURE = "silly_kicks.tracking.pressure"
 _M_PITCH_CONTROL = "silly_kicks.tracking.pitch_control"
 _M_GK_INFLUENCE = "silly_kicks.tracking._gk_influence"
@@ -1061,6 +1062,56 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="dimensionless",
         emitting_module=_M_DAS,
         attribution=_A_DAS,
+    ),
+    # -- Ball contact (TF-79) -------------------------------------------------------------------
+    FeatureColumn(
+        name="first_contact_time",
+        definition="Period-relative time (s) of the first detected ball contact in the action window; NaN if none.",
+        unit="seconds",
+        emitting_module=_M_BALL_CONTACT,
+    ),
+    FeatureColumn(
+        name="first_contact_player_id",
+        definition="Player who made the first detected ball contact in the action window; <NA> if unresolved.",
+        unit="dimensionless",
+        emitting_module=_M_BALL_CONTACT,
+    ),
+    FeatureColumn(
+        name="first_contact_x",
+        definition="Pitch x (metres, frame-LTR) of the first detected ball contact in the action window.",
+        unit="metres",
+        emitting_module=_M_BALL_CONTACT,
+    ),
+    FeatureColumn(
+        name="first_contact_y",
+        definition="Pitch y (metres, frame-LTR) of the first detected ball contact in the action window.",
+        unit="metres",
+        emitting_module=_M_BALL_CONTACT,
+    ),
+    FeatureColumn(
+        name="first_contact_velocity_change_ms",
+        definition="Ball velocity-vector change |dv| (m/s) at the first contact; separates a touch from flight noise.",
+        unit="m/s",
+        emitting_module=_M_BALL_CONTACT,
+    ),
+    FeatureColumn(
+        name="first_contact_confidence",
+        definition="First-contact detector confidence in [0,1] (break x proximity x detection); higher = stronger.",
+        unit="probability",
+        emitting_module=_M_BALL_CONTACT,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="first_contact_is_aerial",
+        definition="Whether the ball was aerial at the first contact; <NA> where z is unmeasured/estimated.",
+        unit="dimensionless",
+        emitting_module=_M_BALL_CONTACT,
+    ),
+    FeatureColumn(
+        name="first_contact_source",
+        definition="Detection provenance of the first contact: rdp / velocity_break / both / unresolved.",
+        unit="dimensionless",
+        emitting_module=_M_BALL_CONTACT,
     ),
     # -- Pressure on actor (TF-2) ---------------------------------------------------------------
     FeatureColumn(

@@ -67,6 +67,7 @@ from ._action_orientation import (
     reproject_to_action_ltr,
 )
 from ._ball_carrier import infer_ball_carrier
+from ._ball_contact import add_ball_contacts
 from ._das import (
     DAS_SOURCE_COMPUTED,
     DAS_SOURCE_TEAM_UNRESOLVED,
@@ -118,6 +119,7 @@ __all__ = [
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
+    "add_ball_contacts",
     "add_cover_shadows",
     "add_das",
     "add_defensive_line",

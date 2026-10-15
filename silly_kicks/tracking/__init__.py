@@ -54,6 +54,7 @@ __all__ = [
     "VISIBLE_AREA_UNLINKED",
     "ActionFrameContext",
     "AndrienkoParams",
+    "BallContactParams",
     "BekkersParams",
     "CoverShadowParams",
     "DasCostWarning",
@@ -120,6 +121,7 @@ __all__ = [
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
+    "add_ball_contacts",
     "add_cover_shadows",
     "add_das",
     "add_defensive_credit",
@@ -193,6 +195,7 @@ __all__ = [
     "defensive_line_xfns",
     "derive_team_in_possession",
     "derive_velocities",
+    "detect_ball_contacts",
     "detect_line_breaking",
     "detect_off_ball_runs",
     "detected_mask",
@@ -205,6 +208,7 @@ __all__ = [
     "feature_framework",
     "features",
     "filter_extratime_frames",
+    "first_contact_in_window",
     "get_das",
     "get_individual_das",
     "get_provider_defaults",
@@ -327,6 +331,12 @@ from . import (
     utils,
 )
 from ._ball_carrier import derive_team_in_possession, infer_ball_carrier
+from ._ball_contact import (
+    BallContactParams,
+    add_ball_contacts,
+    detect_ball_contacts,
+    first_contact_in_window,
+)
 from ._collective import COLLECTIVE_VARIABLES, collective_from_positions, compute_collective_variables
 from ._cover_shadows import (
     CoverShadowParams,
