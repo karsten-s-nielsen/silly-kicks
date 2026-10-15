@@ -54,8 +54,9 @@ def test_registry_surface_is_the_expected_size():
     ``silly_kicks.keeper_identity`` module (breaking move, no shim): ``add_defending_gk_player_id``
     left ``tracking.__all__`` with it. Dropped 34 -> 32 at the xT-GK v1 retirement (ADR-121):
     ``add_xt_gk`` and ``add_gk_completion`` left ``tracking.__all__`` when v1 was removed.
+    Bumped 32 -> 33 at TF-79 (``add_ball_contacts`` entered ``tracking.__all__``).
     """
-    assert len(_public_add_names()) == 32, sorted(_public_add_names())
+    assert len(_public_add_names()) == 33, sorted(_public_add_names())
 
 
 @pytest.mark.parametrize("name", sorted(MIRROR_ENTRIES))

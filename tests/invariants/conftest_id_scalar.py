@@ -1239,6 +1239,17 @@ COVERED_BY_AGGREGATOR_GATE: dict[str, str] = {
 #: Genuinely cannot be dtype-invariant. Each entry states WHY, and each is a case where
 #: invariance would mean the function is BROKEN -- not a case we chose not to test.
 NOT_INVARIANT: dict[str, str] = {
+    "silly_kicks.tracking._ball_contact.first_contact_in_window": (
+        "The flagged scalar is `period_id` -- a PERIOD NUMBER (1-5), which this registry's own module "
+        "docstring explicitly lists as id-SHAPED but NOT an entity id (alongside cluster labels). The "
+        "name-based discovery heuristic (`name.endswith('_id')`) false-positives it. ADR-019's "
+        "dtype-invariance targets provider-assigned player/team ids (where a float/str/Int64 skew "
+        "silently mis-resolves '366' vs 366.0); a period number carries no such id-space. The repo's "
+        "OWN idiom confirms this split -- shipped code routes game_id/player_id through id_compat but "
+        "compares period_id with raw `==` (coordination/_signals.py:657 `same_id(g, game) and int(p) == "
+        "period`; coordination/_windows.py:286). `first_contact_in_window` compares NO player/team id "
+        "(the only scalar compare is the period filter), so there is no entity-id invariance to assert."
+    ),
     "silly_kicks.tracking.utils.validate_id_dtypes": (
         "The DIAGNOSTIC itself (ADR-019's loud guard). Its entire job is to REPORT that an id "
         "scalar's dtype disagrees with the columns, so identical output across a matched and a "

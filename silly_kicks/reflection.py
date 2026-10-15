@@ -147,9 +147,16 @@ _TRACKING_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "visibility": "invariant",
     "source_provider": "invariant",
     "is_goalkeeper_source": "invariant",
+    # --- TF-79 ball-contact table (detect_ball_contacts output; a separate schema, declared here so a
+    #     consumer reflecting the contacts table through the tracking kinds handles its geometry) ---
+    "contact_x": "point_x",
+    "contact_y": "point_y",
+    "velocity_change_ms": "invariant",
+    "contact_source": "invariant",
 }
 """Transform kind per tracking-frame column. Covers TRACKING_FRAMES_COLUMNS plus the
-preprocess-added columns. Completeness is CI-gated (tests/test_reflection.py)."""
+preprocess-added columns (and the TF-79 contacts-table geometry). Completeness is
+CI-gated (tests/test_reflection.py)."""
 
 _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     # --- geometry ---
@@ -166,6 +173,15 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "end_coord_source": "invariant",
     "start_coord_confidence": "invariant",
     "end_coord_confidence": "invariant",
+    # --- TF-79 ball-contact enrichment (add_ball_contacts output on actions) ---
+    "first_contact_x": "point_x",
+    "first_contact_y": "point_y",
+    "first_contact_time": "invariant",
+    "first_contact_player_id": "invariant",
+    "first_contact_velocity_change_ms": "invariant",
+    "first_contact_confidence": "invariant",
+    "first_contact_is_aerial": "invariant",
+    "first_contact_source": "invariant",
     # --- canonical identity / typing (SPADL_COLUMNS) ---
     "game_id": "invariant",
     "original_event_id": "invariant",
