@@ -9,6 +9,81 @@ import pytest
 from tests._perf_structural import assert_subquadratic_growth, call_counter, rows_scanned_counter
 
 
+def _ball_zigzag_frames(n):
+    # A zigzag ball path (heading flips every 3 frames) so the velocity-break candidate count scales
+    # with n; two static players so per-candidate attribution .get fires. detect_ball_contacts must
+    # group ONCE and .get per candidate -- a per-candidate frame rescan would be O(candidates*frames).
+    fps = 25.0
+    dt = 1.0 / fps
+    rows = []
+    for fid in range(n):
+        x = 20.0 + 0.5 * fid
+        y = 34.0 + (6.0 if (fid // 3) % 2 else -6.0)
+        rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                time_seconds=fid * dt,
+                frame_rate=fps,
+                player_id=pd.NA,
+                team_id="T1",
+                is_ball=True,
+                x=x,
+                y=y,
+                z=0.1,
+            )
+        )
+        rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                time_seconds=fid * dt,
+                frame_rate=fps,
+                player_id=1,
+                team_id="T1",
+                is_ball=False,
+                x=x,
+                y=34.0,
+                z=0.0,
+            )
+        )
+        rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                time_seconds=fid * dt,
+                frame_rate=fps,
+                player_id=2,
+                team_id="T2",
+                is_ball=False,
+                x=x + 1.0,
+                y=35.0,
+                z=0.0,
+            )
+        )
+    df = pd.DataFrame(rows)
+    df["player_id"] = df["player_id"].astype("Int64")
+    df["team_id"] = df["team_id"].astype("category")
+    for c in ("x", "y", "z"):
+        df[c] = df[c].astype("float32")
+    return df
+
+
+def test_detect_ball_contacts_is_subquadratic():
+    from silly_kicks.tracking import _ball_contact as bc
+
+    def measure(n):
+        frames = _ball_zigzag_frames(n)
+        with rows_scanned_counter() as c:
+            bc.detect_ball_contacts(frames)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="detect_ball_contacts")
+
+
 # ============================ rows_scanned growth adopters ============================
 def test__pressure_at_entry_is_subquadratic():
     import silly_kicks.causal._confounders as C

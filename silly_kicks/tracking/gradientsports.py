@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Literal
 import pandas as pd
 
 from . import direction
-from .schema import GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
+from .schema import GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS, Z_PROVENANCE, TrackingConversionReport
 from .sportec import _resolve_output_convention
 
 if TYPE_CHECKING:
@@ -142,6 +142,7 @@ def convert_to_frames(
     out["visibility"] = None
     out["source_provider"] = _PROVIDER_NAME
     out["is_goalkeeper_source"] = "native"
+    out["z_source"] = Z_PROVENANCE["gradientsports"]  # ADR-125: measured (optical); ground-level noise only
 
     final = pd.DataFrame({col: out[col] for col in GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS})
     for col, dtype_str in GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS.items():

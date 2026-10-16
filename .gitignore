@@ -96,6 +96,12 @@ calibration_runs/
 /*_shards/
 /xt_bandwidth_report_corpus/
 
+# TF-79 ball-contact validation (ADR-124): shards land at `<--out>/shards`, i.e. nested UNDER the
+# committed `docs/research/ball_contact_detection/` memo dir and named `shards` (not `*_shards`), so
+# neither the top-level `/*_shards/` glob above reaches them. Only the aggregate metrics.json/report.md
+# are committed; the shards are derived resume state. Anchored + specific, per the rule above.
+/docs/research/ball_contact_detection/shards/
+
 # Cover-shadow RQ1 + pass-risk validation (ADR-064): the per-pass score table holds raw owner-tier GS
 # player positions and is NEVER committed -- only the aggregate docs/research/ metrics are. A specific
 # filename (not a tracked path), so ignoring it at any depth is safe.

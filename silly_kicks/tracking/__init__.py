@@ -52,8 +52,10 @@ __all__ = [
     "VISIBLE_AREA_OBSERVED",
     "VISIBLE_AREA_SOURCE_VALUES",
     "VISIBLE_AREA_UNLINKED",
+    "Z_SOURCE_VALUES",
     "ActionFrameContext",
     "AndrienkoParams",
+    "BallContactParams",
     "BekkersParams",
     "CoverShadowParams",
     "DasCostWarning",
@@ -111,6 +113,8 @@ __all__ = [
     "XCrossFeatureSet",
     "XShotFeatureSet",
     "XShotOccurrenceModel",
+    "ZProvenanceDiagnosis",
+    "ZProvenanceWarning",
     "acting_gk_from_frames",
     "action_ltr_goal_map",
     "actor_arc_length_pre_window",
@@ -120,6 +124,7 @@ __all__ = [
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
+    "add_ball_contacts",
     "add_cover_shadows",
     "add_das",
     "add_defensive_credit",
@@ -193,6 +198,7 @@ __all__ = [
     "defensive_line_xfns",
     "derive_team_in_possession",
     "derive_velocities",
+    "detect_ball_contacts",
     "detect_line_breaking",
     "detect_off_ball_runs",
     "detected_mask",
@@ -205,6 +211,7 @@ __all__ = [
     "feature_framework",
     "features",
     "filter_extratime_frames",
+    "first_contact_in_window",
     "get_das",
     "get_individual_das",
     "get_provider_defaults",
@@ -308,6 +315,7 @@ __all__ = [
     "validate_id_dtypes",
     "validate_time_base",
     "validate_velocity_regime",
+    "validate_z_provenance",
     "value_off_ball_runs",
     "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
@@ -327,6 +335,12 @@ from . import (
     utils,
 )
 from ._ball_carrier import derive_team_in_possession, infer_ball_carrier
+from ._ball_contact import (
+    BallContactParams,
+    add_ball_contacts,
+    detect_ball_contacts,
+    first_contact_in_window,
+)
 from ._collective import COLLECTIVE_VARIABLES, collective_from_positions, compute_collective_variables
 from ._cover_shadows import (
     CoverShadowParams,
@@ -428,6 +442,7 @@ from ._warnings import (
     RunValueCoverageWarning,
     SyntheticEPVWarning,
     UnverifiableFeatureContractWarning,
+    ZProvenanceWarning,
 )
 from ._xcross_attempt import (
     XCrossAttemptModel,
@@ -597,6 +612,7 @@ from .schema import (
     TRACKING_CONSTRAINTS,
     TRACKING_FRAMES_COLUMNS,
     VELOCITY_REGIME_VALUES,
+    Z_SOURCE_VALUES,
     FovDiagnosis,
     GkClampDiagnosis,
     IdDtypeDiagnosis,
@@ -604,6 +620,7 @@ from .schema import (
     TimeBaseDiagnosis,
     TrackingConversionReport,
     VelocityRegimeDiagnosis,
+    ZProvenanceDiagnosis,
 )
 from .utils import (
     add_sync_score,
@@ -619,6 +636,7 @@ from .utils import (
     validate_id_dtypes,
     validate_time_base,
     validate_velocity_regime,
+    validate_z_provenance,
 )
 
 try:

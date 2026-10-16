@@ -36,6 +36,11 @@ ARTIFACT_DRIVERS = (
     # periodic production) and writes docs/research/das_native_parity/metrics.json -- the parity
     # percentiles + quadrature shift the ADR/CHANGELOG quote, over external corpus data, so provenance.
     "validate_das_native_parity",
+    # TF-79 ball-contact detection validation (ADR-124). Walks the pining corpus, runs detect_ball_contacts
+    # per match and writes docs/research/ball_contact_detection/{metrics.json,report.md} -- the characterisation
+    # numbers (event->contact offset, agreement-vs-tolerance, confidence calibration, |dv| separation) are cited
+    # over external corpus data, reported-not-gated.
+    "measure_ball_contact_validation",
     # Receiver 30 -> 327 widening gate (combined-cycle-completion spec section 7, D8). Reads the receiver
     # trainer's candidate rows + the committed bundle and writes receiver_gate.json, whose decision ships
     # (or blocks) the widened bundled receiver -- a cited number over the licensed SB360 corpus.

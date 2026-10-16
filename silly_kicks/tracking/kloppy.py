@@ -23,7 +23,7 @@ from kloppy.domain import (  # type: ignore[reportMissingImports]
 from silly_kicks.id_compat import same_id
 from silly_kicks.spadl._kloppy_coordinates import socceraction_coordinate_system
 
-from .schema import KLOPPY_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
+from .schema import KLOPPY_TRACKING_FRAMES_COLUMNS, Z_PROVENANCE, TrackingConversionReport
 from .sportec import _resolve_output_convention
 from .utils import _derive_speed
 
@@ -209,6 +209,8 @@ def convert_to_frames(
             n_teams_gk_derived += 1
         team_mask = (df["game_id"] == gid) & (df["team_id"] == tid) & ~df["is_ball"]
         df.loc[team_mask, "is_goalkeeper_source"] = source
+
+    df["z_source"] = Z_PROVENANCE.get(provider_name, "absent")  # ADR-125: by underlying provider; fail-safe absent
 
     final = pd.DataFrame({col: df[col] for col in KLOPPY_TRACKING_FRAMES_COLUMNS})
     for col, dtype_str in KLOPPY_TRACKING_FRAMES_COLUMNS.items():

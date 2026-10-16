@@ -503,6 +503,15 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ("with_visible_area", _action_context_va_inputs, _action_context_va_invoke),
     ],
     "tracking:add_actor_pre_window": _one(_std_inputs, _std_invoke(F.add_actor_pre_window)),
+    # Branches on the action time base (time_seconds vs start_time), so a variant per branch.
+    "tracking:add_ball_contacts": [
+        ("time_seconds", _std_inputs, _std_invoke(F.add_ball_contacts)),
+        (
+            "start_time",
+            lambda: [make_actions().rename(columns={"time_seconds": "start_time"}), make_frames()],
+            _std_invoke(F.add_ball_contacts),
+        ),
+    ],
     "tracking:add_cover_shadows": _one(_xtf_inputs, _xtf_map_invoke(F.add_cover_shadows)),
     "tracking:add_visible_area_coverage": [
         ("polygon_present", _visible_area_inputs(True), _visible_area_invoke),

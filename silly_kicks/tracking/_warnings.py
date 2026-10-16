@@ -20,7 +20,28 @@ __all__ = [
     "RunValueCoverageWarning",
     "SyntheticEPVWarning",
     "UnverifiableFeatureContractWarning",
+    "ZProvenanceWarning",
 ]
+
+
+class ZProvenanceWarning(UserWarning):
+    """A provider's ball-z SIGNATURE contradicts its declared ``z_source`` (ADR-125).
+
+    The provider adapter declares ``z_source == "measured"`` but the ball z looks ESTIMATED --
+    persistently off-ground (the broadcast-extrapolation tell, e.g. SkillCorner) or all-flat/all-NaN.
+    Reported by :func:`silly_kicks.tracking.validate_z_provenance` so a mis-declared adapter cannot
+    silently ship an unreliable ``is_aerial``. Ground-level negatives do NOT trigger it (those are
+    legitimately-measured ground noise, e.g. Gradient Sports).
+
+    Examples
+    --------
+    Escalate a mis-declared-provenance corpus to an error in a batch job::
+
+        import warnings
+        from silly_kicks.tracking import ZProvenanceWarning
+
+        warnings.filterwarnings("error", category=ZProvenanceWarning)
+    """
 
 
 class GoalkeeperClampWarning(UserWarning):

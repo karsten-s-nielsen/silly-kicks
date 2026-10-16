@@ -271,6 +271,16 @@ REGISTERED_AGGREGATORS = _add_star_names(F) | _add_star_names(_keeper_identity_m
 # unaccounted public function rather than passing unnoticed.
 NON_LINKED_AGGREGATORS: dict[str, str] = {
     # "add_xxx": "reason it compares no action/frame/home_team ids",
+    "add_ball_contacts": (
+        "Links each action to the ball-contact table by TIME WINDOW (period_id + time_seconds), never "
+        "by an action-vs-frame player/team id, so this gate's permutation (which varies actions/frames/"
+        "home_team_id dtypes) reaches no such comparison. Its only id-scalar is `first_contact_in_window`'s "
+        "`period_id` -- a PERIOD NUMBER, not an entity id (classified NOT_INVARIANT in "
+        "tests/invariants/test_public_id_scalar_registry.py). The emitted `first_contact_player_id` is an "
+        "OUTPUT id column (excluded by `_is_id_col` from the value comparison), and detect_ball_contacts "
+        "attributes contacts to frame player ids positionally within a frame (no caller-supplied id axis). "
+        "Dtype-robustness of the contacts table itself is covered by tests/tracking/test_ball_contact.py."
+    ),
     "add_defending_gk_player_id": (
         "Takes NO frames -- its second positional is a keeper_map, not a frames DataFrame -- so this "
         "gate's permutation (which varies actions/frames/home_team_id dtypes) reaches no action-vs-"

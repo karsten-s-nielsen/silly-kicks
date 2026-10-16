@@ -157,6 +157,26 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   different league/era corpus) is reported, not hidden. The causal finding is a
   reported research result, never a ship gate.
 
+- Ramer, U. (1972). "An iterative procedure for the polygon approximation of plane
+  curves." Computer Graphics and Image Processing 1(3):244-256. / Douglas, D. H., &
+  Peucker, T. K. (1973). "Algorithms for the reduction of the number of points
+  required to represent a digitized line or its caricature." Cartographica 10(2):112-122.
+  Used by: silly_kicks/tracking/_ball_contact.py (TF-79). The ball-contact detector's
+  structural-break stage uses the classical Ramer-Douglas-Peucker polyline-simplification
+  algorithm to find trajectory direction-change points; it is a standard, unencumbered
+  algorithm implemented fresh here (no third-party code), so no faithfulness caveat is
+  needed beyond the citation.
+
+- Kim, H., et al. (2026). "PathCRF" (KDD 2026, arXiv:2602.12080; reference code
+  github.com/hyunsungkim-ds/pathcrf, MPL-2.0). The TF-79 ball-contact primitive
+  (silly_kicks/tracking/_ball_contact.py) is INSPIRED BY this work's idea of recovering
+  dropped ball touches from the tracking trajectory, but NONE of its code is lifted: the
+  MPL-2.0 CRF training/inference is NOT ported into this MIT library. silly-kicks adapts
+  only the general concept of trajectory-derived candidate touches, implemented as a pure
+  RDP + velocity-break detector; the deferred Needleman-Wunsch event-alignment / inserted-
+  touch-event stage (a separate, later item) is likewise a fresh reimplementation, never a
+  port. No CRF, no learned sequence model.
+
 - Plasmode simulation (silly_kicks/causal/power.py, silly_kicks/_group_metrics.py
   icc_power_curve; TF-19 sign-off package). "Plasmode" denotes a simulation built on
   REAL data with a KNOWN effect injected into it, as against a fully synthetic
