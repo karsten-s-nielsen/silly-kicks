@@ -164,6 +164,7 @@ def test_run_pipeline_xshot_enumerates_studies_from_prep():
         bucket=BUCKET,
         attempts=1,
         n_extract=2,
+        arms_json='{"arms": {"public": ["skillcorner__skillcorner-1886347"]}, "ship_order": ["public"]}',
         runner=runner,
         sleep=_noop,
     )

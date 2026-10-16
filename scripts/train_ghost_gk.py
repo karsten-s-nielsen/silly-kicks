@@ -404,7 +404,7 @@ def main() -> None:
     # (the CV per-provider MAE, and the metrics aggregation), and the first CLI run after this was
     # written died on `TypeError: string indices must be integers` -- the loop had rebound it to a
     # provider name by the time the metrics dict was built.
-    from scripts._corpus import reproducibility
+    from scripts._corpus_identity import reproducibility
     from scripts._provenance import git_provenance, require_clean_tree
 
     run_prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)

@@ -836,6 +836,7 @@ def test_double_enriched_frames_survive_xshot_consumer():
     `prepare_xshot_training_data` re-derives possession internally and then reads
     `grp["team_in_possession"]` -- precisely where the suffixed column detonated.
     """
+    from silly_kicks.spadl import config as _spc
     from silly_kicks.tracking import derive_team_in_possession, infer_ball_carrier
     from silly_kicks.tracking._xshot_occurrence import prepare_xshot_training_data
 
@@ -850,7 +851,7 @@ def test_double_enriched_frames_survive_xshot_consumer():
             "period_id": [1],
             "team_id": [1],
             "time_seconds": [0.1],
-            "type_name": ["shot"],
+            "type_id": [_spc.actiontype_id["shot"]],  # ADR-126: build_xshot_labels filters by type_id
         }
     )
     # MUST NOT raise KeyError: 'team_in_possession'

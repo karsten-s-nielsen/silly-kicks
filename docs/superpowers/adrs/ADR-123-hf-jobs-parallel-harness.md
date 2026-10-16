@@ -97,3 +97,43 @@ flavor exception**. Determinism (fanned == serial, byte-identical) verified unde
 (SB360 30, pining-materialized off-HF to neutral parquet) paths ran end-to-end, floor included. The gate
 surfaced + fixed three harness defects (cv_folds↔n_folds coupling, `measure_rss` shell, e2e `allow_dirty`).
 Named datasets for the HF waves: `silly-kicks/hf-refit-{tc3, xshot17, xcross-probe, sb360}`.
+
+## Amendment B (2026-10-15): the in-job code is visibility-BLIND; policy enters as a job parameter
+
+A re-fit surfaced that two trainers — `xshot_occurrence` and `xcross_attempt` — ship a *visibility-gated*
+candidate (`public` / `sc_extended` / `full`). That selection depends on per-match public-vs-owner
+**visibility**, which the in-job code derived from the pining manifest (`_loader_pining.match_visibility`)
+and the in-repo registry (`_corpus.PUBLIC_CORPUS`). On the agnostic `--data-dir` path there is no manifest,
+so it fail-closed to *all-private*, the `public` candidate never formed, and the trainer shipped
+`sc_extended` — a 4× worse, non-faithful model (committed `public` PR-AUC 0.3418/0.3036 vs fresh
+`sc_extended` 0.0825/0.0770). Amendment A made the in-job code **data**-agnostic; this amendment makes it
+**policy**-agnostic too.
+
+**Invariants.**
+- **I1 — in-job code is visibility-blind.** No module on a trainer's in-job execution path references the
+  visibility taxonomy (`PUBLIC_CORPUS` / `is_public_row` / `assert_public_corpus` / `artifact_label` /
+  `match_visibility`). The neutral provenance helpers (`corpus_identity` / `reproducibility` /
+  `check_shipped_variant`) were split out of `_corpus` into `_corpus_identity` so the trainers import none
+  of `_corpus`. Enforced by `tests/scripts/hf_jobs/test_visibility_blind_gate.py` as a **pure static-closure**
+  walk (subpackage-aware + a planted-leak traversal meta-assertion). The generic ADR-052 `_driver`/`_partition`
+  corpus-driver seam is **fully traversed, not trusted as a leaf**: the one pining-reaching helper
+  (`list_match_ids`) was relocated to `scripts/_partition_pining.py` (maintainer-only), so `_partition` never
+  reaches `_loader_pining` and the gate needs no exemption or runtime-reachability reasoning (an earlier draft
+  trusted the seam as a leaf on the grounds its lazy pining branch is unexecuted on `--data-dir` — the exact
+  reachability reasoning I1 exists to remove). An anti-rot test asserts the seam IS traversed, is banned-clean,
+  and that `_partition_pining` is NOT in the in-job closure.
+- **I2 — policy enters as a job parameter.** The launcher computes the arm membership OFF-HF
+  (`arm_policy.compute_arms` over `PUBLIC_CORPUS`, converter→identity reconciled internally, emitting the
+  dataset's own keys) and passes it as `--arms` (a base64-embedded JSON the job decodes to `/tmp/arms.json`).
+  The in-job trainer applies the memberships by `np.isin` (`_build_candidate_masks`) and labels the shipped
+  artifact from the arm name. It never computes the policy.
+- **I3 — datasets stay neutral.** Visibility is a per-run parameter, never a dataset column.
+- **I4 — fail-loud.** A visibility-gated trainer invoked with no `--arms` exits with an error; it never
+  falls back to all-private (the fail-closed-silent behaviour that shipped the wrong candidate).
+
+The `--providers` pining path was removed from both trainers (its only remaining `_loader_pining` reach);
+maintainer DGX re-fits adopt the launcher + `--arms`. The DGX e2e now asserts the fresh shipped candidate
+equals the committed one (`dgx_e2e.check_shipped_variant`) — closing the GATE-1 exit-0-only gap — and
+faithfulness is confirmed by CV-parity (fresh `public` PR-AUC ≈ committed). `ghost_gk` / `ghost_outfield`
+(provider-agnostic `cv_mae`), `receiver_model` (`top1_cv`) and the four public trainers ship no
+visibility-gated candidate and are unchanged.

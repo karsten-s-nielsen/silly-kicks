@@ -95,6 +95,14 @@ Per source mode (all via `corpus_repo`, no `sb360_repo`): public → none; `owne
 dataset; `owner_pergame` (xshot/xcross) → the flat dataset (repackaged in-job), **xcross also**
 `probe_repo`; `owner_sb360` (receiver) → the flat dataset read via `--data-dir`.
 
+**Visibility-gated trainers (`xshot_occurrence`, `xcross_attempt`; ADR-123 Amendment B).** These ship a
+`public`/`sc_extended`/`full` candidate chosen by per-match public/owner visibility. The in-job code is
+visibility-blind: `run_pipeline` computes the arm membership OFF-HF (`arm_policy.compute_arms` over the
+in-repo `PUBLIC_CORPUS`, emitting the dataset's own match keys) and passes it as the neutral `--arms`
+parameter (base64-embedded `/tmp/arms.json`); the trainer applies it by membership and never computes the
+policy. Anyone staging their own corpus supplies their own `--arms` (or lets `run_pipeline` compute it from
+their registry). The DGX e2e asserts the fresh shipped candidate matches the committed one.
+
 ## Apply the no-regression floor (per variant)
 
 ```python

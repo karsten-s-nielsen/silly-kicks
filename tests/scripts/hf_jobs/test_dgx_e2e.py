@@ -72,7 +72,14 @@ def test_run_local_e2e_xshot_enumerates_studies_from_prep():
         return "", 0, 1000
 
     summary = run_local_e2e(
-        spec, b, data_args="--data-dir /pg", out_dir="/o", corpus_dir="/c", n_extract=2, measure=fake
+        spec,
+        b,
+        data_args="--data-dir /pg",
+        out_dir="/o",
+        corpus_dir="/c",
+        n_extract=2,
+        arms_path="/tmp/arms.json",  # noqa: S108 -- a fixed in-job path string, not a real local tempfile
+        measure=fake,
     )
     assert [p["phase"] for p in summary["phases"]] == ["extract", "extract", "prep", "study", "study", "reduce"]
 

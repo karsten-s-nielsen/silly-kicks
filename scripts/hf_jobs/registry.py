@@ -63,6 +63,11 @@ class TrainerSpec:
     #: dataset-agnostic: --probe-data-dir, never in-job pining). launch downloads probe_repo -> /tmp/probe
     #: and threads --probe-data-dir. Only xcross (the committed GS 10502/10503 held-out probe).
     probe: bool = False
+    #: This trainer ships a VISIBILITY-GATED candidate (public / sc_extended / full). The public/owner
+    #: policy is computed OFF-HF by the launcher (``arm_policy.compute_arms`` over ``PUBLIC_CORPUS``) and
+    #: passed as the neutral ``--arms`` job parameter; the in-job trainer has NO public/private concept
+    #: (ADR-123 Amendment B). Only xshot_occurrence + xcross_attempt.
+    visibility_gated: bool = False
 
     @property
     def weights_paths(self) -> tuple[str, ...]:
@@ -208,6 +213,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         timeout="2h",  # assemble-phase ceiling; extraction + HPO studies fan out per-phase in launch
         output_flag="--output-dir",
         base_args=("--n-trials", "50"),
+        visibility_gated=True,  # ships public/sc_extended/full; --arms policy computed off-HF (ADR-123 Amd B)
         builds=(
             VariantBuild(
                 "default", ("--feature-set", "faithful"), "tracking/_xshot_weights/default", "xshot_occurrence_v1"
@@ -234,6 +240,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         output_flag="--output-dir",
         base_args=("--n-trials", "50"),
         probe=True,  # held-out TF-19 probe from a staged per-game probe dataset (ADR-123: --probe-data-dir, no pining)
+        visibility_gated=True,  # ships public/sc_extended/full; --arms policy computed off-HF (ADR-123 Amd B)
         builds=(
             VariantBuild(
                 "default", ("--feature-set", "faithful"), "tracking/_xcross_weights/default", "xcross_attempt_v1"

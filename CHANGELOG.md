@@ -5,6 +5,49 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.138.0] — 2026-10-16 — HF visibility-blind harness (ADR-123 Am B) + xShot label-filter fix & trained-artifact integrity gate (ADR-126)
+
+> This (code) commit ships the corrected xShot **label code** + the integrity gate; the re-fit **weights** +
+> audit verdicts land in the follow-up clean-tree artifact commit (ADR-037). The shipped xShot weights are
+> unchanged until that commit.
+
+### HF harness visibility-blind (ADR-123 Amendment B)
+
+Harness-only (`scripts/hf_jobs/`, `scripts/train_{xshot_occurrence,xcross_attempt}.py`, `scripts/_corpus*`);
+no library/model change, no retrain. The HF in-job trainer code is now **visibility-blind**: the
+public/owner candidate-arm policy is computed OFF-HF by the launcher and passed as the neutral `--arms`
+job parameter, so the agnostic `--data-dir` path reproduces the committed visibility-gated `public`
+candidate faithfully (it previously fail-closed to all-private and shipped a 4× worse `sc_extended`). The
+neutral provenance helpers moved `_corpus` → `_corpus_identity`; the `--providers` pining path was removed
+from the two trainers (maintainer DGX re-fits use the launcher + `--arms`); a transitive import-closure
+gate enforces I1 as a **pure static closure** (no infra-leaf exemption — the one pining-reaching helper
+`_partition.list_match_ids` is relocated to `_partition_pining` so the trainer closure never reaches
+`_loader_pining`); the DGX e2e asserts the shipped candidate matches committed. See ADR-123 Amendment B.
+
+### Fixed — xShot-occurrence label-filter defect (ADR-126)
+
+`build_xshot_labels` applied its shot-type filter via a `type_name`-presence guard in
+`prepare_xshot_training_data`. Fed the full SPADL actions table (which carries `type_id` but no `type_name`
+— the production pining path), the guard was skipped and the label silently counted **any** action within
+1 s, not just shots, inflating the xShot positive rate ~13× (reproduced to the integer: 1449 vs the correct
+109 for skillcorner-1925299; the physical maximum for 21 shots at a 1 s horizon is ≈ 210). The shipped xShot
+weights and the whole pining-trained lineage (17–28% positive rate) are therefore defective. The filter now
+lives **inside** `build_xshot_labels` and selects by `type_id` (mirroring `build_xcross_labels`), so no
+caller can bypass it; the fragile guard is deleted. xCross was unaffected (already `type_id`-filtered).
+xShot is re-fit on the correct corpus (~1.5% positive rate, ~5× PR-AUC lift). **Hyrum notice:** the xShot
+output distribution changes 22% → ~1.5%; no first-party module consumes the xShot probability (only
+`extract_xshot_features`, unchanged), so the affected consumer is the external lakehouse mart, recorded in
+`docs/PRIVATE_CONSUMERS.md` (lakehouse re-materialization out of scope, owner ruling).
+
+### Added — trained-artifact integrity gate (ADR-126)
+
+`scripts/validate_trained_artifact_integrity.py` + `silly_kicks/tracking/_artifact_integrity.py`: a layered
+GO/NO-GO gate — a reproduction tripwire (a fresh fit must reproduce the shipped `metrics.json` headline
+within a relative δ; a mismatch is a hard stop) + construct-validity on the absolute metrics, including a
+**physically-derived** base-rate plausibility band (`tol · n_events · horizon · fps / n_rows`, `tol=1.5`)
+that rejects the 22% defect which the existing `pr_auc_gt_base_rate` acceptance passed. Every campaign
+artifact is audited against it (the campaign's reproduction-free floor validated none).
+
 ## [4.135.0] — 2026-10-13 — TF-64 GK detection-gate + xT-GK v1 retirement (ADR-121)
 
 The cycle's SECOND release: the TF-64 GK detection-gate (ADR-109 wiring) + the xT-GK v1 retirement (ADR-121). No retrain — metrics/wiring + a module removal; no bundled-model training inputs moved. **Hyrum notice — value-changing on SkillCorner GK outputs + a public-surface removal:** (1) on a detection-aware provider (SkillCorner, ~17.6% keeper detection) the 14 audited keeper-position outputs + the `pre_shot_gk_*` family now honest-NaN / drop-and-count when the defending keeper is undetected, instead of consuming an ~80%-extrapolated position (anti-pattern E7); fully-observed / snapshot / unclassified providers are byte-identical. (2) xT-GK v1 is REMOVED — `compute_xt_gk` / `add_xt_gk` / `xt_gk_xfns` / `XtGkParams` / `XtGkReport` / `GkCompletionModel` / `compute_gk_completion` / `add_gk_completion` / the `_gk_completion_weights` bundle / the `resolve_gk_geometry` + `native_origin_is_trusted` + `flag_native_goalkick_out_of_region` shims / the `xt_gk*` + `gk_completion` glossary columns — move to xT-GK v2 (`xtgk.compute_xt_gk_v2`). The ADR-025 restart-coordinate engine (`resolve_restart_geometry`) is unaffected. Cross-repo: the lakehouse re-materializes the SkillCorner GK-mart outputs and migrates its `xt_gk*` columns to v2 (owner-coordinated).

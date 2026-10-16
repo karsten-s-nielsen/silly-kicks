@@ -85,3 +85,15 @@ parts:
 - `docs/research/territorial_defense_construct_validity/` — territorial-defense gate.
 - `docs/research/xtgk_v2_construct_validity/` — xT-GK v2 gate.
 - `docs/research/pass_risk_calibration/` — the caveat / "what it does NOT measure" pattern.
+
+## Trained-artifact integrity gate (ADR-126)
+
+For a TRAINED model (xShot/xCross/ghost/…), the construct-validity discipline above is paired with a
+reproduction + plausibility gate before weights ship: `scripts/validate_trained_artifact_integrity.py` +
+`silly_kicks/tracking/_artifact_integrity.py`. It composes (1) a **reproduction tripwire** — a fresh
+extraction+fit must reproduce the shipped `metrics.json` headline (`n_rows`/`n_positive` exact, candidate
+`pr_auc`/`positive_rate` within a relative δ; mismatch = hard stop) and (2) a **physically-derived base-rate
+plausibility band** (`tol · n_events · horizon · fps / n_rows`, `tol=1.5`) plus lift / calibration / usable
+folds. The band catches a mislabelled target that still clears `pr_auc > base_rate` (the ADR-126 xShot
+defect: a 22% positive rate was 13× the physical maximum). Never certify "matches the committed `pr_auc`"
+alone — that re-blesses a defective baseline.

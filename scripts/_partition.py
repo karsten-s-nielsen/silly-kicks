@@ -10,12 +10,12 @@ one partition's totals (`n_matches: 8`) while describing a 64-match corpus. That
 self-description in a provenance-bearing file -- the same class of defect as a false commit SHA --
 and it must not be possible to fix it in one producer and leave it broken in the other.
 
-`scripts/_loader_*` is READ-ONLY from here: this module reads the loader's own listing helper so a
-partition can never name a match a real run would not fetch, and never edits it. That is a property
-of THIS module, not a repo-wide fence -- the TF-19 partition cycle that wrote it was declaring its
-own scope, and ADR-052 subsequently changed `_loader_databricks.load_matches` (it accepted neither
-`tracking_limit` nor `max_per_provider`, so `calibrate_tracking_defaults --source databricks` died
-on a `TypeError` before reading a row).
+The one helper that read the pining loader's own listing (``list_match_ids``) now lives in
+``scripts/_partition_pining.py`` (ADR-123 Amendment B gold-standard severance): keeping it out of THIS
+module means ``_partition`` -- imported by every trainer via the ``_driver`` seam -- no longer reaches
+the pining loader (``_loader_pining``, which carries the banned visibility symbols), so the I1
+visibility-blind gate is a pure static-closure check with no ``_INFRA_LEAVES`` exemption. ``_partition``
+itself imports no ``scripts/_loader_*``.
 """
 
 from __future__ import annotations
@@ -31,18 +31,6 @@ UNPARTITIONED_TAG = "all"
 def worker_tag(match_ids_json: str | None) -> str:
     """The partition's name, taken from its id-list filename (``all`` for an unpartitioned run)."""
     return pathlib.Path(match_ids_json).stem if match_ids_json else UNPARTITIONED_TAG
-
-
-def list_match_ids(providers: list[str]) -> dict[str, list[str]]:
-    """Every available match id per provider, as the JSON a ``--match-ids-json`` split is built from.
-
-    Consumes the loader's own ``_list_matches`` -- the exact call ``load_matches`` makes internally,
-    so the id set cannot drift from what a run would actually fetch.
-    """
-    from scripts._loader_pining import _base_url, _list_matches, _resolve_token
-
-    tok, base = _resolve_token(None), _base_url()
-    return {p: [str(m["id"]) for m in _list_matches(p, tok, base)] for p in providers}
 
 
 def providers_for_slice(providers: list[str], match_ids: dict | None) -> list[str]:

@@ -580,7 +580,7 @@ def main() -> None:
     a = ap.parse_args()
 
     if a.list_matches:
-        from scripts._partition import list_match_ids
+        from scripts._partition_pining import list_match_ids
 
         print(json.dumps(list_match_ids(a.providers.split(",")), indent=2))
         return

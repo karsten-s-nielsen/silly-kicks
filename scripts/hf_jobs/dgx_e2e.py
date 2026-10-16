@@ -23,6 +23,16 @@ from scripts.hf_jobs.registry import TrainerSpec, VariantBuild
 CPU_UPGRADE_RAM_BYTES = 32 * 2**30  # the cpu-upgrade ceiling the reduce phase must fit under
 
 
+def check_shipped_variant(*, fresh: str | None, committed: str | None) -> str | None:
+    """ADR-123 Amendment B / spec §5: the fresh visibility-gated fit must ship the SAME candidate the
+    committed model shipped (``public``), not a worse ``sc_extended`` -- the GATE-1 gap that let an
+    exit-0 run pass while shipping the wrong candidate. Returns an error string on a mismatch, else None.
+    """
+    if fresh != committed:
+        return f"shipped-candidate mismatch: fresh shipped {fresh!r}, committed shipped {committed!r}"
+    return None
+
+
 def measure_rss(cmd: str, *, bash: str = "bash") -> tuple[str, int, int]:
     """Run ``bash -c <cmd>`` and return ``(output, exit_code, peak_rss_bytes)``.
 
@@ -57,13 +67,20 @@ def _local_cmd(
     study=None,
     cv_folds=None,
     allow_dirty: bool = True,
+    arms_path: str | None = None,
 ) -> str:
     """A LOCAL phase command (no clone, no download): the trainer module + phase flags against a local
     ``--data-dir`` corpus. ``reduce``/``full`` append the head-to-head floor over the same local corpus.
 
     ``allow_dirty`` (default True): the e2e runs from a dirty scratch checkout, so every trainer gets
-    ``--allow-dirty`` (it still records ``run_tree_dirty`` -- the hatch permits a dev run, never launders it)."""
+    ``--allow-dirty`` (it still records ``run_tree_dirty`` -- the hatch permits a dev run, never launders it).
+    ``arms_path`` (ADR-123 Amendment B): a visibility-gated trainer gets the local --arms policy file on the
+    extraction phases (the DGX runbook computes it off the local corpus, exactly as the launcher does on HF)."""
     extra = f"--probe-data-dir {probe_data_dir}" if (spec.probe and probe_data_dir) else ""
+    if spec.visibility_gated and phase in ("full", "prep"):
+        if arms_path is None:
+            raise ValueError(f"{spec.name}: visibility-gated DGX e2e needs arms_path (the local --arms policy)")
+        extra = f"{extra} --arms {arms_path}".strip()
     extra = f"{extra} {_phase_flags(spec, build, phase, out_dir, shard=shard, fold=fold, study=study)}".strip()
     if cv_folds is not None and spec.name in ("ghost_gk", "ghost_outfield"):
         extra = f"{extra} --cv-folds {cv_folds}".strip()
@@ -105,6 +122,7 @@ def run_local_e2e(
     n_folds: int = 2,
     rss_ceiling: int = CPU_UPGRADE_RAM_BYTES,
     allow_dirty: bool = True,
+    arms_path: str | None = None,
     measure=measure_rss,
 ) -> dict:
     """Run the trainer's phase DAG locally, measuring peak RSS + wall per phase. Returns
@@ -124,6 +142,7 @@ def run_local_e2e(
             phase=phase,
             cv_folds=n_folds,
             allow_dirty=allow_dirty,
+            arms_path=arms_path,
             **kw,
         )
 
@@ -148,4 +167,25 @@ def run_local_e2e(
                 prep_out = out
     max_rss = max((p["peak_rss"] for p in phases), default=0)
     blocked = any(not p["ok"] for p in phases)
-    return {"phases": phases, "blocked": blocked, "max_rss": max_rss, "rss_ceiling": rss_ceiling}
+    result = {"phases": phases, "blocked": blocked, "max_rss": max_rss, "rss_ceiling": rss_ceiling}
+    # ADR-123 Amendment B / spec §5: a visibility-gated trainer must ship the SAME candidate as committed
+    # (``public``), not a worse ``sc_extended`` -- the GATE-1 exit-0-only gap. Read both shipped_variants.
+    if spec.visibility_gated and not blocked:
+        import json
+        from pathlib import Path
+
+        try:
+            fresh = json.loads((Path(_fresh_dir(out_dir, build)) / "metrics.json").read_text())["shipped_variant"]
+            committed = json.loads((Path("silly_kicks") / build.committed_path / "metrics.json").read_text())[
+                "shipped_variant"
+            ]
+        except (OSError, KeyError, ValueError) as e:
+            result["blocked"] = True
+            result["shipped_variant_error"] = f"could not read shipped_variant: {e}"
+            return result
+        mismatch = check_shipped_variant(fresh=fresh, committed=committed)
+        result["shipped_variant"] = {"fresh": fresh, "committed": committed}
+        if mismatch:
+            result["blocked"] = True
+            result["shipped_variant_error"] = mismatch
+    return result

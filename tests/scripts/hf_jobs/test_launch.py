@@ -21,13 +21,22 @@ def _variant(name, variant):
     return spec, next(b for b in spec.builds if b.variant == variant)
 
 
+# A visibility-gated trainer (xshot/xcross) needs the launcher's --arms policy (ADR-123 Amendment B).
+# A sample suffices for the command-shape goldens; arm_policy is tested in test_arm_policy.
+_SAMPLE_ARMS = '{"arms": {"public": ["skillcorner__skillcorner-1886347"]}, "ship_order": ["public"]}'
+
+
+def _inner(spec, build, **kw):
+    if spec.visibility_gated:
+        kw.setdefault("arms_json", _SAMPLE_ARMS)
+    return build_inner_command(spec, build, **kw)
+
+
 def test_install_includes_huggingface_hub_for_in_job_hf_download():
     # Owner jobs run `hf download` to fetch the staged corpus; `.[train]` does not pull huggingface_hub
     # and the python:3.12 base lacks it (mini-wave ModuleNotFoundError). Install it explicitly.
     for name, spec in reg.REGISTRY.items():
-        inner = build_inner_command(
-            spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/tc3", probe_repo="ns/probe"
-        )
+        inner = _inner(spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/tc3", probe_repo="ns/probe")
         assert "huggingface_hub" in inner, name
 
 
@@ -86,9 +95,7 @@ def test_public_single_variant_payload():
 
 def test_trainers_run_as_modules_never_as_file_paths():
     for name, spec in reg.REGISTRY.items():
-        inner = build_inner_command(
-            spec, spec.builds[0], tag="relref", run_key="r1", corpus_repo="ns/tc3", probe_repo="ns/probe"
-        )
+        inner = _inner(spec, spec.builds[0], tag="relref", run_key="r1", corpus_repo="ns/tc3", probe_repo="ns/probe")
         assert f"python -m {spec.module}" in inner, name
         assert "python scripts/train_" not in inner, name
 
@@ -97,9 +104,7 @@ def test_xcross_threads_agnostic_probe_data_dir_never_pining():
     # ADR-123: the held-out TF-19 probe comes from a STAGED per-game probe dataset (--probe-data-dir),
     # never in-job pining. launch downloads probe_repo and threads --probe-data-dir; no manifest/--providers.
     spec = reg.REGISTRY["xcross_attempt"]
-    inner = build_inner_command(
-        spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/xshot", probe_repo="ns/xcross-probe"
-    )
+    inner = _inner(spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/xshot", probe_repo="ns/xcross-probe")
     assert "hf download ns/xcross-probe --repo-type dataset --local-dir /tmp/probe" in inner
     assert "--probe-data-dir /tmp/probe" in inner
     assert "SILLY_KICKS_PINING_MANIFEST_DIR" not in inner and "--probe-match-ids-json" not in inner
@@ -116,8 +121,8 @@ def test_xcross_without_probe_repo_is_a_loud_error():
 
 def test_xshot_has_no_probe_data_dir():
     spec = reg.REGISTRY["xshot_occurrence"]
-    inner = build_inner_command(spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/xshot")
-    assert "--probe-data-dir" not in inner and "probe" not in inner.replace("xshot", "")
+    inner = _inner(spec, spec.builds[0], tag="r", run_key="r1", corpus_repo="ns/xshot")
+    assert "--probe-data-dir" not in inner and "/tmp/probe" not in inner  # noqa: S108 -- asserting ABSENCE of the path
 
 
 def test_owner_flat_downloads_corpus_and_resolves_gen_dir():
@@ -129,13 +134,37 @@ def test_owner_flat_downloads_corpus_and_resolves_gen_dir():
     assert "--corpus-dir /tmp/corpus" in inner  # owner head-to-head eval reads the flat TC3 corpus
 
 
+def test_visibility_gated_threads_arms_as_base64_data_not_in_job_policy():
+    # ADR-123 Amendment B: the launcher embeds the precomputed --arms JSON as base64 DATA; the job decodes
+    # it to /tmp/arms.json and passes --arms. No public/private computation in-job.
+    import base64
+
+    spec, b = _default("xshot_occurrence")
+    inner = _inner(spec, b, tag="r", run_key="r1", corpus_repo="ns/xshot")
+    assert "base64 -d > /tmp/arms.json" in inner
+    assert "--arms /tmp/arms.json" in inner
+    assert base64.b64encode(_SAMPLE_ARMS.encode()).decode() in inner  # the exact policy, embedded as data
+    assert reg.REGISTRY["xshot_occurrence"].visibility_gated is True
+    assert reg.REGISTRY["xcross_attempt"].visibility_gated is True
+    assert reg.REGISTRY["ghost_gk"].visibility_gated is False  # provider-agnostic cv_mae, no arm
+
+
+def test_visibility_gated_without_arms_is_a_loud_error():
+    import pytest
+
+    spec, b = _default("xshot_occurrence")
+    with pytest.raises(ValueError, match="needs arms_json"):
+        build_inner_command(spec, b, tag="r", run_key="r1", corpus_repo="ns/xshot")  # no arms_json
+
+
 def test_owner_pergame_repackages_flat_to_per_game_in_job():
     spec, b = _default("xshot_occurrence")
-    inner = build_inner_command(spec, b, tag="relref", run_key="r1", corpus_repo="ns/xshot")
+    inner = _inner(spec, b, tag="relref", run_key="r1", corpus_repo="ns/xshot")
     assert "python -m scripts.hf_jobs.repackage /tmp/corpus /tmp/pergame" in inner
     # repackage now emits {game}/actions.parquet itself (Task 3); the fragile in-job symlink workaround is gone.
     assert "symlink_to" not in inner
-    assert "--data-dir /tmp/pergame --output-dir /scratch/r1/xshot_occurrence/default" in inner
+    assert "--data-dir /tmp/pergame" in inner  # (--arms is threaded between --data-dir and --output-dir)
+    assert "--output-dir /scratch/r1/xshot_occurrence/default" in inner
     assert "--fresh-dir /scratch/r1/xshot_occurrence/default/xshot_occurrence_v1" in inner
 
 
@@ -258,8 +287,6 @@ def test_inner_command_is_syntactically_valid_bash():
         pytest.skip("bash not available")
     for name in ("win_probability", "ghost_gk", "xshot_occurrence", "xcross_attempt", "receiver_model"):
         spec = reg.REGISTRY[name]
-        inner = build_inner_command(
-            spec, spec.builds[0], tag="relref", run_key="r1", corpus_repo="ns/tc3", probe_repo="ns/probe"
-        )
+        inner = _inner(spec, spec.builds[0], tag="relref", run_key="r1", corpus_repo="ns/tc3", probe_repo="ns/probe")
         r = subprocess.run([bash, "-n", "-c", inner], capture_output=True, text=True)  # noqa: S603
         assert r.returncode == 0, f"{name}: invalid bash: {r.stderr}"

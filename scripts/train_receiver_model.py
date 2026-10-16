@@ -626,7 +626,7 @@ def main() -> None:
     top1, fold_top1 = cv_top1(rows, args.feature_set)
     model.save(args.out / "model")
 
-    from scripts._corpus import reproducibility
+    from scripts._corpus_identity import reproducibility
     from scripts._loader_pining import match_visibility, select_match_ids
 
     _primary_ids = (

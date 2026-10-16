@@ -22,6 +22,7 @@ the staged corpus).
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -122,6 +123,7 @@ def build_phase_command(
     fold=None,
     study=None,
     cv_folds=None,
+    arms_json: str | None = None,
 ) -> str:
     """The ``bash -lc`` payload for ONE phase of ONE variant (ADR-123 map/reduce). ``phase="full"`` is the
     single-job serial run (train + head-to-head floor). ``extract``/``build_cache``/``fold``/``prep``/``study``
@@ -139,6 +141,17 @@ def build_phase_command(
             raise ValueError(f"{spec.name}: probe trainer needs probe_repo (staged per-game probe dataset)")
         prep = [*prep, f"hf download {probe_repo} --repo-type dataset --local-dir /tmp/probe"]
         extra = "--probe-data-dir /tmp/probe"
+    # ADR-123 Amendment B: a visibility-gated trainer gets the public/owner policy as the neutral --arms
+    # parameter, computed OFF-HF by the launcher and embedded here as pre-written data (base64 so it rides
+    # the `&&` chain without heredoc line-terminator issues). The job never computes the policy. Threaded
+    # only on the phases that run the trainer's whole-corpus extraction+persist (the per-shard/fold/study
+    # workers read the already-persisted arms from the shard root).
+    if spec.visibility_gated and phase in ("full", "prep"):
+        if arms_json is None:
+            raise ValueError(f"{spec.name}: visibility-gated trainer needs arms_json (the launcher's --arms policy)")
+        arms_b64 = base64.b64encode(arms_json.encode("utf-8")).decode("ascii")
+        prep = [*prep, f"echo {arms_b64} | base64 -d > /tmp/arms.json"]
+        extra = f"{extra} --arms /tmp/arms.json".strip()
     extra = f"{extra} {_phase_flags(spec, build, phase, out_dir, shard=shard, fold=fold, study=study)}".strip()
     if cv_folds is not None and spec.name in ("ghost_gk", "ghost_outfield"):
         extra = f"{extra} --cv-folds {cv_folds}".strip()
@@ -171,12 +184,41 @@ def build_inner_command(
     run_key: str,
     corpus_repo: str | None = None,
     probe_repo: str | None = None,
+    arms_json: str | None = None,
 ) -> str:
     """The single-job (``full`` phase) ``bash -lc`` payload: train + head-to-head floor. Thin wrapper over
     :func:`build_phase_command` kept for the non-fanned path + its golden tests."""
     return build_phase_command(
-        spec, build, tag=tag, run_key=run_key, corpus_repo=corpus_repo, probe_repo=probe_repo, phase="full"
+        spec,
+        build,
+        tag=tag,
+        run_key=run_key,
+        corpus_repo=corpus_repo,
+        probe_repo=probe_repo,
+        phase="full",
+        arms_json=arms_json,
     )
+
+
+def corpus_flat_stems(corpus_repo: str, *, api=None) -> list[str]:
+    """OFF-HF: the staged flat corpus's shard filename stems ``{provider}__{game}`` (for ``compute_arms``).
+
+    Lists ``shards/<gen>/<stem>.parquet`` in the dataset repo via the Hub API (local, launcher-side).
+    """
+    from huggingface_hub import HfApi
+
+    api = api or HfApi()
+    files = api.list_repo_files(corpus_repo, repo_type="dataset")
+    return sorted(
+        {f.split("/")[-1][: -len(".parquet")] for f in files if f.startswith("shards/") and f.endswith(".parquet")}
+    )
+
+
+def arms_payload(corpus_repo: str, *, api=None) -> str:
+    """The ``--arms`` JSON string for a staged corpus, computed OFF-HF from the in-repo public/owner registry."""
+    from scripts.hf_jobs.arm_policy import compute_arms
+
+    return json.dumps(compute_arms(corpus_flat_stems(corpus_repo, api=api)))
 
 
 def build_argv(spec: TrainerSpec, inner: str, *, bucket: str, attempts: int) -> list[str]:
@@ -389,13 +431,19 @@ def run_pipeline(
     attempts: int,
     n_extract: int = 4,
     n_folds: int = 5,
+    arms_json: str | None = None,
     runner=subprocess_runner,
     sleep=time.sleep,
 ) -> str:
     """Run the full map/reduce DAG for ONE variant and return the reduce (or full) job id. Each stage's
     jobs run in parallel, then the orchestrator waits for all before the next. ``n_extract`` extract shards;
     ``n_folds`` ghost CV folds (match the trainer's ``--cv-folds``); the xshot/xcross study count is
-    enumerated from the prep job's output. Fail-loud: any stage ERROR raises ``StagePhaseError``."""
+    enumerated from the prep job's output. Fail-loud: any stage ERROR raises ``StagePhaseError``.
+
+    ``arms_json`` (ADR-123 Amendment B): the precomputed visibility-gated --arms policy; if omitted it is
+    computed ONCE here, off-HF, from the staged corpus (the job receives it as data, never computes it)."""
+    if arms_json is None and spec.visibility_gated and corpus_repo:
+        arms_json = arms_payload(corpus_repo)
 
     def inner(phase, **kw):
         return build_phase_command(
@@ -407,6 +455,7 @@ def run_pipeline(
             probe_repo=probe_repo,
             phase=phase,
             cv_folds=n_folds,
+            arms_json=arms_json,
             **kw,
         )
 

@@ -6,6 +6,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from silly_kicks.spadl import config as _spc
+
+_SHOT_TID = _spc.actiontype_id["shot"]  # ADR-126: build_xshot_labels filters shots by type_id
+
 
 def test_atomic_mirror_reexports():
     from silly_kicks.atomic.tracking import features as atomic_features
@@ -432,6 +436,7 @@ def _write_synthetic_train_dir(tmp_path, *, n_games=4):
                 "period_id": [1] * len(shot_times),
                 "team_id": [2] * len(shot_times),
                 "time_seconds": shot_times,
+                "type_id": [_SHOT_TID] * len(shot_times),
             }
         ).to_parquet(gdir / "shots.parquet")
     return data_dir
@@ -462,6 +467,7 @@ def _write_degenerate_train_dir(tmp_path, *, n_games=4):
                 "period_id": [1] * len(shot_times),
                 "team_id": [2] * len(shot_times),
                 "time_seconds": shot_times,
+                "type_id": [_SHOT_TID] * len(shot_times),
             }
         ).to_parquet(gdir / "shots.parquet")
     return data_dir
@@ -588,6 +594,20 @@ def test_xshot_cross_provider():
     assert len(seen) >= 2, f"cross-provider gate needs >=2 evaluable providers, got {seen}"
 
 
+def _write_arms_json(tmp_path, data_dir, *, provider="unknown"):
+    """ADR-123 Amendment B: the visibility-blind trainer requires ``--arms``. The synthetic
+    ``--data-dir`` frames carry no ``source_provider``, so the in-job match key is
+    ``unknown__<game_dir>`` (``_iter_matches_from_dir`` falls back to ``"unknown"``); mark every game
+    ``public`` so the single-arm trainer ships ``public``."""
+    import json
+    from pathlib import Path
+
+    keys = sorted(f"{provider}__{g.name}" for g in Path(data_dir).iterdir() if g.is_dir())
+    arms_path = Path(tmp_path) / "arms.json"
+    arms_path.write_text(json.dumps({"arms": {"public": keys}, "ship_order": ["public"]}), encoding="utf-8")
+    return arms_path
+
+
 @pytest.mark.slow
 def test_train_script_smoke(tmp_path):
     import json
@@ -597,6 +617,7 @@ def test_train_script_smoke(tmp_path):
     from pathlib import Path
 
     data_dir = _write_synthetic_train_dir(tmp_path)
+    arms_path = _write_arms_json(tmp_path, data_dir)
     out_dir = Path(tmp_path) / "out"
     repo_root = Path(__file__).resolve().parents[2]
     env = dict(os.environ, PYTHONPATH=str(repo_root))
@@ -609,6 +630,8 @@ def test_train_script_smoke(tmp_path):
             "--allow-dirty",
             "--data-dir",
             str(data_dir),
+            "--arms",
+            str(arms_path),
             "--output-dir",
             str(out_dir),
             "--n-trials",
@@ -647,6 +670,7 @@ def test_train_script_smoke_position_only(tmp_path):
     from pathlib import Path
 
     data_dir = _write_synthetic_train_dir(tmp_path)
+    arms_path = _write_arms_json(tmp_path, data_dir)
     out_dir = Path(tmp_path) / "out_po"
     repo_root = Path(__file__).resolve().parents[2]
     env = dict(os.environ, PYTHONPATH=str(repo_root))
@@ -657,6 +681,8 @@ def test_train_script_smoke_position_only(tmp_path):
             "--allow-dirty",
             "--data-dir",
             str(data_dir),
+            "--arms",
+            str(arms_path),
             "--output-dir",
             str(out_dir),
             "--n-trials",
@@ -692,6 +718,7 @@ def test_train_script_fail_closed_writes_no_artifact(tmp_path):
     from pathlib import Path
 
     data_dir = _write_degenerate_train_dir(tmp_path)
+    arms_path = _write_arms_json(tmp_path, data_dir)
     out_dir = Path(tmp_path) / "out"
     repo_root = Path(__file__).resolve().parents[2]
     result = subprocess.run(  # noqa: S603
@@ -703,6 +730,8 @@ def test_train_script_fail_closed_writes_no_artifact(tmp_path):
             "--allow-dirty",
             "--data-dir",
             str(data_dir),
+            "--arms",
+            str(arms_path),
             "--output-dir",
             str(out_dir),
             "--n-trials",
@@ -914,6 +943,7 @@ def _match_frames_and_shots(n_frames=30, game_id=1):
             "period_id": [1, 1],
             "team_id": [2, 2],
             "time_seconds": [(n_frames - 5) * 0.1, (n_frames - 3) * 0.1],
+            "type_id": [_SHOT_TID, _SHOT_TID],
         }
     )
     return frames, shots
