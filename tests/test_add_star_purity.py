@@ -42,6 +42,7 @@ import silly_kicks.tracking as tracking
 from silly_kicks.atomic import spadl as asp
 from silly_kicks.atomic import tracking as atr
 from silly_kicks.atomic.tracking import features as atf
+from silly_kicks.corners import add_corner_windows
 from silly_kicks.tracking import features as F
 from silly_kicks.tracking.pitch_control import PitchControlCache
 
@@ -738,6 +739,86 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: atf.add_xshot_occurrence(i[0], i[1], home_team_id=5, links=i[2]),
         ),
     ],
+    # TF-46 corners: add_corner_windows(corners, frames, contacts). Two variants -- the TF-79
+    # contact-resolved branch and the no-contact fallback branch (conditional VALUES, not columns).
+    "corners:add_corner_windows": [
+        (
+            "contact_resolved",
+            lambda: [
+                pd.DataFrame(
+                    {
+                        "game_id": ["g1"],
+                        "corner_id": [0],
+                        "period_id": [1],
+                        "t_kick": [100.0],
+                        "attacking_team_id": ["tA"],
+                        "corner_side": pd.Series(["left"], dtype="category"),
+                        "kick_x": [104.5],
+                        "kick_y": [1.0],
+                        "corner_kind": pd.Series(["direct"], dtype="category"),
+                        "corner_source": pd.Series(["spadl_corner"], dtype="category"),
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "frame_id": [5],
+                        "period_id": [1],
+                        "time_seconds": [100.5],
+                        "player_id": ["pW"],
+                        "team_id": ["tW"],
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "period_id": [1],
+                        "frame_id": [5],
+                        "time_seconds": [100.5],
+                        "player_id": ["pW"],
+                        "contact_source": pd.Series(["velocity_break"], dtype="object"),
+                    }
+                ),
+            ],
+            lambda i: add_corner_windows(i[0], i[1], i[2]),
+        ),
+        (
+            "no_contact",
+            lambda: [
+                pd.DataFrame(
+                    {
+                        "game_id": ["g1"],
+                        "corner_id": [0],
+                        "period_id": [1],
+                        "t_kick": [100.0],
+                        "attacking_team_id": ["tA"],
+                        "corner_side": pd.Series(["left"], dtype="category"),
+                        "kick_x": [104.5],
+                        "kick_y": [1.0],
+                        "corner_kind": pd.Series(["direct"], dtype="category"),
+                        "corner_source": pd.Series(["spadl_corner"], dtype="category"),
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "frame_id": [5],
+                        "period_id": [1],
+                        "time_seconds": [100.5],
+                        "player_id": ["pW"],
+                        "team_id": ["tW"],
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "period_id": pd.Series([], dtype="int64"),
+                        "frame_id": pd.Series([], dtype="int64"),
+                        "time_seconds": pd.Series([], dtype="float64"),
+                        "player_id": pd.Series([], dtype="object"),
+                        "contact_source": pd.Series([], dtype="object"),
+                    }
+                ),
+            ],
+            lambda i: add_corner_windows(i[0], i[1], i[2]),
+        ),
+    ],
 }
 
 REGISTERED_NAMES = set(PURITY_ENTRIES)
@@ -751,6 +832,9 @@ _PKG_MOD = {
     # shim): `add_defending_gk_player_id` lives here, NOT in `tracking`, so its purity coverage is
     # re-homed to a `keeper_identity:` prefix rather than dropped.
     "keeper_identity": "silly_kicks.keeper_identity",
+    # TF-46: corners is a tracking-CONSUMING compute family (not in tracking.__all__); its one public
+    # add_* (add_corner_windows) is purity-gated here under its own prefix.
+    "corners": "silly_kicks.corners",
 }
 
 
@@ -763,6 +847,7 @@ ATOMIC_SPADL_REGISTERED = _registered_for("atomic.spadl")
 TRACKING_REGISTERED = _registered_for("tracking")
 ATOMIC_TRACKING_REGISTERED = _registered_for("atomic.tracking")
 KEEPER_IDENTITY_REGISTERED = _registered_for("keeper_identity")
+CORNERS_REGISTERED = _registered_for("corners")
 
 
 def _exported_add_surface(prefix: str) -> set[str]:
@@ -823,6 +908,7 @@ def test_meta_registration_complete_per_package():
         ("tracking", TRACKING_REGISTERED),
         ("atomic.tracking", ATOMIC_TRACKING_REGISTERED),
         ("keeper_identity", KEEPER_IDENTITY_REGISTERED),
+        ("corners", CORNERS_REGISTERED),
     ):
         exported = _exported_add_surface(prefix)
         assert exported == registered_subset, (

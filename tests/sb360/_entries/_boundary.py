@@ -502,3 +502,75 @@ _entry(
     verdict_provenance="substantive",
     provenance_rationale=_RD_PROVENANCE_RATIONALE,
 )
+
+
+# --- TF-46 Arm 1 corners (ADR-053 boundary): add_corner_windows ------------------------------
+def _call_corner_windows(actions, frames, links, home_team_id):
+    """``add_corner_windows`` on a corner synthesized from the first action (the SB360 fixture carries
+    no corner action, so the anchor is synthesized; the audit measures the FRAME-COUPLING of the window
+    columns, not identify_corners' event-only path). Returns the corners table + the 8 window columns."""
+    import pandas as pd
+
+    from silly_kicks.corners import add_corner_windows as _acw
+    from silly_kicks.corners._columns import CORNER_IDENTIFY_COLUMNS
+    from silly_kicks.tracking._ball_contact import detect_ball_contacts
+
+    a0 = actions.iloc[0]
+    corners = pd.DataFrame(
+        [
+            {
+                "game_id": a0["game_id"],
+                "corner_id": 0,
+                "period_id": int(a0["period_id"]),
+                "t_kick": float(a0["time_seconds"]),
+                "attacking_team_id": a0["team_id"],
+                "corner_side": "left",
+                "kick_x": 104.5,
+                "kick_y": 1.0,
+                "corner_kind": "direct",
+                "corner_source": "spadl_corner",
+            }
+        ]
+    ).astype(CORNER_IDENTIFY_COLUMNS)
+    contacts = detect_ball_contacts(frames)
+    return _acw(corners, frames, contacts)
+
+
+# t_init/t_target/t_outcome/target_snapshot_source are computed from the action's own t_kick scalar
+# (frame-blind) -> `identical` across both velocity legs and all three visibility rosters. The first
+# contact + winner come from the TF-79 continuous ball-contact primitive, and first_possession_time
+# from the GI feed -- both STRUCTURALLY absent on SB360 freeze frames -> both-NaN -> no_signal ->
+# not_exercised (measured 2026-10-16 via run_axis over all four legs). A frame-coupling tripwire.
+_CW_LIVE = ("t_init", "t_target", "t_outcome", "target_snapshot_source")
+_CW_DARK = ("first_contact_time", "first_possession_time", "winner_team_id", "winner_player_id")
+_CW_ALL = (*_CW_LIVE, *_CW_DARK)
+_CW_DARK_RATIONALE = (
+    "TF-79 continuous ball-contact (first_contact/winner) and the GI first_possession diagnostic are "
+    "structurally unavailable on an SB360 freeze frame, so both legs are all-NaN -> no_signal, "
+    "unexercisable on this fixture. The window times are frame-blind (computed from the action's "
+    "t_kick), so they observe `identical`. [measured cause=n/a]"
+)
+_CW_PROVENANCE = (
+    "Timing columns are frame-blind (derived from the action's t_kick scalar) -> `identical`/`works`; "
+    "the TF-79-contact winner + GI possession columns are continuous-only/GI-only and honest-dark on "
+    "freeze frames (not_exercised). A frame-coupling regression tripwire, not degradation coverage."
+)
+
+
+def _cw_axis() -> dict:
+    out = {c: AxisVerdict("identical", _WORKS) for c in _CW_LIVE}
+    out.update({c: AxisVerdict("no_signal", "not_exercised", rationale=_CW_DARK_RATIONALE) for c in _CW_DARK})
+    return out
+
+
+_entry(
+    "corners.add_corner_windows",
+    _call_corner_windows,
+    columns=_CW_ALL,
+    velocity=_cw_axis(),
+    visibility={r: _cw_axis() for r in ("gk_absent", "defender_absent", "gk_one_end")},
+    applicability={c: "no_support" for c in _CW_ALL},
+    applicability_deltas={c: {"extreme": 0.0, "near": 0.0} for c in _CW_ALL},
+    verdict_provenance="structural",
+    provenance_rationale=_CW_PROVENANCE,
+)

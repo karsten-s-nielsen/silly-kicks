@@ -1051,6 +1051,23 @@ METRIC_CONTRACTS: dict[str, MetricContract] = {
             "coord_stoppage_source": "object",
         },
     },
+    # TF-46 corner offence (Arm 1): the fixed-width per-routine CHANCE-QUALITY mart. The run-encoding
+    # and routine-feature outputs are DATA-DRIVEN width -> not committed as *_METRIC_COLUMNS and not
+    # registered here (cf. xsuccess); their documentation/liveness is carried by the corners liveness
+    # gate + the feature_glossary _corners_columns() leg.
+    "corners": {
+        "keys": ("game_id", "corner_id"),
+        "metric_columns": ("n_shots", "n_goals", "sum_xg"),
+        "columns": ("game_id", "corner_id", "n_shots", "n_goals", "sum_xg", "chance_quality_source"),
+        "column_types": {
+            "game_id": "object",
+            "corner_id": "int64",
+            "n_shots": "Int64",
+            "n_goals": "Int64",
+            "sum_xg": "float64",
+            "chance_quality_source": "category",
+        },
+    },
 }
 
 __all__ = ["METRIC_CONTRACTS", "MetricContract"]

@@ -223,6 +223,14 @@ _EXPECTED_DARK_COLUMNS = {
     # dark; only these two reclassify. Multi-frame tracking exercises both.
     ("add_ball_contacts", "first_contact_velocity_change_ms"),
     ("add_ball_contacts", "first_contact_is_aerial"),
+    # TF-46 Arm 1 corners.add_corner_windows (boundary): the first-contact winner comes from the TF-79
+    # continuous ball-contact primitive and first_possession_time from the GI feed -- both structurally
+    # absent on an SB360 freeze frame, so all four are not_exercised under every roster. The window
+    # timing columns are frame-blind (`works`) and are not dark. Multi-frame tracking exercises these.
+    ("corners.add_corner_windows", "first_contact_time"),
+    ("corners.add_corner_windows", "first_possession_time"),
+    ("corners.add_corner_windows", "winner_team_id"),
+    ("corners.add_corner_windows", "winner_player_id"),
 }
 
 
