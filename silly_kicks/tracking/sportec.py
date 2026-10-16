@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Literal
 import pandas as pd
 
 from . import direction
-from .schema import SPORTEC_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
+from .schema import SPORTEC_TRACKING_FRAMES_COLUMNS, Z_PROVENANCE, TrackingConversionReport
 
 if TYPE_CHECKING:
     from .preprocess import PreprocessConfig
@@ -151,6 +151,7 @@ def convert_to_frames(
     out["visibility"] = None
     out["source_provider"] = "sportec"
     out["is_goalkeeper_source"] = "native"
+    out["z_source"] = Z_PROVENANCE["sportec"]  # ADR-125: measured (dense optical 3D; IDSSE = this path)
 
     final = pd.DataFrame({col: out[col] for col in SPORTEC_TRACKING_FRAMES_COLUMNS})
     for col, dtype_str in SPORTEC_TRACKING_FRAMES_COLUMNS.items():

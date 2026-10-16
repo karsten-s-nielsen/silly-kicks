@@ -147,6 +147,7 @@ _TRACKING_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "visibility": "invariant",
     "source_provider": "invariant",
     "is_goalkeeper_source": "invariant",
+    "z_source": "invariant",  # ADR-125: ball-z provenance token; non-geometric, unchanged by reflection
     # --- TF-79 ball-contact table (detect_ball_contacts output; a separate schema, declared here so a
     #     consumer reflecting the contacts table through the tracking kinds handles its geometry) ---
     "contact_x": "point_x",

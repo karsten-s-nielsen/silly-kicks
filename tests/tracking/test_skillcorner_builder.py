@@ -58,6 +58,13 @@ def test_ball_z_recovered_not_nan():
     assert ball.z == pytest.approx(2.0)  # bronze ball_z preserved, NOT NaN
 
 
+def test_z_source_is_estimated():
+    # ADR-125: SkillCorner is broadcast + extrapolated -> z is ESTIMATED (the fix's TARGET must carry
+    # z_source="estimated", so ball-contact is_aerial is honest-NaN, not a false boolean).
+    frames, _ = sk.convert_to_frames(_bronze(), home_team_id="31", output_convention="absolute_frame")
+    assert set(frames["z_source"].unique()) == {"estimated"}
+
+
 def test_ball_state_is_valid_alive_not_none():
     # 4.48.1 regression guard: the native builder set ball_state=None, which is schema-invalid
     # (value-set {"alive","dead"}) and made xS/xCross's strict `== "alive"` domain filter drop

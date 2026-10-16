@@ -285,7 +285,17 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: `rd_num_superiority_gk` + `rd_zone_occupancy` now honest-NaN on `gk_absent` (no keeper to include ->
 #: None -> NaN) instead of silently equalling the keeper-free count (+2, gk_absent ONLY). Same honest
 #: coverage-loss shape as the DAS re-key above; the keeper-free `rd_num_superiority` is unaffected.
-NOT_EXERCISED_BUDGET = 51
+#:
+#: RAISED 51 -> 59 by the TF-79 ball-contact dedup + z-provenance cycle (ADR-125). `add_ball_contacts`
+#: previously contributed ZERO (every column `all_nan` -> `honest_nan`); the cycle makes two of its
+#: columns observe `no_signal` instead, on all four (axis, roster) combos = +8 tuples. The two are
+#: `first_contact_velocity_change_ms` (the |Δv| signal) and `first_contact_is_aerial` (now gated on
+#: measured z, ADR-125 §B): on a single freeze frame detect_ball_contacts resolves no contact (no
+#: trajectory), so both legs are all-NaN, which the harness classes `no_signal` -> `not_exercised`.
+#: Structural, not a regression: a continuous-only detector cannot be exercised by a single snapshot
+#: (the same data-regime boundary as `add_elastic_sync`), and the budget can only RISE as a both-NaN
+#: column reclassifies. The other seven ball-contact columns stay `all_nan` -> `honest_nan`.
+NOT_EXERCISED_BUDGET = 59
 
 
 def _entry(

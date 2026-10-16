@@ -176,6 +176,7 @@ def snapshot_to_tracking_frames(
 
     # --- combine, enforce column order, and enforce the declared DTYPES ---
     frames = pd.concat([player_frames, ball_frames], ignore_index=True)
+    frames["z_source"] = "absent"  # ADR-125: SB360 snapshots carry no continuous ball z -> is_aerial NaN
     frames = frames[list(TRACKING_FRAMES_COLUMNS.keys())]
     frames = _cast_to_declared_schema(frames)
 

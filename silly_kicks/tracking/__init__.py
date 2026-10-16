@@ -52,6 +52,7 @@ __all__ = [
     "VISIBLE_AREA_OBSERVED",
     "VISIBLE_AREA_SOURCE_VALUES",
     "VISIBLE_AREA_UNLINKED",
+    "Z_SOURCE_VALUES",
     "ActionFrameContext",
     "AndrienkoParams",
     "BallContactParams",
@@ -112,6 +113,8 @@ __all__ = [
     "XCrossFeatureSet",
     "XShotFeatureSet",
     "XShotOccurrenceModel",
+    "ZProvenanceDiagnosis",
+    "ZProvenanceWarning",
     "acting_gk_from_frames",
     "action_ltr_goal_map",
     "actor_arc_length_pre_window",
@@ -312,6 +315,7 @@ __all__ = [
     "validate_id_dtypes",
     "validate_time_base",
     "validate_velocity_regime",
+    "validate_z_provenance",
     "value_off_ball_runs",
     "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
@@ -438,6 +442,7 @@ from ._warnings import (
     RunValueCoverageWarning,
     SyntheticEPVWarning,
     UnverifiableFeatureContractWarning,
+    ZProvenanceWarning,
 )
 from ._xcross_attempt import (
     XCrossAttemptModel,
@@ -607,6 +612,7 @@ from .schema import (
     TRACKING_CONSTRAINTS,
     TRACKING_FRAMES_COLUMNS,
     VELOCITY_REGIME_VALUES,
+    Z_SOURCE_VALUES,
     FovDiagnosis,
     GkClampDiagnosis,
     IdDtypeDiagnosis,
@@ -614,6 +620,7 @@ from .schema import (
     TimeBaseDiagnosis,
     TrackingConversionReport,
     VelocityRegimeDiagnosis,
+    ZProvenanceDiagnosis,
 )
 from .utils import (
     add_sync_score,
@@ -629,6 +636,7 @@ from .utils import (
     validate_id_dtypes,
     validate_time_base,
     validate_velocity_regime,
+    validate_z_provenance,
 )
 
 try:

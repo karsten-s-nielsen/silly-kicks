@@ -59,6 +59,29 @@ TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     "visibility": "object",
     "source_provider": "category",
     "is_goalkeeper_source": "category",
+    # z_source (ADR-125): provenance of the ball `z` that ball-contact `is_aerial` reads. STATIC per
+    # match, DECLARED by the provider adapter (never inferred from values). `category` (static low-card,
+    # like team_id/source_provider). Vocab Z_SOURCE_VALUES {measured, estimated, absent}: `is_aerial` is
+    # honest-NaN unless "measured". KLOPPY (+ SPORTEC/SKILLCORNER/METRICA aliases) inherit it via the
+    # {**TRACKING_FRAMES_COLUMNS} spread below, so this one entry covers both schema bases (ADR-058
+    # KLOPPY-mirror gate stays green). See feedback_category_dtype_only_for_static_columns.
+    "z_source": "category",
+}
+
+#: Closed vocabulary for the ``z_source`` frame column (ADR-125).
+Z_SOURCE_VALUES: tuple[str, ...] = ("measured", "estimated", "absent")
+
+#: Per-provider ball-z provenance (ADR-125; the spike's measured-vs-estimated finding). DECLARED, not
+#: inferred: IDSSE/Sportec + Metrica are dense optical (measured 3D); Gradient Sports measures z (its
+#: negatives are ground-level noise below the 1.8 m aerial boundary -> still "measured", not demoted);
+#: SkillCorner is broadcast + extrapolated (``*_tracking_extrapolated``) -> "estimated". Anything with
+#: no continuous ball z (SB360 snapshots) is "absent".
+Z_PROVENANCE: dict[str, str] = {
+    "sportec": "measured",
+    "idsse": "measured",
+    "metrica": "measured",
+    "gradientsports": "measured",
+    "skillcorner": "estimated",
 }
 
 KLOPPY_TRACKING_FRAMES_COLUMNS: dict[str, str] = {
@@ -146,6 +169,7 @@ TRACKING_CATEGORICAL_DOMAINS: dict[str, frozenset[str]] = {
     "speed_source": frozenset({"native", "derived", SPEED_SOURCE_UNAVAILABLE}),
     "source_provider": frozenset({"gradientsports", "sportec", "metrica", "skillcorner", "snapshot"}),
     "is_goalkeeper_source": frozenset({"native", "derived"}),
+    "z_source": frozenset(Z_SOURCE_VALUES),  # ADR-125
 }
 
 
@@ -428,6 +452,44 @@ class GkClampDiagnosis:
     ceiling_by_unit: dict[tuple[str, str], float]
     pileup_by_unit: dict[tuple[str, str], float]
     n_units: int
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
+class ZProvenanceDiagnosis:
+    """Whether the ball-z SIGNATURE contradicts the declared ``z_source`` (ADR-125).
+
+    A data-quality cross-check, produced by ``silly_kicks.tracking.utils.validate_z_provenance`` --
+    the validate-family guard that catches a mis-declared provider adapter before it ships. The
+    flagged signature is PERSISTENT ELEVATION (the broadcast-extrapolation tell: the ball sits
+    off-ground in a large fraction of frames -- SkillCorner ~0.81-0.86), OR an all-flat / all-NaN z,
+    while the adapter declares ``z_source == "measured"``. Ground-level negatives do NOT flag
+    (Gradient Sports' negatives are below the aerial boundary, legitimately measured). Thresholds are
+    pre-registered against the ball-z spike, never fit to an accuracy corpus. Whether z is estimated
+    is a property of the WHOLE frame set (like ``VelocityRegimeDiagnosis``), so it is a diagnostic.
+
+    Attributes:
+        declared: the frame set's declared ``z_source`` ("measured" / "estimated" / "absent" / None).
+        p50_z: median finite ball z (m).
+        off_ground_fraction: fraction of finite ball-z frames above the off-ground height.
+        consistent: False iff ``declared == "measured"`` but the signature looks estimated/flat.
+        message: human-readable summary, and the text of the warning when one is emitted.
+
+    Examples
+    --------
+    Gate a corpus on z-provenance consistency before trusting ``is_aerial``::
+
+        from silly_kicks.tracking import validate_z_provenance
+
+        diag = validate_z_provenance(frames)
+        if not diag.consistent:
+            raise SystemExit(diag.message)  # declared 'measured' but z looks extrapolated
+    """
+
+    declared: str | None
+    p50_z: float
+    off_ground_fraction: float
+    consistent: bool
     message: str
 
 
