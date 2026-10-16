@@ -36,7 +36,7 @@ def _collect_output() -> subprocess.CompletedProcess[str]:
     like a harness bug rather than "collection broke". The caller inspects ``returncode`` and reports the
     two failure modes -- collection-broke vs coverage-short -- distinctly.
     """
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603
         [
             sys.executable,
             "-m",
