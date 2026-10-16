@@ -115,6 +115,10 @@ PACKAGES = (
     "silly_kicks.causal",
     "silly_kicks.tracking",
     "silly_kicks.keeper_identity",
+    # TF-46: corners is walked so any future public corner fn taking an entity *_id is auto-discovered
+    # and gated. The current surface takes no such scalar (ids arrive inside frames/actions), so this
+    # adds zero entries today -- it is the forward guard.
+    "silly_kicks.corners",
 )
 
 #: Entity-id COLLECTIONS resolved against an id column (``.isin``). Same hazard as a scalar:

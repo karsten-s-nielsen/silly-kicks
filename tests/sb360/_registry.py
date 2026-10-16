@@ -74,6 +74,9 @@ BOUNDARY_ENTRY_POINTS: frozenset[str] = frozenset(
         "xtgk.compute_xt_gk_v2",
         "spadl.add_restart_coordinates",
         "restdefense.compute_rest_defense",
+        # TF-46 Arm 1: add_corner_windows enriches the per-corner table with TF-79 timing + winner;
+        # it lives in corners/ (outside tracking.__all__), so it is a boundary entry (ADR-053).
+        "corners.add_corner_windows",
         # territorial_defense.compute_territorial_defense was DEMOTED to experimental (ADR-090:
         # instrument_void) -- no longer a PUBLIC boundary entry, so it carries no SB360 verdict
         # (mirrors the TF-60 Layer-3 arms).
@@ -295,7 +298,13 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: Structural, not a regression: a continuous-only detector cannot be exercised by a single snapshot
 #: (the same data-regime boundary as `add_elastic_sync`), and the budget can only RISE as a both-NaN
 #: column reclassifies. The other seven ball-contact columns stay `all_nan` -> `honest_nan`.
-NOT_EXERCISED_BUDGET = 59
+#:
+#: 59 -> 75 (+16): TF-46 Arm 1 `corners.add_corner_windows` (boundary entry). Its four TF-79-contact /
+#: GI-possession columns (first_contact_time, first_possession_time, winner_team_id, winner_player_id)
+#: are continuous-only / GI-only -> both-NaN -> no_signal -> not_exercised on the SB360 freeze-frame
+#: fixture, across all four legs (velocity + three visibility rosters) = 4 columns x 4 = 16. The four
+#: window-timing columns are frame-blind -> `identical`/`works`, not counted.
+NOT_EXERCISED_BUDGET = 75
 
 
 def _entry(

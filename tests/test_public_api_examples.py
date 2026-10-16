@@ -430,6 +430,22 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/positioning/_solve.py",
     "silly_kicks/positioning/_compute.py",
     "silly_kicks/positioning/_report.py",
+    # corners (TF-46 Arm 1): the modules that DEFINE its public surface -- the four frozen params
+    # (_config), CornersReport (_report), identify_corners (_identify), add_corner_windows (_windows),
+    # reflect_corners_to_canonical_side (_reflect), RunZoneModel (_zones), CornerRoutineModel +
+    # cluster_corner_routines + compute_corner_routine_features (_routines), compute_corner_run_encoding
+    # (_encode), compute_corner_chance_quality + aggregate_chance_quality_by_feature (_effectiveness) --
+    # re-exported via the package __all__. _columns.py holds constants only. Brand-new public modules --
+    # documented on creation (every public symbol carries a real Examples section).
+    "silly_kicks/corners/_config.py",
+    "silly_kicks/corners/_report.py",
+    "silly_kicks/corners/_identify.py",
+    "silly_kicks/corners/_windows.py",
+    "silly_kicks/corners/_reflect.py",
+    "silly_kicks/corners/_zones.py",
+    "silly_kicks/corners/_routines.py",
+    "silly_kicks/corners/_encode.py",
+    "silly_kicks/corners/_effectiveness.py",
 )
 
 
@@ -623,6 +639,15 @@ _EXAMPLES_DEBT: dict[str, str] = {
     # --- TF-18 ghost GK (GhostClampWarning in the same block IS documented) ---
     "silly_kicks/tracking/_ghost_gk.py::IntegrityError": (
         "Artifact-integrity error category raised by GhostGkModel.load on a tampered or pre-chirality artifact."
+    ),
+    # TF-46 corners: bare artifact-integrity exception categories (same shape as the ghost/xshot
+    # IntegrityError above) -- a one-line docstring, no synthetic literal block.
+    "silly_kicks/corners/_zones.py::IntegrityError": (
+        "Artifact-integrity error category raised by RunZoneModel.load on a tampered or "
+        "chirality/feature-contract-mismatched artifact."
+    ),
+    "silly_kicks/corners/_routines.py::IntegrityError": (
+        "Artifact-integrity error category raised by CornerRoutineModel.load on a tampered artifact."
     ),
     "silly_kicks/tracking/_ghost_gk.py::keeper_detection_mask": (
         "Per-frame mask marking frames whose keeper is genuinely detected rather than interpolated."

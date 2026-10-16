@@ -1079,3 +1079,18 @@ The kloppy test fixtures (tests/datasets/kloppy/*.xml + .json) are
 vendored from kloppy under BSD-3-Clause. The metrica_events.json
 within is originally from metrica-sports/sample-data Sample Game 2
 (CC-BY-NC-4.0).
+
+- Corner routine inference (TF-46 Arm 1). The offence pipeline follows the
+  published, deployed methodology of Shaw, L. & Gopaladesikan, S., "Routine
+  Inspection: A Playbook for Corner Kicks" (42 Analytics): a probabilistic
+  (initial x target)-zone encoding of attacking runs, a non-negative matrix
+  factorization over the per-corner run vectors into co-occurring run
+  combinations, and agglomerative clustering into a team's distinct routines.
+  Zone fitting uses a Gaussian Mixture Model (Dempster, Laird & Rubin, "Maximum
+  likelihood from incomplete data via the EM algorithm", JRSS-B 1977). The topic
+  model uses non-negative matrix factorization (Lee & Seung, NIPS 2000; Kuang,
+  Choo & Park 2015; Hoyer, JMLR 2004; Fevotte & Idier, Neural Computation 2011).
+  Used by: silly_kicks.corners (TF-46 Arm 1). silly-kicks ships NO xG model; the
+  per-routine chance-quality primitive takes an INJECTED xG column (port pattern).
+  The paper's supervised defensive-role arm (XGBoost; 83.4% vs a 70% logistic
+  floor) is an Arm-2 reference benchmark, not implemented or gated here.
