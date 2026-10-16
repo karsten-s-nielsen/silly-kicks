@@ -32,7 +32,7 @@ from ._gk_identification import (
     derive_goalkeepers,
 )
 from .direction import orient_frames_to_ltr_by_geometry, require_et_direction
-from .schema import SKILLCORNER_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
+from .schema import SKILLCORNER_TRACKING_FRAMES_COLUMNS, Z_PROVENANCE, TrackingConversionReport
 from .utils import _derive_speed, orient_frames_to_ltr
 
 if TYPE_CHECKING:
@@ -353,6 +353,8 @@ def convert_to_frames(
             "or a missing roster flag.",
             stacklevel=2,
         )
+
+    df["z_source"] = Z_PROVENANCE["skillcorner"]  # ADR-125: estimated (broadcast tracking_extrapolated)
 
     final = pd.DataFrame({c: df[c] for c in SKILLCORNER_TRACKING_FRAMES_COLUMNS})
     for c, dt in SKILLCORNER_TRACKING_FRAMES_COLUMNS.items():

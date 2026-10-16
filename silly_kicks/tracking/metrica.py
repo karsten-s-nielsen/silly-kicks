@@ -29,7 +29,7 @@ import pandas as pd
 # bronze 2026-06-18), so the clock is rebased per-(period) min (see convert_to_frames).
 from ._gk_identification import derive_goalkeepers
 from .direction import orient_frames_to_ltr_by_geometry, require_et_direction
-from .schema import METRICA_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
+from .schema import METRICA_TRACKING_FRAMES_COLUMNS, Z_PROVENANCE, TrackingConversionReport
 from .utils import _derive_speed, orient_frames_to_ltr
 
 if TYPE_CHECKING:
@@ -212,6 +212,8 @@ def convert_to_frames(
             f"lists {len(gk_jerseys)} --- positional GK derivation disagrees with the roster count.",
             stacklevel=2,
         )
+
+    df["z_source"] = Z_PROVENANCE["metrica"]  # ADR-125: measured (optical)
 
     final = pd.DataFrame({c: df[c] for c in METRICA_TRACKING_FRAMES_COLUMNS})
     for c, dt in METRICA_TRACKING_FRAMES_COLUMNS.items():

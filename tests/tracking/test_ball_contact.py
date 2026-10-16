@@ -159,6 +159,7 @@ def _synthetic_match_frames(*, gap_period2: bool = True) -> pd.DataFrame:
                 x=x,
                 y=y,
                 z=z,
+                z_source="measured",  # ADR-125: optical-measured fixture -> boolean is_aerial
             )
         )
 
@@ -175,7 +176,15 @@ def _synthetic_match_frames(*, gap_period2: bool = True) -> pd.DataFrame:
                 y = _AY + (_BY - _AY) * f
                 z = 0.1 + (2.4 - 0.1) * f
             else:
-                x, y, z = _BX, _BY, 2.4
+                # ball decelerates to a slow CRAWL along its approach direction (realistic -- NOT
+                # frozen to the segment end; a permanent terminal static run would be collapsed by
+                # the duplicate-frame dedup). Same direction as the A->B leg -> a pure speed drop at
+                # B (contact_source "velocity_break", no RDP corner), so source diversity is kept.
+                _nrm = ((_BX - _AX) ** 2 + (_BY - _AY) ** 2) ** 0.5
+                _ux, _uy = (_BX - _AX) / _nrm, (_BY - _AY) / _nrm
+                x = _BX + 1.0 * (fid - 20) * dt * _ux
+                y = _BY + 1.0 * (fid - 20) * dt * _uy
+                z = 2.4
             if gap_period2 and period == 2 and 12 <= fid <= 14:
                 x = np.nan
                 y = np.nan
@@ -203,6 +212,7 @@ def test_detect_contacts_recovers_planted_touches():
         "velocity_change_ms",
         "confidence",
         "is_aerial",
+        "aerial_source",
         "contact_source",
     }
     resolved = out[out["contact_source"] != "unresolved"]
@@ -349,3 +359,213 @@ def test_contact_columns_registered_for_reflection():
     assert TRACKING_REFLECTION_KINDS["contact_y"] == "point_y"
     assert SPADL_REFLECTION_KINDS["first_contact_x"] == "point_x"
     assert SPADL_REFLECTION_KINDS["first_contact_y"] == "point_y"
+
+
+# --------------------------------------------------------------------------- #
+# Task 2 (TF-79 follow-up): time-based |dv| and detection-quality windows
+# (dedup makes the per-period arrays sparse + non-uniform-dt, so fixed frame-count
+#  windows span the wrong seconds; these must be derived from tt.)
+# --------------------------------------------------------------------------- #
+# dense cluster around the touch then a sparse tail (the post-dedup shape); 25 fps nominal
+_TT_SPARSE = np.array([0.00, 0.04, 0.08, 0.12, 0.72, 1.32, 1.92])
+
+
+def test_time_window_bounds_each_side_within_span():
+    span = 0.12
+    for gp in range(1, len(_TT_SPARSE) - 1):
+        lo, hi = bc._time_window(_TT_SPARSE, gp, span)
+        assert _TT_SPARSE[gp] - _TT_SPARSE[lo] <= span + 1e-9
+        assert _TT_SPARSE[hi - 1] - _TT_SPARSE[gp] <= span + 1e-9
+
+
+def test_old_frame_count_window_violates_the_seconds_bound():
+    # RED-GREEN teeth (ADR-056): the RETIRED semantics were +/- round(span/frame_period) SAMPLES.
+    # At 25 fps, span 0.12 s -> +/-3 samples. At gp=3 (t=0.12) that reaches sample 6 (t=1.92) ->
+    # 1.80 s on the after side, >> 0.12 s. The new time window must NOT.
+    span, frame_period = 0.12, 1.0 / 25.0
+    k = max(1, round(span / frame_period))  # 3
+    gp = 3
+    i1_old = min(len(_TT_SPARSE) - 1, gp + k)
+    assert _TT_SPARSE[i1_old] - _TT_SPARSE[gp] > span  # OLD span is wrong (1.80 s > 0.12 s)
+    _lo, hi = bc._time_window(_TT_SPARSE, gp, span)
+    assert _TT_SPARSE[hi - 1] - _TT_SPARSE[gp] <= span + 1e-9  # NEW is correct
+
+
+def test_velocity_change_detects_turn_over_the_time_window():
+    # +x 10 m/s before the touch, +y 10 m/s after: |dv| = hypot(10, 10) ~= 14.14 over +/-0.12 s
+    tt = np.array([0.00, 0.04, 0.08, 0.12, 0.16, 0.20, 0.24])
+    bx = np.where(tt <= 0.12, 10.0 * tt, 10.0 * 0.12)
+    by = np.where(tt <= 0.12, 0.0, 10.0 * (tt - 0.12))
+    dv = bc._velocity_change_at(bx, by, tt, 3, 0.12)
+    assert 13.0 < dv < 15.0
+
+
+def test_time_based_window_matches_old_on_dense_uniform_sampling():
+    # regression: on uniform 25 fps the time window == the old +/-3-sample frame-count window
+    tt = np.round(np.arange(0.0, 1.0, 0.04), 2)
+    lo, hi = bc._time_window(tt, 10, 0.12)
+    assert (tt[10] - tt[lo]) <= 0.12 + 1e-9 and (tt[hi - 1] - tt[10]) <= 0.12 + 1e-9
+    assert hi - lo == 2 * 3 + 1
+
+
+# --------------------------------------------------------------------------- #
+# Task 3 (TF-79 follow-up): duplicate-frame dedup recovers GS-like under-detection
+# --------------------------------------------------------------------------- #
+_TRAP_PLAYER = 7  # the receiver of the trap touch at t ~= 0.6 s
+_TRAP_T = 0.6
+
+
+def _trap_frames(dup: bool) -> pd.DataFrame:
+    """Ball 12 m/s +x then a sharp SPEED-DROP (trap) to a 1 m/s crawl at player 7 at t=0.6 s.
+
+    The real path is sampled at 0.04 s. ``dup=False`` is the clean 25 fps sampling. ``dup=True``
+    samples at 50 fps with every SECOND frame a held duplicate (the GS velocity sawtooth),
+    TIME-ALIGNED so the trap still lands at t=0.6 s (dedup collapses the held dups back to the
+    clean path).
+    """
+    dt_real = 0.04
+    pts = []
+    x, y = 20.0, 34.0
+    for _ in range(15):  # approach 0.6 s at 12 m/s +x
+        pts.append((x, y))
+        x += 12.0 * dt_real
+    tx, ty = x, y
+    for _ in range(15):  # 1 m/s crawl after the trap
+        pts.append((x, y))
+        x += 1.0 * dt_real
+    fps = 50.0 if dup else 25.0
+    dt = 1.0 / fps
+    rows = []
+
+    def emit(fid, bx, by):
+        rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                time_seconds=fid * dt,
+                frame_rate=fps,
+                player_id=pd.NA,
+                team_id="T1",
+                is_ball=True,
+                x=bx,
+                y=by,
+                z=0.1,
+                z_source="measured",
+            )
+        )
+        rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                time_seconds=fid * dt,
+                frame_rate=fps,
+                player_id=_TRAP_PLAYER,
+                team_id="T1",
+                is_ball=False,
+                x=tx,
+                y=ty,
+                z=0.0,
+                z_source="measured",
+            )
+        )
+        rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                time_seconds=fid * dt,
+                frame_rate=fps,
+                player_id=9,
+                team_id="T2",
+                is_ball=False,
+                x=5.0,
+                y=5.0,
+                z=0.0,
+                z_source="measured",
+            )
+        )
+
+    fid = 0
+    for bx, by in pts:
+        emit(fid, bx, by)
+        fid += 1
+        if dup:
+            emit(fid, bx, by)  # held duplicate at +dt -> 50% consecutive-duplicate ball frames
+            fid += 1
+    df = pd.DataFrame(rows)
+    df["player_id"] = df["player_id"].astype("Int64")
+    df["team_id"] = df["team_id"].astype("category")
+    for c in ("x", "y", "z"):
+        df[c] = df[c].astype("float32")
+    return df
+
+
+def _strip_consecutive_dups(frames: pd.DataFrame) -> pd.DataFrame:
+    ball = frames[frames["is_ball"]]
+    players = frames[~frames["is_ball"]]
+    parts = [players]
+    for _pid, g in ball.groupby("period_id"):
+        g = g.sort_values("frame_id")
+        x = g["x"].to_numpy(dtype=float)
+        y = g["y"].to_numpy(dtype=float)
+        m = np.ones(len(g), dtype=bool)
+        m[1:] = np.hypot(np.diff(x), np.diff(y)) > 1e-6
+        parts.append(g[m])
+    return pd.concat(parts, ignore_index=True)
+
+
+def _resolved_near(frames: pd.DataFrame, player: int, t: float, tol: float = 0.12) -> bool:
+    c = bc.detect_ball_contacts(frames)
+    r = c[(c["contact_source"].astype(object) != "unresolved") & (c["player_id"] == player)]
+    return bool(((r["time_seconds"] - t).abs() <= tol).any())
+
+
+def _resolved_keys(frames: pd.DataFrame) -> set:
+    c = bc.detect_ball_contacts(frames)
+    r = c[(c["contact_source"].astype(object) != "unresolved") & c["player_id"].notna()]
+    return {
+        (int(p), int(pl), round(float(tt), 2))
+        for p, pl, tt in zip(r["period_id"], r["player_id"], r["time_seconds"], strict=True)
+    }
+
+
+def test_trap_touch_detected_without_dups():
+    # floor (two-sided): the planted trap touch IS detectable on the clean sampling
+    assert _resolved_near(_trap_frames(dup=False), _TRAP_PLAYER, _TRAP_T)
+
+
+def test_trap_touch_recovered_through_duplicate_frame_sawtooth():
+    # recovery: the same touch, buried under 50% consecutive-duplicate ball frames, is recovered
+    assert _resolved_near(_trap_frames(dup=True), _TRAP_PLAYER, _TRAP_T)
+
+
+def test_dedup_does_not_over_collapse_dense_control():
+    # GSBC-PLAN-01: deduping must change ONLY the zero-displacement duplicates -> the resolved
+    # contact set is IDENTICAL to its explicitly-stripped twin (an over-collapsing dedup fails).
+    dense = _trap_frames(dup=True)
+    assert _resolved_keys(dense) == _resolved_keys(_strip_consecutive_dups(dense))
+    assert _resolved_near(dense, _TRAP_PLAYER, _TRAP_T)
+
+
+# --------------------------------------------------------------------------- #
+# Z2/Z3 (ADR-125): is_aerial honest-NaN unless z_source=="measured"; aerial_source echo
+# --------------------------------------------------------------------------- #
+def test_is_aerial_requires_measured_z_source():
+    # measured -> boolean (synthetic contact B is aerial, z=2.4); estimated/absent -> all <NA>
+    meas = bc.detect_ball_contacts(_synthetic_match_frames())  # tagged z_source="measured"
+    assert bool(meas["is_aerial"].fillna(False).any())
+    assert set(meas["aerial_source"].unique()) == {"measured"}
+    for src in ("estimated", "absent"):
+        out = bc.detect_ball_contacts(_synthetic_match_frames().assign(z_source=src))
+        assert out["is_aerial"].isna().all()  # honest-NaN: z is not a trustworthy measurement
+        assert set(out["aerial_source"].unique()) == {src}  # aerial_source echoes z_source
+
+
+def test_is_aerial_fail_safe_absent_when_z_source_column_missing():
+    # GSBC-PLAN-02: a legacy/synthetic caller with no z_source column -> fail-safe "absent" -> NaN,
+    # never a false boolean.
+    out = bc.detect_ball_contacts(_synthetic_match_frames().drop(columns=["z_source"]))
+    assert out["is_aerial"].isna().all()
+    assert set(out["aerial_source"].unique()) == {"absent"}

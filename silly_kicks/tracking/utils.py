@@ -29,7 +29,7 @@ from silly_kicks.reflection import TRACKING_REFLECTION_KINDS, reflect
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
 from ._provider_visibility import detected_mask, detection_aware_provider
 from ._visibility import VISIBLE_AREA_OBSERVED
-from ._warnings import GoalkeeperClampWarning
+from ._warnings import GoalkeeperClampWarning, ZProvenanceWarning
 from .schema import (
     EMPTY,
     FOV_REGIME_ABSENT,
@@ -48,6 +48,7 @@ from .schema import (
     LinkReport,
     TimeBaseDiagnosis,
     VelocityRegimeDiagnosis,
+    ZProvenanceDiagnosis,
 )
 
 MISMATCH_OVERLAP_FLOOR: float = 0.2
@@ -974,6 +975,68 @@ def validate_gk_position_clamp(
     if warn and clamped:
         warnings.warn(message, GoalkeeperClampWarning, stacklevel=2)
     return GkClampDiagnosis(clamped, tuple(clamped_units), ceiling_by_unit, pileup_by_unit, n_units, message)
+
+
+def validate_z_provenance(
+    frames: pd.DataFrame,
+    *,
+    off_ground_m: float = 0.1,
+    persistent_off_ground_frac: float = 0.7,
+    warn: bool = True,
+) -> ZProvenanceDiagnosis:
+    """Cross-check a frame set's declared ``z_source`` against its ball-z SIGNATURE (ADR-125).
+
+    Validate-family guard (:func:`validate_gk_position_clamp` / :func:`validate_velocity_regime`): a
+    provider adapter DECLARES ``z_source`` (measured / estimated / absent), and this catches a
+    mis-declaration before it ships an unreliable ``is_aerial``. Flags a ``"measured"`` declaration
+    whose ball z looks ESTIMATED -- persistently off-ground (off-ground fraction above
+    ``persistent_off_ground_frac``, the broadcast-extrapolation tell) OR all-flat / all-NaN. **Ground
+    -level negatives do NOT flag** -- Gradient Sports' negatives are below the aerial boundary and are
+    legitimately measured. Thresholds are PRE-REGISTERED against the ball-z spike (IDSSE off-ground
+    ~0.25-0.38 and GS ~0.39-0.51 both PASS; SkillCorner ~0.81-0.86 is flagged), never fit to an
+    accuracy corpus. Signature-inference is a VALIDATION here, never the mechanism (that is the
+    declared ``z_source``). Emits :class:`ZProvenanceWarning` when inconsistent and ``warn``.
+
+    Examples
+    --------
+    A provider that declares measured z but ships a persistently off-ground (extrapolated)
+    ball is flagged inconsistent:
+
+    >>> import pandas as pd
+    >>> frames = pd.DataFrame(
+    ...     {"is_ball": [True, True, True], "z": [0.2, 0.3, 0.25], "z_source": ["measured"] * 3}
+    ... )
+    >>> validate_z_provenance(frames, warn=False).consistent
+    False
+    """
+    if "z_source" in frames.columns and len(frames):
+        vals = pd.unique(frames["z_source"].astype(object).dropna())
+        declared = str(vals[0]) if len(vals) == 1 else ("mixed" if len(vals) > 1 else None)
+    else:
+        declared = None
+    ball = frames.loc[frames["is_ball"].to_numpy(dtype=bool)] if "is_ball" in frames else frames.iloc[:0]
+    z = ball["z"].to_numpy(dtype=float) if "z" in ball.columns else np.array([], dtype=float)
+    z = z[np.isfinite(z)]
+    if len(z) == 0:
+        p50, off_frac, flat = float("nan"), 0.0, True
+    else:
+        p50 = float(np.median(z))
+        off_frac = float(np.mean(z > off_ground_m))
+        flat = bool(np.max(np.abs(z)) < off_ground_m)
+    looks_estimated = off_frac > persistent_off_ground_frac or flat
+    consistent = not (declared == "measured" and looks_estimated)
+    message = f"z provenance: declared={declared!r}, ball-z p50={p50:.2f} m, off-ground fraction={off_frac:.2f}. " + (
+        "consistent."
+        if consistent
+        else (
+            "a 'measured' declaration is contradicted by a persistent-elevation / flat z signature -- "
+            "the ball sits off-ground in most frames (the broadcast-extrapolation tell) or carries no "
+            "live z. is_aerial from this z is NOT a measurement; re-declare z_source 'estimated'/'absent'."
+        )
+    )
+    if not consistent and warn:
+        warnings.warn(message, ZProvenanceWarning, stacklevel=2)
+    return ZProvenanceDiagnosis(declared, p50, off_frac, consistent, message)
 
 
 def validate_fov(

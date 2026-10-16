@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks.tracking.schema import Z_SOURCE_VALUES
 
 
 @dataclass(frozen=True)
@@ -263,19 +264,35 @@ _CONTACT_COLUMNS: tuple[str, ...] = (
     "velocity_change_ms",
     "confidence",
     "is_aerial",
+    "aerial_source",
     "contact_source",
 )
 
 
-def _velocity_change_at(bx, by, tt, gp: int, window: int) -> float:
-    """|Δv| (m/s) of the ball's velocity VECTOR across ``gp``, over +/- ``window`` frames.
+def _time_window(tt: np.ndarray, gp: int, span_s: float) -> tuple[int, int]:
+    """``[lo, hi)`` index range of samples within +/- ``span_s`` seconds of ``tt[gp]``.
+
+    Derived from ``tt`` by ``searchsorted``, NOT a fixed frame count: after duplicate-frame
+    dedup the sampling is sparse and non-uniform, so a frame-count window would span the wrong
+    number of seconds and silently corrupt |dv| / detection-quality. On a dense uniform sampling
+    it reduces to the equivalent +/- round(span/frame_period) frames.
+    """
+    lo = int(np.searchsorted(tt, tt[gp] - span_s, side="left"))
+    hi = int(np.searchsorted(tt, tt[gp] + span_s, side="right"))
+    return lo, hi
+
+
+def _velocity_change_at(bx, by, tt, gp: int, span_s: float) -> float:
+    """|Δv| (m/s) of the ball's velocity VECTOR across ``gp``, over +/- ``span_s`` SECONDS.
 
     A touch changes the ball's velocity vector (accel, decel, OR turn) well above passive drag
     (<~1 m/s over 0.1 s); this is the single physical signal that separates a touch from flight
-    noise. NaN if the window runs off the segment or a side has zero duration.
+    noise. The window is time-based (``_time_window``), so it spans the intended seconds on the
+    sparse post-dedup sampling. NaN if no sample lies within the window on a side, or a side has
+    zero duration.
     """
-    i0 = max(0, gp - window)
-    i1 = min(len(bx) - 1, gp + window)
+    lo, hi = _time_window(tt, gp, span_s)
+    i0, i1 = lo, hi - 1
     if gp - i0 < 1 or i1 - gp < 1:
         return float("nan")
     dt_b = tt[gp] - tt[i0]
@@ -317,6 +334,7 @@ def _empty_contacts(frames: pd.DataFrame) -> pd.DataFrame:
             "velocity_change_ms": pd.Series([], dtype="float64"),
             "confidence": pd.Series([], dtype="float64"),
             "is_aerial": pd.Series([], dtype="boolean"),
+            "aerial_source": pd.Categorical([], categories=Z_SOURCE_VALUES),
             "contact_source": pd.Categorical([], categories=CONTACT_SOURCE_VALUES),
         }
     )
@@ -351,6 +369,7 @@ def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _D
     """
     from silly_kicks._frame_index import group_rows
     from silly_kicks.id_compat import restore_id_dtype
+    from silly_kicks.tracking.preprocess._dedup import trajectory_dedup_mask
 
     required = {"is_ball", "period_id", "frame_id", "time_seconds", "x", "y"}
     missing = required - set(frames.columns)
@@ -373,7 +392,21 @@ def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _D
         bx = seg_df["x"].to_numpy(dtype=np.float64, copy=True)
         by = seg_df["y"].to_numpy(dtype=np.float64, copy=True)
         bz = seg_df["z"].to_numpy(dtype=np.float64, copy=True) if "z" in seg_df else np.full(len(seg_df), np.nan)
+        # z_source (ADR-125): provenance of the ball z -- "measured" | "estimated" | "absent". FAIL-SAFE
+        # default "absent" when the column is missing (a legacy/synthetic caller) -> honest-NaN is_aerial,
+        # never a false boolean.
+        zsrc = (
+            seg_df["z_source"].astype(object).to_numpy()
+            if "z_source" in seg_df
+            else np.full(len(seg_df), "absent", dtype=object)
+        )
         fr = seg_df["frame_rate"].to_numpy(dtype=np.float64, copy=True) if "frame_rate" in seg_df else np.array([])
+        # Collapse consecutive-duplicate ball positions before any consecutive-frame differencing:
+        # a duplicate frame gives velocity 0, so a run of duplicates makes a 0<->real velocity
+        # sawtooth that masks real breaks (the GS under-detection; provider-agnostic, harmless where
+        # there are no duplicates). Original frame_ids are preserved -> player attribution unchanged.
+        keep = trajectory_dedup_mask(bx, by)
+        fid, tt, bx, by, bz, zsrc = fid[keep], tt[keep], bx[keep], by[keep], bz[keep], zsrc[keep]
         finite_fr = fr[np.isfinite(fr)] if len(fr) else np.array([])
         if len(finite_fr) and finite_fr[0] > 0:
             frame_period = 1.0 / float(finite_fr[0])
@@ -406,22 +439,23 @@ def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _D
                 tmap[p] = float(st[p])
             merged = _merge_clusters(cand_local, mag, source, tmap, params, frame_period=frame_period)
 
-            dvw = max(1, round(0.12 / frame_period)) if frame_period > 0 else 1
             for cand in merged:
                 gp = lo + cand.frame_pos
-                dv = _velocity_change_at(bx, by, tt, gp, dvw)
+                dv = _velocity_change_at(bx, by, tt, gp, 0.12)
                 # OPT-IN hard floor (default 0.0 -> never drops; preserves every candidate).
                 if np.isfinite(dv) and dv < params.min_velocity_change_ms:
                     continue
                 players_here = players_by_frame.get(pid, int(fid[gp]))
                 attr_id, dist = _attribute(gp, bx, by, bz, players_here, params)
                 z_here = bz[gp]
-                if np.isnan(z_here):
+                # ADR-125: is_aerial is honest-NaN unless z is a trustworthy MEASUREMENT (z_source
+                # "measured"); "estimated" (SkillCorner) and "absent" (SB360) -> <NA>.
+                z_src_here = str(zsrc[gp])
+                if z_src_here != "measured" or np.isnan(z_here):
                     is_aerial = pd.NA
                 else:
                     is_aerial = bool(z_here > params.aerial_z_m)
-                w = max(1, round(0.2 / frame_period)) if frame_period > 0 else 1
-                a, b = max(0, gp - w), min(len(finite), gp + w + 1)
+                a, b = _time_window(tt, gp, 0.2)
                 detection_quality = float(finite[a:b].mean())
                 if pd.isna(attr_id):
                     conf = float("nan")
@@ -445,6 +479,7 @@ def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _D
                         "velocity_change_ms": float(dv) if np.isfinite(dv) else float("nan"),
                         "confidence": conf,
                         "is_aerial": is_aerial,
+                        "aerial_source": z_src_here,
                         "contact_source": src,
                     }
                 )
@@ -456,6 +491,7 @@ def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _D
     out = out.sort_values(["period_id", "frame_id"], kind="stable").reset_index(drop=True)
     out["player_id"] = restore_id_dtype(out["player_id"].to_numpy(dtype=object), frames["player_id"].dtype)
     out["is_aerial"] = out["is_aerial"].astype("boolean")
+    out["aerial_source"] = pd.Categorical(out["aerial_source"], categories=Z_SOURCE_VALUES)
     out["contact_source"] = pd.Categorical(out["contact_source"], categories=CONTACT_SOURCE_VALUES)
     return out
 
@@ -468,6 +504,7 @@ _FIRST_CONTACT_COLUMNS: tuple[str, ...] = (
     "first_contact_velocity_change_ms",
     "first_contact_confidence",
     "first_contact_is_aerial",
+    "first_contact_aerial_source",
     "first_contact_source",
 )
 
@@ -529,6 +566,8 @@ def add_ball_contacts(
     fpid[:] = pd.NA
     faer = np.empty(n, dtype=object)
     faer[:] = pd.NA
+    faersrc = np.empty(n, dtype=object)
+    faersrc[:] = pd.NA
     fsrc = np.empty(n, dtype=object)
     fsrc[:] = pd.NA
 
@@ -559,6 +598,7 @@ def add_ball_contacts(
                     fconf[ai] = row["confidence"]
                     fpid[ai] = row["player_id"]
                     faer[ai] = row["is_aerial"]
+                    faersrc[ai] = row["aerial_source"]
                     fsrc[ai] = row["contact_source"]
 
     pid_dtype = contacts["player_id"].dtype if len(contacts) else "Int64"
@@ -569,5 +609,6 @@ def add_ball_contacts(
     out["first_contact_velocity_change_ms"] = fdv
     out["first_contact_confidence"] = fconf
     out["first_contact_is_aerial"] = pd.array(faer, dtype="boolean")
+    out["first_contact_aerial_source"] = pd.Categorical(faersrc, categories=Z_SOURCE_VALUES)
     out["first_contact_source"] = pd.Categorical(fsrc, categories=CONTACT_SOURCE_VALUES)
     return out

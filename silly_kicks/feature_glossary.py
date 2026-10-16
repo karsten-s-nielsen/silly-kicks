@@ -1113,6 +1113,13 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="dimensionless",
         emitting_module=_M_BALL_CONTACT,
     ),
+    FeatureColumn(
+        name="first_contact_aerial_source",
+        definition="Ball-z provenance at the first contact (ADR-125): measured / estimated / absent -- "
+        "is_aerial is trustworthy only where 'measured'.",
+        unit="dimensionless",
+        emitting_module=_M_BALL_CONTACT,
+    ),
     # -- Pressure on actor (TF-2) ---------------------------------------------------------------
     FeatureColumn(
         name="pressure_on_actor",

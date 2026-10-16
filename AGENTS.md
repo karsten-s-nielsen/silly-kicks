@@ -42,7 +42,7 @@ Hexagonal: all core functions are pure (pandas in, pandas out), zero I/O, zero g
 | TF-48 | `_shot_goalmouth.py` | `compute_shot_goalmouth`/`add_shot_goalmouth` — no xfns (post-contact leakage) |
 | TF-49 | `_packing.py` | `compute_packing_metrics`/`add_packing`/`packing_xfns` (no default list) |
 | TF-51 | `defensive_credit/` | `compute_defensive_credits`/`add_defensive_credit`/`compute_bravery`/`add_press_commitment` — no xfns |
-| TF-79 | `_ball_contact.py` | `detect_ball_contacts`/`add_ball_contacts`/`first_contact_in_window`/`BallContactParams` — no xfns (ADR-124) |
+| TF-79 | `_ball_contact.py` | `detect_ball_contacts`/`add_ball_contacts`/`first_contact_in_window`/`BallContactParams` — no xfns (ADR-124/125) |
 | -- | `_visibility.py` | `point_observed`/`region_observed_fraction`/`add_visible_area_coverage` — no xfns |
 | -- | orchestrator | `run_tracking_features` (provider-agnostic producer; not an aggregator) |
 

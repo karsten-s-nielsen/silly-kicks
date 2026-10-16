@@ -95,3 +95,7 @@ Design decisions recorded here and enforced in code/tests:
    (blunted) ball trajectory (contact |Δv| p50 ≈ 0.97 m/s), confirmed to be the provider's data, not
    silly-kicks preprocess (`smooth_frames` is additive; detect reads raw `x`/`y`). Validated on IDSSE
    (optical) + SkillCorner (broadcast).
+   > **SUPERSEDED by ADR-125.** This "blunted ball" cause is WRONG: the `|Δv| ≈ 0.97` was measured at
+   > *detected contacts* (a biased sample), not real touches — at real touches the GS ball is sharp
+   > (|Δv| ≈ 3 ≈ IDSSE). The real cause is a ~50 % consecutive-duplicate-ball-frame velocity sawtooth;
+   > ADR-125's dedup recovers GS to IDSSE's level.

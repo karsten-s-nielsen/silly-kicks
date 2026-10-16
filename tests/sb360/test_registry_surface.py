@@ -212,6 +212,17 @@ _EXPECTED_DARK_COLUMNS = {
     # (territorial_defense.compute_territorial_defense's b_attribution_slippage was here, but the metric
     # was DEMOTED to experimental in 4.112.0 -- ADR-090 construct-validity -- so it carries no boundary
     # verdict at all now.)
+    #
+    # TF-79 ball-contact (ADR-125): detect_ball_contacts is continuous-only -- a single SB360
+    # freeze-frame has no trajectory segment (needs >= 2 ball frames), so NO contact resolves on any
+    # roster. These two are the pure-signal columns that then carry nothing at all (both legs all-NaN
+    # -> no_signal -> not_exercised): the |Δv| measurement and the z-gated aerial boolean (ADR-125 §B
+    # makes is_aerial honest-NaN unless z is measured, and SB360 z is absent). NOT a regression -- any
+    # pre-dedup "coverage" was a spurious freeze-frame contact (the sawtooth artifact), i.e. fabricated,
+    # not evidence. The other seven first_contact_* columns stay honest_nan (all_nan), so they are not
+    # dark; only these two reclassify. Multi-frame tracking exercises both.
+    ("add_ball_contacts", "first_contact_velocity_change_ms"),
+    ("add_ball_contacts", "first_contact_is_aerial"),
 }
 
 

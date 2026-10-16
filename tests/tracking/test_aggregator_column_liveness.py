@@ -612,7 +612,12 @@ def _run_visible_area_coverage():
 def _ball_contact_scene():
     """A trajectory with TWO resolvable contacts: a sharp turn at player 7 (dist 0 -> high
     confidence) and a dead-stop at player 9 held 1 m off the ball (dist ~1 -> lower confidence),
-    so every float first_contact_* column is non-constant across the two actions."""
+    so every float first_contact_* column is non-constant across the two actions.
+
+    ADR-125: the frames declare measured ``z_source`` and the ball is lifted to an aerial height
+    (2.0 m, within the 2.6 m playable ceiling) around contact A, so ``first_contact_is_aerial`` is
+    exercised BOTH-sided -- True at the aerial turn, False at the ground dead-stop. z is neutral to
+    detection (RDP / velocity breaks read x/y) and to attribution (``_attribute`` distance is 2-D)."""
     fps = 25.0
     dt = 1.0 / fps
     p_a, p_b = 7, 9
@@ -627,11 +632,19 @@ def _ball_contact_scene():
             f = (fid - 10) / 10.0
             bx, by = ax + (cbx - ax) * f, ay + (cby - ay) * f
         else:
-            bx, by = cbx, cby
+            # Interior stop, NOT a terminal dead-stop: the ball arrives fast at (cbx, cby) then drifts
+            # slowly away (0.08 m/frame = 2 m/s). ADR-125's dedup collapses a trailing STATIC tail and
+            # would drop a terminal dead-stop, so contact B must carry subsequent motion to survive as a
+            # fast-in / slow-out velocity break (the documented "interior stops survive" behaviour).
+            bx, by = cbx + 0.08 * (fid - 20), cby
         rows.append(_frow(pd.NA, pd.NA, False, bx, by, t, is_ball=True))
         rows.append(_frow(p_a, 5, False, ax, ay, t))
         rows.append(_frow(p_b, 6, False, 63.0, 48.0, t))
     frames = pd.DataFrame(rows)
+    # ADR-125: declare measured z, and lift the ball to an aerial height around contact A (the fid~10
+    # turn) so first_contact_is_aerial resolves both-sided (True at A, False at the ground dead-stop B).
+    frames["z_source"] = "measured"
+    frames.loc[frames["is_ball"] & frames["frame_id"].between(8, 12), "z"] = 2.0
     actions = pd.DataFrame(
         {
             "game_id": [1, 1],
@@ -766,6 +779,16 @@ def test_ball_contact_fixture_has_resolvable_contacts():
     resolved = contacts[contacts["contact_source"].astype(object) != "unresolved"]
     assert resolved["player_id"].nunique() >= 2, (
         f"ball-contact liveness scene resolves {resolved['player_id'].nunique()} player(s); need >=2"
+    )
+    # ADR-125 teeth guard: first_contact_is_aerial is only live when the scene declares measured z AND
+    # a resolved contact carries a non-null is_aerial; without this a scene refactor that drops the
+    # measured-z lift makes is_aerial all-<NA> and the liveness `dead` check passes vacuously. Pin the
+    # both-sided design (one aerial turn, one ground dead-stop) the fixture is built to exercise.
+    assert (frames["z_source"] == "measured").any(), "scene must declare measured z (else is_aerial is <NA>)"
+    aerials = resolved["is_aerial"].dropna()
+    assert not aerials.empty, "no resolved contact carries a non-null is_aerial -- the measured-z teeth are vacuous"
+    assert {bool(v) for v in aerials.unique()} == {True, False}, (
+        "is_aerial must be exercised both-sided (one aerial contact, one ground)"
     )
 
 
