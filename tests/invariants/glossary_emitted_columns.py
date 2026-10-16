@@ -581,6 +581,34 @@ def _base_schema_and_provenance() -> set[str]:
     return schema
 
 
+def _corners_columns() -> set[str]:
+    """Derived chance-quality metric columns emitted by compute_corner_chance_quality (TF-46 Arm 1).
+
+    A ``compute_*`` missed by the name-shape discovery; run on a tiny fixture. The run-encoding and
+    routine-feature columns are DATA-DRIVEN width (not fixed names) and the window/identify columns are
+    structural, so only the fixed per-routine chance-quality metrics are documented features here."""
+    import pandas as pd
+
+    from silly_kicks.corners import CORNER_CHANCE_METRIC_COLUMNS, compute_corner_chance_quality
+    from silly_kicks.spadl import config as spadlconfig
+
+    corners = pd.DataFrame(
+        {"game_id": ["g"], "corner_id": [0], "period_id": [1], "t_kick": [100.0], "t_outcome": [106.0]}
+    )
+    actions = pd.DataFrame(
+        {
+            "game_id": ["g"],
+            "period_id": [1],
+            "time_seconds": [101.0],
+            "type_id": [spadlconfig.actiontype_id["shot"]],
+            "result_id": [spadlconfig.result_id["success"]],
+            "xg": [0.4],
+        }
+    )
+    samples = compute_corner_chance_quality(corners, actions, xg_column="xg")
+    return set(CORNER_CHANCE_METRIC_COLUMNS) & set(samples.columns)
+
+
 def emitted_columns() -> set[str]:
     """Base-normalised union of DERIVED columns emitted by every default-config producer."""
     raw = (
@@ -598,5 +626,6 @@ def emitted_columns() -> set[str]:
         | _win_probability_columns()
         | _positioning_columns()
         | _coordination_columns()
+        | _corners_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()

@@ -94,6 +94,12 @@ ARTIFACT_DRIVERS = (
     # discrimination / net-of-team / transfer verdicts) from owner-tier SkillCorner GI data
     # -- aggregate stats over external data, cited; owner-run, reported-not-gated -> provenance.
     "validate_gk_decision",
+    # TF-46 Arm 1 corner offence: build_corner_routines fits RunZoneModel (GMM) + CornerRoutineModel
+    # (NMF) on the owner-tier SkillCorner corpus and writes two params-only npz bundles + metrics.json;
+    # validate_corners runs the construct-validity battery -> docs/research/corner_routines/metrics.json.
+    # Both aggregate-only, owner-run (reported-not-gated) -> provenance.
+    "build_corner_routines",
+    "validate_corners",
     # TF-54b PassCompletionModel weight trainer (kept per Decision 3; carried with the expected_passing
     # seam). Writes parameters-only bundled weights + metrics.json stamping training_commit -- the same
     # class as the other weight trainers (train_receiver_model / train_ghost_gk / train_ghost_outfield).
