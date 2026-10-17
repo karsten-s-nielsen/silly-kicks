@@ -709,6 +709,65 @@ def test_train_script_smoke_position_only(tmp_path):
     XShotOccurrenceModel.load(art)
 
 
+def _write_arms_json_two_tier(tmp_path, data_dir, *, provider="unknown"):
+    """A 2-tier corpus: half the games ``public``, ALL in ``sc_extended``, NO ``full`` -> ``run_paired`` is
+    False, so the non-paired branch must ship the BROADEST arm (sc_extended), never the narrow public arm."""
+    import json
+    from pathlib import Path
+
+    games = sorted(f"{provider}__{g.name}" for g in Path(data_dir).iterdir() if g.is_dir())
+    public = games[: max(1, len(games) // 2)]
+    arms_path = Path(tmp_path) / "arms_2tier.json"
+    arms_path.write_text(
+        json.dumps({"arms": {"public": public, "sc_extended": games}, "ship_order": ["public", "sc_extended"]}),
+        encoding="utf-8",
+    )
+    return arms_path
+
+
+@pytest.mark.slow
+def test_train_script_ships_broadest_arm_when_not_paired(tmp_path):
+    """ADR-126 / ADR-038: a 2-tier (public + sc_extended, no full) corpus ships ``sc_extended``, NEVER
+    ``public`` -- an owner-tier-trained model must not carry a public label. Regression for the
+    ``ship_order[-1]`` fix (the sc_extended re-fit previously mis-shipped the narrow ``public`` arm)."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    data_dir = _write_synthetic_train_dir(tmp_path)
+    arms_path = _write_arms_json_two_tier(tmp_path, data_dir)
+    out_dir = Path(tmp_path) / "out"
+    repo_root = Path(__file__).resolve().parents[2]
+    env = dict(os.environ, PYTHONPATH=str(repo_root))
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "scripts/train_xshot_occurrence.py",
+            "--allow-dirty",
+            "--data-dir",
+            str(data_dir),
+            "--arms",
+            str(arms_path),
+            "--output-dir",
+            str(out_dir),
+            "--n-trials",
+            "3",
+            "--horizon-seconds",
+            "1.0",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        cwd=str(repo_root),
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    meta = json.loads((out_dir / "xshot_occurrence_v1" / "metadata.json").read_text())
+    assert meta["shipped_variant"] == "sc_extended", meta.get("shipped_variant")
+
+
 @pytest.mark.slow
 def test_train_script_fail_closed_writes_no_artifact(tmp_path):
     """N3: a corpus that cannot beat the base rate -> non-zero exit, NO bundled artifact."""

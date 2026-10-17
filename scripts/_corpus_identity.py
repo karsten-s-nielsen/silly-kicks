@@ -13,6 +13,21 @@ from __future__ import annotations
 import hashlib
 import json
 
+#: Dataset ``source_provider`` (the SPADL converter name) -> the licensing/dataset IDENTITY recorded in an
+#: artifact's ``provider_list`` and used in the model-card vocabulary. The Bundesliga/DFL matches are
+#: converted by ``sportec_spadl`` so their frames carry ``source_provider="sportec"``, but the dataset
+#: identity every consumer keys on is ``idsse``. This is a NAMING normalization -- NOT a public/private
+#: rule -- single-sourced here so the launcher arm policy and the in-job trainers share one vocabulary
+#: (I1-safe: no redistributability symbol, so it does not pull the taxonomy into the trainer closure).
+_CONVERTER_TO_IDENTITY = {"sportec": "idsse"}
+
+
+def canonical_providers(providers) -> list[str]:
+    """Sorted unique provider IDENTITIES for an artifact's ``provider_list`` (converter names normalised,
+    e.g. ``sportec`` -> ``idsse``) -- the stable vocabulary the metadata test, model cards and consumers
+    expect. The raw ``source_provider`` is unchanged elsewhere (arm masking still keys on it)."""
+    return sorted({_CONVERTER_TO_IDENTITY.get(str(p), str(p)) for p in providers})
+
 
 def match_id_pairs(providers, match_ids) -> list[list[str]]:
     """Sorted unique ``[provider, match_id]`` pairs of a per-row corpus."""

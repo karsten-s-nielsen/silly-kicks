@@ -116,7 +116,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         source="public",
         flavor="cpu-upgrade",
         extras=("statsbombpy",),
-        timeout="45m",
+        timeout="3h",  # 3961-match --all-competitions load (now bucket-shard-rooted -> --attempts resumes)
         output_flag="--out",
         base_args=(),
         # match_outcome writes the artifact DIRECTLY to --out (no weights/ subdir) -- verified.
@@ -145,7 +145,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         source="owner_flat",
         flavor="cpu-upgrade",  # owner directive 2026-10-14: cpu-upgrade only
         extras=(),
-        timeout="3h",  # assemble-phase ceiling; extraction + CV folds fan out (shorter) per-phase in launch
+        timeout="12h",  # generous: slow whole-corpus extract on cpu-upgrade; per-second billing => long cap is free
         output_flag="--output-dir",
         base_args=(),
         # 4 variants, each writing {output-dir}/ghost_gk_v1, so each needs its OWN output dir (launch
@@ -185,7 +185,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         source="owner_flat",
         flavor="cpu-upgrade",  # owner directive 2026-10-14: cpu-upgrade only
         extras=(),
-        timeout="3h",  # assemble-phase ceiling; extraction + CV folds fan out per-phase in launch
+        timeout="12h",  # generous: slow whole-corpus extract on cpu-upgrade; per-second billing => long cap is free
         output_flag="--output-dir",
         base_args=(),
         # 2 variants; the trainer writes {output-dir}/{variant}, so the variant is in the path -- a shared
@@ -210,7 +210,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         source="owner_pergame",
         flavor="cpu-upgrade",  # owner directive 2026-10-14: cpu-upgrade only
         extras=(),
-        timeout="2h",  # assemble-phase ceiling; extraction + HPO studies fan out per-phase in launch
+        timeout="6h",  # generous: slow extract + n_trials=50 HPO; per-second billing => long cap is free
         output_flag="--output-dir",
         base_args=("--n-trials", "50"),
         visibility_gated=True,  # ships public/sc_extended/full; --arms policy computed off-HF (ADR-123 Amd B)
@@ -236,7 +236,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         source="owner_pergame",
         flavor="cpu-upgrade",  # owner directive 2026-10-14: cpu-upgrade only
         extras=(),
-        timeout="2h",  # assemble-phase ceiling; extraction + HPO studies fan out per-phase in launch
+        timeout="6h",  # generous: slow extract + n_trials=50 HPO; per-second billing => long cap is free
         output_flag="--output-dir",
         base_args=("--n-trials", "50"),
         probe=True,  # held-out TF-19 probe from a staged per-game probe dataset (ADR-123: --probe-data-dir, no pining)
@@ -263,7 +263,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         source="owner_sb360",
         flavor="cpu-upgrade",  # owner directive 2026-10-14: cpu-upgrade only
         extras=(),
-        timeout="2h",  # assemble-phase ceiling; extraction fans out per-phase in launch
+        timeout="4h",  # generous: SB360 extract + fit; per-second billing => long cap is free
         output_flag="--out",
         # ADR-123 dataset-AGNOSTIC: launch injects --data-dir (the STAGED flat corpus) + --shard-root
         # (extraction scratch in the bucket). NO pining manifest / --cache-dir / --match-ids-json in-job.

@@ -24,5 +24,17 @@ def test_corpus_identity_exports_the_neutral_helpers():
         "check_shipped_variant",
         "check_expected_variant",
         "match_id_pairs",
+        "canonical_providers",
     ):
         assert hasattr(ci, fn), fn
+
+
+def test_canonical_providers_normalizes_converter_to_identity():
+    # provider_list records the dataset IDENTITY, not the SPADL converter name: the DFL/Bundesliga matches
+    # carry source_provider="sportec" but their identity is "idsse" (the vocabulary the metadata test,
+    # cards and consumers expect). Sorted + unique; non-converter providers pass through unchanged.
+    from scripts._corpus_identity import canonical_providers
+
+    assert canonical_providers(["sportec", "skillcorner", "skillcorner", "sportec"]) == ["idsse", "skillcorner"]
+    assert canonical_providers(["skillcorner"]) == ["skillcorner"]
+    assert canonical_providers(["sportec"]) == ["idsse"]

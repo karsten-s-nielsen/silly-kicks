@@ -22,9 +22,9 @@ from collections.abc import Sequence
 
 from scripts._corpus import PUBLIC_CORPUS
 
-#: Dataset ``source_provider`` -> the licensing/registry identity. The Bundesliga/DFL matches carry the
-#: SPADL converter name as ``source_provider`` but are registered under their dataset identity.
-_CONVERTER_TO_IDENTITY = {"sportec": "idsse"}
+# Single-sourced in the neutral provenance module (the in-job trainers normalise provider_list with the
+# same map; _corpus_identity must stay I1-clean, so the map lives there, not here).
+from scripts._corpus_identity import _CONVERTER_TO_IDENTITY
 
 
 def _is_public(provider: str, game: str) -> bool:

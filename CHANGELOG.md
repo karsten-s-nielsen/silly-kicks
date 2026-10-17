@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.138.0] — 2026-10-16 — HF visibility-blind harness (ADR-123 Am B) + xShot label-filter fix & trained-artifact integrity gate (ADR-126)
 
-> This (code) commit ships the corrected xShot **label code** + the integrity gate; the re-fit **weights** +
-> audit verdicts land in the follow-up clean-tree artifact commit (ADR-037). The shipped xShot weights are
-> unchanged until that commit.
+> Two commits under one release (ADR-037 clean-tree split): the **code** commit ships the corrected xShot
+> **label code** + the integrity gate + the harness ports; the **artifact** commit (produced on the code
+> commit's clean tree) ships the re-fit xShot **weights** + the audit verdicts. See "Re-fit weights + audit"
+> below.
 
 ### HF harness visibility-blind (ADR-123 Amendment B)
 
@@ -34,10 +35,12 @@ gate enforces I1 as a **pure static closure** (no infra-leaf exemption — the o
 weights and the whole pining-trained lineage (17–28% positive rate) are therefore defective. The filter now
 lives **inside** `build_xshot_labels` and selects by `type_id` (mirroring `build_xcross_labels`), so no
 caller can bypass it; the fragile guard is deleted. xCross was unaffected (already `type_id`-filtered).
-xShot is re-fit on the correct corpus (~1.5% positive rate, ~5× PR-AUC lift). **Hyrum notice:** the xShot
-output distribution changes 22% → ~1.5%; no first-party module consumes the xShot probability (only
-`extract_xshot_features`, unchanged), so the affected consumer is the external lakehouse mart, recorded in
-`docs/PRIVATE_CONSUMERS.md` (lakehouse re-materialization out of scope, owner ruling).
+This commit ships the corrected **label code** only; the bundled xShot **weights are still the defective
+22%-label artifact** and are replaced in the follow-up artifact commit (re-fit on the corrected label,
+expected ~1.5% positive rate / ~5× PR-AUC lift). **Hyrum notice (takes effect at the artifact commit):**
+the xShot output distribution will change 22% → ~1.5%; no first-party module consumes the xShot probability
+(only `extract_xshot_features`, unchanged), so the affected consumer is the external lakehouse mart,
+recorded in `docs/PRIVATE_CONSUMERS.md` (lakehouse re-materialization out of scope, owner ruling).
 
 ### Added — trained-artifact integrity gate (ADR-126)
 
@@ -47,6 +50,39 @@ within a relative δ; a mismatch is a hard stop) + construct-validity on the abs
 **physically-derived** base-rate plausibility band (`tol · n_events · horizon · fps / n_rows`, `tol=1.5`)
 that rejects the 22% defect which the existing `pr_auc_gt_base_rate` acceptance passed. Every campaign
 artifact is audited against it (the campaign's reproduction-free floor validated none).
+
+### Re-fit weights + audit (FORTHCOMING — the follow-up artifact commit, ADR-126/ADR-037)
+
+The re-fit xShot **weights** and the per-family **audit** (reproduction + physically-derived base-rate
+gate over every HF-trainable campaign artifact) are produced on this code commit's clean tree and land in
+the separate artifact commit — NOT this one. Until that commit lands, the bundled xShot weights remain the
+defective 22%-label artifact. The artifact commit carries the re-fit weights, the per-family verdict JSONs
+and the audit memo under `docs/research/trained_artifact_integrity/`, and extends this entry with the
+measured outcomes (expected: xShot adopts the corrected ~1.5%-rate fit; the other families reproduce and
+are left untouched).
+
+### Changed — HF harness ports (ADR-122/123, bundled with this release)
+
+Local-orchestrator/harness fixes surfaced by the real-HF re-fit wave (no weights-provenance impact):
+`build_argv` mounts the scratch bucket `:rw` (v2.2 mounts read-only by default → in-job writes silently
+failed); `poll_until_terminal` parses `hf jobs inspect` text (v2.2 dropped `--format json`) via a
+stage-field regex that cannot false-positive on a `message` substring; `retrieve_variant` uses
+`hf buckets sync` (v2.2 `hf cp` is single-file); `launch_variant_job` auto-threads `--arms` for a
+visibility-gated single `full` job; `match_outcome_dependence` points its `for_each` shard-root at the
+bucket so a timeout retry resumes; registry timeouts widened (slow cpu-upgrade nodes; per-second billing
+makes a long cap free); `stage.write_offline_manifest` removed (dead post-Amendment-B — the in-job trainer
+reads a neutral `--data-dir`, never a pining manifest).
+
+### Fixed — sc_extended candidate mislabel (ADR-123 Amendment B.1)
+
+`train_xshot_occurrence` / `train_xcross_attempt`: the non-paired ship branch shipped `ship_order[0]` (the
+narrowest arm). An owner-tier corpus with SkillCorner but no Gradient Sports (the `sc_extended` tier: no
+`full` arm → `run_paired` False) therefore shipped the `public` arm (the 17-match redistributable subset)
+**labelled `public`** — wrong corpus and an owner-tier→`public` label violating the ADR-038 artifact-label
+control. The branch now ships `ship_order[-1]` (the broadest arm present): all-public corpora unchanged, a
+2-tier corpus ships `sc_extended` over all its rows (faithful to the committed single-candidate run). The
+HF-published `sc_extended` / `sc_extended_position_only` xShot artifacts carried the same 18.9% label
+defect and are re-fit + re-published on the 115-match owner-tier corpus.
 
 ## [4.137.0] — 2026-10-15 — GS ball-contact trajectory-dedup + ball-z provenance / honest-NaN `is_aerial` (TF-79 follow-up, ADR-125)
 

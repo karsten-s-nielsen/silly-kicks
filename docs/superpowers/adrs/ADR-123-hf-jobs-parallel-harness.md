@@ -137,3 +137,17 @@ equals the committed one (`dgx_e2e.check_shipped_variant`) — closing the GATE-
 faithfulness is confirmed by CV-parity (fresh `public` PR-AUC ≈ committed). `ghost_gk` / `ghost_outfield`
 (provider-agnostic `cv_mae`), `receiver_model` (`top1_cv`) and the four public trainers ship no
 visibility-gated candidate and are unchanged.
+
+### Amendment B.1 (2026-10-17): the non-paired branch ships the BROADEST arm, not the narrowest
+
+The `sc_extended` owner-tier re-fit surfaced a candidate-selection defect in the Amendment-B code. The
+three-arm paired comparison runs only when `run_paired = ("sc_extended" in arms) and ("full" in arms)`.
+An owner-tier corpus with SkillCorner but no Gradient Sports (the committed `sc_extended` tier: 7 IDSSE +
+108 SkillCorner, no `full` arm) therefore fell to the non-paired branch, which shipped `ship_order[0]` —
+the **narrowest** arm, `public` — trained on the redistributable subset. That is both the wrong corpus
+and an owner-tier→`public` label, violating the ADR-038 artifact-label control. The fix: the non-paired
+branch ships `ship_order[-1]`, the **broadest** arm present (`ship_order` is narrow→broad:
+`public`/`sc_extended`/`full`). An all-public corpus (`ship_order = [public]`) is unchanged; a 2-tier
+corpus ships `sc_extended` over all its rows — faithful to the committed single-candidate `sc_extended`
+run. Regression: `test_train_script_ships_broadest_arm_when_not_paired` (a 2-tier `--arms` → shipped
+`sc_extended`). Applies to `xshot_occurrence` and `xcross_attempt` identically.

@@ -564,7 +564,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
     parity test sets it False since the probe needs a real ``_probe_sample`` on disk. Returns
     ``(metrics, model)``; raises :class:`AcceptanceGatesFailedError` instead of exiting."""
     sys.path.insert(0, "scripts")
-    from _corpus_identity import check_shipped_variant, corpus_identity, reproducibility
+    from _corpus_identity import canonical_providers, check_shipped_variant, corpus_identity, reproducibility
     from _paired import fixed_sequence_ship
 
     from scripts._study_shared import load_study_inputs
@@ -584,7 +584,6 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
     objective_inputs = cfg["objective_inputs"]  # D21, persisted by the prep
     ship_variant = cfg.get("ship_variant")
     run_paired = cfg["run_paired"]
-    provset = {str(p) for p in providers.tolist()}
 
     # score_differential range probe (B6): guard the phantom-owngoal signature.
     sd = X["score_differential"].to_numpy(dtype=float)
@@ -650,7 +649,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
             "metrics": _cv_metrics(
                 X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, negative_subsample=ns, seed=seed
             ),
-            "providers": sorted(set(providers[ship_mask].tolist())),
+            "providers": canonical_providers(providers[ship_mask]),
         }
         candidates["paired"] = {
             "nested": {n: paired[n]["nested"] for n in cand_masks},
@@ -665,8 +664,11 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
                 "--ship-variant requires the multi-candidate (run_paired) corpus (public + owner "
                 "SkillCorner + gradientsports) so the variant masks and the TF-19 probe cohort exist."
             )
-        # ADR-123 Amendment B: the shipped label is the sole/preferred arm NAME from the --arms parameter.
-        shipped = cfg["ship_order"][0]
+        # ADR-123 Amendment B: ship the BROADEST arm NAME present (ship_order is narrow->broad). All-public:
+        # ship_order=[public] -> public (identical to before). An owner-tier 2-tier corpus (public +
+        # sc_extended, no full) ships sc_extended over its rows, NEVER the narrow public arm (an owner-tier
+        # model labeled public would violate the ADR-038 artifact-label control).
+        shipped = cfg["ship_order"][-1]
         ship_mask = inp.arms[shipped]
         check_shipped_variant(cfg.get("expect_variant"), shipped)  # before the study: a refusal costs no fit
         params_all = _hpo_once(
@@ -685,7 +687,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
         candidates[shipped] = {
             "params": params_all,
             "metrics": _cv_metrics(X, y, groups, params_all, negative_subsample=ns, seed=seed),
-            "providers": sorted(provset),
+            "providers": canonical_providers(providers),
         }
 
     shipped_metrics = candidates[shipped]["metrics"]
@@ -724,7 +726,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
         "shipped_variant": shipped,
         "n_rows": len(X),
         "n_positive": int(np.asarray(y).sum()),
-        "providers": sorted(provset),
+        "providers": canonical_providers(providers),
         # Corpus IDENTITY (spec section 5): exact ids only for an all-public corpus, else a digest
         # (Hub publishes copy metrics.json). n_rows alone could not tell 17 public matches from 27.
         **corpus_identity(providers.tolist(), match_ids.tolist(), all_public=bool(is_public.all())),

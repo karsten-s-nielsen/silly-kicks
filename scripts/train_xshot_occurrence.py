@@ -529,7 +529,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
     :class:`AcceptanceGatesFailedError` instead of exiting so it is safe to call as a library.
     """
     sys.path.insert(0, "scripts")
-    from _corpus_identity import check_shipped_variant, corpus_identity, reproducibility
+    from _corpus_identity import canonical_providers, check_shipped_variant, corpus_identity, reproducibility
     from _paired import fixed_sequence_ship
 
     from scripts._study_shared import load_study_inputs
@@ -546,7 +546,6 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
     art = Path(cfg["artifact_dir"])
     run_prov = cfg["run_prov"]
     objective_inputs = cfg["objective_inputs"]  # D21, persisted by the prep
-    provset = {str(p) for p in providers.tolist()}
 
     candidates: dict = {}
     if cfg["run_paired"]:
@@ -591,7 +590,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
             "metrics": _cv_metrics(
                 X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, negative_subsample=ns, seed=seed
             ),
-            "providers": sorted(set(providers[ship_mask].tolist())),
+            "providers": canonical_providers(providers[ship_mask]),
         }
         candidates["paired"] = {
             "nested": {n: paired[n]["nested"] for n in cand_masks},
@@ -601,10 +600,13 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
             "why": why,
         }
     else:
-        # ADR-123 Amendment B: the shipped label is the sole/preferred arm NAME from the --arms parameter
-        # (no in-job label helper, no provider/policy logic). The committed all-public-17 corpus has a
-        # single ``public`` arm covering every row, so ship_mask is all rows -- identical to before.
-        shipped = cfg["ship_order"][0]
+        # ADR-123 Amendment B: the shipped label is an arm NAME from the --arms parameter (no in-job label
+        # helper, no provider/policy logic). Ship the BROADEST arm present (ship_order is narrow->broad:
+        # public, sc_extended, full). All-public-17: ship_order=[public] -> public over every row (identical
+        # to before). An owner-tier 2-tier corpus (public + sc_extended, no full -> run_paired is False):
+        # ship the sc_extended candidate over its 115 rows, NEVER the narrow public arm -- a public label on
+        # owner-tier-trained weights would violate the ADR-038 artifact-label control.
+        shipped = cfg["ship_order"][-1]
         ship_mask = inp.arms[shipped]
         check_shipped_variant(cfg.get("expect_variant"), shipped)  # before the study: a refusal costs no fit
         params_all = _hpo_once(
@@ -623,7 +625,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
         candidates[shipped] = {
             "params": params_all,
             "metrics": _cv_metrics(X, y, groups, params_all, negative_subsample=ns, seed=seed),
-            "providers": sorted(provset),
+            "providers": canonical_providers(providers),
         }
 
     shipped_metrics = candidates[shipped]["metrics"]
@@ -661,7 +663,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None):
         "shipped_variant": shipped,
         "n_rows": len(X),
         "n_positive": int(np.asarray(y).sum()),
-        "providers": sorted(provset),
+        "providers": canonical_providers(providers),
         # Corpus IDENTITY (spec section 5): exact ids only for an all-public corpus, else a digest
         # (Hub publishes copy metrics.json). n_rows alone could not tell 17 public matches from 27.
         **corpus_identity(providers.tolist(), match_ids.tolist(), all_public=bool(is_public.all())),

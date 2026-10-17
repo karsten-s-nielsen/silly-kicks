@@ -155,6 +155,10 @@ def build_phase_command(
     extra = f"{extra} {_phase_flags(spec, build, phase, out_dir, shard=shard, fold=fold, study=study)}".strip()
     if cv_folds is not None and spec.name in ("ghost_gk", "ghost_outfield"):
         extra = f"{extra} --cv-folds {cv_folds}".strip()
+    # match_outcome's for_each (ADR-052) defaults its shard-root to ephemeral /tmp, so a --attempts retry
+    # on the 3961-match --all-competitions load re-extracts from zero. Point it at the bucket to RESUME.
+    if spec.name == "match_outcome_dependence" and phase == "full":
+        extra = f"{extra} --shard-root {out_dir}/shards".strip()
     committed_dir = f"silly_kicks/{build.committed_path}"
     parts = [
         "set -e",
@@ -238,7 +242,9 @@ def build_argv(spec: TrainerSpec, inner: str, *, bucket: str, attempts: int) -> 
         "--attempts",
         str(attempts),
         "-v",
-        f"hf://buckets/{bucket}:{BUCKET_MOUNT}",
+        # `:rw` is REQUIRED on hf CLI v2.2: a bucket mounts READ-ONLY by default, so the in-job
+        # shard/output writes silently fail without it (the whole resume/persist contract depends on it).
+        f"hf://buckets/{bucket}:{BUCKET_MOUNT}:rw",
         "-d",
         "python:3.12",
         "--",
@@ -266,7 +272,13 @@ def launch_variant_job(
     attempts: int,
     runner=subprocess_runner,
 ) -> str:
-    inner = build_inner_command(spec, build, tag=tag, run_key=run_key, corpus_repo=corpus_repo, probe_repo=probe_repo)
+    # ADR-123 Amendment B: a visibility-gated trainer (xshot/xcross) run as ONE `full` job needs the
+    # public/owner policy threaded as --arms, computed OFF-HF from the staged corpus (mirrors run_pipeline).
+    # Without it build_phase_command raises; the single-job path otherwise could not re-fit these faithfully.
+    arms_json = arms_payload(corpus_repo) if (spec.visibility_gated and corpus_repo) else None
+    inner = build_inner_command(
+        spec, build, tag=tag, run_key=run_key, corpus_repo=corpus_repo, probe_repo=probe_repo, arms_json=arms_json
+    )
     os.environ["HF_TOKEN"] = token  # forwarded as a job secret via `--secrets HF_TOKEN` (not on the cmdline)
     out, code = runner(build_argv(spec, inner, bucket=bucket, attempts=attempts))
     if code != 0:
@@ -312,26 +324,26 @@ def launch_all_variants(
 _TERMINAL = {"COMPLETED", "ERROR", "CANCELED"}
 
 
-def _terminal_stage(out: str) -> str | None:
-    """The job's terminal stage from ``hf jobs inspect --format json``, or None if still running.
+_STAGE_RE = re.compile(r"""['"]stage['"]\s*:\s*['"](\w+)['"]""")
 
-    Reads ``status.stage`` EXACTLY -- never a substring of the raw output (a failed job's ``status.message``
-    contains "Error", and ``command`` echoes the bash payload, so a substring scan would false-positive)."""
-    try:
-        data = json.loads(out)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    for rec in data if isinstance(data, list) else [data]:
-        status = rec.get("status") if isinstance(rec, dict) else None
-        stage = status.get("stage") if isinstance(status, dict) else status
-        if isinstance(stage, str) and stage.upper() in _TERMINAL:
-            return stage.upper()
+
+def _terminal_stage(out: str) -> str | None:
+    """The job's terminal stage from ``hf jobs inspect`` output, or None if still running / absent.
+
+    hf CLI v2.2's ``inspect`` has no ``--format json``; it prints a TSV whose ``status`` column is a Python
+    repr like ``{'stage': 'RUNNING'}``. We regex the ``stage`` field SPECIFICALLY -- never a substring of
+    ``status.message`` (a failed job's message contains "Error") or ``command`` (echoes the bash payload),
+    so a message substring cannot false-positive. JSON (``"stage": "X"``) is matched by the same regex."""
+    for m in _STAGE_RE.finditer(out or ""):
+        stage = m.group(1).upper()
+        if stage in _TERMINAL:
+            return stage
     return None
 
 
 def poll_until_terminal(job_id, *, runner=subprocess_runner, sleep=time.sleep, interval=20, max_polls=2000) -> str:
     for _ in range(max_polls):
-        out, _ = runner(["hf", "jobs", "inspect", job_id, "--format", "json"])
+        out, _ = runner(["hf", "jobs", "inspect", job_id])  # v2.2: `inspect` has no --format json
         stage = _terminal_stage(out)
         if stage is not None:
             return stage
@@ -342,7 +354,8 @@ def poll_until_terminal(job_id, *, runner=subprocess_runner, sleep=time.sleep, i
 def retrieve_variant(bucket, run_key, name, variant, dest, *, runner=subprocess_runner):
     """Copy a finished variant's output (weights + metrics.json) out of the bucket to a local dir."""
     src = f"hf://buckets/{bucket}/{run_key}/{name}/{variant}"
-    out, code = runner(["hf", "cp", src, str(dest), "--recursive"])
+    # hf CLI v2.2: `hf cp` is single-file; a recursive directory pull is `hf buckets sync`.
+    out, code = runner(["hf", "buckets", "sync", src, str(dest)])
     if code != 0:
         raise RuntimeError(f"retrieve {src} failed: {out}")
     return dest

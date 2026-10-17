@@ -1,6 +1,4 @@
-import json
-
-from scripts.hf_jobs.stage import corpus_manifest, stage_corpus, write_offline_manifest
+from scripts.hf_jobs.stage import corpus_manifest, stage_corpus
 
 
 def test_manifest_is_content_stable(tmp_path):
@@ -20,11 +18,5 @@ def test_stage_skips_when_manifest_unchanged(tmp_path):
     assert len(uploads) == 1
 
 
-def test_write_offline_manifest_captures_each_providers_matches(tmp_path):
-    # Stage-time (DGX, token-bearing): snapshot the /{provider}/matches response so the air-gapped HF Job
-    # enumerates offline via SILLY_KICKS_PINING_MANIFEST_DIR. `lister` is injected (no network in the test).
-    served = {"statsbomb": [{"id": "3986784", "visibility": "private", "artifacts": {}}]}
-    out = write_offline_manifest(["statsbomb"], tmp_path, lister=lambda p: served[p])
-    assert out == [tmp_path / "statsbomb" / "matches.json"]
-    doc = json.loads((tmp_path / "statsbomb" / "matches.json").read_text())
-    assert doc == {"matches": served["statsbomb"]}  # exactly the API shape _list_matches reads back
+# NOTE (ADR-123 Amendment B): write_offline_manifest was removed -- the in-job trainer reads a NEUTRAL
+# staged parquet via a plain --data-dir; no pining manifest / SILLY_KICKS_PINING_MANIFEST_DIR reaches HF.

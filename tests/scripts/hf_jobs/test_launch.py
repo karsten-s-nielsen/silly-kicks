@@ -204,7 +204,8 @@ def test_argv_mounts_bucket_sets_attempts_and_keeps_the_dash_dash_marker():
     assert argv[argv.index("--secrets") + 1] == "HF_TOKEN"
     assert not any("hf_FAKE" in a for a in argv)
     assert argv[argv.index("--attempts") + 1] == "3"  # native auto-retry (resume via the persistent bucket)
-    assert argv[argv.index("-v") + 1] == f"hf://buckets/{BUCKET}:{BUCKET_MOUNT}"  # read-write scratch mount
+    # v2.2 mounts a bucket READ-ONLY by default; `:rw` is required or the in-job writes silently fail
+    assert argv[argv.index("-v") + 1] == f"hf://buckets/{BUCKET}:{BUCKET_MOUNT}:rw"
     # the end-of-options marker still sits immediately before `bash` (without it v2.2.0 eats `-lc`)
     assert argv[-4:] == ["--", "bash", "-lc", inner]
     assert argv[argv.index("--") - 1] == "python:3.12"
@@ -249,31 +250,68 @@ def test_launch_all_variants_launches_one_job_per_build():
     assert len(seen) == 4
 
 
-def test_poll_returns_terminal_stage_from_json_format():
-    import json
-
-    seq = iter(
-        [
-            json.dumps([{"id": "6abc123", "status": {"stage": "RUNNING"}}]),
-            json.dumps([{"id": "6abc123", "status": {"stage": "COMPLETED"}}]),
-        ]
-    )
+def test_poll_returns_terminal_stage_from_v22_inspect_text():
+    # hf CLI v2.2 `inspect` has NO --format json; it prints a TSV whose `status` column is a Python repr.
+    seq = iter(["jid\tstatus\t{'stage': 'RUNNING'}", "jid\tstatus\t{'stage': 'COMPLETED'}"])
 
     def fake_runner(argv):
         assert argv[:3] == ["hf", "jobs", "inspect"]
-        assert "--format" in argv and argv[argv.index("--format") + 1] == "json"
+        assert "--format" not in argv  # v2.2 inspect is text-only
         return next(seq), 0
 
     assert poll_until_terminal("6abc123", runner=fake_runner, sleep=lambda _: None) == "COMPLETED"
 
 
 def test_poll_does_not_false_positive_on_a_message_substring():
-    import json
-
-    out = json.dumps([{"id": "j", "status": {"stage": "RUNNING", "message": "retrying after an Error"}}])
     from scripts.hf_jobs.launch import _terminal_stage
 
-    assert _terminal_stage(out) is None
+    # the `stage` is RUNNING; `message` contains "Error" -- the stage-field regex must not false-positive
+    assert _terminal_stage("status\t{'stage': 'RUNNING', 'message': 'retrying after an Error'}") is None
+    # and it still reads a genuine terminal stage out of the repr
+    assert _terminal_stage("status\t{'stage': 'ERROR', 'message': 'boom'}") == "ERROR"
+
+
+def test_retrieve_variant_uses_buckets_sync_not_cp():
+    from scripts.hf_jobs.launch import retrieve_variant
+
+    seen = {}
+
+    def fake_runner(argv):
+        seen["argv"] = argv
+        return "", 0
+
+    retrieve_variant("ns/scratch", "r1", "ghost_gk", "default", "dest", runner=fake_runner)
+    # v2.2: a recursive directory pull is `hf buckets sync`, NOT `hf cp --recursive` (cp is single-file)
+    assert seen["argv"][:3] == ["hf", "buckets", "sync"]
+    assert seen["argv"][3] == "hf://buckets/ns/scratch/r1/ghost_gk/default"
+
+
+def test_visibility_gated_launch_variant_job_auto_threads_arms(monkeypatch):
+    # A single `full` job for xshot/xcross must thread --arms; launch_variant_job computes it OFF-HF.
+    import scripts.hf_jobs.launch as L
+
+    arms = '{"arms": {"public": ["sportec__sportec-g1"]}, "ship_order": ["public"]}'
+    monkeypatch.setattr(L, "arms_payload", lambda repo: arms)
+    spec = reg.REGISTRY["xshot_occurrence"]
+    build = spec.builds[0]
+    seen = {}
+
+    def fake_runner(argv):
+        seen["inner"] = argv[-1]
+        return "id=6abcdef url=https://huggingface.co/jobs/karstenskyt/6abcdef\n", 0
+
+    L.launch_variant_job(
+        spec,
+        build,
+        tag="relref",
+        run_key="r1",
+        corpus_repo="ns/xshot17",
+        token="hf_FAKE",
+        bucket=BUCKET,
+        attempts=3,
+        runner=fake_runner,
+    )
+    assert "--arms /tmp/arms.json" in seen["inner"]
 
 
 def test_inner_command_is_syntactically_valid_bash():
