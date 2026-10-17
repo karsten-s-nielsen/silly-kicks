@@ -26,6 +26,11 @@ _SCRIPTS = SCRIPTS  # single-sourced with the shared population seam (Cycle B)
 # Listed rather than inferred: "writes an artifact" is a semantic property, and a heuristic over
 # `write_text` would sweep in dev utilities whose output nobody cites.
 ARTIFACT_DRIVERS = (
+    # Trained-artifact integrity gate (ADR-126). Reads a shipped + a fresh metrics.json and writes a verdict
+    # metrics.json (GO/NO-GO: reproduction tripwire + physically-derived base-rate band) -- a cited decision,
+    # so clean-tree provenance. No corpus walk of its own (it consumes two metrics files), so the
+    # guard-precedes-walk case skips and the corpus-driver seam gate does not enrol it.
+    "validate_trained_artifact_integrity",
     # Native-DAS corpus parity + performance driver (ADR-107/108). Walks the owner-tier pining corpus,
     # runs four DAS legs (accessible-space reference, native numpy/numba reference-quadrature, native
     # periodic production) and writes docs/research/das_native_parity/metrics.json -- the parity

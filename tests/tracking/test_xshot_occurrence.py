@@ -5,10 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from silly_kicks.spadl import config as _spc
 from silly_kicks.tracking import _geometry as geo
 from silly_kicks.tracking import _xshot_occurrence as xs
 
 _FIELD_LENGTH = 105.0
+_SHOT_TID = _spc.actiontype_id["shot"]  # ADR-126: build_xshot_labels filters shots by type_id
 
 
 def test_to_goal_relative_x_home_goal_no_flip():
@@ -230,7 +232,9 @@ def test_label_horizon_via_time_seconds():
             "team_in_possession": [2, 2, 2],
         }
     )
-    shots = pd.DataFrame({"game_id": [1], "period_id": [1], "team_id": [2], "time_seconds": [1.2]})
+    shots = pd.DataFrame(
+        {"game_id": [1], "period_id": [1], "team_id": [2], "time_seconds": [1.2], "type_id": [_SHOT_TID]}
+    )
     y = xs.build_xshot_labels(fidx, shots, horizon_seconds=1.0)
     # t=0.0: shot at 1.2 is >1.0 ahead -> 0; t=0.5: 1.2-0.5=0.7 <=1 ->1; t=1.0: 0.2 ->1
     assert list(y) == [0, 1, 1]
@@ -250,7 +254,9 @@ def test_label_robust_to_noncontiguous_frame_id():
             "team_in_possession": [2, 2, 2],
         }
     )
-    shots = pd.DataFrame({"game_id": [1], "period_id": [1], "team_id": [2], "time_seconds": [1.2]})
+    shots = pd.DataFrame(
+        {"game_id": [1], "period_id": [1], "team_id": [2], "time_seconds": [1.2], "type_id": [_SHOT_TID]}
+    )
     y = xs.build_xshot_labels(fidx, shots, horizon_seconds=1.0)
     assert list(y) == [0, 1, 1]
 
@@ -260,7 +266,9 @@ def test_label_no_period_bleed():
 
     # Frame at end of P1; shot just after at start of P2 -- must NOT label P1 frame positive.
     fidx = pd.DataFrame({"game_id": [1], "period_id": [1], "time_seconds": [45.0], "team_in_possession": [2]})
-    shots = pd.DataFrame({"game_id": [1], "period_id": [2], "team_id": [2], "time_seconds": [45.2]})
+    shots = pd.DataFrame(
+        {"game_id": [1], "period_id": [2], "team_id": [2], "time_seconds": [45.2], "type_id": [_SHOT_TID]}
+    )
     y = xs.build_xshot_labels(fidx, shots, horizon_seconds=1.0)
     assert list(y) == [0]
 
@@ -269,7 +277,9 @@ def test_label_inclusive_of_t():
     import pandas as pd
 
     fidx = pd.DataFrame({"game_id": [1], "period_id": [1], "time_seconds": [10.0], "team_in_possession": [2]})
-    shots = pd.DataFrame({"game_id": [1], "period_id": [1], "team_id": [2], "time_seconds": [10.0]})
+    shots = pd.DataFrame(
+        {"game_id": [1], "period_id": [1], "team_id": [2], "time_seconds": [10.0], "type_id": [_SHOT_TID]}
+    )
     y = xs.build_xshot_labels(fidx, shots, horizon_seconds=1.0)
     assert list(y) == [1]
 
@@ -279,9 +289,41 @@ def test_label_turnover_opponent_shot_is_negative():
 
     # Frame: team 2 in possession at t=5.0. Opponent (team 1) shoots at t=5.5.
     fidx = pd.DataFrame({"game_id": [1], "period_id": [1], "time_seconds": [5.0], "team_in_possession": [2]})
-    shots = pd.DataFrame({"game_id": [1], "period_id": [1], "team_id": [1], "time_seconds": [5.5]})
+    shots = pd.DataFrame(
+        {"game_id": [1], "period_id": [1], "team_id": [1], "time_seconds": [5.5], "type_id": [_SHOT_TID]}
+    )
     y = xs.build_xshot_labels(fidx, shots, horizon_seconds=1.0)
     assert list(y) == [0]
+
+
+def test_build_xshot_labels_filters_to_shots_on_typeid_only_actions():
+    """ADR-126 I1 (detection): fed a full actions table with type_id but NO type_name,
+    build_xshot_labels must count ONLY shots, not every action."""
+    import pandas as pd
+
+    from silly_kicks.spadl import config as _spc
+
+    shot_id = _spc.actiontype_id["shot"]
+    pass_id = _spc.actiontype_id["pass"]
+    fidx = pd.DataFrame(
+        {"game_id": [1, 1], "period_id": [1, 1], "time_seconds": [9.5, 9.5], "team_in_possession": [2, 2]}
+    )
+    # Two same-team events at t=10.0 within the 1s window: one shot, one pass. Only the shot counts.
+    actions = pd.DataFrame(
+        {
+            "game_id": [1, 1],
+            "period_id": [1, 1],
+            "team_id": [2, 2],
+            "time_seconds": [10.0, 10.0],
+            "type_id": [shot_id, pass_id],
+        }
+    )  # NO type_name column
+    y = xs.build_xshot_labels(fidx, actions, horizon_seconds=1.0)
+    assert list(y) == [1, 1]  # both fidx rows see the shot
+    # pass-only counterfactual labels nothing (the pass must NOT count as a shot occurrence):
+    passes = actions[actions["type_id"] == pass_id]
+    y2 = xs.build_xshot_labels(fidx, passes, horizon_seconds=1.0)
+    assert list(y2) == [0, 0]
 
 
 # --- Task 5: XShotOccurrenceModel ---
@@ -840,7 +882,9 @@ def test_build_xshot_labels_bit_identical_after_refactor():
             "team_in_possession": ["A"] * 5,  # real xS column (line 299), NOT team_id
         }
     )
-    shots = pd.DataFrame({"game_id": ["g"], "period_id": [1], "team_id": ["A"], "time_seconds": [1.2]})
+    shots = pd.DataFrame(
+        {"game_id": ["g"], "period_id": [1], "team_id": ["A"], "time_seconds": [1.2], "type_id": [_SHOT_TID]}
+    )
     y = build_xshot_labels(frames_index, shots, horizon_seconds=1.0)
     np.testing.assert_array_equal(np.asarray(y), np.array([0, 1, 1, 0, 0]))  # GOLDEN (frozen pre-refactor)
     assert np.asarray(y).dtype == np.dtype(int)

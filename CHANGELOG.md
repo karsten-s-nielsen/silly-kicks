@@ -5,6 +5,85 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.138.0] — 2026-10-16 — HF visibility-blind harness (ADR-123 Am B) + xShot label-filter fix & trained-artifact integrity gate (ADR-126)
+
+> Two commits under one release (ADR-037 clean-tree split): the **code** commit ships the corrected xShot
+> **label code** + the integrity gate + the harness ports; the **artifact** commit (produced on the code
+> commit's clean tree) ships the re-fit xShot **weights** + the audit verdicts. See "Re-fit weights + audit"
+> below.
+
+### HF harness visibility-blind (ADR-123 Amendment B)
+
+Harness-only (`scripts/hf_jobs/`, `scripts/train_{xshot_occurrence,xcross_attempt}.py`, `scripts/_corpus*`);
+no library/model change, no retrain. The HF in-job trainer code is now **visibility-blind**: the
+public/owner candidate-arm policy is computed OFF-HF by the launcher and passed as the neutral `--arms`
+job parameter, so the agnostic `--data-dir` path reproduces the committed visibility-gated `public`
+candidate faithfully (it previously fail-closed to all-private and shipped a 4× worse `sc_extended`). The
+neutral provenance helpers moved `_corpus` → `_corpus_identity`; the `--providers` pining path was removed
+from the two trainers (maintainer DGX re-fits use the launcher + `--arms`); a transitive import-closure
+gate enforces I1 as a **pure static closure** (no infra-leaf exemption — the one pining-reaching helper
+`_partition.list_match_ids` is relocated to `_partition_pining` so the trainer closure never reaches
+`_loader_pining`); the DGX e2e asserts the shipped candidate matches committed. See ADR-123 Amendment B.
+
+### Fixed — xShot-occurrence label-filter defect (ADR-126)
+
+`build_xshot_labels` applied its shot-type filter via a `type_name`-presence guard in
+`prepare_xshot_training_data`. Fed the full SPADL actions table (which carries `type_id` but no `type_name`
+— the production pining path), the guard was skipped and the label silently counted **any** action within
+1 s, not just shots, inflating the xShot positive rate ~13× (reproduced to the integer: 1449 vs the correct
+109 for skillcorner-1925299; the physical maximum for 21 shots at a 1 s horizon is ≈ 210). The shipped xShot
+weights and the whole pining-trained lineage (17–28% positive rate) are therefore defective. The filter now
+lives **inside** `build_xshot_labels` and selects by `type_id` (mirroring `build_xcross_labels`), so no
+caller can bypass it; the fragile guard is deleted. xCross was unaffected (already `type_id`-filtered).
+This commit ships the corrected **label code** only; the bundled xShot **weights are still the defective
+22%-label artifact** and are replaced in the follow-up artifact commit (re-fit on the corrected label,
+expected ~1.5% positive rate / ~5× PR-AUC lift). **Hyrum notice (takes effect at the artifact commit):**
+the xShot output distribution will change 22% → ~1.5%; no first-party module consumes the xShot probability
+(only `extract_xshot_features`, unchanged), so the affected consumer is the external lakehouse mart,
+recorded in `docs/PRIVATE_CONSUMERS.md` (lakehouse re-materialization out of scope, owner ruling).
+
+### Added — trained-artifact integrity gate (ADR-126)
+
+`scripts/validate_trained_artifact_integrity.py` + `silly_kicks/tracking/_artifact_integrity.py`: a layered
+GO/NO-GO gate — a reproduction tripwire (a fresh fit must reproduce the shipped `metrics.json` headline
+within a relative δ; a mismatch is a hard stop) + construct-validity on the absolute metrics, including a
+**physically-derived** base-rate plausibility band (`tol · n_events · horizon · fps / n_rows`, `tol=1.5`)
+that rejects the 22% defect which the existing `pr_auc_gt_base_rate` acceptance passed. Every campaign
+artifact is audited against it (the campaign's reproduction-free floor validated none).
+
+### Re-fit weights + audit (FORTHCOMING — the follow-up artifact commit, ADR-126/ADR-037)
+
+The re-fit xShot **weights** and the per-family **audit** (reproduction + physically-derived base-rate
+gate over every HF-trainable campaign artifact) are produced on this code commit's clean tree and land in
+the separate artifact commit — NOT this one. Until that commit lands, the bundled xShot weights remain the
+defective 22%-label artifact. The artifact commit carries the re-fit weights, the per-family verdict JSONs
+and the audit memo under `docs/research/trained_artifact_integrity/`, and extends this entry with the
+measured outcomes (expected: xShot adopts the corrected ~1.5%-rate fit; the other families reproduce and
+are left untouched).
+
+### Changed — HF harness ports (ADR-122/123, bundled with this release)
+
+Local-orchestrator/harness fixes surfaced by the real-HF re-fit wave (no weights-provenance impact):
+`build_argv` mounts the scratch bucket `:rw` (v2.2 mounts read-only by default → in-job writes silently
+failed); `poll_until_terminal` parses `hf jobs inspect` text (v2.2 dropped `--format json`) via a
+stage-field regex that cannot false-positive on a `message` substring; `retrieve_variant` uses
+`hf buckets sync` (v2.2 `hf cp` is single-file); `launch_variant_job` auto-threads `--arms` for a
+visibility-gated single `full` job; `match_outcome_dependence` points its `for_each` shard-root at the
+bucket so a timeout retry resumes; registry timeouts widened (slow cpu-upgrade nodes; per-second billing
+makes a long cap free); `stage.write_offline_manifest` removed (dead post-Amendment-B — the in-job trainer
+reads a neutral `--data-dir`, never a pining manifest).
+
+### Fixed — sc_extended candidate mislabel (ADR-123 Amendment B.1)
+
+`train_xshot_occurrence` / `train_xcross_attempt`: the non-paired ship branch shipped `ship_order[0]` (the
+narrowest arm). An owner-tier corpus with SkillCorner but no Gradient Sports (the `sc_extended` tier: no
+`full` arm → `run_paired` False) therefore shipped the `public` arm (the 17-match redistributable subset)
+**labelled `public`** — wrong corpus and an owner-tier→`public` label violating the ADR-038 artifact-label
+control. The branch now ships `ship_order[-1]` (the broadest arm present): all-public corpora unchanged, a
+2-tier corpus ships `sc_extended` over all its rows (faithful to the committed single-candidate run). The
+HF-published `sc_extended` / `sc_extended_position_only` xShot artifacts carried the same 18.9% label
+defect and are re-fit + re-published on the 115-match owner-tier corpus.
+
 ## [4.137.0] — 2026-10-15 — GS ball-contact trajectory-dedup + ball-z provenance / honest-NaN `is_aerial` (TF-79 follow-up, ADR-125)
 
 Two folded-together changes (ADR-125). **(A)** Fixes ball-contact under-detection on Gradient Sports and **corrects the 4.136.0 GS characterisation**: the degradation was NOT a "blunted ball" (that figure was measured at detected contacts, a biased sample — at real touches the GS ball is sharp, |Δv| ≈ 3 ≈ IDSSE) but a **duplicate-frame velocity sawtooth** — ball tracking carries ~50 % consecutive-duplicate positions on every provider, and `_velocity_breaks`' raw consecutive-frame differencing turns them into a 0↔real sawtooth that masks real touches (fatal on GS's faster motion). **(B)** Realizes the ADR-124 intent that `is_aerial` be honest-NaN where ball `z` is **estimated**: a ball-`z` spike found z is present on every tracking provider but MEASURED only on IDSSE/Sportec/Gradient Sports and ESTIMATED on SkillCorner (broadcast extrapolation — ball p50 ≈ 0.24 m up, 96 % of frames off-ground), so the detector was emitting a boolean `is_aerial` from estimated z. **Pure, no retrain; contact values change on every provider and `is_aerial` changes on SkillCorner (boolean → `<NA>`), so byte-identical is NOT claimed** (the intended correctness improvement).

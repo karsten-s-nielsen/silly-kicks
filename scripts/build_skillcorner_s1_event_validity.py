@@ -621,7 +621,7 @@ def main() -> None:
     from _provenance import git_provenance, require_clean_tree
 
     if args.list_matches:
-        from _partition import list_match_ids
+        from _partition_pining import list_match_ids
 
         print(json.dumps(list_match_ids(args.providers.split(",")), indent=2))
         return

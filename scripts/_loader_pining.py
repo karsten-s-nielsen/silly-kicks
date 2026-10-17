@@ -77,6 +77,12 @@ def _resolve_token(token: str | None) -> str:
 #: The one raw-artifact cache env var, in the repo's ``SILLY_KICKS_*`` convention (spec §4.1).
 CORPUS_CACHE_ENV = "SILLY_KICKS_CORPUS_CACHE_DIR"
 
+#: Offline manifest dir. When set, ``_list_matches`` reads ``<dir>/<provider>/matches.json`` (a staged
+#: copy of the API's ``/{provider}/matches`` response) instead of the network, so an air-gapped run
+#: (e.g. an HF Job over a staged corpus) enumerates matches with NO token and NO pining network. The
+#: per-match artifacts still resolve from the local cache (``cache_dir``), so the whole load is offline.
+PINING_MANIFEST_ENV = "SILLY_KICKS_PINING_MANIFEST_DIR"
+
 
 def resolve_cache_dir(cache_dir: str | Path | None) -> Path | None:
     """The raw-artifact cache root: the ARGUMENT, else ``$SILLY_KICKS_CORPUS_CACHE_DIR``, else ``None``.
@@ -93,7 +99,21 @@ def resolve_cache_dir(cache_dir: str | Path | None) -> Path | None:
 
 
 def _list_matches(provider: str, token: str, base_url: str) -> list[dict]:
-    """GET /{provider}/matches -> the matches list (id + artifacts map)."""
+    """GET /{provider}/matches -> the matches list (id + artifacts map).
+
+    Offline mode: when ``$SILLY_KICKS_PINING_MANIFEST_DIR`` is set, read the staged
+    ``<dir>/<provider>/matches.json`` instead of the network (no token, no pining API) -- the air-gapped
+    path for a staged corpus. Fail-loud if the staged manifest for ``provider`` is absent.
+    """
+    offline = os.environ.get(PINING_MANIFEST_ENV, "").strip()
+    if offline:
+        staged = Path(offline) / provider / "matches.json"
+        if not staged.exists():
+            raise FileNotFoundError(
+                f"offline pining manifest for {provider!r} not found at {staged} "
+                f"(unset {PINING_MANIFEST_ENV} to use the API, or stage the manifest there)"
+            )
+        return json.loads(staged.read_text()).get("matches", [])
     req = urllib.request.Request(  # noqa: S310
         f"{base_url}/{provider}/matches", headers={"Authorization": f"Bearer {token}"}
     )

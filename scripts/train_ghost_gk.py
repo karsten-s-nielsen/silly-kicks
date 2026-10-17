@@ -309,6 +309,34 @@ def parse_args() -> argparse.Namespace:
         help="Train from a modified working tree. The run still records run_tree_dirty=true in "
         "metrics.json -- the hatch permits a dev run, it never launders the fact.",
     )
+    # --- Map/reduce fan-out (ADR-123): extract --shard-index -> --build-cache -> --fold -> --assemble.
+    # Each phase is a small cpu-upgrade job sharing the bucket feature-cache/shard_root; the reduce is
+    # byte-identical to a plain serial run (no flag). The final fit stays serial (one model).
+    parser.add_argument(
+        "--shard-index",
+        default=None,
+        help="I/N: extract only this disjoint subset of the discovered parquet files (fan-out worker). "
+        "Writes its shards to the shared feature-cache shard_root and exits before the whole-corpus cache.",
+    )
+    parser.add_argument(
+        "--build-cache",
+        action="store_true",
+        help="Build the whole-corpus feature cache from the (fanned) shards, then exit. One job between "
+        "the extract fan-out and the --fold fan-out, so fold workers race-free LOAD the cache.",
+    )
+    parser.add_argument(
+        "--fold",
+        type=int,
+        default=None,
+        help="Run ONLY CV fold K (loads the built feature cache), write {cache}/folds/fold_K.json, then "
+        "exit (fan-out worker). Requires the cache (run --build-cache first).",
+    )
+    parser.add_argument(
+        "--assemble",
+        action="store_true",
+        help="Reduce: load the cache + aggregate folds/fold_*.json, final fit + parity gate + importance, "
+        "ship the artifact + metrics.json, then exit.",
+    )
     return parser.parse_args()
 
 
@@ -376,7 +404,7 @@ def main() -> None:
     # (the CV per-provider MAE, and the metrics aggregation), and the first CLI run after this was
     # written died on `TypeError: string indices must be integers` -- the loop had rebound it to a
     # provider name by the time the metrics dict was built.
-    from scripts._corpus import reproducibility
+    from scripts._corpus_identity import reproducibility
     from scripts._provenance import git_provenance, require_clean_tree
 
     run_prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
@@ -418,6 +446,19 @@ def main() -> None:
     if not parquets:
         print(f"ERROR: No .parquet files found in {args.data_dir}", file=sys.stderr)
         sys.exit(1)
+
+    # Map/reduce extract fan-out (ADR-123): slice to this worker's disjoint file subset. Each flat-TC3
+    # parquet is one game, so a file-index partition is a disjoint cover of the corpus. --build-cache /
+    # --fold / --assemble run over the FULL list (they load the whole-corpus cache, never re-extract).
+    if args.shard_index is not None:
+        from scripts._driver import shard_select
+
+        _si, _sn = (int(x) for x in args.shard_index.split("/"))
+        parquets = shard_select(parquets, _si, _sn)
+        print(f"Shard {_si}/{_sn}: extracting {len(parquets)} of the discovered parquet files")
+        if not parquets:
+            print(f"ERROR: shard {args.shard_index} selects no files", file=sys.stderr)
+            sys.exit(1)
 
     # Fail fast on an unclassified provider, BEFORE any extraction or fitting. The membership rule
     # lives in _provider_visibility.validate_provider (single source); only the moment it fires
@@ -754,6 +795,13 @@ def main() -> None:
                 f"Re-run to retry only those -- the games that succeeded are already sharded."
             )
 
+        # Map/reduce extract fan-out (ADR-123): a --shard-index worker has written its subset's shards to
+        # the shared shard_root; the whole-corpus cache belongs to --build-cache (a subset cannot build the
+        # whole corpus). Exit here before the concat so N workers compose without racing on the cache.
+        if args.shard_index is not None and not (args.build_cache or args.assemble):
+            print(f"Shard {args.shard_index}: extraction complete ({res.skipped} resumed); exiting before cache.")
+            return
+
         # Combined from THIS PASS'S keys, not `_driver.reconcile`: this driver has no partition
         # surface, so a whole-generation read would fold in games from a wider earlier `--data-dir`.
         parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
@@ -785,6 +833,13 @@ def main() -> None:
         # directory, which the hit predicate treats as a MISS.
         cache_token_path.write_text(generation.name, encoding="utf-8")
         print(f"Cached features to {cache_dir} (generation {generation.name})")
+
+    # Map/reduce --build-cache phase (ADR-123): the whole-corpus feature cache now exists on disk (either
+    # just written by the fresh-extract branch, or already present). Exit so the --fold fan-out workers
+    # race-free LOAD it. Must be BEFORE the subsample cap (the cache is the pre-cap whole corpus).
+    if args.build_cache:
+        print("Feature cache ready; exiting (--build-cache phase, ADR-123).")
+        return
 
     # PR-S81: variant axis = sample count -> wheel size. Cap AFTER extraction so the
     # bundled "default" stays small while "full" keeps all in-domain samples.
@@ -841,10 +896,12 @@ def main() -> None:
         )
         folds = list(cv.split(features, provider_labels, groups))
 
-    fold_metrics: list[dict] = []
+    # Map/reduce CV (ADR-123): the per-fold body is a function so a --fold K worker can run ONE fold
+    # and --assemble can load the fanned fold_*.json; a plain serial run just maps it over every fold.
+    # The split (folds) is computed identically above under either regime (seeded), so fanned == serial.
+    fold_sidecar_dir = cache_dir / "folds"
 
-    cv_t0 = time.time()
-    for fold, (train_idx, test_idx) in enumerate(folds):
+    def run_one_fold(fold: int, train_idx, test_idx) -> dict:
         print(f"\n--- Fold {fold + 1}/{args.cv_folds} ---")
         print(f"  Train: {len(train_idx)} samples, Test: {len(test_idx)} samples")
         X_train, X_test = features.iloc[train_idx], features.iloc[test_idx]
@@ -859,13 +916,9 @@ def main() -> None:
         )
         fit_t0 = time.time()
         model.fit(X_train, y_train, carrier_params=cp)
-        fit_elapsed = time.time() - fit_t0
-        print(f"  Fit: {fit_elapsed:.1f}s")
+        print(f"  Fit: {time.time() - fit_t0:.1f}s")
 
-        pred_t0 = time.time()
         preds = model.predict_mean(X_test)  # shape (n, 2) -- exact boosted HGBR mean (Option A)
-        pred_elapsed = time.time() - pred_t0
-        print(f"  Predict (boosted mean): {pred_elapsed:.1f}s")
 
         mae_x = float(np.mean(np.abs(preds[:, 0] - y_test["gk_x"].values)))
         mae_y = float(np.mean(np.abs(preds[:, 1] - y_test["gk_y"].values)))
@@ -886,26 +939,40 @@ def main() -> None:
                     )
                 )
             )
-
-        fold_wall = time.time() - cv_t0
-        avg_per_fold = fold_wall / (fold + 1)
-        remaining = avg_per_fold * (args.cv_folds - fold - 1)
         print(f"  MAE x={mae_x:.3f}m  y={mae_y:.3f}m  euclid={mae_euclid:.3f}m")
         print(f"  Per-provider: {per_prov}")
-        print(f"  CV elapsed: {fold_wall:.0f}s, ETA remaining: {remaining:.0f}s")
-        fold_metrics.append(
-            {
-                "mae_x": mae_x,
-                "mae_y": mae_y,
-                "mae_euclidean": mae_euclid,
-                "per_provider": per_prov,
-                # TF-60 PR3: out-of-sample euclid MAE over the >30 m high-sweeper stratum on this
-                # fold's test set (NaN if the fold has no high labels). Reported, not gated (sec 7.3).
-                "high_sweeper_mae": high_sweeper_stratum_mae(
-                    preds, {"gk_x": y_test["gk_x"].values, "gk_y": y_test["gk_y"].values}
-                ),
-            }
-        )
+        return {
+            "mae_x": mae_x,
+            "mae_y": mae_y,
+            "mae_euclidean": mae_euclid,
+            "per_provider": per_prov,
+            # TF-60 PR3: out-of-sample euclid MAE over the >30 m high-sweeper stratum on this
+            # fold's test set (NaN if the fold has no high labels). Reported, not gated (sec 7.3).
+            "high_sweeper_mae": high_sweeper_stratum_mae(
+                preds, {"gk_x": y_test["gk_x"].values, "gk_y": y_test["gk_y"].values}
+            ),
+        }
+
+    if args.fold is not None:
+        # Fan-out worker: run exactly fold K from the (identically computed) split, persist, exit.
+        if not (0 <= args.fold < len(folds)):
+            print(f"ERROR: --fold {args.fold} out of range [0,{len(folds)})", file=sys.stderr)
+            sys.exit(2)
+        fold_sidecar_dir.mkdir(parents=True, exist_ok=True)
+        _tr, _te = folds[args.fold]
+        _d = run_one_fold(args.fold, _tr, _te)
+        (fold_sidecar_dir / f"fold_{args.fold}.json").write_text(json.dumps(_d), encoding="utf-8")
+        print(f"Fold {args.fold} done -> {fold_sidecar_dir / f'fold_{args.fold}.json'}")
+        return
+
+    if args.assemble:
+        # Reduce: load the fanned fold sidecars (JSON float round-trip is exact) in fold order.
+        fold_metrics: list[dict] = [
+            json.loads((fold_sidecar_dir / f"fold_{k}.json").read_text(encoding="utf-8")) for k in range(len(folds))
+        ]
+    else:
+        # Plain serial run: map the per-fold body over every fold (the original inline loop).
+        fold_metrics = [run_one_fold(fold, tr, te) for fold, (tr, te) in enumerate(folds)]
 
     # Aggregate CV
     mae_x_vals = [m["mae_x"] for m in fold_metrics]

@@ -6,12 +6,14 @@ from scripts._corpus import (
     BUNDLED_PUBLIC_ARM,
     PUBLIC_CORPUS,
     bundled_public_arm_pairs,
+    requested_is_all_public,
+)
+from scripts._corpus_identity import (
     check_expected_variant,
     check_shipped_variant,
     corpus_identity,
     match_id_pairs,
     reproducibility,
-    requested_is_all_public,
 )
 
 
