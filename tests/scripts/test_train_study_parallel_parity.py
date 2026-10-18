@@ -10,6 +10,15 @@ pytest.importorskip("ruthless")
 from scripts import train_xshot_occurrence as tr
 from scripts._corpus_mmap import load_design_matrix, persist_design_matrix
 
+_SHIP_ORDER = ["public", "sc_extended", "full"]
+
+
+def _arms_from(providers, is_public):
+    """The candidate-arm masks a launcher would pass as --arms (ADR-123 Amendment B); the trainer only
+    applies them. (The pre-Amendment-B ``_build_candidate_masks`` logic, now the fixture's job.)"""
+    is_sc_private = (providers == "skillcorner") & ~is_public
+    return {"public": is_public, "sc_extended": is_public | is_sc_private, "full": np.ones(len(providers), bool)}
+
 
 def _count_hpo_runs(monkeypatch):
     """Count real ``OptunaStrategy.run`` calls from here on (the HPO still runs; only counted)."""
@@ -100,6 +109,7 @@ def test_parallel_assemble_equals_serial_weights_byte_identical(tmp_path, monkey
             "run_paired": True,
             "run_prov": {"commit": "test", "dirty": False, "tree_state": "clean"},
             "objective_inputs": {"driver": "test-parallel-parity"},  # D21 identity the prep persists
+            "ship_order": _SHIP_ORDER,
         }
 
     # Serial: studies computed inline during assemble (empty cache).
@@ -113,6 +123,7 @@ def test_parallel_assemble_equals_serial_weights_byte_identical(tmp_path, monkey
         match_ids=match_ids,
         is_public=is_public,
         config=_config(root_s),
+        arms=_arms_from(providers, is_public),
     )
     m_serial, model_serial = tr.assemble_studies(root_s, study_shard_dir=root_s)
 
@@ -127,6 +138,7 @@ def test_parallel_assemble_equals_serial_weights_byte_identical(tmp_path, monkey
         match_ids=match_ids,
         is_public=is_public,
         config=_config(root_p),
+        arms=_arms_from(providers, is_public),
     )
     tags = tr.enumerate_studies(root_p)
     assert len(tags) == 9  # 3 candidates x 3 public folds
@@ -202,6 +214,7 @@ def test_xcross_parallel_assemble_equals_serial_weights_byte_identical(tmp_path,
             "ship_variant": None,
             "run_prov": {"commit": "test", "dirty": False, "tree_state": "clean"},
             "objective_inputs": {"driver": "test-parallel-parity"},  # D21 identity the prep persists
+            "ship_order": _SHIP_ORDER,
         }
 
     root_s = tmp_path / "serial"
@@ -214,6 +227,7 @@ def test_xcross_parallel_assemble_equals_serial_weights_byte_identical(tmp_path,
         match_ids=match_ids,
         is_public=is_public,
         config=_config(root_s),
+        arms=_arms_from(providers, is_public),
     )
     m_serial, model_serial = trx.assemble_studies(root_s, study_shard_dir=root_s, run_probe=False)
 
@@ -227,6 +241,7 @@ def test_xcross_parallel_assemble_equals_serial_weights_byte_identical(tmp_path,
         match_ids=match_ids,
         is_public=is_public,
         config=_config(root_p),
+        arms=_arms_from(providers, is_public),
     )
     tags = trx.enumerate_studies(root_p)
     assert len(tags) == 9  # 3 candidates x 3 public folds

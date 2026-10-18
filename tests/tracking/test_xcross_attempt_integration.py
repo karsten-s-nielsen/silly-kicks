@@ -143,6 +143,19 @@ def _write_synthetic_train_dir(tmp_path, *, n_games=4, learnable=True):
     return data_dir
 
 
+def _write_arms_json(tmp_path, data_dir, *, provider="synthetic"):
+    """ADR-123 Amendment B: the visibility-blind trainer requires ``--arms``. The synthetic frames carry
+    ``source_provider="synthetic"`` (``_finalize_xcross_frames``), so the in-job match key is
+    ``synthetic__<game_dir>``; mark every game ``public`` so the single-arm trainer ships ``public``."""
+    import json
+    from pathlib import Path
+
+    keys = sorted(f"{provider}__{g.name}" for g in Path(data_dir).iterdir() if g.is_dir())
+    arms_path = Path(tmp_path) / "arms.json"
+    arms_path.write_text(json.dumps({"arms": {"public": keys}, "ship_order": ["public"]}), encoding="utf-8")
+    return arms_path
+
+
 @pytest.mark.slow
 def test_train_script_smoke(tmp_path):
     import json
@@ -152,6 +165,7 @@ def test_train_script_smoke(tmp_path):
     from pathlib import Path
 
     data_dir = _write_synthetic_train_dir(tmp_path)
+    arms_path = _write_arms_json(tmp_path, data_dir)
     out_dir = Path(tmp_path) / "out"
     repo_root = Path(__file__).resolve().parents[2]
     env = dict(os.environ, PYTHONPATH=str(repo_root))
@@ -164,6 +178,8 @@ def test_train_script_smoke(tmp_path):
             "--allow-dirty",
             "--data-dir",
             str(data_dir),
+            "--arms",
+            str(arms_path),
             "--output-dir",
             str(out_dir),
             "--n-trials",
@@ -227,6 +243,7 @@ def test_train_script_smoke_position_only(tmp_path):
     from pathlib import Path
 
     data_dir = _write_synthetic_train_dir(tmp_path)
+    arms_path = _write_arms_json(tmp_path, data_dir)
     out_dir = Path(tmp_path) / "out_po"
     repo_root = Path(__file__).resolve().parents[2]
     env = dict(os.environ, PYTHONPATH=str(repo_root))
@@ -237,6 +254,8 @@ def test_train_script_smoke_position_only(tmp_path):
             "--allow-dirty",
             "--data-dir",
             str(data_dir),
+            "--arms",
+            str(arms_path),
             "--output-dir",
             str(out_dir),
             "--n-trials",
@@ -278,6 +297,7 @@ def test_train_script_fail_closed_writes_no_artifact(tmp_path):
     from pathlib import Path
 
     data_dir = _write_synthetic_train_dir(tmp_path, learnable=False)
+    arms_path = _write_arms_json(tmp_path, data_dir)
     out_dir = Path(tmp_path) / "out"
     repo_root = Path(__file__).resolve().parents[2]
     env = dict(os.environ, PYTHONPATH=str(repo_root))
@@ -290,6 +310,8 @@ def test_train_script_fail_closed_writes_no_artifact(tmp_path):
             "--allow-dirty",
             "--data-dir",
             str(data_dir),
+            "--arms",
+            str(arms_path),
             "--output-dir",
             str(out_dir),
             "--n-trials",

@@ -1,17 +1,23 @@
 """G1 corpus guard + corpus identity + reproducibility helpers (combined-cycle-completion spec 5, 0.11)."""
 
+import json
+import pathlib
+
 import pytest
 
 from scripts._corpus import (
     BUNDLED_PUBLIC_ARM,
     PUBLIC_CORPUS,
     bundled_public_arm_pairs,
+    rehydrate_public_corpus_ids,
+    requested_is_all_public,
+)
+from scripts._corpus_identity import (
     check_expected_variant,
     check_shipped_variant,
     corpus_identity,
     match_id_pairs,
     reproducibility,
-    requested_is_all_public,
 )
 
 
@@ -83,6 +89,42 @@ def test_corpus_identity_records_ids_only_for_an_all_public_corpus():
     # the digest is a function of the identity, so two runs on one corpus agree and different corpora differ
     assert corpus_identity(["sk"], ["999"], all_public=False) != restricted
     assert corpus_identity(["sk", "sk"], ["999", "1"], all_public=False) == restricted
+
+
+def test_rehydrate_public_corpus_ids_replaces_the_digest_with_canonical_pairs():
+    # A visibility-blind trainer artifact carries the DIGEST, not the ids (ADR-123 Amendment B). The
+    # off-HF adoption seam rehydrates the canonical public ids, in place of the digest, position-preserved.
+    blind = {
+        "shipped_variant": "public",
+        "providers": ["idsse", "skillcorner"],
+        "corpus_match_ids_sha256": "7f8151127456de5a9152cd8bdbb92b9277159557769d180dcfbd7e74f5d076db",
+        "corpus_n_matches": 17,
+        "reproducibility": "public",
+    }
+    out = rehydrate_public_corpus_ids(blind)
+    assert out["corpus_match_ids"] == bundled_public_arm_pairs()
+    assert "corpus_match_ids_sha256" not in out and "corpus_n_matches" not in out
+    assert list(out).index("corpus_match_ids") == list(blind).index("corpus_match_ids_sha256")  # in place
+    assert blind.get("corpus_match_ids") is None  # input not mutated
+    assert rehydrate_public_corpus_ids(out) == out  # idempotent on an already-canonical bundle
+
+
+def test_rehydrate_public_corpus_ids_refuses_a_non_pinned_corpus():
+    # A different count (e.g. the widened current PUBLIC_CORPUS, D4) or different providers is refused,
+    # never silently relabelled as the pinned public arm.
+    with pytest.raises(ValueError, match="pinned public arm"):
+        rehydrate_public_corpus_ids({"corpus_n_matches": 25, "providers": ["idsse", "skillcorner"]})
+    with pytest.raises(ValueError, match="pinned public providers"):
+        rehydrate_public_corpus_ids({"corpus_n_matches": 17, "providers": ["idsse", "skillcorner", "statsbomb"]})
+
+
+def test_committed_xshot_bundles_carry_the_canonical_public_corpus_ids():
+    # The adopted wheel bundles must carry the explicit canonical public ids (the output of the seam) --
+    # the corpus-policy gate's value, asserted here co-located with the seam that produces it.
+    root = pathlib.Path("silly_kicks/tracking")
+    for d in ("_xshot_weights/default", "_xshot_weights/position_only"):
+        m = json.loads((root / d / "metrics.json").read_text(encoding="utf-8"))
+        assert m["corpus_match_ids"] == bundled_public_arm_pairs(), d
 
 
 def test_reproducibility_public_and_restricted():

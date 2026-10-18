@@ -8,10 +8,9 @@ arm and ship a model trained on non-redistributable data under a `public` label.
 
 from __future__ import annotations
 
-import hashlib
-import json
-
 import numpy as np
+
+from scripts._corpus_identity import match_id_pairs
 
 # The 27 matches we may redistribute. Drift here fails the run loudly (spec 3.2). SkillCorner grew
 # 10 -> 20 on 2026-09-09 (a second public drop, uploaded to pining-for-the-data); the pre-existing
@@ -127,16 +126,60 @@ BUNDLED_PUBLIC_ARM: dict[str, tuple[str, ...]] = {
 }
 
 
-def match_id_pairs(providers, match_ids) -> list[list[str]]:
-    """Sorted unique ``[provider, match_id]`` pairs of a per-row corpus."""
-    return [list(p) for p in sorted({(str(p), str(m)) for p, m in zip(providers, match_ids, strict=True)})]
-
-
 def bundled_public_arm_pairs(providers: tuple[str, ...] = ("idsse", "skillcorner")) -> list[list[str]]:
     """``BUNDLED_PUBLIC_ARM`` restricted to ``providers``, in the :func:`match_id_pairs` shape."""
     provs = [p for p in providers for _ in BUNDLED_PUBLIC_ARM[p]]
     mids = [m for p in providers for m in BUNDLED_PUBLIC_ARM[p]]
     return match_id_pairs(provs, mids)
+
+
+def rehydrate_public_corpus_ids(metrics: dict, *, providers: tuple[str, ...] = ("idsse", "skillcorner")) -> dict:
+    """Off-HF finalize: give a PUBLIC wheel bundle its explicit, canonical ``corpus_match_ids``.
+
+    The in-job trainer is visibility-blind (ADR-123 Amendment B / the I1 import-closure rule): it cannot
+    assert ``all_public``, so :func:`scripts._corpus_identity.corpus_identity` records a DIGEST
+    (``corpus_match_ids_sha256`` + ``corpus_n_matches``) rather than the raw ids -- an owner id must never
+    reach a copied ``metrics.json``. A PUBLIC wheel bundle, however, MUST carry the explicit
+    ``corpus_match_ids``: the ids are redistributable and ``test_bundled_weights_corpus_policy`` requires
+    them. This helper is the single OFF-HF adoption seam that rehydrates them, run where visibility IS
+    known (the launcher staged the pinned public arm).
+
+    Guard: the recorded ``corpus_n_matches`` and ``providers`` MUST equal the pinned public arm, else the
+    run used some OTHER corpus (e.g. the widened current ``PUBLIC_CORPUS`` -- a separate, gated decision,
+    D4) and this REFUSES rather than silently relabel it. The digest itself cannot be equality-checked
+    against the canonical set, because the trainer hashes the RAW per-row provider names (``sportec``, not
+    the normalised ``idsse``); the authoritative physical-corpus check is the staged-dataset identity at
+    staging time. Idempotent: a bundle already carrying the canonical ``corpus_match_ids`` is returned
+    unchanged. Returns a NEW dict; the input is not mutated.
+    """
+    pairs = bundled_public_arm_pairs(providers)
+    if metrics.get("corpus_match_ids") == pairs:
+        return dict(metrics)
+    recorded_n = metrics.get("corpus_n_matches")
+    if recorded_n != len(pairs):
+        raise ValueError(
+            f"refusing to rehydrate corpus_match_ids: corpus_n_matches={recorded_n!r} != the pinned "
+            f"public arm ({len(pairs)}). The run used a corpus that is not the bundled public arm "
+            "(widening to the current PUBLIC_CORPUS is a separate, gated decision -- D4)."
+        )
+    recorded_providers = metrics.get("providers")
+    if recorded_providers is not None and sorted(map(str, recorded_providers)) != sorted(providers):
+        raise ValueError(
+            f"refusing to rehydrate corpus_match_ids: providers={recorded_providers!r} != the pinned "
+            f"public providers {sorted(providers)!r}."
+        )
+    out: dict = {}
+    inserted = False
+    for key, value in metrics.items():
+        if key in ("corpus_match_ids_sha256", "corpus_n_matches"):
+            if not inserted:  # replace the digest in place with the explicit list
+                out["corpus_match_ids"] = pairs
+                inserted = True
+            continue
+        out[key] = value
+    if not inserted:
+        out["corpus_match_ids"] = pairs
+    return out
 
 
 def requested_is_all_public(pairs, visibility: dict[tuple[str, str], str]) -> bool:
@@ -150,55 +193,3 @@ def requested_is_all_public(pairs, visibility: dict[tuple[str, str], str]) -> bo
             visibility=visibility,
         ).all()
     )
-
-
-def check_expected_variant(expected: str | None, *, all_public: bool) -> None:
-    """G1 launch preflight, run BEFORE extraction: an expected ``public`` artifact needs an all-public corpus.
-
-    A ``public`` bundle can only come from a corpus in which every requested match is public: any
-    owner-tier match makes the paired gate eligible to ship a restricted variant. ``sc_extended`` and
-    ``full`` expectations are enforced at ship time only (:func:`check_shipped_variant`).
-    """
-    if expected == "public" and not all_public:
-        raise SystemExit(
-            "--expect-variant public, but the requested corpus contains non-public matches (is the "
-            "OWNER pining token set?). A public bundle must be trained on public matches only. "
-            "Refusing before extraction."
-        )
-
-
-def check_shipped_variant(expected: str | None, shipped: str) -> None:
-    """G1 ship-time check: never write an artifact whose shipped variant differs from the expectation."""
-    if expected is not None and shipped != expected:
-        raise SystemExit(
-            f"--expect-variant {expected}, but this run would ship {shipped!r}. Refusing to write the artifact."
-        )
-
-
-def corpus_identity(providers, match_ids, *, all_public: bool) -> dict:
-    """The corpus identity an artifact may record: the exact ids for an all-public corpus, else a digest.
-
-    Hub publishes copy ``metrics.json``, so an owner/NDA id must never appear in one; the digest still
-    lets two artifacts be proven to share (or not share) a corpus.
-    """
-    pairs = match_id_pairs(providers, match_ids)
-    if all_public and pairs:
-        return {"corpus_match_ids": pairs}
-    digest = hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode("utf-8")).hexdigest()
-    return {"corpus_match_ids_sha256": digest, "corpus_n_matches": len(pairs)}
-
-
-def reproducibility(shipped: str, providers, *, training_commit: str | None = None) -> dict:
-    """The ADR-067 M4 caveat, emitted by the TRAINER -- never hand-added to a driver-stamped artifact."""
-    if shipped == "public":
-        return {"reproducibility": "public"}
-    provs = ", ".join(sorted({str(p) for p in providers}))
-    at = f" at training_commit {training_commit}" if training_commit else ""
-    return {
-        "reproducibility": "restricted",
-        "reproducibility_note": (
-            f"Restricted: trained{at} on a corpus ({provs}) that includes matches which cannot be "
-            f"redistributed or carries no public-visibility proof (variant {shipped!r}), so the weights "
-            "cannot be reproduced from public data (ADR-067 M4)."
-        ),
-    }

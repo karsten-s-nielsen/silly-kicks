@@ -17,7 +17,7 @@ unicode, which ``np.save`` writes without pickle.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +35,10 @@ class StudyInputs:
     match_ids: np.ndarray
     is_public: np.ndarray
     config: dict
+    #: ADR-123 Amendment B: candidate-arm row masks {name -> bool mask}, supplied via the --arms job
+    #: parameter and persisted so fan-out study workers rebuild byte-identical masks with NO provider
+    #: logic. Empty for a pre-Amendment-B inputs dir (back-compat).
+    arms: dict[str, np.ndarray] = field(default_factory=dict)
 
 
 _CONFIG = "study_config.json"
@@ -55,14 +59,24 @@ def persist_study_inputs(
     match_ids,
     is_public,
     config: dict,
+    arms: dict[str, np.ndarray] | None = None,
 ) -> Path:
-    """Write ``(X, y, groups, providers, match_ids, is_public)`` + ``config`` under ``shard_root``."""
+    """Write ``(X, y, groups, providers, match_ids, is_public)`` + ``config`` under ``shard_root``.
+
+    ``arms`` (ADR-123 Amendment B) are the candidate-arm row masks; each is written to
+    ``arms/<name>.npy`` so fan-out study workers rebuild byte-identical masks from the parameter.
+    """
     root = Path(shard_root)
     root.mkdir(parents=True, exist_ok=True)
     persist_design_matrix(X, y, groups, root / "corpus")
     _save_str_array(root / "providers.npy", providers)
     _save_str_array(root / "match_ids.npy", match_ids)
     np.save(root / "is_public.npy", np.asarray(is_public, dtype=bool))
+    if arms:
+        arms_dir = root / "arms"
+        arms_dir.mkdir(exist_ok=True)
+        for name, mask in arms.items():
+            np.save(arms_dir / f"{name}.npy", np.asarray(mask, dtype=bool))
     (root / _CONFIG).write_text(json.dumps(config), encoding="utf-8")
     return root
 
@@ -103,6 +117,8 @@ def load_study_inputs(shard_root: str | Path) -> StudyInputs:
     """Reconstruct the study inputs written by :func:`persist_study_inputs`."""
     root = Path(shard_root)
     X, y, groups = load_design_matrix(root / "corpus")
+    arms_dir = root / "arms"
+    arms = {p.stem: np.load(p, allow_pickle=False) for p in sorted(arms_dir.glob("*.npy"))} if arms_dir.exists() else {}
     return StudyInputs(
         X=X,
         y=y,
@@ -111,4 +127,5 @@ def load_study_inputs(shard_root: str | Path) -> StudyInputs:
         match_ids=np.load(root / "match_ids.npy", allow_pickle=False),
         is_public=np.load(root / "is_public.npy", allow_pickle=False),
         config=json.loads((root / _CONFIG).read_text(encoding="utf-8")),
+        arms=arms,
     )

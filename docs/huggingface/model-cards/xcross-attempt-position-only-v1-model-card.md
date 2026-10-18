@@ -49,15 +49,15 @@ Use this when your frames genuinely lack velocity. For velocity-bearing tracking
 
 HF-only for **licensing**, not quality: trained on **restricted owner-tier SkillCorner data** that
 cannot be redistributed in the wheel (ADR-038). Only learned parameters are published — **no raw
-provider tracking data**. The Hub repo is the owner-tier **archive** (ADR-071). `training_commit`: `1ce63ef`.
+provider tracking data**. The Hub repo is the owner-tier **archive** (ADR-071). `training_commit`: `4095251`.
 
 ## Held-out CV (5 folds, out-of-fold)
 
 | Metric | Value | Baseline |
 |---|---|---|
-| PR-AUC | 0.1297 (± 0.0087) | base rate 0.0500 |
+| PR-AUC | 0.1328 (± 0.0106) | base rate 0.0500 |
 | Brier | 0.0454 | base-rate Brier 0.0475 |
-| Log loss | 0.1771 | &mdash; |
+| Log loss | 0.1768 | &mdash; |
 
 All four acceptance gates pass. Estimates are **CV, not the shipped fit**. Dropping velocity costs
 discrimination vs the faithful model (PR-AUC 0.189 → 0.130) — the trade is that this model *runs at
@@ -135,4 +135,4 @@ https://github.com/karsten-s-nielsen/silly-kicks
 
 ## Wheel sibling (4.128.0)
 
-In silly-kicks 4.128.0 the wheel's bundled `position_only` was re-fit on float32-stored frames (`training_commit=b62c1f2`). This Hub artifact is unchanged: trained on float64 frames, its predictions and weights are byte-identical to the previous release.
+In silly-kicks 4.128.0 the wheel's bundled `position_only` was re-fit on float32-stored frames (`training_commit=b62c1f2`). This Hub owner-tier `sc_extended_position_only` artifact is re-fit on the corrected floor velocities this cycle (silly-kicks 4.138.0 / TF-65 / ADR-120): predictions change within noise from the prior velocity-stale artifact. No label defect — xCross is `type_id`-filtered. The re-fit artifact is pushed by the ADR-088 model-publish step.

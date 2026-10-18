@@ -45,18 +45,10 @@ def _corpus_fingerprint(args) -> str:
     sys.path.insert(0, "scripts")
     from _cache import corpus_fingerprint
 
-    if not args.providers:
-        d = Path(args.data_dir)
-        rows = [("local", p.name, "private") for p in sorted(d.iterdir()) if p.is_dir()]
-        return corpus_fingerprint(rows)
-
-    from _loader_pining import match_visibility, select_match_ids
-
-    providers = args.providers.split(",")
-    allowlist = json.load(open(args.match_ids_json)) if args.match_ids_json else None
-    pairs = select_match_ids(providers=providers, match_ids=allowlist, max_per_provider=args.max_per_provider)
-    vis = match_visibility(providers)
-    return corpus_fingerprint([(p, m, vis.get((p, m), "private")) for p, m in pairs])
+    # ADR-123 Amendment B: --data-dir is the only source; fingerprint the staged directory contents.
+    d = Path(args.data_dir)
+    rows = [("local", p.name, "private") for p in sorted(d.iterdir()) if p.is_dir()]
+    return corpus_fingerprint(rows)
 
 
 def _iter_matches_from_dir(data_dir: Path, home_map: dict | None = None):
@@ -480,15 +472,16 @@ class AcceptanceGatesFailedError(RuntimeError):
     """The shipped candidate failed a fail-closed acceptance gate. main() maps this to exit 1."""
 
 
-def _build_candidate_masks(X, providers, is_public) -> dict:
-    """The 3 paired candidates, single-sourced so main, ``run_one_study`` and ``assemble_studies``
-    build identical row masks (the ``gradientsports`` owner rows make ``full`` != ``sc_extended``)."""
-    is_sc_private = (providers == "skillcorner") & ~is_public
-    return {
-        "public": is_public,
-        "sc_extended": is_public | is_sc_private,
-        "full": np.ones(len(X), bool),
-    }
+def _build_candidate_masks(match_keys, armspec) -> dict:
+    """The candidate row masks, built PURELY from the --arms parameter (ADR-123 Amendment B).
+
+    An arm is a set of dataset match-keys supplied by the launcher; the mask is set membership. NO
+    provider-name and NO public/private logic in-job. ``main`` builds + persists the masks; the fan-out
+    workers + the reduce read ``StudyInputs.arms``.
+    """
+    from scripts.hf_jobs.arms import arm_masks
+
+    return arm_masks(match_keys, armspec)
 
 
 def _fit_study_for_test(X, y, groups, tag, n_trials, seed=42):
@@ -530,7 +523,7 @@ def enumerate_studies(shard_root) -> list[str]:
     inp = load_study_inputs(shard_root)
     if not inp.config.get("run_paired"):
         return []
-    masks = _build_candidate_masks(inp.X, inp.providers, inp.is_public)
+    masks = inp.arms  # ADR-123 Amendment B: arm masks persisted from the --arms parameter
     _, _, folds = _public_folds(inp.X, inp.y, inp.groups, inp.is_public)
     return [f"{name}_f{fold}" for fold in range(len(folds)) for name in masks]
 
@@ -541,7 +534,7 @@ def run_one_study(shard_root, tag: str):
 
     inp = load_study_inputs(shard_root)
     cfg = inp.config
-    masks = _build_candidate_masks(inp.X, inp.providers, inp.is_public)
+    masks = inp.arms  # ADR-123 Amendment B: arm masks persisted from the --arms parameter
     name, _sep, fold_s = tag.rpartition("_f")
     fold = int(fold_s)
     _, _, folds = _public_folds(inp.X, inp.y, inp.groups, inp.is_public)
@@ -571,7 +564,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
     parity test sets it False since the probe needs a real ``_probe_sample`` on disk. Returns
     ``(metrics, model)``; raises :class:`AcceptanceGatesFailedError` instead of exiting."""
     sys.path.insert(0, "scripts")
-    from _corpus import artifact_label, check_shipped_variant, corpus_identity, reproducibility
+    from _corpus_identity import canonical_providers, check_shipped_variant, corpus_identity, reproducibility
     from _paired import fixed_sequence_ship
 
     from scripts._study_shared import load_study_inputs
@@ -591,7 +584,6 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
     objective_inputs = cfg["objective_inputs"]  # D21, persisted by the prep
     ship_variant = cfg.get("ship_variant")
     run_paired = cfg["run_paired"]
-    provset = {str(p) for p in providers.tolist()}
 
     # score_differential range probe (B6): guard the phantom-owngoal signature.
     sd = X["score_differential"].to_numpy(dtype=float)
@@ -612,7 +604,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
 
     candidates: dict = {}
     if run_paired:
-        cand_masks = _build_candidate_masks(X, providers, is_public)
+        cand_masks = inp.arms  # ADR-123 Amendment B: arm masks from the --arms parameter
         paired = _paired_data_effect(
             X,
             y,
@@ -657,7 +649,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
             "metrics": _cv_metrics(
                 X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, negative_subsample=ns, seed=seed
             ),
-            "providers": sorted(set(providers[ship_mask].tolist())),
+            "providers": canonical_providers(providers[ship_mask]),
         }
         candidates["paired"] = {
             "nested": {n: paired[n]["nested"] for n in cand_masks},
@@ -672,9 +664,12 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
                 "--ship-variant requires the multi-candidate (run_paired) corpus (public + owner "
                 "SkillCorner + gradientsports) so the variant masks and the TF-19 probe cohort exist."
             )
-        ship_mask = np.ones(len(X), bool)
-        ship_provs = set(providers[ship_mask].tolist())
-        shipped = artifact_label(providers=ship_provs, all_public=bool(is_public[ship_mask].all()))
+        # ADR-123 Amendment B: ship the BROADEST arm NAME present (ship_order is narrow->broad). All-public:
+        # ship_order=[public] -> public (identical to before). An owner-tier 2-tier corpus (public +
+        # sc_extended, no full) ships sc_extended over its rows, NEVER the narrow public arm (an owner-tier
+        # model labeled public would violate the ADR-038 artifact-label control).
+        shipped = cfg["ship_order"][-1]
+        ship_mask = inp.arms[shipped]
         check_shipped_variant(cfg.get("expect_variant"), shipped)  # before the study: a refusal costs no fit
         params_all = _hpo_once(
             X,
@@ -692,7 +687,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
         candidates[shipped] = {
             "params": params_all,
             "metrics": _cv_metrics(X, y, groups, params_all, negative_subsample=ns, seed=seed),
-            "providers": sorted(provset),
+            "providers": canonical_providers(providers),
         }
 
     shipped_metrics = candidates[shipped]["metrics"]
@@ -731,7 +726,7 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
         "shipped_variant": shipped,
         "n_rows": len(X),
         "n_positive": int(np.asarray(y).sum()),
-        "providers": sorted(provset),
+        "providers": canonical_providers(providers),
         # Corpus IDENTITY (spec section 5): exact ids only for an all-public corpus, else a digest
         # (Hub publishes copy metrics.json). n_rows alone could not tell 17 public matches from 27.
         **corpus_identity(providers.tolist(), match_ids.tolist(), all_public=bool(is_public.all())),
@@ -820,9 +815,16 @@ def assemble_studies(shard_root, *, study_shard_dir=None, run_probe: bool = True
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
-    src = ap.add_mutually_exclusive_group(required=False)  # not required for --study/--assemble workers
-    src.add_argument("--data-dir")
-    src.add_argument("--providers")
+    # ADR-123 Amendment B: the staged neutral corpus is the ONLY source; public/owner policy enters as the
+    # --arms parameter (computed off-HF by the launcher). No in-job pining / --providers / manifest.
+    ap.add_argument("--data-dir")
+    ap.add_argument(
+        "--arms",
+        default=None,
+        help="JSON {arms: {name: [dataset match-key, ...]}, ship_order: [...]} of candidate-arm "
+        "memberships from the launcher (off-HF). The job applies it mechanically (np.isin), with NO "
+        "public/private concept of its own. Required on the extraction path.",
+    )
     ap.add_argument(
         "--home-teams",
         default=None,
@@ -832,7 +834,6 @@ def main(argv=None) -> None:
     )
     ap.add_argument("--output-dir")
     ap.add_argument("--n-trials", type=int, default=50)
-    ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--horizon-seconds", type=float, default=1.0)
     ap.add_argument(
         "--negative-subsample",
@@ -855,24 +856,11 @@ def main(argv=None) -> None:
         "same-population comparison leg (M5).",
     )
     ap.add_argument(
-        "--probe-match-ids-json",
+        "--probe-data-dir",
         default=None,
-        help='JSON {"gradientsports": ["10502", ...]}: matches loaded ONLY for the TF-19 substitution probe, in '
-        "a separate pass whose rows are discarded -- a held-out probe for a public-only fit (combined-cycle D5c).",
-    )
-    ap.add_argument(
-        "--match-ids-json",
-        default=None,
-        help="JSON file mapping {provider: [match_id, ...]} -- a per-provider allowlist threaded to "
-        "load_matches(match_ids=) (--providers path only). Default None (load every listed match).",
-    )
-    ap.add_argument(
-        "--cache-dir",
-        default=None,
-        help="Persist downloaded pining artifacts under CACHE_DIR/{provider}/{match_id}/ and reuse "
-        "them on later runs over the same corpus. Default None re-downloads every run (~24-90 s per "
-        "match). The cache is keyed on (provider, match_id) ONLY, so it would serve stale bytes if "
-        "an upstream artifact were ever revised; these are immutable historical matches.",
+        help="ADR-123 dataset-AGNOSTIC held-out TF-19 probe: a staged per-game parquet dir ({game}/frames.parquet "
+        "+ actions.parquet, with source_provider set) for the probe matches. The separate probe pass captures the "
+        "cohort from this data (no pining, no --providers, no manifest) -- how it was staged is off-job.",
     )
     ap.add_argument(
         "--feature-set",
@@ -901,14 +889,6 @@ def main(argv=None) -> None:
         "metrics.json -- the hatch permits a dev run, it never launders the fact.",
     )
     ap.add_argument(
-        "--expect-variant",
-        choices=["public", "sc_extended", "full"],
-        default=None,
-        help="G1 guard: refuse BEFORE extraction unless the requested corpus can ship this variant "
-        "(public => every requested match is public), and refuse at ship time if the shipped variant "
-        "differs. Default off (unchanged behaviour).",
-    )
-    ap.add_argument(
         "--shard-root",
         default=None,
         help="Study-shard root for the parallel study path (5c): a worker reads it via "
@@ -932,6 +912,13 @@ def main(argv=None) -> None:
     ap.add_argument("--list-studies", action="store_true", help="print the study tags under --shard-root as JSON")
     ap.add_argument(
         "--study-list", default=None, help="JSON list of study tags to run from --shard-root (launcher worker)"
+    )
+    ap.add_argument(
+        "--shard-index",
+        default=None,
+        help="I/N (ADR-123): extract only this disjoint subset of the TRAINING match refs to the shared "
+        "shard_root (art/shards) and exit BEFORE the cache/probe/persist. Requires --probe-match-ids-json "
+        "(a resumed prep loses the in-line probe cohort; the held-out probe is its own GS pass). Reduce = --assemble.",
     )
     args = ap.parse_args(argv)
 
@@ -957,8 +944,12 @@ def main(argv=None) -> None:
 
     if not args.output_dir:
         ap.error("--output-dir is required")
-    if not (args.data_dir or args.providers):
-        ap.error("one of --data-dir / --providers is required")
+    if not args.data_dir:
+        ap.error("--data-dir is required")
+    # I4 (ADR-123 Amendment B): the candidate-arm policy is a REQUIRED parameter on the extraction path.
+    # Fail LOUD -- never fall back to an implicit all-private (that silently shipped the wrong candidate).
+    if not args.shard_index and not args.arms:
+        sys.exit("ERROR: --arms is required (ADR-123 Amendment B: visibility enters as a job parameter).")
 
     # FIRST, before any corpus work. This trainer writes BUNDLED weights, and an artifact whose
     # provenance is unknown is one nobody can reproduce or audit later. ADR-052 enrolled all five
@@ -971,49 +962,18 @@ def main(argv=None) -> None:
     comparison_provs = [p for p in args.probe_comparison_providers.split(",") if p]
     if set(probe_provs) & set(comparison_provs):
         raise SystemExit("--probe-providers and --probe-comparison-providers must be disjoint.")
-    if args.probe_match_ids_json:
-        if not args.providers:
-            ap.error("--probe-match-ids-json needs --providers (probe matches are listed via pining)")
-        _probe = json.load(open(args.probe_match_ids_json))
-        _pkeys = set(_probe)
-        if not _pkeys <= set(probe_provs):
-            ap.error(f"--probe-match-ids-json providers {sorted(_pkeys)} must all be in --probe-providers")
-        # Held out by construction (B r4 CCC-PLAN-39): refuse any probe match the TRAINING pass could also load
-        # -- a training provider with no allowlist loads its whole manifest, so every probe id under it overlaps.
-        _train_provs = {p for p in args.providers.split(",") if p}
-        _train_allow = json.load(open(args.match_ids_json)) if args.match_ids_json else None
-        _overlap = [
-            (p, str(m))
-            for p, ids in _probe.items()
-            for m in ids
-            if p in _train_provs and (_train_allow is None or str(m) in {str(x) for x in _train_allow.get(p, [])})
-        ]
-        if _overlap:
-            ap.error(
-                f"--probe-match-ids-json names {len(_overlap)} match(es) the training corpus can also load; "
-                "a held-out probe must be disjoint from training"
-            )
+
+    # Map/reduce fan-out (ADR-123): a --shard-index worker's resumed prep loses the in-line probe cohort
+    # (ADR-119), so the held-out TF-19 probe must be the separate --probe-data-dir pass (agnostic staged
+    # per-game data; no pining, no --providers, no manifest).
+    if args.shard_index is not None and not args.probe_data_dir:
+        ap.error("--shard-index requires --probe-data-dir (the held-out TF-19 probe is a separate staged pass)")
 
     out = Path(args.output_dir)
     art = out / "xcross_attempt_v1"
     cache = art / "_feature_cache"
     sys.path.insert(0, "scripts")
     from _cache import cache_is_valid, write_cache_meta
-
-    # G1 launch preflight (combined-cycle-completion spec section 5): BEFORE any corpus work, so a run
-    # that would train a public bundle on owner-tier data never starts.
-    if args.expect_variant is not None:
-        if not args.providers:
-            ap.error("--expect-variant needs --providers (only the pining path lists a requested corpus)")
-        from _corpus import check_expected_variant, requested_is_all_public
-        from _loader_pining import match_visibility, select_match_ids
-
-        _provs = args.providers.split(",")
-        _allow = json.load(open(args.match_ids_json)) if args.match_ids_json else None
-        _pairs = select_match_ids(providers=_provs, match_ids=_allow, max_per_provider=args.max_per_provider)
-        check_expected_variant(
-            args.expect_variant, all_public=requested_is_all_public(_pairs, match_visibility(_provs))
-        )
 
     # --- Phase 1: stream + extract + cache ---
     # M1: bound on BOTH branches (cache-hit never calls _extract).
@@ -1030,32 +990,29 @@ def main(argv=None) -> None:
         groups = np.load(cache / "groups.npy", allow_pickle=True)
         providers = np.load(cache / "providers.npy", allow_pickle=True)
         match_ids = np.load(cache / "match_ids.npy", allow_pickle=True)
-        if args.probe_match_ids_json:
-            _meta_path = cache.parent / "_probe_sample" / "meta.json"
-            if not _meta_path.is_file():
-                raise SystemExit(
-                    "no cached _probe_sample/meta.json for --probe-match-ids-json; use a fresh --output-dir"
-                )
-            _meta = json.load(open(_meta_path))
-            _probe = json.load(open(args.probe_match_ids_json))
-            _want = sorted([p, m] for p, ids in _probe.items() for m in ids)
-            if sorted(_meta.get("probe_matches", [])) != _want:
-                raise SystemExit("cached _probe_sample does not match --probe-match-ids-json; use a fresh --output-dir")
     else:
-        if args.providers:
-            allowlist = json.load(open(args.match_ids_json)) if args.match_ids_json else None
-            sys.path.insert(0, "scripts")
-            from _loader_pining import pining_source
+        home_map = json.loads(Path(args.home_teams).read_text()) if args.home_teams else None
+        source, load = _iter_matches_from_dir(Path(args.data_dir), home_map), None
+        # Map/reduce extract fan-out (ADR-123): a --shard-index worker extracts only its disjoint TRAINING
+        # ref subset to the shared shard_root and exits before the cache/probe/persist. It requires
+        # --probe-data-dir (guarded early) so the prep's resumed main-extraction captures NO in-line probe
+        # cohort (it would come back empty on resume -- ADR-119); the held-out TF-19 probe is that pass.
+        if args.shard_index is not None:  # guarded early (requires --probe-data-dir)
+            from scripts._driver import shard_select
 
-            source, load = pining_source(
-                args.providers.split(","),
-                max_per_provider=args.max_per_provider,
-                match_ids=allowlist,
-                cache_dir=args.cache_dir,
+            _si, _sn = (int(x) for x in args.shard_index.split("/"))
+            _subset = shard_select(list(source), _si, _sn)
+            _extract(
+                _subset,
+                args.horizon_seconds,
+                feature_set=args.feature_set,
+                load=load,
+                shard_root=art / "shards",
+                probe_providers=(),  # no in-line probe: the held-out probe is the separate GS pass in prep
+                probe_comparison_providers=(),
             )
-        else:
-            home_map = json.loads(Path(args.home_teams).read_text()) if args.home_teams else None
-            source, load = _iter_matches_from_dir(Path(args.data_dir), home_map), None
+            print(f"Shard {args.shard_index}: extracted {len(_subset)} refs to shards; exiting pre-cache.")
+            return
         t0 = time.time()
         X, y, groups, providers, match_ids, probe_bundle = _extract(
             source,
@@ -1065,21 +1022,20 @@ def main(argv=None) -> None:
             # Shards live BESIDE the feature cache, under the same per-corpus `--output-dir`, so
             # the "fresh --output-dir per corpus" discipline the fingerprint enforces covers them.
             shard_root=art / "shards",
-            probe_providers=() if args.probe_match_ids_json else tuple(probe_provs),
+            probe_providers=() if args.probe_data_dir else tuple(probe_provs),
             probe_comparison_providers=tuple(comparison_provs),
         )
-        if args.probe_match_ids_json:
-            # D5(c): the TF-19 probe cohort comes from a SEPARATE pass over probe-only matches (e.g. GS
-            # 10502/10503) whose feature rows are discarded -- they can never enter training.
-            from _loader_pining import pining_source
-
-            probe_allow = json.load(open(args.probe_match_ids_json))
-            p_refs, p_load = pining_source(sorted(probe_allow), match_ids=probe_allow, cache_dir=args.cache_dir)
+        if args.probe_data_dir:
+            # ADR-123 AGNOSTIC held-out probe: same separate-pass discipline, but the probe matches come
+            # from a STAGED per-game parquet dir (source_provider set) -- no pining, no --providers, no
+            # manifest. _iter_matches_from_dir yields (prov, name, actions, frames, home); _extract captures
+            # the cohort for every match whose prov is in probe_providers (the staged GS parquet carries it).
+            p_source = _iter_matches_from_dir(Path(args.probe_data_dir))
             *_discarded, p_bundle = _extract(
-                p_refs,
+                p_source,
                 args.horizon_seconds,
                 feature_set=args.feature_set,
-                load=p_load,
+                load=None,
                 shard_root=art / "probe_shards",
                 probe_providers=tuple(probe_provs),
                 probe_comparison_providers=(),
@@ -1116,34 +1072,29 @@ def main(argv=None) -> None:
             _write_probe_sample(ps, cohort, provs)
 
     groups = np.asarray(groups).astype(str)
-    provset = {str(p) for p in providers.tolist()}
     sys.path.insert(0, "scripts")
-    from _corpus import assert_public_corpus, is_public_row
-    from _loader_pining import match_visibility
+    from scripts.hf_jobs.arms import load_arms, match_key
 
-    # Public-vs-owner is keyed on the manifest visibility field, NEVER the provider name (spec 3.2):
-    # the 98 owner-tier SkillCorner matches carry provider `skillcorner` but are non-redistributable.
-    # The manifest is only fetchable on the --providers (pining) path; --data-dir has none -> {} ->
-    # fail-closed all-private (is_public_row's default), which is correct for a local smoke corpus.
-    vis = match_visibility(sorted(set(providers.tolist()))) if args.providers else {}
-    loads_full_public_arm = {"skillcorner", "idsse"} <= set(providers.tolist()) and args.max_per_provider is None
-    assert_public_corpus(vis, expect_full_public_arm=loads_full_public_arm)
-    is_public = is_public_row(providers=providers, match_ids=match_ids, visibility=vis)
-    # Outer gate for the 3-candidate nested paired test (Task 11 Step 4). Kept identical to the
-    # pre-Task-11 predicate (NOT the plan's bare `mix` form): the `gradientsports` clause is what
-    # makes `full` != `sc_extended` (owner GS rows), and it also keeps a public/owner SkillCorner-
-    # only mix -- e.g. the Task-9 slow test's 1-public-game corpus -- out of the paired path, where
-    # StratifiedGroupKFold(2) on a single public group would raise. The real maintainer run always
-    # carries GS, so its behaviour is unchanged; only the paired-test INTERNALS became nested-HPO.
-    # (`run_paired` is also the `admitted`-gate input for the TF-19 held-out probe, further below.)
-    run_paired = bool(is_public.any() and (~is_public).any() and "gradientsports" in provset)
+    # ADR-123 Amendment B: the candidate arms come from the --arms parameter, keyed by the dataset's own
+    # match keys (<source_provider>__<match_id>). The job has NO public/private concept -- it applies the
+    # provided memberships by np.isin (`_build_candidate_masks`). The launcher computed the memberships
+    # off-HF from the public/owner taxonomy and passed them as data.
+    armspec = load_arms(args.arms)
+    match_keys = np.array([match_key(str(p), str(m)) for p, m in zip(providers, match_ids, strict=True)])
+    arms = _build_candidate_masks(match_keys, armspec)
+    is_public = arms.get("public", np.zeros(len(match_keys), dtype=bool))
+    # The nested 3-candidate paired comparison runs only when the launcher supplied the multi-arm
+    # structure (``sc_extended`` + ``full`` -- a mixed-visibility corpus carrying owner rows). An
+    # all-one-arm corpus (the committed public-17) ships its single arm directly. (``run_paired`` is also
+    # the ``admitted``-gate input for the TF-19 held-out probe, further below.)
+    run_paired = ("sc_extended" in arms) and ("full" in arms)
 
     # D21: shared store-identity parts for every HPO study this run opens; `_hpo_once` completes them
     # with its per-fold `tag`. Output / resume / orchestration knobs (output_dir, n_trials, allow_dirty,
     # and the 5c parallel-path shard_root/study/assemble) are excluded so they never fork the store key;
     # every other CLI arg is an input the tuning depends on. Persisted in the study config below so the
     # parallel workers and the reduce key their stores on the SAME identity as a serial run.
-    resume_knobs = {"output_dir", "n_trials", "allow_dirty", "shard_root", "study", "assemble"}
+    resume_knobs = {"output_dir", "n_trials", "allow_dirty", "shard_root", "study", "assemble", "shard_index"}
     objective_inputs = {
         "driver": "train_xcross_attempt",
         "args": {k: v for k, v in vars(args).items() if k not in resume_knobs},
@@ -1168,7 +1119,8 @@ def main(argv=None) -> None:
         "run_prov": run_prov,
         "objective_inputs": objective_inputs,
         "ship_variant": args.ship_variant,
-        "expect_variant": args.expect_variant,
+        "expect_variant": None,  # ADR-123 Amendment B: --expect-variant removed (pining-path preflight)
+        "ship_order": list(armspec.ship_order),  # the single-candidate ship label comes from the param
     }
     from scripts._study_shared import persist_study_inputs
 
@@ -1181,6 +1133,7 @@ def main(argv=None) -> None:
         match_ids=match_ids,
         is_public=is_public,
         config=config,
+        arms=arms,
     )
     if args.prep_only:
         print(json.dumps({"study_root": str(study_root), "studies": enumerate_studies(study_root)}))

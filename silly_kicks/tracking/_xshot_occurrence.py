@@ -23,6 +23,7 @@ import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.id_compat import align_join_keys, ids_match
+from silly_kicks.spadl import config as _spc
 from silly_kicks.tracking import _geometry as _geo
 from silly_kicks.tracking._ball_carrier import (
     DEFAULT_CARRIER_PARAMS,
@@ -286,11 +287,17 @@ def extract_xshot_features(
     return pd.DataFrame([[values[c] for c in names]], columns=names)
 
 
+#: SPADL action types that count as a shot occurrence (ADR-126). Defined above
+#: ``build_xshot_labels`` so it can be the default ``shot_types`` argument.
+_DEFAULT_SHOT_TYPES = ("shot", "shot_penalty", "shot_freekick")
+
+
 def build_xshot_labels(
     frames_index: pd.DataFrame,
     shots: pd.DataFrame,
     *,
     horizon_seconds: float = 1.0,
+    shot_types: tuple[str, ...] = _DEFAULT_SHOT_TYPES,
 ) -> pd.Series:
     """Per-row xS label: 1 iff a same-team shot occurs in [t, t+horizon] same period.
 
@@ -298,14 +305,23 @@ def build_xshot_labels(
     row's window --- NO linkage step (avoids the +/-tolerance link smear at the 1 s
     horizon). Robust to non-contiguous ``frame_id`` (uses time, not frame index).
 
+    The shot-type filter is applied HERE, by ``type_id`` (ADR-126), mirroring
+    :func:`~silly_kicks.tracking._xcross_attempt.build_xcross_labels`. A caller may pass a
+    full SPADL actions table; only rows whose ``type_id`` is a shot type are counted. This
+    is deliberately NOT guarded on a ``type_name`` column (SPADL actions carry ``type_id``
+    but not always ``type_name``; the old ``type_name``-presence guard silently counted
+    EVERY action when fed a ``type_name``-less table).
+
     Parameters
     ----------
     frames_index : pd.DataFrame
         One row per scored frame slot; columns ``game_id``, ``period_id``,
         ``time_seconds``, ``team_in_possession``.
     shots : pd.DataFrame
-        Shot actions; columns ``game_id``, ``period_id``, ``team_id``,
-        ``time_seconds``.
+        Shot (or full) actions; columns ``game_id``, ``period_id``, ``team_id``,
+        ``time_seconds``, and ``type_id`` (required for the shot-type filter).
+    shot_types : tuple[str, ...]
+        SPADL action-type names counted as shots (default ``_DEFAULT_SHOT_TYPES``).
 
     Returns
     -------
@@ -316,14 +332,16 @@ def build_xshot_labels(
     --------
     >>> # y = build_xshot_labels(fidx, shots, horizon_seconds=1.0)
     """
-    # Thin wrapper over the shared occurrence helper (M-3). frames carry the possessing team
-    # as `team_in_possession`; shots carry the acting team as `team_id`.
-    y = _build_occurrence_labels(frames_index, shots, horizon=horizon_seconds, frame_team_col="team_in_possession")
+    # Filter to shot type_ids FIRST (ADR-126), then the shared occurrence helper (M-3). frames
+    # carry the possessing team as `team_in_possession`; shots carry the acting team as `team_id`.
+    type_ids = {_spc.actiontype_id[t] for t in shot_types}
+    shots_f = shots[shots["type_id"].isin(type_ids)][["game_id", "period_id", "team_id", "time_seconds"]]
+    y = _build_occurrence_labels(frames_index, shots_f, horizon=horizon_seconds, frame_team_col="team_in_possession")
     return pd.Series(y, index=frames_index.index)
 
 
 _DEFAULT_CARRIER_PARAMS = DEFAULT_CARRIER_PARAMS  # shared constant (anti-drift; PR-S80 L1)
-_DEFAULT_SHOT_TYPES = ("shot", "shot_penalty", "shot_freekick")
+# _DEFAULT_SHOT_TYPES moved above build_xshot_labels (ADR-126) so it can be its default argument.
 _HF_REPO_ID = "silly-kicks/xshot-occurrence-v1"
 _MODEL_VERSION = "1.0.0"
 _XSHOT_WEIGHTS_ROOT = Path(__file__).parent / "_xshot_weights"
@@ -914,12 +932,8 @@ def prepare_xshot_training_data(
     features = pd.concat(feat_rows, ignore_index=True)[_names]
     fidx = pd.DataFrame(labels_idx)
 
-    shots_f = shots
-    if "type_name" in shots.columns:
-        shots_f = shots[shots["type_name"].isin(types)]
-    elif not types:
-        shots_f = shots.iloc[0:0]  # empty type set + no type column -> no positives
-    labels = build_xshot_labels(fidx, shots_f, horizon_seconds=horizon_seconds).to_numpy()
+    # ADR-126: the shot-type filter lives in build_xshot_labels (by type_id); pass the raw table.
+    labels = build_xshot_labels(fidx, shots, horizon_seconds=horizon_seconds, shot_types=types).to_numpy()
     groups = fidx["game_id"].to_numpy()
     if return_keys:
         return features, labels, groups, pd.DataFrame(key_rows, columns=["game_id", "period_id", "frame_id"])
