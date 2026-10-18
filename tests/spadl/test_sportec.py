@@ -181,6 +181,22 @@ def _df_corner_crossed() -> pd.DataFrame:
     return df
 
 
+def _df_corner_crossed_real_dfl() -> pd.DataFrame:
+    """A crossed corner as REAL DFL data encodes it: play_height=="high" into a box target area."""
+    df = _df_corner()
+    df["play_height"] = ["high"]
+    df["corner_target_area"] = ["nearPost"]
+    return df
+
+
+def _df_corner_short_real_dfl() -> pd.DataFrame:
+    """A short corner as REAL DFL data encodes it: play_height=="flat", corner_target_area=="short"."""
+    df = _df_corner()
+    df["play_height"] = ["flat"]
+    df["corner_target_area"] = ["short"]
+    return df
+
+
 def _df_throwin() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -271,6 +287,20 @@ class TestSportecActionMappingPassAndSetPieces:
             _df_corner_crossed(), home_team_id="T-HOME", home_team_start_left=True
         )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_crossed"]
+
+    def test_corner_real_dfl_high_maps_to_corner_crossed(self):
+        # Real DFL discriminator (measured on the 7 IDSSE matches): play_height=="high" aerial delivery.
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_corner_crossed_real_dfl(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_crossed"]
+
+    def test_corner_real_dfl_flat_short_maps_to_corner_short(self):
+        # play_height=="flat" + corner_target_area=="short" is the genuine short corner in real DFL.
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_corner_short_real_dfl(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_short"]
 
     def test_throwin_maps_to_throw_in_other_bodypart(self):
         actions, _ = sportec_mod.convert_to_actions(_df_throwin(), home_team_id="T-HOME", home_team_start_left=True)
