@@ -41,9 +41,9 @@
     "gamma": 0.25
   },
   "params": {
-    "n_estimators": 202,
+    "n_estimators": 207,
     "max_depth": 4,
-    "learning_rate": 0.05776217048594245,
+    "learning_rate": 0.021742720847949443,
     "tree_method": "hist",
     "n_jobs": 1,
     "subsample": 1.0,
@@ -51,15 +51,15 @@
     "random_state": 42,
     "eval_metric": "logloss",
     "verbosity": 0,
-    "min_child_weight": 6,
-    "reg_lambda": 3.6250261153630468
+    "min_child_weight": 19,
+    "reg_lambda": 3.9849467204487987
   },
   "version": "1.0.0",
   "pitch_length": 105.0,
   "pitch_width": 68.0,
   "geometry_version": "goal-relative-2",
-  "xgboost_version": "3.4.0",
-  "training_platform": "Linux-6.17.0-1014-nvidia-aarch64-with-glibc2.39",
+  "xgboost_version": "3.4.1",
+  "training_platform": "Linux-6.12.110-135.202.amzn2023.x86_64-x86_64-with-glibc2.41",
   "shipped_variant": "public",
   "provider_list": [
     "idsse",
@@ -69,12 +69,12 @@
     "version": "chirality-probe-1",
     "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
     "outputs": [
-      0.0445694663
+      0.0023076346
     ]
   },
   "feature_contract": {
     "version": "feature-contract-1",
-    "probe_sha256": "9f17a54c10b8237f1f60ac7f84953ac8948b90e92bbc45eabc7bc3378138b398",
+    "probe_sha256": "d86fc4ab50ba6d14bee656539383512cec95ea328402271a7dcc930dfb001135",
     "fingerprint": [
       22.0227155455,
       0.6889243882,
@@ -108,5 +108,5 @@
       "goal_width": 7.32
     }
   },
-  "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+  "training_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d"
 }

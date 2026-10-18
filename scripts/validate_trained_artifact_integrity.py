@@ -142,7 +142,16 @@ def main(argv: list[str] | None = None) -> None:
             family=args.family,
             rel_tol=args.rel_tol,
         ),
-        **prov,
+        # Canonical research-artifact provenance (ADR-037): the TOP-LEVEL `run_commit` /
+        # `run_tree_dirty` shape that `test_artifact_provenance_output.py` enforces across
+        # docs/research. `git_provenance()` returns the raw `commit`/`dirty` keys, which the gate
+        # does NOT read -- splatting them (`**prov`) emits an untraceable artifact. Map them here,
+        # exactly as the sibling drivers (build_rq_pass_scores, derive_opengoal_range, ...) do.
+        "run_commit": prov["commit"],
+        "run_tree_dirty": prov["dirty"],
+        "run_tree_state": prov["tree_state"],
+        "platform": prov["platform"],
+        "machine": prov["machine"],
     }
     Path(args.out).write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps({"family": args.family, "go": out["go"], "verdict": v}, indent=2))

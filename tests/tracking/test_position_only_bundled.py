@@ -44,6 +44,7 @@ _C3 = "4bda048b898669227a648a5f853c4314f7fdebe3"  # ADR-089 both-axes ghost re-f
 _C4 = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"  # F1b float32-frame ghost default re-fit (ADR-106)
 _C5 = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"  # combined-cycle C2: xshot/xcross + ghost position_only re-fit at M
 _C6 = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"  # TF-65 velocity-gap ghost default/sweeper re-fit (ADR-120, 4.134.0)
+_C7 = "4095251730ce216decf99ec8e47d8e1162a04a1d"  # ADR-126 (4.138.0): xShot type_id label re-fit
 
 
 def _declare_unavailable(frames: pd.DataFrame) -> pd.DataFrame:
@@ -86,10 +87,12 @@ def test_bundled_position_only_loads_clean(name, cls, root, n_feat):
 def test_bundled_position_only_carry_training_provenance():
     # Bundled weights must be traceable to a commit (test_artifact_provenance_output enforces this
     # over the whole surface; pinned here to the position_only trio for a focused, in-place check).
-    # The combined-cycle C2 re-fit all three position_only variants at M (_C5): xshot/xcross on the
-    # public arm (the old sc_extended weights were wrong-corpus) and ghost position_only on the F1b
-    # float32 frames (byte-identical to the 3ca609f archive, re-stamped at the run commit).
-    expected = {"_xshot_weights": _C5, "_xcross_weights": _C5, "_ghost_gk_weights": _C5}
+    # The combined-cycle C2 re-fit xcross + ghost position_only at M (_C5): xcross on the public arm
+    # (the old sc_extended weights were wrong-corpus) and ghost position_only on the F1b float32 frames
+    # (byte-identical to the 3ca609f archive, re-stamped at the run commit). The xShot position_only
+    # bundle was re-fit again at _C7 for the ADR-126 type_id label fix (4.138.0; the label fix is
+    # independent of velocity, so it is NOT a byte-identical no-op).
+    expected = {"_xshot_weights": _C7, "_xcross_weights": _C5, "_ghost_gk_weights": _C5}
     for root, want in expected.items():
         meta = json.loads((_WEIGHTS_ROOT / root / "position_only" / "metadata.json").read_text(encoding="utf-8"))
         assert meta.get("training_commit") == want, f"{root}/position_only training_commit"

@@ -31,7 +31,14 @@ nearest defenders + 5 nearest attackers.
 
 - Domain filter: alive-ball, **attacking third**
 - Feature set: **`faithful`** (velocity-bearing, 27 features)
-- Trained on **964,263** rows / **182,517** positives (18.9% positive rate)
+- Trained on **964,264** rows / **12,884** positives (**1.34%** positive rate)
+
+> **Re-fit 2026-10-18 (ADR-126 + ADR-120).** The prior artifact (`training_commit 1ce63ef`, 18.9% positive
+> rate, PR-AUC 0.585) was **defective**: a `type_name`-presence guard was bypassed on the pining full-actions
+> table, so the label counted **any** action within 1 s, not just shots (18.9% is ~7× the physical maximum).
+> This artifact re-fits on the corrected `type_id` label (1.34%, the honest shot-occurrence base rate) and on
+> the corrected floor velocities (ADR-120). The headline PR-AUC drops 0.585 → 0.124 **because the old figure
+> measured the wrong label, not a quality regression** — 0.124 is a ~9× lift over the 1.34% base.
 
 ## Which variant should I use?
 
@@ -56,13 +63,13 @@ corpus **is** the owner-tier `sc_extended` tier, so there is no paired compariso
 
 | Metric | Value | Baseline |
 |---|---|---|
-| PR-AUC | 0.5851 (± 0.0436) | base rate 0.1893 |
-| Brier | 0.1131 | base-rate Brier 0.1534 |
-| Log loss | 0.3671 | &mdash; |
+| PR-AUC | 0.1242 (± 0.0033) | base rate 0.0134 |
+| Brier | 0.01232 | base-rate Brier 0.01318 |
+| Log loss | 0.0541 | &mdash; |
 
 All four acceptance gates pass (`enough_usable_folds`, `pr_auc_gt_base_rate`,
 `brier_lt_base_rate_brier`, `log_loss_lt_uniform`). Estimates are **CV, not the shipped fit**.
-`training_commit`: `1ce63ef`.
+`training_commit`: `4095251`.
 
 ## TF-19 status: the shot arm has never been measured
 
@@ -130,6 +137,6 @@ See the `NOTICE` file in the silly-kicks repository for full bibliographic citat
 
 https://github.com/karsten-s-nielsen/silly-kicks
 
-## Wheel sibling (4.134.0)
+## Wheel sibling (4.138.0)
 
-In silly-kicks 4.134.0 the wheel's bundled `default` was re-fit on the corrected floor velocities (TF-65 / ADR-120, `training_commit=a34e992`). This Hub owner-tier artifact is unchanged this cycle: the velocity-gap re-fit touched only the wheel-bundled public variant; re-fitting this restricted `sc_extended` model on the corrected velocities is a tracked owner-run follow-up.
+In silly-kicks 4.138.0 the wheel's bundled `default` was re-fit on the corrected type_id shot label (ADR-126, `training_commit=4095251`). This Hub owner-tier `sc_extended` artifact is re-fit this cycle as well — the same `type_id` label fix (18.9% → 1.34% positive rate) plus the TF-65 / ADR-120 floor-velocity correction. The re-fit weights are pushed by the ADR-088 model-publish step; that re-publish is the point at which the Hub artifact state changes.

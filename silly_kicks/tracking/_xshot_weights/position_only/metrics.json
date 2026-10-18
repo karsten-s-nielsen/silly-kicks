@@ -1,10 +1,10 @@
 {
-  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
   "shipped_variant": "public",
   "n_rows": 156106,
-  "n_positive": 34649,
+  "n_positive": 2405,
   "providers": [
     "idsse",
     "skillcorner"
@@ -83,19 +83,19 @@
   "candidates": {
     "public": {
       "params": {
-        "n_estimators": 266.921160012869,
-        "max_depth": 5.677741238430813,
-        "learning_rate": 0.025164167531014834,
-        "min_child_weight": 18.412238054096036,
-        "reg_lambda": 2.29977746907269
+        "n_estimators": 214.57229803169446,
+        "max_depth": 2.6263251775596146,
+        "learning_rate": 0.021567016350550857,
+        "min_child_weight": 19.790939455552685,
+        "reg_lambda": 4.060885275895105
       },
       "metrics": {
-        "pr_auc": 0.3035995420824977,
-        "brier": 0.16700676679611207,
-        "log_loss": 0.5107476651668549,
-        "pr_auc_std": 0.027998941568745325,
-        "positive_rate": 0.22195815663715682,
-        "base_rate_brier": 0.1726927333393922,
+        "pr_auc": 0.07547108362594587,
+        "brier": 0.014732493832707406,
+        "log_loss": 0.06683742105960847,
+        "pr_auc_std": 0.017431221831010278,
+        "positive_rate": 0.015406198352401573,
+        "base_rate_brier": 0.015168847404728032,
         "n_usable_folds": 5
       },
       "providers": [
@@ -111,5 +111,5 @@
     "log_loss_lt_uniform": true
   },
   "estimates_are_cv_not_shipped_fit": true,
-  "artifact_size_bytes": 1182266
+  "artifact_size_bytes": 242797
 }

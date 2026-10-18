@@ -8,6 +8,8 @@ band inputs are consistent with the n_rows used by the reproduction check.
 
 from __future__ import annotations
 
+import json
+
 from scripts import validate_trained_artifact_integrity as V
 
 
@@ -77,3 +79,43 @@ def test_verdict_passes_corrected_fails_defect():
     assert v_bad["base_rate_ok"] is False
     assert v_bad["reproduced"] is False
     assert V.is_go(v_bad) is False
+
+
+def test_main_stamps_canonical_run_provenance(tmp_path):
+    """main() must write the ADR-037 canonical top-level provenance, not raw git_provenance keys.
+
+    The research-artifact gate (``test_artifact_provenance_output.test_research_artifacts_carry_run_provenance``)
+    reads ``run_commit`` / ``run_tree_dirty`` top-level. A verdict stamped with the raw ``commit`` /
+    ``dirty`` keys that :func:`scripts._provenance.git_provenance` returns loads fine but trips the gate --
+    the defect this test pins so ``**prov`` can never come back.
+    """
+    shipped = _shipped()
+    fresh = dict(_shipped())
+    sp = tmp_path / "shipped.json"
+    fp = tmp_path / "fresh.json"
+    out = tmp_path / "verdict.json"
+    sp.write_text(json.dumps(shipped), encoding="utf-8")
+    fp.write_text(json.dumps(fresh), encoding="utf-8")
+    V.main(
+        [
+            "--family",
+            "xshot_occurrence",
+            "--shipped",
+            str(sp),
+            "--fresh",
+            str(fp),
+            "--n-events",
+            "21",
+            "--fps",
+            "10.0",
+            "--out",
+            str(out),
+            "--allow-dirty",  # the test tree may be dirty; provenance is still stamped
+        ]
+    )
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data.get("run_commit"), "verdict carries no top-level run_commit (ADR-037 canonical)"
+    assert "run_tree_dirty" in data, "verdict carries no top-level run_tree_dirty"
+    assert "commit" not in data and "dirty" not in data, (
+        "raw git_provenance keys leaked into the verdict -- map them to run_commit/run_tree_dirty"
+    )

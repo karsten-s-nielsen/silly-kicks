@@ -34,11 +34,10 @@ gate enforces I1 as a **pure static closure** (no infra-leaf exemption — the o
 109 for skillcorner-1925299; the physical maximum for 21 shots at a 1 s horizon is ≈ 210). The shipped xShot
 weights and the whole pining-trained lineage (17–28% positive rate) are therefore defective. The filter now
 lives **inside** `build_xshot_labels` and selects by `type_id` (mirroring `build_xcross_labels`), so no
-caller can bypass it; the fragile guard is deleted. xCross was unaffected (already `type_id`-filtered).
-This commit ships the corrected **label code** only; the bundled xShot **weights are still the defective
-22%-label artifact** and are replaced in the follow-up artifact commit (re-fit on the corrected label,
-expected ~1.5% positive rate / ~5× PR-AUC lift). **Hyrum notice (takes effect at the artifact commit):**
-the xShot output distribution will change 22% → ~1.5%; no first-party module consumes the xShot probability
+caller can bypass it; the fragile guard is deleted. xCross was unaffected (already `type_id`-filtered). The
+label code lands in the code commit; the re-fit xShot **weights** land in the artifact commit (below) at the
+corrected **1.54% positive rate** (wheel) / 1.34% (sc_extended), pr_auc 0.082/0.075 (wheel). **Hyrum notice:**
+the xShot output distribution changes 22% → 1.54%; no first-party module consumes the xShot probability
 (only `extract_xshot_features`, unchanged), so the affected consumer is the external lakehouse mart,
 recorded in `docs/PRIVATE_CONSUMERS.md` (lakehouse re-materialization out of scope, owner ruling).
 
@@ -51,15 +50,27 @@ within a relative δ; a mismatch is a hard stop) + construct-validity on the abs
 that rejects the 22% defect which the existing `pr_auc_gt_base_rate` acceptance passed. Every campaign
 artifact is audited against it (the campaign's reproduction-free floor validated none).
 
-### Re-fit weights + audit (FORTHCOMING — the follow-up artifact commit, ADR-126/ADR-037)
+### Re-fit weights + audit (artifact commit, ADR-126/ADR-037)
 
-The re-fit xShot **weights** and the per-family **audit** (reproduction + physically-derived base-rate
-gate over every HF-trainable campaign artifact) are produced on this code commit's clean tree and land in
-the separate artifact commit — NOT this one. Until that commit lands, the bundled xShot weights remain the
-defective 22%-label artifact. The artifact commit carries the re-fit weights, the per-family verdict JSONs
-and the audit memo under `docs/research/trained_artifact_integrity/`, and extends this entry with the
-measured outcomes (expected: xShot adopts the corrected ~1.5%-rate fit; the other families reproduce and
-are left untouched).
+Every HF-trainable campaign artifact was re-fit on the staged neutral corpora (HF Jobs, branch tip
+`4095251`, clean-tree verdicts) and audited; the memo + per-family verdict JSONs are in
+`docs/research/trained_artifact_integrity/audit_2026-10-18.md`. This cleared two defects: the ADR-126 xShot
+label defect, and the ADR-120 floor-velocity staleness the owner-tier Hub artifacts had carried.
+
+- **Adopted — xShot (wheel `default`/`position_only`).** Corrected `type_id` label: **1.54%** positive rate
+  (was 22.2%), pr_auc **0.082/0.075** (was 0.342/0.304); ships `public`, provider_list `["idsse","skillcorner"]`.
+  The committed pr_auc was inflated by the 22% "any-action" label — the published figure drops 0.34→0.08
+  because the old number measured the wrong label, not a quality regression. Wheel weights updated here.
+- **Adopted (Hub) — `xshot-occurrence-v1`/`-position-only` (sc_extended).** Same label defect at the owner tier
+  (18.9%→**1.34%**, pr_auc 0.585→0.124/0.115); ships `sc_extended` (the `ship_order[-1]` fix — never `public`
+  on owner-tier data). **`xcross-attempt-v1`/`-position-only`** (velocity-corrected, ships `sc_extended`) and
+  **`ghost-gk-v1`** `full` (velocity-corrected, cv_mae 1.1271) re-published.
+- **Kept (reproduced) — the other nine.** ghost_gk ×4 byte-identical, ghost_outfield ×2 within ±0.01%,
+  receiver exact (`top1_cv` 0.50969141), xcross wheel reproduce — committed weights faithful, left untouched.
+
+The fresh feature-contract probe (`d86fc4ab`) is the Python-3.12 (CI/deployment) value — the artifacts load
+warning-free under py3.12 (the `.venv` py3.10 `UnverifiableFeatureContractWarning` is a non-escalated odd-env
+artifact).
 
 ### Changed — HF harness ports (ADR-122/123, bundled with this release)
 
@@ -83,6 +94,25 @@ control. The branch now ships `ship_order[-1]` (the broadest arm present): all-p
 2-tier corpus ships `sc_extended` over all its rows (faithful to the committed single-candidate run). The
 HF-published `sc_extended` / `sc_extended_position_only` xShot artifacts carried the same 18.9% label
 defect and are re-fit + re-published on the 115-match owner-tier corpus.
+
+### Fixed — artifact-commit full-suite consistency (ADR-037/ADR-126)
+
+The first artifact-commit adoption tripped twelve full-suite contract tests that the pre-commit subset run
+did not collect (a review-coverage gap, now owned: a bundled-weights / model-card / provenance change is
+validated against the full `tests/` tree, never a path subset). Three consistency fixes:
+
+- **Provenance.** `validate_trained_artifact_integrity` now stamps the canonical top-level `run_commit` /
+  `run_tree_dirty` (ADR-037) that the research-artifact gate reads, instead of splatting the raw
+  `git_provenance()` keys (`commit`/`dirty`); a new unit test pins the output schema.
+- **Public-bundle corpus ids.** The visibility-blind in-job trainer (Amendment B / I1) cannot emit a public
+  corpus's explicit ids, so it records a digest. The new off-HF seam
+  `scripts/_corpus.rehydrate_public_corpus_ids` rehydrates the canonical `corpus_match_ids` for a public
+  bundle (idempotent; refuses a corpus whose count or providers are not the pinned public arm). It is the
+  single documented adoption step (`docs/howto/hf-jobs-training.md`); the two wheel xShot bundles carry the
+  rehydrated ids.
+- **Model cards.** `_hub_note` asserts only the verifiable wheel-sibling provenance; a Hub-only card states
+  its own re-fit as body prose, never a pinned off-repo claim (the repo cannot verify the ADR-088
+  re-publish). All five Hub-only cards are truthful.
 
 ## [4.137.0] — 2026-10-15 — GS ball-contact trajectory-dedup + ball-z provenance / honest-NaN `is_aerial` (TF-79 follow-up, ADR-125)
 

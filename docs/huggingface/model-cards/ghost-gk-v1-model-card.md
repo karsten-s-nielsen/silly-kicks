@@ -146,7 +146,7 @@ while production served the KDE **mode** (≈4.65 m):
 |-----------|------------------------|---------|
 | old card number (`predict_mean`, sklearn, phase-categorical) | ≈1.1 m | never served (unavailable after `load()`) |
 | KDE mode (≤ v4.12) | ≈4.65 m | served through 4.12 |
-| **boosted mean (reconstructed pickle-free)** | **1.126 m** (both-axes re-fit, 5-fold aggregate; per-provider GS 1.071 / SkillCorner 1.162 / Sportec 1.672) | **served now** |
+| **boosted mean (reconstructed pickle-free)** | **1.127 m** (velocity-corrected re-fit, 5-fold aggregate euclidean) | **served now** |
 
 The 4.14.0 number is re-measured at re-fit on the same held-out split as the mode (not copied from the
 old ≈1.1 m card, which was a *different*, phase-categorical model). An intermediate design that served
@@ -261,4 +261,4 @@ Features are extracted in **goal-relative coordinates**:
 
 ## Wheel sibling (4.134.0)
 
-In silly-kicks 4.134.0 the wheel's bundled `default` was re-fit on the corrected floor velocities (TF-65 / ADR-120, `training_commit=a34e992`). This Hub owner-tier artifact is unchanged this cycle: the velocity-gap re-fit touched only the wheel-bundled public variant; re-fitting this `full` Hub model on the corrected velocities is a tracked owner-run follow-up.
+In silly-kicks 4.134.0 the wheel's bundled `default` was re-fit on the corrected floor velocities (TF-65 / ADR-120, `training_commit=a34e992`). This Hub `full` model is re-fit on the same corrected floor velocities this cycle (silly-kicks 4.138.0, `--variant full`, 179-match corpus): aggregate held-out euclidean MAE 1.127 m (essentially unchanged — `predict_mean` is velocity-robust), the KDE density resolution unchanged. The re-fit artifact is pushed by the ADR-088 model-publish step; pre-4.138.0 artifacts still load (feature-contract / chirality unchanged by the velocity re-fit).

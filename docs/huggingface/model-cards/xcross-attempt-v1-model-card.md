@@ -52,15 +52,15 @@ parameters are published here &mdash; **no raw provider tracking data** (only sp
 The Hub `sc_extended` repo is the owner-tier **archive**: it holds the owner-tier model independent of
 the wheel-bundle selection gate, which decides only what ships *in the wheel* (ADR-071). This artifact
 was produced with that operator override (`--ship-variant sc_extended`); the gate's verdict and
-per-fold deltas are recorded in `metrics.json` (`candidates.paired`). `training_commit`: `b658445`.
+per-fold deltas are recorded in `metrics.json` (`candidates.paired`). `training_commit`: `4095251`.
 
 ## Held-out CV (5 folds, out-of-fold)
 
 | Metric | Value | Baseline |
 |---|---|---|
-| PR-AUC | 0.1888 (± 0.0108) | base rate 0.0500 |
+| PR-AUC | 0.1896 (± 0.0105) | base rate 0.0500 |
 | Brier | 0.0436 | base-rate Brier 0.0475 |
-| Log loss | 0.1658 | &mdash; |
+| Log loss | 0.1655 | &mdash; |
 
 All four acceptance gates pass (`enough_usable_folds`, `pr_auc_gt_base_rate`,
 `brier_lt_base_rate_brier`, `log_loss_lt_uniform`). Estimates are **CV, not the shipped fit**.
@@ -147,4 +147,4 @@ https://github.com/karsten-s-nielsen/silly-kicks
 
 ## Wheel sibling (4.134.0)
 
-In silly-kicks 4.134.0 the wheel's bundled `default` was re-fit on the corrected floor velocities (TF-65 / ADR-120, `training_commit=a34e992`). This Hub owner-tier artifact is unchanged this cycle: the velocity-gap re-fit touched only the wheel-bundled public variant; re-fitting this restricted `sc_extended` model on the corrected velocities is a tracked owner-run follow-up.
+In silly-kicks 4.134.0 the wheel's bundled `default` was re-fit on the corrected floor velocities (TF-65 / ADR-120, `training_commit=a34e992`). This Hub owner-tier `sc_extended` artifact is re-fit on the same corrected floor velocities this cycle (silly-kicks 4.138.0): predictions change within noise from the prior velocity-stale artifact (PR-AUC 0.189). No label defect — xCross was always `type_id`-filtered. The re-fit artifact is pushed by the ADR-088 model-publish step.

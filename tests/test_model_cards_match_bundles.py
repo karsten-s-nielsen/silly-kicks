@@ -19,6 +19,8 @@ _W = Path("silly_kicks/tracking")
 _PROVENANCE_VERSION = "4.128.0"
 _TF65_VERSION = "4.134.0"
 _TF65_COMMIT7 = "a34e992"  # the TF-65 velocity-gap re-fit commit (short); dirs stamped this were re-fit this cycle
+_ADR126_VERSION = "4.138.0"
+_ADR126_COMMIT7 = "4095251"  # the ADR-126 xShot type_id label re-fit commit (short); the two xShot wheel bundles
 _NUM = re.compile(r"\d+(?:\.\d+)?")
 _GK_ROWS = {
     "Held-out CV euclidean MAE": [
@@ -82,21 +84,30 @@ def _refit_head(rel: str) -> str:
 
 
 def _hub_note(rel: str) -> str:
-    """The wheel-sibling note a Hub-only card must carry, keyed on the wheel bundle's training_commit:
-    a wheel sibling re-fit this cycle (TF-65, `a34e992`) states the velocity-gap re-fit + that this Hub
-    owner-tier artifact is unchanged this cycle; a byte-identical (not-re-fit) sibling keeps its prior
-    F1b float32 note."""
+    """The wheel-sibling PROVENANCE sentence a Hub-only card must carry, keyed on the wheel bundle's
+    training_commit.
+
+    Option A (r7 resolution): this asserts ONLY the verifiable wheel-sibling fact -- the commit the wheel
+    bundle was last re-fit at, and what on. It does NOT assert the Hub artifact's own cycle state. That
+    state depends on the off-repo Hub re-publish (ADR-088), which this repo cannot verify, so the card
+    states it as BODY prose instead of a pinned claim -- a repo must not pin an off-repo fact. The earlier
+    contract keyed a "This Hub artifact is unchanged this cycle" clause on the WHEEL commit, which fired
+    FALSE whenever a Hub artifact was re-fit while its wheel sibling was not (ghost `full`, xcross
+    `sc_extended`, this cycle)."""
     short, name = _short(rel), Path(rel).name
+    if short == _ADR126_COMMIT7:
+        return (
+            f"In silly-kicks {_ADR126_VERSION} the wheel's bundled `{name}` was re-fit on the "
+            f"corrected type_id shot label (ADR-126, `training_commit={short}`)."
+        )
     if short == _TF65_COMMIT7:
         return (
-            f"In silly-kicks {_TF65_VERSION} the wheel's bundled `{name}` was re-fit on "
-            f"the corrected floor velocities (TF-65 / ADR-120, `training_commit={short}`). This Hub "
-            f"owner-tier artifact is unchanged this cycle"
+            f"In silly-kicks {_TF65_VERSION} the wheel's bundled `{name}` was re-fit on the corrected "
+            f"floor velocities (TF-65 / ADR-120, `training_commit={short}`)."
         )
     return (
         f"In silly-kicks {_PROVENANCE_VERSION} the wheel's bundled `{name}` was re-fit on "
-        f"float32-stored frames (`training_commit={short}`). This Hub artifact is unchanged: "
-        f"trained on float64 frames"
+        f"float32-stored frames (`training_commit={short}`)."
     )
 
 
@@ -141,7 +152,9 @@ def test_mirror_card_table_row_equals_the_bundle(card, label):
 
 
 @pytest.mark.parametrize("card", sorted(_HF_ONLY))
-def test_hub_only_card_states_the_unchanged_note_for_its_bundled_sibling(card):
+def test_hub_only_card_states_its_bundled_sibling_provenance(card):
+    """Option A: the card carries the verifiable wheel-sibling provenance sentence exactly once. The Hub
+    artifact's own re-fit state is body prose (off-repo, verified at the ADR-088 re-publish), not pinned."""
     rel = _HF_ONLY[card]
     assert _card(card).count(_hub_note(rel)) == 1
 

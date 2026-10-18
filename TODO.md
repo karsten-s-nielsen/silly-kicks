@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.137.0: GS ball-contact trajectory-dedup + ball-z provenance / honest-NaN `is_aerial` (TF-79 follow-up, ADR-125).** (A) Provider-agnostic duplicate-ball-frame dedup in `detect_ball_contacts` fixes Gradient Sports under-detection (a ~50% duplicate-frame velocity sawtooth — NOT the "blunted ball" claimed in 4.136.0); recovers GS agree@0.5 ~0.05→~0.4 (= IDSSE), harmless elsewhere. (B) New `z_source` frames column (provider-declared) + `aerial_source` contacts column + `validate_z_provenance` guard; `is_aerial` is now `<NA>` unless z is measured, so SkillCorner's estimated z no longer emits a fake boolean. No retrain; corrects the 4.136.0 GS caveat (ADR-124 superseded). Detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.138.0: HF visibility-blind harness (ADR-123 Am B) + xShot label-filter fix & trained-artifact integrity gate (ADR-126).** A bypassed `type_name` guard had let the xShot occurrence label count ANY action as a shot (22% wheel / 18.9% Hub-`sc_extended` positive rate, ~9x the physical maximum); the filter now selects by `type_id` (1.54% / 1.34%). Added a reproduction + physically-derived base-rate integrity gate (`validate_trained_artifact_integrity`). Re-fit EVERY HF-trainable artifact on the corrected label + corrected floor velocities (discharging the ADR-120 owner-tier velocity-re-fit debt): wheel xShot x2, Hub `sc_extended` xShot/xCross x4, `full` ghost-gk-v1. In-job trainer code is visibility-blind (public/owner policy enters as the neutral `--arms` job param); ship_order ships the BROADEST arm (never owner-tier labelled `public`); `provider_list` records the dataset identity; v2.2 hf-CLI harness ports. Detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -94,19 +94,6 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   prewarped signal-prep filter (negligible at the interim 0.4 Hz; D1 runs on the DGX, not yet executed). Adopt
   `prewarp=True` in `residual_cutoff_for_run` when the default flips, or sooner if D1 derives high cutoffs.
   Dovetails with TF-65 (kinematics-smoothing bake-off, which already eats a velocity-dependent retrain).
-- **Deferred velocity-model DGX re-fits (the single home for outstanding silly-kicks retrain/re-fit debt).**
-  The shipped SG + dense-grid floor (4.134.0, ADR-120) moved broadcast-provider velocities; 4.134.0 re-fit
-  only the PUBLIC-tier faithful models (ghost-GK `default`/`sweeper`, ghost-outfield `default`, xshot,
-  xcross), leaving these velocity-dependent artifacts on PRE-dense-grid weights, OWED a DGX re-fit on the
-  corrected floor velocities: (a) the restricted Hub owner-tier variants — `sc_extended` xshot/xcross,
-  `full` ghost, owner receiver (owner pining token; the faithful trainers, `--ship-variant` per tier);
-  (b) xshot/xcross metadata `n_games` trainer-parity (metadata-only, at the same re-fit). **Conditional
-  superset:** if the Butterworth exact-pre-warp default is ever flipped (bullet above), the velocity regime
-  changes again → ALL velocity models (incl. these) + the DAS golden re-fit together, so run (a)/(b)
-  standalone only while that flip stays deferred. **Not in scope here** (not silly-kicks DGX debt): lakehouse
-  `das_*`/gkdv/`V_opp` re-materialise (consumer-side), AtomicVAEP retrain (no bundled weights — lands on the
-  lakehouse, ADR-096), vector-reflection-ρ / `bekkers_pi` (Databricks-parked). Source: 4.134.0 follow-up
-  (ADR-120) + TF-65 §9. Owner-run; no library default changes.
 - **CI lever (B-Windows) — trim Windows to the platform-/version-sensitive subset (next latency/cost
   lever after the duration-sharding, ADR-074).** Sharding preserves ALL coverage; every leg runs its
   full suite in parallel shards. If minutes/cost — or principle — later warrant it, the next lever is to

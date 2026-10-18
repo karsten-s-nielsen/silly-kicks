@@ -30,8 +30,12 @@ are **dropped** (not NaN-filled), so the model scores frames that carry no per-p
 
 - **26 features** (`position_only`), goal-relative coordinates via the shared `_geometry` helper
 - Domain filter: alive-ball, **attacking third**
-- Trained on **964,263** rows / **182,517** positives (18.9% positive rate) — same owner-tier corpus
+- Trained on **964,264** rows / **12,884** positives (**1.34%** positive rate) — same owner-tier corpus
   as the faithful `sc_extended` variant
+
+> **Re-fit 2026-10-18 (ADR-126 + ADR-120).** The prior artifact (`1ce63ef`, 18.9%, PR-AUC 0.528) was
+> defective — a bypassed `type_name` guard counted any action as a shot. Re-fit on the corrected `type_id`
+> label (1.34%) + corrected velocities; PR-AUC 0.528 → 0.115 because the old number measured the wrong label.
 
 ## When to use this vs the bundled `position_only`
 
@@ -48,18 +52,18 @@ Use this when your frames genuinely lack velocity. For velocity-bearing tracking
 HF-only for **licensing**, not quality: trained on **restricted owner-tier SkillCorner data** that
 cannot be redistributed in the wheel (ADR-038). Only learned parameters are published — **no raw
 provider tracking data**. Produced by a two-provider (IDSSE + SkillCorner) single-candidate run; the corpus **is** the
-owner-tier tier. `training_commit`: `1ce63ef`.
+owner-tier tier. `training_commit`: `4095251`.
 
 ## Held-out CV (5 folds, out-of-fold)
 
 | Metric | Value | Baseline |
 |---|---|---|
-| PR-AUC | 0.5276 (± 0.0345) | base rate 0.1893 |
-| Brier | 0.1213 | base-rate Brier 0.1534 |
-| Log loss | 0.3919 | &mdash; |
+| PR-AUC | 0.1146 (± 0.0063) | base rate 0.0134 |
+| Brier | 0.01240 | base-rate Brier 0.01318 |
+| Log loss | 0.0555 | &mdash; |
 
 All four acceptance gates pass. Estimates are **CV, not the shipped fit**. As expected, dropping
-velocity costs some discrimination vs the faithful model (PR-AUC 0.585 → 0.528) — the trade is that
+velocity costs some discrimination vs the faithful model (PR-AUC 0.124 → 0.115) — the trade is that
 this model *runs at all* on velocity-less frames.
 
 ## Usage
@@ -112,6 +116,6 @@ See the `NOTICE` file in the silly-kicks repository for full bibliographic citat
 
 https://github.com/karsten-s-nielsen/silly-kicks
 
-## Wheel sibling (4.128.0)
+## Wheel sibling (4.138.0)
 
-In silly-kicks 4.128.0 the wheel's bundled `position_only` was re-fit on float32-stored frames (`training_commit=b62c1f2`). This Hub artifact is unchanged: trained on float64 frames, its predictions and weights are byte-identical to the previous release.
+In silly-kicks 4.138.0 the wheel's bundled `position_only` was re-fit on the corrected type_id shot label (ADR-126, `training_commit=4095251`). This Hub owner-tier `sc_extended_position_only` artifact is re-fit this cycle as well — the same `type_id` label fix (18.9% → 1.34% positive rate) plus the ADR-120 floor-velocity correction. The re-fit weights are pushed by the ADR-088 model-publish step; that re-publish is the point at which the Hub artifact state changes.

@@ -1,0 +1,26 @@
+{
+  "go": false,
+  "input_contract": {
+    "digest": "e6bcfca5b89eb614ba44a57e4be79254cc63d48aa753a92ce5b883ea281076ff",
+    "driver": "validate_trained_artifact_integrity",
+    "family": "xshot_occurrence",
+    "rel_tol": 0.05,
+    "version": 1
+  },
+  "machine": "AMD64",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "verdict": {
+    "base_rate_ok": true,
+    "calibration_ok": true,
+    "candidate": "public",
+    "enough_folds": true,
+    "family": "xshot_occurrence",
+    "lift_ok": true,
+    "positive_rate": 0.015406198352401573,
+    "pr_auc": 0.07547108362594587,
+    "reproduced": false
+  }
+}

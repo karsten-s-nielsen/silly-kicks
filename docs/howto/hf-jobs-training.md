@@ -119,9 +119,24 @@ auto-accept.
 
 Load a retrieved artifact in-repo and confirm `verify_chirality` + `SHA256SUMS` + `_feature_contract` pass
 (first HF artifact, P1). Then copy each cleared variant's weights into `silly_kicks/<weights_path>/`,
-matching the committed bundle shape (no new `metrics.json` where none existed), run the full suite green,
-stamp the lakehouse re-mat owed, and open the single owner-gated weights commit. Merge #284 **non-squash**
-so the harness-tune commit + the weights commit both stay reachable (the weights' `run_commit` provenance).
+matching the committed bundle shape (no new `metrics.json` where none existed).
+
+**Public bundles: rehydrate `corpus_match_ids`.** The in-job trainer is visibility-blind (ADR-123
+Amendment B), so a PUBLIC bundle's `metrics.json` arrives with the DIGEST (`corpus_match_ids_sha256` +
+`corpus_n_matches`), not the explicit ids. The wheel bundle must carry the explicit list
+(`test_bundled_weights_corpus_policy`). Run the single off-HF seam on each public bundle's metrics before
+committing — it rehydrates the canonical ids and REFUSES a corpus that is not the pinned public arm:
+
+```python
+import json, pathlib
+from scripts._corpus import rehydrate_public_corpus_ids
+p = pathlib.Path("silly_kicks/tracking/_xshot_weights/default/metrics.json")
+p.write_text(json.dumps(rehydrate_public_corpus_ids(json.loads(p.read_text())), indent=2), encoding="utf-8")
+```
+
+Then run the full suite green, stamp the lakehouse re-mat owed, and open the single owner-gated weights
+commit. Merge #284 **non-squash** so the harness-tune commit + the weights commit both stay reachable (the
+weights' `run_commit` provenance).
 
 ## Cost
 

@@ -19,6 +19,11 @@ _REUSED = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
 # corrected floor velocities. position_only / sweeper_position_only are byte-identical no-ops (no
 # velocity read) and keep their prior anchor.
 _TF65 = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+# ADR-126 (silly-kicks 4.138.0): the xShot occurrence-label fix re-fit BOTH xShot bundles (default +
+# position_only) on the corrected type_id label (HF Jobs cloning branch tip 4095251); the label fix is
+# independent of velocity, so position_only is NOT a no-op here. xCross was correctly type_id-filtered
+# already, so its anchors are unchanged.
+_ADR126 = "4095251730ce216decf99ec8e47d8e1162a04a1d"
 _WHEEL_EXCLUDED = {"full"}  # pyproject.toml:222 excludes the maintainer-local `full` dirs from the wheel
 _GHOST_PROVIDERS = ["gradientsports", "skillcorner", "sportec"]
 _PUBLIC_PROVIDERS = ["idsse", "skillcorner"]
@@ -68,8 +73,8 @@ POLICY: dict[str, dict[tuple[str, str], object]] = {
 # ADR anchor per dir: 7 re-fit at the C2 run commit, 6 reused at the F1b commit. training_commit lives
 # in metadata.json (ghost/gof/xshot/xcross); run_commit in metrics.json (gkc/receiver).
 _ANCHOR: dict[str, tuple[str, str, str]] = {
-    "_xshot_weights/default": ("metadata.json", "training_commit", _TF65),
-    "_xshot_weights/position_only": ("metadata.json", "training_commit", _M),
+    "_xshot_weights/default": ("metadata.json", "training_commit", _ADR126),
+    "_xshot_weights/position_only": ("metadata.json", "training_commit", _ADR126),
     "_xcross_weights/default": ("metadata.json", "training_commit", _TF65),
     "_xcross_weights/position_only": ("metadata.json", "training_commit", _M),
     "_ghost_gk_weights/position_only": ("metadata.json", "training_commit", _M),

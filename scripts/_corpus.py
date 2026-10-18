@@ -133,6 +133,55 @@ def bundled_public_arm_pairs(providers: tuple[str, ...] = ("idsse", "skillcorner
     return match_id_pairs(provs, mids)
 
 
+def rehydrate_public_corpus_ids(metrics: dict, *, providers: tuple[str, ...] = ("idsse", "skillcorner")) -> dict:
+    """Off-HF finalize: give a PUBLIC wheel bundle its explicit, canonical ``corpus_match_ids``.
+
+    The in-job trainer is visibility-blind (ADR-123 Amendment B / the I1 import-closure rule): it cannot
+    assert ``all_public``, so :func:`scripts._corpus_identity.corpus_identity` records a DIGEST
+    (``corpus_match_ids_sha256`` + ``corpus_n_matches``) rather than the raw ids -- an owner id must never
+    reach a copied ``metrics.json``. A PUBLIC wheel bundle, however, MUST carry the explicit
+    ``corpus_match_ids``: the ids are redistributable and ``test_bundled_weights_corpus_policy`` requires
+    them. This helper is the single OFF-HF adoption seam that rehydrates them, run where visibility IS
+    known (the launcher staged the pinned public arm).
+
+    Guard: the recorded ``corpus_n_matches`` and ``providers`` MUST equal the pinned public arm, else the
+    run used some OTHER corpus (e.g. the widened current ``PUBLIC_CORPUS`` -- a separate, gated decision,
+    D4) and this REFUSES rather than silently relabel it. The digest itself cannot be equality-checked
+    against the canonical set, because the trainer hashes the RAW per-row provider names (``sportec``, not
+    the normalised ``idsse``); the authoritative physical-corpus check is the staged-dataset identity at
+    staging time. Idempotent: a bundle already carrying the canonical ``corpus_match_ids`` is returned
+    unchanged. Returns a NEW dict; the input is not mutated.
+    """
+    pairs = bundled_public_arm_pairs(providers)
+    if metrics.get("corpus_match_ids") == pairs:
+        return dict(metrics)
+    recorded_n = metrics.get("corpus_n_matches")
+    if recorded_n != len(pairs):
+        raise ValueError(
+            f"refusing to rehydrate corpus_match_ids: corpus_n_matches={recorded_n!r} != the pinned "
+            f"public arm ({len(pairs)}). The run used a corpus that is not the bundled public arm "
+            "(widening to the current PUBLIC_CORPUS is a separate, gated decision -- D4)."
+        )
+    recorded_providers = metrics.get("providers")
+    if recorded_providers is not None and sorted(map(str, recorded_providers)) != sorted(providers):
+        raise ValueError(
+            f"refusing to rehydrate corpus_match_ids: providers={recorded_providers!r} != the pinned "
+            f"public providers {sorted(providers)!r}."
+        )
+    out: dict = {}
+    inserted = False
+    for key, value in metrics.items():
+        if key in ("corpus_match_ids_sha256", "corpus_n_matches"):
+            if not inserted:  # replace the digest in place with the explicit list
+                out["corpus_match_ids"] = pairs
+                inserted = True
+            continue
+        out[key] = value
+    if not inserted:
+        out["corpus_match_ids"] = pairs
+    return out
+
+
 def requested_is_all_public(pairs, visibility: dict[tuple[str, str], str]) -> bool:
     """True iff the requested corpus is non-empty and every requested match is public (fail-closed)."""
     if not pairs:
