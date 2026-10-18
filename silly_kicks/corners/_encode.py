@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from silly_kicks.id_compat import canonical_id, canonical_id_series
+from silly_kicks.id_compat import ids_match
 from silly_kicks.spadl import config as spadlconfig
 
 from ._columns import CORNER_KEYS
@@ -29,7 +29,12 @@ def _run_column_names(model: RunZoneModel) -> list[str]:
 
 def _nearest_frame_xy(frames: pd.DataFrame, period: int, t: float, team) -> pd.DataFrame | None:
     """The attacking team's player (player_id, x, y) at the frame nearest ``t`` in ``period``."""
-    sub = frames[(frames["period_id"] == period) & (canonical_id_series(frames["team_id"]) == canonical_id(team))]
+    # NA-safe id compare (ADR-019): the ball row carries a <NA> team_id, so a raw ``==`` yields an
+    # NA-bearing mask that crashes under boolean indexing. Both masks are positional numpy arrays --
+    # ids_match returns a fresh-RangeIndex Series, so never ``&`` it with a label-indexed Series.
+    period_mask = (frames["period_id"] == period).to_numpy()
+    team_mask = ids_match(frames["team_id"], team).to_numpy()
+    sub = frames[period_mask & team_mask]
     sub = sub[~sub.get("is_ball", pd.Series(False, index=sub.index)).astype(bool)] if "is_ball" in sub.columns else sub
     if sub.empty:
         return None

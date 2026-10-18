@@ -337,6 +337,7 @@ def load_match(
     cache_dir: str | Path | None = None,
     token: str | None = None,
     base_url: str | None = None,
+    with_velocity: bool = True,
 ) -> LoadedMatch:
     """Download (or read from the cache) and build ONE match (ADR-052 D14).
 
@@ -365,6 +366,7 @@ def load_match(
         tracking_limit,
         cache_dir=resolve_cache_dir(cache_dir),
         events_only=events_only,
+        with_velocity=with_velocity,
     )
     if not events_only and ref.provider == "skillcorner" and getattr(report, "geometry_excluded", False):
         # S1 geometry rate-gate (spec 4.4): a geometrically-broken SkillCorner match's tracking is
@@ -391,6 +393,7 @@ def pining_source(
     cache_dir: str | Path | None = None,
     token: str | None = None,
     base_url: str | None = None,
+    with_velocity: bool = True,
 ) -> tuple[list[MatchRef], Callable[[MatchRef], LoadedMatch]]:
     """The tracking source factory: ``(refs, load)`` for ``for_each`` (ADR-052 D14, reuse of the
     S-migration recipe's source step, owner-ratified 2026-09-23).
@@ -408,7 +411,13 @@ def pining_source(
 
     def load(ref: MatchRef) -> LoadedMatch:
         return load_match(
-            ref, events_only=False, tracking_limit=tracking_limit, cache_dir=cd, token=token, base_url=base_url
+            ref,
+            events_only=False,
+            tracking_limit=tracking_limit,
+            cache_dir=cd,
+            token=token,
+            base_url=base_url,
+            with_velocity=with_velocity,
         )
 
     return refs, load
@@ -486,6 +495,7 @@ def _build_match_with_retry(
     *,
     cache_dir=None,
     events_only: Literal[False] = False,
+    with_velocity: bool = True,
     attempts: int = 3,
     backoff: float = 3.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, object, object, object]: ...
@@ -502,6 +512,7 @@ def _build_match_with_retry(
     *,
     cache_dir=None,
     events_only: Literal[True],
+    with_velocity: bool = True,
     attempts: int = 3,
     backoff: float = 3.0,
 ) -> tuple[pd.DataFrame, None, object, None, None]: ...
@@ -517,6 +528,7 @@ def _build_match_with_retry(
     *,
     cache_dir=None,
     events_only: bool = False,
+    with_velocity: bool = True,
     attempts: int = 3,
     backoff: float = 3.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame | None, object, object, object]:
@@ -538,7 +550,7 @@ def _build_match_with_retry(
         if events_only:
             actions, home = _build_match_actions(provider, match_id, paths)
             return actions, None, home, None, None
-        return _build_match(provider, match_id, paths, tracking_limit)
+        return _build_match(provider, match_id, paths, tracking_limit, with_velocity=with_velocity)
 
     last_exc: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -626,7 +638,7 @@ def _download_artifacts(
     return out
 
 
-def _build_match(provider, match_id, paths, tracking_limit):
+def _build_match(provider, match_id, paths, tracking_limit, *, with_velocity: bool = True):
     """Provider dispatch: parse artifacts into ``(actions, frames, home_team_id, visible_area, report)``.
 
     ``visible_area`` is the per-action SB360 freeze-frame polygon table (``action_id``/``polygon``)
@@ -637,13 +649,13 @@ def _build_match(provider, match_id, paths, tracking_limit):
     match. The 5-tuple arity is uniform across providers so the retry wrapper + caller unpack cleanly.
     """
     if provider == "idsse":
-        actions, frames, home = _build_idsse(paths, match_id, tracking_limit)
+        actions, frames, home = _build_idsse(paths, match_id, tracking_limit, with_velocity=with_velocity)
         return actions, frames, home, None, None
     if provider == "skillcorner":
-        actions, frames, home, report = _build_skillcorner(paths, match_id, tracking_limit)
+        actions, frames, home, report = _build_skillcorner(paths, match_id, tracking_limit, with_velocity=with_velocity)
         return actions, frames, home, None, report
     if provider == "gradientsports":
-        actions, frames, home = _build_gradientsports(paths, tracking_limit)
+        actions, frames, home = _build_gradientsports(paths, tracking_limit, with_velocity=with_velocity)
         return actions, frames, home, None, None
     if provider == "statsbomb":
         # SB360 freeze-frames carry no per-player temporal history, so `tracking_limit` (a frame
@@ -703,6 +715,34 @@ def _attach_roster_identity(actions: pd.DataFrame, roster: dict[int, dict]) -> p
     return out
 
 
+def _normalize_native_xg(actions: pd.DataFrame, native_col: str) -> pd.DataFrame:
+    """Rename a preserved provider-native shot-xG column to the uniform ``xg`` (float, NaN off-shot).
+
+    silly-kicks ships NO xG model by design (ADR-110 raw primitives; ADR-085 injected PSxG) -- xG is a
+    consumer-injected column. The pining corpus surfaces each provider's OWN shot xG as ``xg`` so the
+    TF-46 corner chance-quality memo can read a per-provider, variance-reduced companion to the
+    model-free n_goals / n_shots. Per-provider by construction (statsbomb ``statsbomb_xg``, sportec
+    ``shot_x_g``) -- these are different xG models and are NEVER pooled across providers. No-op when the
+    native column is absent (e.g. SkillCorner has no clean shot xG -> honest-NaN sum_xg downstream).
+    """
+    if native_col in actions.columns:
+        actions = actions.copy()
+        actions["xg"] = pd.to_numeric(actions.pop(native_col), errors="coerce")
+    return actions
+
+
+def _sb_shot_xg_column(flat: pd.DataFrame) -> pd.Series:
+    """Per-event StatsBomb shot xG, pulled from the nested ``extra['shot']['statsbomb_xg']``.
+
+    ``flatten_events`` keeps every non-top-level key inside the ``extra`` dict, so the shot xG is not a
+    top-level ``surface_native`` key -- extract it here, then pass as a ``preserve_native`` column so it
+    rides the converter's filter/sort/dribble transforms onto the shot action rows (NaN elsewhere)."""
+    return pd.Series(
+        [(ex.get("shot") or {}).get("statsbomb_xg") if isinstance(ex, dict) else None for ex in flat["extra"]],
+        index=flat.index,
+    )
+
+
 def _statsbomb_actions(paths, match_id):
     """The actions half of :func:`build_statsbomb_match` -- events + metadata + roster identity,
     NEVER ``freeze_frames``.
@@ -731,12 +771,16 @@ def _statsbomb_actions(paths, match_id):
     if home is None:
         home = int(flat["team_id"].dropna().iloc[0])
 
+    flat = flat.copy()
+    flat["_sk_shot_xg"] = _sb_shot_xg_column(flat)  # native SB360 shot xG -> preserved onto shot actions
     actions, _report = convert_to_actions(
         flat,
         home_team_id=home,
         xy_fidelity_version=xy_fidelity,
         shot_fidelity_version=shot_fidelity,
+        preserve_native=["_sk_shot_xg"],
     )
+    actions = _normalize_native_xg(actions, "_sk_shot_xg")
     if paths.get("roster") is not None:
         actions = _attach_roster_identity(actions, parse_roster(_read_json(paths["roster"])))
     return actions, home, xy_fidelity
@@ -765,11 +809,19 @@ def build_statsbomb_match(paths, match_id):
     return actions, frames, home, visible_area, None
 
 
-def _preprocess(frames: pd.DataFrame) -> pd.DataFrame:
-    """Derive velocities (vx/vy) so bekkers_pi + velocity-aware carrier inference work."""
+def _preprocess(frames: pd.DataFrame, *, with_velocity: bool = True) -> pd.DataFrame:
+    """Smooth positions, and (default) derive velocities (vx/vy) so bekkers_pi + velocity-aware
+    carrier inference work.
+
+    ``with_velocity=False`` keeps the position smoothing but SKIPS ``derive_velocities``. Position
+    smoothing is ~1 s/match; velocity derivation is ~32 s/match (Savitzky-Golay over every player
+    track), and consumers that read x/y only -- e.g. the TF-46 corner pipeline, whose
+    ``detect_ball_contacts`` derives its own ball velocity -- pay that cost for columns they never
+    read. The flag is opt-in; every existing caller keeps full velocity (default True)."""
     from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
 
-    return derive_velocities(smooth_frames(frames))
+    smoothed = smooth_frames(frames)
+    return derive_velocities(smoothed) if with_velocity else smoothed
 
 
 def _sc_timestamp_seconds(ts) -> float:
@@ -888,7 +940,7 @@ def _skillcorner_bronze(raw_frames: list[dict], meta: dict, *, match_id: str) ->
     return pd.DataFrame(rows)
 
 
-def build_skillcorner_frames(paths, match_id, tracking_limit):
+def build_skillcorner_frames(paths, match_id, tracking_limit, *, with_velocity: bool = True):
     """Preprocessed silly-kicks frames from SkillCorner artifacts via the NATIVE builder.
 
     Was: the kloppy gateway (``visibility=None``, no ``ball_z``, and a pitch scale that disagrees
@@ -953,7 +1005,7 @@ def build_skillcorner_frames(paths, match_id, tracking_limit):
     # 1363 actions), zero warnings -- i.e. identical before and after. A previous cycle changed it
     # anyway on an assumed (never measured) premise; spec section 11.1 records that.
     frames, report = tracking_sk.convert_to_frames(bronze, home_team_id=home_team_id, output_convention="ltr")
-    return _preprocess(frames), report
+    return _preprocess(frames, with_velocity=with_velocity), report
 
 
 def _skillcorner_actions(paths):
@@ -975,7 +1027,7 @@ def _skillcorner_actions(paths):
     return actions, home_team_id
 
 
-def _build_skillcorner(paths, match_id, tracking_limit):
+def _build_skillcorner(paths, match_id, tracking_limit, *, with_velocity: bool = True):
     """SkillCorner: NATIVE tracking builder + silly-kicks SkillCorner events converter.
 
     Returns ``(actions, frames, home_team_id, report)``. ``report`` is the tracking
@@ -987,7 +1039,7 @@ def _build_skillcorner(paths, match_id, tracking_limit):
     exclusion was DORMANT). The actions come from :func:`_skillcorner_actions`, which the
     events-only load shares.
     """
-    frames, report = build_skillcorner_frames(paths, match_id, tracking_limit)
+    frames, report = build_skillcorner_frames(paths, match_id, tracking_limit, with_velocity=with_velocity)
     actions, home_team_id = _skillcorner_actions(paths)
     return actions, frames, home_team_id, report
 
@@ -1015,12 +1067,17 @@ def _idsse_actions(paths, match_id):
     native_evt = shape_events_to_native(parse_dfl_events(str(paths["events"]), match_info=mi, match_id=bare_id))
     hsl = derive_idsse_home_team_start_left(native_evt, mi.home_team_id)
     hsl_et = derive_idsse_home_team_start_left_extratime(native_evt, mi.home_team_id)
+    # Surface the DFL native shot xG (``shot_x_g``) as the uniform ``xg`` where present (older bronze
+    # may omit it) -- the TF-46 corner memo's per-provider xG companion; see _normalize_native_xg.
+    preserve = ["shot_x_g"] if "shot_x_g" in native_evt.columns else None
     actions, _evt_report = sportec_spadl.convert_to_actions(
         native_evt,
         home_team_id="home",  # native_evt.team carries the 'home'/'away' label, not the CLU id
         home_team_start_left=hsl,
         home_team_start_left_extratime=hsl_et,
+        preserve_native=preserve,
     )
+    actions = _normalize_native_xg(actions, "shot_x_g")
     # The native converter echoes the 'home'/'away' label as the SPADL team_id, but the tracking
     # frames key team by the DFL CLU id. The ADR-028 per-action LTR re-projection joins actions to
     # frames on team_id, so they MUST share a namespace -- the retired kloppy path used CLU on both
@@ -1032,7 +1089,7 @@ def _idsse_actions(paths, match_id):
     return actions, mi, hsl, hsl_et
 
 
-def _build_idsse(paths, match_id, tracking_limit):
+def _build_idsse(paths, match_id, tracking_limit, *, with_velocity: bool = True):
     """IDSSE (DFL/Sportec XML) via the silly-kicks DFL parse+shape port (ADR-031 T3).
 
     Single-sources the DFL parser: ``providers.sportec.parse_dfl_*`` (bytes -> RAW bronze) ->
@@ -1066,7 +1123,7 @@ def _build_idsse(paths, match_id, tracking_limit):
         home_team_start_left_extratime=hsl_et,
         output_convention="absolute_frame",
     )
-    return actions, _preprocess(frames), mi.home_team_id
+    return actions, _preprocess(frames, with_velocity=with_velocity), mi.home_team_id
 
 
 _GS_EVENT_FIELD_MAP = {
@@ -1255,7 +1312,7 @@ def _gradientsports_actions(paths):
     return actions, _GsMatch(game_id, home_team_id, away_team_id, home_start_left, home_start_left_et, roster)
 
 
-def _build_gradientsports(paths, tracking_limit=None):
+def _build_gradientsports(paths, tracking_limit=None, *, with_velocity: bool = True):
     """Gradient Sports: flatten JSONL tracking + roster -> add_gradientsports_player_ids -> frames;
     flatten gameEvents JSON -> SPADL via spadl.gradientsports. Ports the PR-A e2e + GS SPADL test.
 
@@ -1328,4 +1385,4 @@ def _build_gradientsports(paths, tracking_limit=None):
         home_team_start_left=home_start_left,
         home_team_start_left_extratime=home_start_left_et,
     )
-    return actions, _preprocess(frames), str(home_team_id)
+    return actions, _preprocess(frames, with_velocity=with_velocity), str(home_team_id)

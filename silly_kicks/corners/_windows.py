@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
-from silly_kicks.id_compat import canonical_id, canonical_id_series
+from silly_kicks.id_compat import ids_match
 from silly_kicks.tracking._ball_contact import first_contact_in_window
 
 from ._columns import CORNER_WINDOW_COLUMNS
@@ -35,7 +35,9 @@ def _team_of(frames: pd.DataFrame, frame_id, player_id) -> object:
     sub = frames.loc[frames["frame_id"] == frame_id, ["player_id", "team_id"]].reset_index(drop=True)
     if sub.empty:
         return pd.NA
-    match = canonical_id_series(sub["player_id"]).to_numpy() == canonical_id(player_id)
+    # NA-safe id compare (ADR-019): the ball row carries a <NA> player_id, so a raw ``==`` yields an
+    # NA-bearing mask that crashes under boolean indexing. ids_match maps <NA> -> False.
+    match = ids_match(sub["player_id"], player_id).to_numpy()
     team = sub["team_id"].to_numpy()[match]
     return team[0] if len(team) else pd.NA
 

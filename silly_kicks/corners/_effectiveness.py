@@ -28,10 +28,15 @@ def compute_corner_chance_quality(
     corners: pd.DataFrame,
     actions: pd.DataFrame,
     *,
-    xg_column: str,
+    xg_column: str | None = None,
     params: ChanceQualityParams = _DEFAULT_CHANCE_PARAMS,
 ) -> pd.DataFrame:
     """Per-corner shots / goals / summed xG inside ``[t_kick, t_outcome]``. Grain ``(game_id, corner_id)``.
+
+    ``n_shots`` and ``n_goals`` are MODEL-FREE (fully observed) and are always computed. ``sum_xg`` needs
+    an injected xG column (silly-kicks ships no xG model, ADR-110/ADR-085): pass ``xg_column`` to populate
+    it, else ``sum_xg`` is honest-NaN (never a fabricated 0.0). A NAMED-but-absent ``xg_column`` still
+    raises -- that is a caller error, distinct from "this provider supplies no xG".
 
     Examples
     --------
@@ -40,12 +45,12 @@ def compute_corner_chance_quality(
         from silly_kicks.corners import compute_corner_chance_quality
         quality = compute_corner_chance_quality(windowed_corners, actions, xg_column="xg")
     """
-    if xg_column not in actions.columns:
+    if xg_column is not None and xg_column not in actions.columns:
         raise KeyError(
             f"xg_column {xg_column!r} is not in actions -- silly-kicks ships no xG model. Inject an xG "
-            "column (port pattern; cf. xg_column in vaep/labels.py)."
+            "column (port pattern; cf. xg_column in vaep/labels.py), or omit xg_column for n_shots/n_goals only."
         )
-    xg = pd.to_numeric(actions[xg_column], errors="coerce")
+    xg = pd.to_numeric(actions[xg_column], errors="coerce") if xg_column is not None else None
     is_shot = actions["type_id"].isin(_SHOT_TYPE_IDS)
     is_goal = is_shot & (actions["result_id"] == _SUCCESS)
 
@@ -56,13 +61,17 @@ def compute_corner_chance_quality(
         t1 = float(c["t_outcome"]) if "t_outcome" in corners.columns and pd.notna(c["t_outcome"]) else t0 + 6.0
         in_win = (actions["period_id"] == period) & (actions["time_seconds"] >= t0) & (actions["time_seconds"] <= t1)
         shot_win = in_win & is_shot
+        if xg is None:
+            sum_xg = float("nan")  # no xG injected -> honest-NaN, never a fabricated 0.0
+        else:
+            sum_xg = float(np.nansum(xg[shot_win].to_numpy(dtype=float))) if shot_win.any() else 0.0
         rows.append(
             {
                 "game_id": c["game_id"],
                 "corner_id": int(c["corner_id"]),
                 CC_N_SHOTS: int(shot_win.sum()),
                 CC_N_GOALS: int((in_win & is_goal).sum()),
-                CC_SUM_XG: float(np.nansum(xg[shot_win].to_numpy(dtype=float))) if shot_win.any() else 0.0,
+                CC_SUM_XG: sum_xg,
                 CC_SOURCE: xg_column,
             }
         )

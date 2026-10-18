@@ -81,20 +81,46 @@ def sb360_init_divergence(init_xy: np.ndarray, kick_xy: np.ndarray, model) -> di
     }
 
 
+#: Chance-quality currencies, most-robust first. n_goals / n_shots are the MODEL-FREE backbone
+#: (fully observed, provider-uniform, no xG model -- silly-kicks ships none by design, ADR-110);
+#: sum_xg is a provider-native-xG companion present only where the provider supplies xG (statsbomb
+#: statsbomb_xg, sportec shot_x_g) and is read PER PROVIDER, never pooled across providers' xG models.
+_CHANCE_METRICS = ("n_goals", "n_shots", "sum_xg")
+
+
 def reduce_samples(samples: pd.DataFrame) -> dict:
     """Pooled verdicts over all corpus corner-feature/chance-quality rows (the REDUCE)."""
-    out: dict = {"n_corners": len(samples), "n_teams": int(samples["team_id"].nunique()) if "team_id" in samples else 0}
-    if "sum_xg" in samples:
-        xg = samples["sum_xg"].to_numpy(dtype=float)
-        out["responsiveness"] = {"sum_xg_mean": float(np.nanmean(xg)) if len(xg) else float("nan")}
-    if {"sum_xg", "team_id"} <= set(samples.columns):
-        out["discrimination_one_way"] = {"sum_xg": icc_vs_permutation(samples, "sum_xg", "team_id")}
-    if {"sum_xg", "provider"} <= set(samples.columns):
-        # section 12.5 cross-provider stability: per-provider chance-quality means (SkillCorner broadcast vs
-        # optical full-obs vs SB360 freeze) -- reported for the stability reading, not gated.
+    from silly_kicks.id_compat import canonical_id_series
+
+    samples = samples.copy()
+    # Team ids are PER-PROVIDER namespaces AND mixed dtype across providers (SkillCorner str,
+    # statsbomb/idsse int). A bare pooled team_id both mis-merges different-provider teams that share a
+    # spelling and crashes np.unique's sort (int vs str). Group discrimination on a provider-qualified
+    # CANONICAL key (ADR-019): canonical_id normalizes the dtype, the provider prefix keeps the namespace.
+    have_team = "team_id" in samples.columns
+    if have_team:
+        key = canonical_id_series(samples["team_id"]).astype("string")
+        if "provider" in samples.columns:
+            key = samples["provider"].astype("string") + ":" + key
+        samples["_team_key"] = key
+    out: dict = {"n_corners": len(samples), "n_teams": int(samples["_team_key"].nunique()) if have_team else 0}
+    metrics = [m for m in _CHANCE_METRICS if m in samples.columns]
+
+    def _mean(frame: pd.DataFrame, col: str) -> float:
+        vals = frame[col].to_numpy(dtype=float)
+        # all-NaN is legitimate (e.g. SkillCorner sum_xg: no native shot xG) -> honest NaN, no warning
+        return float(np.nanmean(vals)) if len(vals) and not bool(np.isnan(vals).all()) else float("nan")
+
+    # Responsiveness: per-metric corpus mean (the per-routine quality moves off baseline in the memo).
+    out["responsiveness"] = {f"{m}_mean": _mean(samples, m) for m in metrics}
+    # Discrimination: one-way ICC of each metric by provider-qualified team vs a label-permutation null.
+    if have_team:
+        out["discrimination_one_way"] = {m: icc_vs_permutation(samples, m, "_team_key") for m in metrics}
+    # Section 12.5 cross-provider stability: per-provider means of each metric (SkillCorner broadcast vs
+    # optical full-obs vs SB360 freeze). Reported, not gated. sum_xg is per-provider by construction.
+    if "provider" in samples.columns:
         out["cross_provider"] = {
-            str(p): {"n": len(g), "sum_xg_mean": float(np.nanmean(g["sum_xg"].to_numpy(dtype=float)))}
-            for p, g in samples.groupby("provider")
+            str(p): {"n": len(g), **{f"{m}_mean": _mean(g, m) for m in metrics}} for p, g in samples.groupby("provider")
         }
     return out
 
@@ -112,7 +138,8 @@ def main() -> None:
     ap.add_argument("--models", default=None, help="dir holding the fitted run_zone/ + routine/ bundles")
     ap.add_argument("--token", default=None)
     ap.add_argument("--cache-dir", default=None)
-    ap.add_argument("--providers", nargs="*", default=["skillcorner", "idsse", "sportec", "statsbomb"])
+    # "sportec" is the same data as "idsse" (served under that pining key) and 404s the listing.
+    ap.add_argument("--providers", nargs="*", default=["skillcorner", "idsse", "statsbomb"])
     ap.add_argument("--match-ids-json", default=None, help='per-provider pins: JSON {"<provider>": ["<id>", ...]}')
     ap.add_argument("--max-matches", type=int, default=None)
     ap.add_argument("--allow-dirty", action="store_true")
@@ -147,15 +174,13 @@ def main() -> None:
         windowed = add_corner_windows(corners, item.frames, detect_ball_contacts(item.frames))
         encoding = compute_corner_run_encoding(windowed, item.frames, model=zone_model)
         feats = compute_corner_routine_features(encoding, model=routine_model)
-        quality = (
-            compute_corner_chance_quality(windowed, item.actions, xg_column="xg")
-            if "xg" in item.actions.columns
-            else None
-        )
+        # n_shots/n_goals are model-free (always computed); sum_xg only where the provider injects xG.
+        xg_col = "xg" if "xg" in item.actions.columns else None
+        quality = compute_corner_chance_quality(windowed, item.actions, xg_column=xg_col)
         rows = feats.merge(windowed[["game_id", "corner_id", "attacking_team_id"]], on=["game_id", "corner_id"])
         rows = rows.rename(columns={"attacking_team_id": "team_id"})
         rows["provider"] = item.provider  # for the section 12.5 cross-provider stability leg
-        return rows.merge(quality, on=["game_id", "corner_id"], how="left") if quality is not None else rows
+        return rows.merge(quality, on=["game_id", "corner_id"], how="left")
 
     refs, load = pining_source(
         providers=args.providers,
@@ -163,6 +188,7 @@ def main() -> None:
         max_per_provider=args.max_matches,
         cache_dir=args.cache_dir,
         token=args.token,
+        with_velocity=False,  # corners read x/y only; skip the ~32s/match velocity derivation
     )
     res = for_each(
         refs,

@@ -51,6 +51,51 @@ def test_sb360_init_divergence_bounds_the_reassignment():
     assert 0.0 <= res["zone_reassignment_rate"] <= 1.0
 
 
+def test_reduce_samples_model_free_backbone_and_per_provider_xg():
+    # Tier 1: n_goals / n_shots are the model-free backbone (always present, provider-uniform); sum_xg
+    # is a per-provider native-xG companion, honest-NaN where a provider supplies no xG (SkillCorner).
+    from scripts.validate_corners import reduce_samples
+
+    rows = [
+        ("A", "idsse", 1, 3, 0.4),
+        ("A", "idsse", 0, 2, 0.2),
+        ("B", "statsbomb", 0, 1, 0.1),
+        ("B", "statsbomb", 1, 4, 0.6),
+        ("A", "skillcorner", 0, 2, float("nan")),
+        ("B", "skillcorner", 1, 3, float("nan")),
+    ]
+    samples = pd.DataFrame(rows, columns=["team_id", "provider", "n_goals", "n_shots", "sum_xg"])
+    samples["n_goals"] = samples["n_goals"].astype("Int64")
+    samples["n_shots"] = samples["n_shots"].astype("Int64")
+
+    out = reduce_samples(samples)
+    assert set(out["responsiveness"]) == {"n_goals_mean", "n_shots_mean", "sum_xg_mean"}
+    assert out["responsiveness"]["n_shots_mean"] == pytest.approx(2.5)  # model-free, all six corners
+    assert set(out["discrimination_one_way"]) == {"n_goals", "n_shots", "sum_xg"}
+    cp = out["cross_provider"]
+    assert set(cp) == {"idsse", "statsbomb", "skillcorner"}
+    assert cp["skillcorner"]["n_shots_mean"] == pytest.approx(2.5)  # model-free leg present per provider
+    assert np.isnan(cp["skillcorner"]["sum_xg_mean"])  # honest-NaN: no native SkillCorner shot xG, never faked
+
+
+def test_reduce_samples_handles_mixed_dtype_team_ids_across_providers():
+    # Real corpus: SkillCorner team_id is str, statsbomb/idsse int -> pooled mixed dtype. A bare
+    # np.unique(team_id) sort crashes ("'<' not supported between 'int' and 'str'"); reduce must
+    # canonicalize + provider-qualify the team key (ADR-019), and never merge same-spelling ids.
+    from scripts.validate_corners import reduce_samples
+
+    rows = [
+        ("7", "skillcorner", 0, 2, float("nan")),  # str id
+        ("7", "skillcorner", 1, 3, float("nan")),
+        (7, "statsbomb", 0, 1, 0.1),  # int id, SAME spelling, DIFFERENT provider/team
+        (7, "statsbomb", 1, 2, 0.3),
+    ]
+    samples = pd.DataFrame(rows, columns=["team_id", "provider", "n_goals", "n_shots", "sum_xg"])
+    out = reduce_samples(samples)  # must NOT raise
+    assert out["n_teams"] == 2  # skillcorner:7 and statsbomb:7 stay distinct, never merged
+    assert "n_shots" in out["discrimination_one_way"] and "n_goals" in out["discrimination_one_way"]
+
+
 def test_injection_firewall_no_outcome_vector():
     # the power harness takes an InjectionSpec recipe, never an observed-outcome vector (unrepresentable)
     import inspect

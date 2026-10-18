@@ -117,10 +117,11 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--token", default=None)
     ap.add_argument("--cache-dir", default=None)
-    # Multi-provider pooled fit (spec D4): continuous tracking (skillcorner/idsse/sportec) + SB360
-    # freeze (statsbomb). Metrica excluded by default (3 ancient demo games, little value). The
-    # library still accepts it if passed explicitly.
-    ap.add_argument("--providers", nargs="*", default=["skillcorner", "idsse", "sportec", "statsbomb"])
+    # Multi-provider pooled fit (spec D4): continuous tracking (skillcorner + idsse, the DFL/Sportec
+    # optical source served under the "idsse" pining key) + SB360 freeze (statsbomb). "sportec" is NOT
+    # a separate pining provider -- it is the same data as "idsse" and 404s the listing; Metrica is
+    # excluded (3 ancient demo games). The library still accepts any provider passed explicitly.
+    ap.add_argument("--providers", nargs="*", default=["skillcorner", "idsse", "statsbomb"])
     ap.add_argument("--match-ids-json", default=None, help='per-provider pins: JSON {"<provider>": ["<id>", ...]}')
     ap.add_argument("--max-matches", type=int, default=None)
     ap.add_argument("--allow-dirty", action="store_true")
@@ -141,6 +142,7 @@ def main() -> None:
         max_per_provider=args.max_matches,
         cache_dir=args.cache_dir,
         token=args.token,
+        with_velocity=False,  # corners read x/y only; skip the ~32s/match velocity derivation
     )
     res = for_each(
         refs,

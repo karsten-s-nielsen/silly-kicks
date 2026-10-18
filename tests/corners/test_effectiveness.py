@@ -68,6 +68,14 @@ def test_missing_xg_column_raises():
         raise AssertionError("expected KeyError")
 
 
+def test_model_free_omits_xg_honest_nan():
+    # No xg_column: n_shots/n_goals are model-free (always observed); sum_xg is honest-NaN, never 0.0.
+    out = compute_corner_chance_quality(_corners(), _actions())
+    assert out["n_shots"].notna().all() and out["n_goals"].notna().all()
+    assert out["sum_xg"].isna().all()  # no xG injected -> honest NaN
+    assert out["chance_quality_source"].isna().all()  # source records "no xg supplied"
+
+
 def test_aggregate_by_feature_is_weighted_mean_not_ranking():
     quality = compute_corner_chance_quality(_corners(), _actions(), xg_column="xg")
     features = pd.DataFrame(

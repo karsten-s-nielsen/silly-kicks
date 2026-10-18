@@ -76,7 +76,18 @@ class _Report:
 
 
 def test_load_match_raises_matchexcluded_with_both_rates_on_the_s1_gate(monkeypatch):
-    def _fake_retry(provider, match_id, artifacts, tok, base, tracking_limit, *, cache_dir=None, events_only=False):
+    def _fake_retry(
+        provider,
+        match_id,
+        artifacts,
+        tok,
+        base,
+        tracking_limit,
+        *,
+        cache_dir=None,
+        events_only=False,
+        with_velocity=True,
+    ):
         return "act", "frm", "home", None, _Report(excluded=True, reason="player off-pitch 0.341 > 0.005")
 
     monkeypatch.setattr(lp, "_build_match_with_retry", _fake_retry)
@@ -88,7 +99,18 @@ def test_load_match_raises_matchexcluded_with_both_rates_on_the_s1_gate(monkeypa
 
 
 def test_load_match_returns_a_seven_field_loaded_match(monkeypatch):
-    def _fake_retry(provider, match_id, artifacts, tok, base, tracking_limit, *, cache_dir=None, events_only=False):
+    def _fake_retry(
+        provider,
+        match_id,
+        artifacts,
+        tok,
+        base,
+        tracking_limit,
+        *,
+        cache_dir=None,
+        events_only=False,
+        with_velocity=True,
+    ):
         return "act", "frm", "home", "va", _Report(excluded=False)
 
     monkeypatch.setattr(lp, "_build_match_with_retry", _fake_retry)
@@ -124,7 +146,18 @@ def _install_parity_network(monkeypatch):
     }
     monkeypatch.setattr(lp, "_list_matches", lambda provider, tok, base: manifests[provider])
 
-    def _fake_retry(provider, match_id, artifacts, tok, base, tracking_limit, *, cache_dir=None, events_only=False):
+    def _fake_retry(
+        provider,
+        match_id,
+        artifacts,
+        tok,
+        base,
+        tracking_limit,
+        *,
+        cache_dir=None,
+        events_only=False,
+        with_velocity=True,
+    ):
         rep = _Rep(excluded=(match_id == "bad")) if provider == "skillcorner" else None
         return f"act-{match_id}", f"frm-{match_id}", f"home-{match_id}", f"va-{match_id}", rep
 
