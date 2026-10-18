@@ -93,10 +93,11 @@ def fit_models(snapshots: pd.DataFrame, out_dir: Path) -> dict:
     run_cols = _run_column_names(zone_model)
     term_rows = []
     for (_g, _c), grp in snapshots.groupby(["game_id", "corner_id"], sort=False):
+        # Occupancy default (no active_mask): only players whose target is in the danger+approach region
+        # contribute to the term matrix -- stay-back/short players are excluded (spec section 6, 2026-10-18).
         vec = zone_model.encode_runs(
             grp[["init_x", "init_y"]].to_numpy(dtype=float),
             grp[["target_x", "target_y"]].to_numpy(dtype=float),
-            active_mask=np.ones(len(grp), dtype=bool),
         )
         term_rows.append(vec)
     term_matrix = np.vstack(term_rows) if term_rows else np.zeros((0, len(run_cols)))

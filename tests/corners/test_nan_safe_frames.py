@@ -31,7 +31,7 @@ def _toy_zone_model() -> RunZoneModel:
         [
             rng.normal([100.0, 28.0], 1.0, size=(40, 2)),
             rng.normal([100.0, 40.0], 1.0, size=(40, 2)),
-            rng.normal([80.0, 10.0], 1.0, size=(40, 2)),
+            rng.normal([86.0, 34.0], 1.0, size=(40, 2)),  # top-of-box / second-ball edge (in-region)
         ]
     )
     return RunZoneModel().fit(init, target, init_k=2, target_k=3)

@@ -71,8 +71,9 @@ def _encode_one(corner: pd.Series, frames: pd.DataFrame, model: RunZoneModel, pa
         return None
     init_xy = merged[["x_i", "y_i"]].to_numpy(dtype=np.float64)
     target_xy = merged[["x_t", "y_t"]].to_numpy(dtype=np.float64)
-    moved = np.hypot(target_xy[:, 0] - init_xy[:, 0], target_xy[:, 1] - init_xy[:, 1]) >= params.min_run_distance_m
-    return model.encode_runs(init_xy, target_xy, active_mask=moved if moved.any() else None)
+    # Active players follow the model's OCCUPANCY rule (target in the danger+approach region); no
+    # displacement threshold, so a stationary second-ball/edge holder is counted (spec §6, 2026-10-18).
+    return model.encode_runs(init_xy, target_xy)
 
 
 def compute_corner_run_encoding(

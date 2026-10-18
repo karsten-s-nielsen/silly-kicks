@@ -16,7 +16,7 @@ def _model() -> RunZoneModel:
         [
             rng.normal([100.0, 28.0], 1.0, size=(40, 2)),
             rng.normal([100.0, 40.0], 1.0, size=(40, 2)),
-            rng.normal([80.0, 10.0], 1.0, size=(40, 2)),
+            rng.normal([86.0, 34.0], 1.0, size=(40, 2)),  # top-of-box / second-ball edge (in-region)
         ]
     )
     return RunZoneModel().fit(init, target, init_k=2, target_k=3)
@@ -63,7 +63,7 @@ def test_direct_corner_encodes_short_is_nan():
     out = compute_corner_run_encoding(_corners(), _frames(), model=model)
     run_cols = _run_column_names(model)
     assert list(out.columns) == ["game_id", "corner_id", *run_cols]
-    assert len(run_cols) == model.n_initial_zones * model.n_target_zones  # 2*2 = 4
+    assert len(run_cols) == model.n_initial_zones * model.n_target_zones  # 2*3 = 6
     direct = out[out["corner_id"] == 0].iloc[0]
     short = out[out["corner_id"] == 1].iloc[0]
     assert direct[run_cols].to_numpy(dtype=float).sum() > 0  # direct corner encoded

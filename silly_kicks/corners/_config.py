@@ -77,18 +77,19 @@ class CornerWindowParams:
 class RunEncodingParams:
     """Settings for the probabilistic (initial x target)-zone run encoder.
 
-    Attributes
-    ----------
-    min_run_distance_m: Players whose init->target move is shorter than this are inactive (ignored).
+    The active-player rule is OCCUPANCY of the danger+approach region, owned by the fitted
+    ``RunZoneModel`` (its ``goal_radius_m``), not an encoder-side displacement threshold -- so the
+    stationary second-ball/edge holder is counted (spec §6 amendment 2026-10-18). The encoder
+    therefore currently exposes no per-provider knob; this class is retained for config-API symmetry
+    with the other families and as the seam for future encoder settings.
 
     Examples
     --------
     >>> from silly_kicks.corners import RunEncodingParams
-    >>> RunEncodingParams().min_run_distance_m
-    2.0
+    >>> RunEncodingParams.default().is_default()
+    True
     """
 
-    min_run_distance_m: float = 2.0
     _is_universal_default: bool = field(default=False, compare=False, repr=False)
 
     @classmethod

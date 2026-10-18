@@ -22,10 +22,20 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks.spadl import config as spadlconfig
-from silly_kicks.tracking._geometry import in_penalty_area_absolute
 
 _MODEL_VERSION = "run-zone-1"
 _ATTACKED_GOAL_X = float(spadlconfig.field_length)  # frame-LTR canonical: attacking goal at x=105
+_GOAL_Y = float(spadlconfig.field_width) / 2.0  # goal-mouth centre
+#: Target "danger + approach" region radius from the goal centre (spec §9 amendment 2026-10-18).
+#: Calibrated on the full corpus: <=25 m -> 7 BIC zones spanning box + top-of-box + second-ball/edge
+#: (a literal penalty-area filter collapsed to 2 active zones and dropped late-runner/second-ball arrivals).
+_DEFAULT_GOAL_RADIUS_M = 25.0
+
+
+def _within_goal_radius(xy: np.ndarray, radius: float) -> np.ndarray:
+    """Boolean mask -- positions within ``radius`` m of the attacking goal centre (frame-LTR)."""
+    a = np.asarray(xy, dtype=np.float64).reshape(-1, 2)
+    return np.hypot(_ATTACKED_GOAL_X - a[:, 0], _GOAL_Y - a[:, 1]) <= radius
 
 
 class IntegrityError(Exception):
@@ -74,7 +84,8 @@ class RunZoneModel:
         self.target_means: np.ndarray | None = None
         self.target_covs: np.ndarray | None = None
         self.target_weights: np.ndarray | None = None
-        self.active_target_idx: np.ndarray | None = None  # indices of in-penalty-area target components
+        self.active_target_idx: np.ndarray | None = None  # indices of in-region target components (all, post-fit)
+        self.goal_radius_m: float = _DEFAULT_GOAL_RADIUS_M  # target danger+approach region radius
         self.selected: dict = {}  # fit provenance (BIC curves, selected k)
         self.training_commit: str | None = None
 
@@ -87,7 +98,8 @@ class RunZoneModel:
         init_k: int | None = None,
         target_k: int | None = None,
         init_k_range: tuple[int, int] = (2, 6),
-        target_k_range: tuple[int, int] = (8, 16),
+        target_k_range: tuple[int, int] = (4, 16),
+        goal_radius_m: float = _DEFAULT_GOAL_RADIUS_M,
         random_state: int = 0,
     ) -> RunZoneModel:
         """Fit the two GMMs. Component counts BIC-selected over the ranges unless pinned.
@@ -125,24 +137,31 @@ class RunZoneModel:
             return best, {"selected_k": int(best.n_components), "bic": curve}
 
         gi, si = _fit_bic(init_xy, init_k, init_k_range)
-        gt, st = _fit_bic(target_xy, target_k, target_k_range)
+        # Target zones are fit on the DANGER+APPROACH region only (within goal_radius_m of the goal
+        # centre): box + top-of-box + second-ball/edge. Fitting over ALL attacking players instead put
+        # ~59% of the mass at midfield (stay-back/short players) and collapsed the active zones to 2
+        # (spec §9 amendment 2026-10-18). Every fitted component is therefore an attacking target zone.
+        in_region = _within_goal_radius(target_xy, goal_radius_m)
+        target_fit = target_xy[in_region]
+        floor_k = target_k if target_k is not None else target_k_range[0]
+        if target_fit.shape[0] < floor_k:
+            raise ValueError(
+                f"RunZoneModel.fit: only {target_fit.shape[0]} target position(s) within {goal_radius_m} m of "
+                f"goal -- too few to fit the target zones."
+            )
+        gt, st = _fit_bic(target_fit, target_k, target_k_range)
 
-        tgt_means = np.asarray(gt.means_, dtype=np.float64)  # local: non-Optional for the active-zone scan
+        tgt_means = np.asarray(gt.means_, dtype=np.float64)
         self.init_means, self.init_covs, self.init_weights = gi.means_, gi.covariances_, gi.weights_
         self.target_means, self.target_covs, self.target_weights = tgt_means, gt.covariances_, gt.weights_
-        self.active_target_idx = np.array(
-            [
-                j
-                for j in range(tgt_means.shape[0])
-                if in_penalty_area_absolute(
-                    float(tgt_means[j, 0]), float(tgt_means[j, 1]), attacked_goal_x=_ATTACKED_GOAL_X
-                )
-            ],
-            dtype=np.int64,
-        )
-        if self.active_target_idx.size == 0:
-            raise ValueError("RunZoneModel.fit: no target component falls inside the penalty area (no active zones).")
-        self.selected = {"init": si, "target": st, "n_active_target": int(self.active_target_idx.size)}
+        self.active_target_idx = np.arange(tgt_means.shape[0], dtype=np.int64)  # all in-region => all active
+        self.goal_radius_m = float(goal_radius_m)
+        self.selected = {
+            "init": si,
+            "target": st,
+            "n_active_target": int(self.active_target_idx.size),
+            "goal_radius_m": float(goal_radius_m),
+        }
         return self
 
     # --- serve (pure numpy) -------------------------------------------------------------------
@@ -161,7 +180,7 @@ class RunZoneModel:
 
     @property
     def n_target_zones(self) -> int:
-        """Number of active (in-penalty-area) target zones.
+        """Number of active (within-goal-radius danger+approach) target zones.
 
         Examples
         --------
@@ -177,8 +196,9 @@ class RunZoneModel:
     ) -> np.ndarray:
         """Probabilistic run vector of length ``n_initial_zones * n_target_zones``.
 
-        ``active_mask`` selects the attacking players counted (default: those with >=0.5 target-mass on
-        the active zones -- Shaw's "active players near an active zone").
+        ``active_mask`` selects the attacking players counted (default: OCCUPANCY -- those whose TARGET
+        lies in the danger+approach region, within ``goal_radius_m`` of the goal centre). Occupancy, not
+        a displacement threshold, so the stationary second-ball / edge holder is counted (spec §6, 2026-10-18).
 
         Examples
         --------
@@ -200,7 +220,9 @@ class RunZoneModel:
         r_tgt = _gaussian_responsibilities(target_xy, self.target_means, self.target_covs, self.target_weights)
         r_tgt_active = r_tgt[:, self.active_target_idx]
         if active_mask is None:
-            active_mask = r_tgt_active.sum(axis=1) >= 0.5
+            # Occupancy rule: a player counts iff their TARGET is in the danger+approach region. Deep
+            # stay-back players (target at midfield) are excluded; the stationary second-ball holder is not.
+            active_mask = _within_goal_radius(target_xy, self.goal_radius_m)
         active_mask = np.asarray(active_mask, dtype=bool)
         vec = np.zeros((self.n_initial_zones, self.n_target_zones), dtype=np.float64)
         for p in np.flatnonzero(active_mask):
@@ -235,6 +257,7 @@ class RunZoneModel:
             "version": _MODEL_VERSION,
             "pitch_length": float(spadlconfig.field_length),
             "pitch_width": float(spadlconfig.field_width),
+            "goal_radius_m": float(self.goal_radius_m),
             "selected": self.selected,
             "chirality": _chirality_block(self),
             "feature_contract": _feature_contract_block(self),
@@ -290,6 +313,7 @@ class RunZoneModel:
             model.target_weights = z["target_weights"]
             model.active_target_idx = z["active_target_idx"]
         model.selected = meta.get("selected", {})
+        model.goal_radius_m = float(meta.get("goal_radius_m", _DEFAULT_GOAL_RADIUS_M))
         model.training_commit = meta.get("training_commit")
 
         from silly_kicks.tracking._chirality import verify_chirality
@@ -331,7 +355,7 @@ def _chirality_block(model: RunZoneModel) -> dict:
 
 def _feature_contract_block(model: RunZoneModel) -> dict:
     """Feature contract (ADR-050): the encoder's vector on the fixed contract probe frame, plus the
-    penalty-area constants the active-zone selection consumed (a geometry change -> re-fit)."""
+    goal-radius constant the target region + occupancy rule consume (a geometry change -> re-fit)."""
     from silly_kicks.tracking._feature_contract import contract_probe_frame, feature_contract
 
     def _vec() -> np.ndarray:
@@ -341,7 +365,6 @@ def _feature_contract_block(model: RunZoneModel) -> dict:
     return feature_contract(
         _vec,
         constants={
-            "penalty_area_half_width": float(spadlconfig.penalty_area_half_width),
-            "penalty_area_depth": float(spadlconfig.penalty_area_depth),
+            "goal_radius_m": float(model.goal_radius_m),
         },
     )

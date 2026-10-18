@@ -18,7 +18,7 @@ def _synthetic():
         [
             rng.normal([100.0, 28.0], 1.0, size=(40, 2)),
             rng.normal([100.0, 40.0], 1.0, size=(40, 2)),
-            rng.normal([80.0, 10.0], 1.0, size=(40, 2)),
+            rng.normal([86.0, 34.0], 1.0, size=(40, 2)),  # top-of-box / second-ball edge (in-region)
         ]
     )
     return init, target

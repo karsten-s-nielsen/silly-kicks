@@ -25,8 +25,9 @@ def _term_matrix(n=60, seed=0):
 
 
 def _toy_model(rank=2) -> CornerRoutineModel:
-    # alpha=0 for the unit fixtures: the default alpha=1 L1 penalty (Shaw's, tuned for count-scale
-    # real corners) over-shrinks this tiny synthetic matrix; mechanics are tested unregularised.
+    # alpha=0.0 is the DEFAULT (plain Frobenius NMF); passed explicitly here only to pin the mechanics
+    # fixtures against a future default change. The default-path regression guard is
+    # test_default_alpha_reconstruction_is_non_degenerate below.
     return CornerRoutineModel().fit(_term_matrix(), rank=rank, alpha=0.0)
 
 
@@ -77,6 +78,21 @@ def test_elbow_selects_small_rank_for_low_rank_data():
     m = CornerRoutineModel().fit(_term_matrix(), rank=None, rank_range=(2, 4), alpha=0.0)
     assert m.rank is not None and 2 <= m.rank <= 4  # planted rank-2 data -> elbow at a small rank
     assert "reconstruction" in m.selected
+
+
+def test_default_alpha_reconstruction_is_non_degenerate():
+    # Regression guard (TF46-IMPL-05): the DEFAULT alpha must give a non-degenerate NMF. The old default
+    # alpha=1.0 with l1_ratio=1.0 crushed W,H -> 0 on an occupancy term matrix, so the reconstruction
+    # error equalled ||X||_F CONSTANT across every rank (a dead rank-2 basis -- the ADR-032 / PR-S118
+    # class). Fit a non-trivial (full-rank) matrix with the DEFAULT alpha (NOT an explicit 0.0) over a
+    # rank range; the curve must be non-constant and net-decreasing. This RED-greens the guard:
+    # alpha=1.0 -> constant -> both asserts fail; alpha=0.0 -> decreasing -> both pass.
+    rng = np.random.default_rng(0)
+    term = rng.random((40, 12))  # full-rank, non-negative -> error must fall as rank grows
+    m = CornerRoutineModel().fit(term, rank_range=(2, 6))  # DEFAULT alpha
+    vals = [m.selected["reconstruction"][k] for k in sorted(m.selected["reconstruction"], key=int)]
+    assert len(set(round(v, 6) for v in vals)) > 1, "reconstruction constant across ranks (dead basis)"
+    assert vals[0] > vals[-1], "reconstruction did not decrease with rank (over-regularised collapse)"
 
 
 def test_compute_routine_features_handles_nan_rows():

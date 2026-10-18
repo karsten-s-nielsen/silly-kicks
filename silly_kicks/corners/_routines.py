@@ -66,7 +66,7 @@ class CornerRoutineModel:
         self.basis: np.ndarray | None = None  # H: (rank, n_runs)
         self.rank: int | None = None
         self.n_runs: int | None = None
-        self.alpha: float = 1.0
+        self.alpha: float = 0.0
         self.selected: dict = {}
         self.training_commit: str | None = None
 
@@ -76,7 +76,7 @@ class CornerRoutineModel:
         *,
         rank: int | None = None,
         rank_range: tuple[int, int] = (2, 30),
-        alpha: float = 1.0,
+        alpha: float = 0.0,
         random_state: int = 0,
     ) -> CornerRoutineModel:
         """Fit the NMF basis. ``rank`` is reconstruction-elbow-selected over ``rank_range`` unless pinned.
@@ -85,7 +85,7 @@ class CornerRoutineModel:
         --------
         Pin the rank, or leave it ``None`` to elbow-select::
 
-            model = CornerRoutineModel().fit(term_matrix, rank=30, alpha=1.0)
+            model = CornerRoutineModel().fit(term_matrix, rank=7)  # or leave rank/alpha default
         """
         from sklearn.decomposition import NMF
 
