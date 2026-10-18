@@ -78,15 +78,19 @@ def _combine_shards(res) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=list(_EMITTED_SHARD_COLUMNS))
 
 
-def fit_models(snapshots: pd.DataFrame, out_dir: Path) -> dict:
+def fit_models(snapshots: pd.DataFrame, out_dir: Path, *, training_commit: str | None = None) -> dict:
     """Fit RunZoneModel + CornerRoutineModel from the pooled per-player snapshots; save both. Pure-ish
-    (writes two bundle dirs under ``out_dir``). Returns a JSON-safe fit summary."""
+    (writes two bundle dirs under ``out_dir``). Returns a JSON-safe fit summary.
+
+    ``training_commit`` stamps both bundles' metadata so a shipped artifact traces back to a commit
+    (ADR-011 provenance; mirrors the tracking trainers). The corpus run passes the clean-HEAD commit."""
     from silly_kicks.corners import CornerRoutineModel, RunZoneModel
     from silly_kicks.corners._encode import _run_column_names
 
     init_xy = snapshots[["init_x", "init_y"]].to_numpy(dtype=float)
     target_xy = snapshots[["target_x", "target_y"]].to_numpy(dtype=float)
     zone_model = RunZoneModel().fit(init_xy, target_xy)
+    zone_model.training_commit = training_commit
     zone_model.save(out_dir / "run_zone")
 
     # per-corner term matrix: encode each corner's aligned players through the fitted zone model
@@ -102,6 +106,7 @@ def fit_models(snapshots: pd.DataFrame, out_dir: Path) -> dict:
         term_rows.append(vec)
     term_matrix = np.vstack(term_rows) if term_rows else np.zeros((0, len(run_cols)))
     routine_model = CornerRoutineModel().fit(term_matrix)
+    routine_model.training_commit = training_commit
     routine_model.save(out_dir / "routine")
 
     return {
@@ -155,7 +160,7 @@ def main() -> None:
         label="match",
     )
     snapshots = _combine_shards(res)
-    summary = fit_models(snapshots, dest) if not snapshots.empty else {"n_corners": 0}
+    summary = fit_models(snapshots, dest, training_commit=prov["commit"]) if not snapshots.empty else {"n_corners": 0}
 
     contract = declare_inputs(
         driver="build_corner_routines",

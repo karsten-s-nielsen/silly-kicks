@@ -45,3 +45,14 @@ def test_fit_models_writes_loadable_bundles(tmp_path):
     routine = CornerRoutineModel.load(tmp_path / "routine")
     assert zone.n_initial_zones >= 1 and zone.n_target_zones >= 1
     assert routine.rank is not None and routine.rank >= 1
+
+
+def test_fit_models_stamps_training_commit(tmp_path):
+    # ADR-011 provenance: a bundled artifact must trace back to a commit. The corpus run passes the
+    # clean-HEAD commit; here a sentinel confirms both bundles carry it in metadata.
+    import json
+
+    fit_models(_snapshots(), tmp_path, training_commit="deadbeef")
+    for sub in ("run_zone", "routine"):
+        meta = json.loads((tmp_path / sub / "metadata.json").read_text(encoding="utf-8"))
+        assert meta["training_commit"] == "deadbeef"
