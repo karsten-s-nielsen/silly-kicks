@@ -134,3 +134,23 @@ def test_numba_cache_key_covers_all_njit_files() -> None:
             covered |= {str(p.relative_to(_REPO)).replace("\\", "/") for p in _REPO.glob(pat)}
         missing = set(njit_files) - covered
         assert not missing, f"@njit files not covered by the {job_name} numba cache key: {sorted(missing)}"
+
+
+def test_in_workspace_numba_cache_dir_is_gitignored() -> None:
+    """A NUMBA_CACHE_DIR inside the checkout must be gitignored. Untracked, its kernel files make the CI
+    tree dirty, and the ADR-128 code identity of a dirty tree is a content hash: a kernel written
+    mid-test changes every stage generation (ADR-128's first CI run failed the importance parity test so)."""
+    import subprocess
+
+    prefix = "${{ github.workspace }}/"
+    dirs = {
+        job: str((spec.get("env") or {}).get("NUMBA_CACHE_DIR", ""))
+        for job, spec in _CI["jobs"].items()
+        if str((spec.get("env") or {}).get("NUMBA_CACHE_DIR", "")).startswith(prefix)
+    }
+    # non-vacuity: both jobs that compile kernels set an in-workspace cache dir today.
+    assert {"test", "slow"} <= set(dirs), f"in-workspace NUMBA_CACHE_DIR jobs drifted: {sorted(dirs)}"
+    for job, value in dirs.items():
+        probe = f"{value[len(prefix) :]}/probe.nbi"
+        rc = subprocess.run(["git", "check-ignore", "-q", probe], cwd=_REPO, check=False).returncode  # noqa: S603, S607 -- fixed argv
+        assert rc == 0, f"{job}: NUMBA_CACHE_DIR {value!r} is not gitignored ({probe} not ignored)"

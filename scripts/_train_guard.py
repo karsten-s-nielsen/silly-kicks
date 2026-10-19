@@ -8,7 +8,8 @@ marker-gated to ``python_version >= '3.11'`` (sklearn 1.9 dropped Python 3.10), 
 fit and SHIP ghost weights on py3.10/sklearn<=1.7.2 that silently disagree with the bundled
 artifacts -- guarded only by a comment. This raises instead.
 
-Called at the TRAINER entry point (``scripts/train_ghost_gk.py`` ``main()``), never in
+Called at the TRAINER's fit-time entry points (``scripts/train_ghost_gk.py``: the ``cv``, ``fit`` and
+``importance`` stage work, ADR-128), never in
 ``GhostGkModel.fit()``: the non-slow library unit tests fit toy models on whatever sklearn the CI leg
 resolved, and a library-level raise would redden the py3.10 legs. The range mirrors
 ``pyproject.toml``'s ``[train]`` ``scikit-learn>=1.9,<2`` -- keep them in lockstep.

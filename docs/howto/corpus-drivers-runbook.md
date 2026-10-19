@@ -7,6 +7,12 @@
 > independently half-solved four times before unification. It POINTS at `_driver.py`'s docstring and
 > `docs/context/corpus-drivers.md` (the WHY/measurement); it does not duplicate them.
 
+> **New drivers start on the stage contract (ADR-128).** Scaffold a new driver with
+> `python -m scripts.hf_jobs scaffold driver <name>` and follow `docs/howto/compute-pipelines.md`: it
+> declares `PIPELINE` and its corpus walk is an `ItemStage` (which runs `for_each` underneath). The
+> `for_each` instructions below remain the reference for the drivers on `_LEGACY_UNMIGRATED`
+> (`tests/scripts/test_compute_contract.py`) and for `ItemStage` semantics.
+
 ## The rule: adopt `scripts/_driver.py`; never hand-roll the loop
 
 Every corpus driver adopts the shared seam — CI-gated, not prose (ADR-052). `_driver.py` OWNS the
@@ -25,7 +31,9 @@ for_each(items, *, key=, work=, shard_root=, token_inputs=, load=..., token_reas
   DIRECTORY named by a `ruthless.fingerprint` digest of the DECLARED inputs (`token_inputs`). A changed
   declared input yields a different directory, so a stale shard can be neither read nor half-overwritten.
 - **Skips** an item whose shard already exists (that is resume); prints a FLUSHED `[i/n]` line;
-  records a failure rather than losing the pass.
+  records a failure rather than losing the pass. In a checksummed generation (every new generation,
+  ADR-128) the shard also needs a matching `<key>.sha256` sidecar: a missing or mismatching sidecar
+  deletes the shard and redoes the item.
 - **An empty result STILL writes a shard** — absent means "not yet run", present-and-empty means "ran,
   produced nothing". Conflating them recomputes every barren item forever.
 - `token_inputs={}` means "this pass has no staleness risk" and REQUIRES `token_reason` — a silent

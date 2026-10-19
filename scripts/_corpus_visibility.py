@@ -27,16 +27,24 @@ def validate_corpus_visibility(provider_by_path: dict[Path, str]) -> None:
     shard dropped the ``visibility`` column entirely (M2, consume side). A shard whose statistics are
     unavailable falls back to reading the one column.
     """
-    import pyarrow.parquet as pq
-
-    from silly_kicks.tracking._provider_visibility import (
-        _DETECTION_AWARE_PROVIDERS,
-        _detection_discarded_message,
-    )
+    from silly_kicks.tracking._provider_visibility import _DETECTION_AWARE_PROVIDERS
 
     for path, provider in provider_by_path.items():
         if provider not in _DETECTION_AWARE_PROVIDERS:
             continue
+        _check_shard_visibility(path, provider)
+
+
+def _check_shard_visibility(path: Path, provider: str) -> None:
+    """One detection-aware shard, under the dataset read gate (`scripts._dataset_reads`): the footer read
+    holds a slot, and the no-statistics fallback reads the whole file."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from scripts import _dataset_reads
+    from silly_kicks.tracking._provider_visibility import _detection_discarded_message
+
+    with _dataset_reads.read_slot():
         pf = pq.ParquetFile(path)
         if "visibility" not in pf.schema_arrow.names:
             raise ValueError(
@@ -47,7 +55,7 @@ def validate_corpus_visibility(provider_by_path: dict[Path, str]) -> None:
         meta = pf.metadata
         num_rows = meta.num_rows
         if num_rows == 0:
-            continue  # an empty shard is not a discarded-flag signal
+            return  # an empty shard is not a discarded-flag signal
         # Flat tc3 schema: arrow field order == parquet leaf-column order.
         col_idx = pf.schema_arrow.names.index("visibility")
         null_count = 0
@@ -60,10 +68,15 @@ def validate_corpus_visibility(provider_by_path: dict[Path, str]) -> None:
                 break
             null_count += nc
         if not stats_ok:
-            # No usable metadata -> read the one column and decide honestly (rare path).
-            vis = pf.read(columns=["visibility"]).column("visibility").to_pandas()
+            # No usable metadata -> read the one column and decide honestly (rare path). From the WHOLE file
+            # (one sequential read, this slot reused), never a range read on a mounted path.
+            vis = (
+                pq.read_table(pa.BufferReader(_dataset_reads.read_bytes(path)), columns=["visibility"])
+                .column("visibility")
+                .to_pandas()
+            )
             if vis.isna().all():
                 raise ValueError(f"{path.name}: {_detection_discarded_message(provider)}")
-            continue
+            return
         if null_count == num_rows:
             raise ValueError(f"{path.name}: {_detection_discarded_message(provider)}")

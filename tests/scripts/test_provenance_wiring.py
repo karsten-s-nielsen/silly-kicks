@@ -349,8 +349,38 @@ def _writes_bundled_weights(tree: ast.AST) -> bool:
     return any("_weights" in s for s in string_literals(tree))
 
 
+def _is_stage_pipeline(tree: ast.AST) -> bool:
+    """ADR-128: the module declares ``PIPELINE = Pipeline(..., output=...)`` and runs ``main(PIPELINE)``.
+
+    Its CLI -- ``--out``, ``--allow-dirty``, the ``require_clean_tree`` guard and the provenance stamp -- is
+    ``scripts._stages.main``'s, not the module's own, so the source checks below read ``scripts/_stages.py``
+    for it (asserted once, by `test_the_stage_cli_carries_the_provenance_contract`). A pipeline with an
+    ``output`` stage exports an artifact (``--run-all --out``), so it is an artifact driver by construction.
+    """
+    declares = any(
+        isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "PIPELINE" for t in n.targets)
+        and isinstance(n.value, ast.Call)
+        and getattr(n.value.func, "id", "") == "Pipeline"
+        and any(
+            kw.arg == "output" and not (isinstance(kw.value, ast.Constant) and kw.value.value is None)
+            for kw in n.value.keywords
+        )
+        for n in getattr(tree, "body", [])
+    )
+    runs_main = any(
+        isinstance(n, ast.ImportFrom) and n.module == "scripts._stages" and any(a.name == "main" for a in n.names)
+        for n in ast.walk(tree)
+    )
+    return declares and runs_main
+
+
 def _is_artifact_driver(tree: ast.AST) -> bool:
-    return (_declares_an_out_flag(tree) and _writes_a_document(tree)) or _writes_bundled_weights(tree)
+    return (
+        (_declares_an_out_flag(tree) and _writes_a_document(tree))
+        or _writes_bundled_weights(tree)
+        or _is_stage_pipeline(tree)
+    )
 
 
 def _candidates() -> set[str]:
@@ -441,9 +471,27 @@ def _source(name: str) -> str:
     return (_SCRIPTS / f"{name}.py").read_text(encoding="utf-8")
 
 
+def _cli_source(name: str) -> str:
+    """Where ``name``'s CLI lives: its own source, or ``scripts/_stages.py`` for an ADR-128 pipeline."""
+    if _is_stage_pipeline(ast.parse(_source(name))):
+        return _source("_stages")
+    return _source(name)
+
+
+def test_the_stage_cli_carries_the_provenance_contract():
+    """ADR-128: every stage-contract module inherits its CLI from `scripts._stages.main`, so THAT entry
+    point must import the shared helper, offer the dirty hatch and run the clean-tree guard -- once."""
+    src = _source("_stages")
+    main_fn = _function(src, "main")
+    assert main_fn is not None and _calls_in(main_fn, "require_clean_tree")
+    assert "_provenance" in src and "--allow-dirty" in src and "--out" in src
+    pipelines = [n for n in ARTIFACT_DRIVERS if _is_stage_pipeline(ast.parse(_source(n)))]
+    assert "train_win_probability" in pipelines, "non-vacuity: a migrated trainer must take the stage path"
+
+
 @pytest.mark.parametrize("name", ARTIFACT_DRIVERS)
 def test_driver_imports_the_shared_provenance_helper(name):
-    assert "_provenance" in _source(name), (
+    assert "_provenance" in _cli_source(name), (
         f"{name}.py writes a registered artifact but never imports scripts._provenance. "
         "A bare `git rev-parse HEAD` is NOT provenance: it reads clean on a modified tree."
     )
@@ -453,7 +501,7 @@ def test_driver_imports_the_shared_provenance_helper(name):
 def test_driver_offers_an_allow_dirty_escape_hatch(name):
     """The hatch must exist (a dev run is legitimate) and its artifact stays marked -- so the
     absence of `--allow-dirty` is itself evidence the guard was never wired."""
-    assert "--allow-dirty" in _source(name), f"{name}.py has no --allow-dirty flag"
+    assert "--allow-dirty" in _cli_source(name), f"{name}.py has no --allow-dirty flag"
 
 
 def _shells_out_to_rev_parse(src: str) -> bool:
@@ -521,7 +569,7 @@ def test_the_ENTRY_POINT_enforces_the_clean_tree(name):
     calls. Enforcing "the guard is in main" checks the property that actually matters: no CLI
     invocation can reach expensive work without passing the check first.
     """
-    main_fn = _function(_source(name), "main")
+    main_fn = _function(_cli_source(name), "main")
     assert main_fn is not None, f"{name}.py has no main()"
     assert _calls_in(main_fn, "require_clean_tree"), (
         f"{name}.py never calls require_clean_tree from main() -- a CLI run could write a "
@@ -533,7 +581,7 @@ def test_the_ENTRY_POINT_enforces_the_clean_tree(name):
 def test_the_guard_precedes_the_corpus_walk_within_main(name):
     """Where BOTH calls live in `main`, ordering is directly checkable and must hold: the 8.7h loss
     happened because expensive work ran before anything validated it."""
-    main_fn = _function(_source(name), "main")
+    main_fn = _function(_cli_source(name), "main")
     assert main_fn is not None
     guard = _calls_in(main_fn, "require_clean_tree")
     # The walk = a direct corpus-loader call OR the sharded `for_each` itself (the actual expensive pass).

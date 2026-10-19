@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scripts._toy_corpora import ghost_gk_frames
 from silly_kicks.tracking._ghost_gk import GRID_X_MAX, GRID_X_MIN, GRID_Y_MAX, GRID_Y_MIN
 
 # ---------------------------------------------------------------------------
@@ -55,125 +56,9 @@ def _fitted_model(*, n_estimators: int = 10, n_samples: int = 100):
 # ---------------------------------------------------------------------------
 
 
-def _make_ghost_gk_frames(
-    *,
-    home_team_id: int = 1,
-    away_team_id: int = 2,
-    period_id: int = 1,
-    frame_id: int = 1,
-    game_id: str = "100",
-    timestamp: float = 1.0,
-) -> pd.DataFrame:
-    """Synthetic frames with ball, GK, defenders, attackers.
-
-    ORIENTED (ADR-028): every non-ball row carries ``team_attacking_direction``, so
-    ``acting_team_attacks_rtl`` can resolve a real per-action flip. The scene is
-    home-attacks-right (frame-LTR): the home GK sits at x=5 defending the x=0 goal,
-    so the home team attacks x=105 -> "ltr"; the away GK sits at x=100 defending the
-    x=105 goal, so the away team attacks x=0 -> "rtl". Ball rows carry None, which is
-    what ``convert_to_frames`` emits and what the helper filters out anyway.
-
-    Before this column existed the fixture always took the all-False no-flip path, so
-    every away-team action it fed to ``add_ghost_gk`` / ``ghost_gk_xfns`` silently
-    mixed coordinate conventions and was never exercised against ADR-028.
-    """
-    rows = []
-    base = {
-        "game_id": game_id,
-        "period_id": period_id,
-        "frame_id": frame_id,
-        "timestamp": timestamp,
-        "ball_state": "alive",
-        "time_seconds": timestamp,
-        # A REAL, classified provider (fully-observed): the ghost-GK trainer's detected-only
-        # filter (spec 4.3, PR-S115) calls keeper_detection_mask, which fail-closes on an
-        # unregistered provider. "gradientsports" is a no-op for the filter (all keepers observed),
-        # so these synthetic frames exercise the trainer without a spurious unknown-provider raise.
-        "source_provider": "gradientsports",
-    }
-    # Ball
-    rows.append(
-        {
-            **base,
-            "player_id": "ball",
-            "team_id": None,
-            "x": 50.0,
-            "y": 34.0,
-            "vx": 2.0,
-            "vy": 0.0,
-            "speed": 2.0,
-            "is_ball": True,
-            "is_goalkeeper": False,
-            "team_attacking_direction": None,
-        }
-    )
-    # Home GK (defending goal at x=0 -> home attacks x=105 -> "ltr")
-    rows.append(
-        {
-            **base,
-            "player_id": "p1",
-            "team_id": home_team_id,
-            "x": 5.0,
-            "y": 34.0,
-            "vx": 0.0,
-            "vy": 0.0,
-            "speed": 0.0,
-            "is_ball": False,
-            "is_goalkeeper": True,
-            "team_attacking_direction": "ltr",
-        }
-    )
-    # Home defenders (4)
-    for i, (px, py) in enumerate([(20, 25), (22, 30), (21, 38), (23, 45)]):
-        rows.append(
-            {
-                **base,
-                "player_id": f"p{10 + i}",
-                "team_id": home_team_id,
-                "x": float(px),
-                "y": float(py),
-                "vx": 0.5,
-                "vy": 0.0,
-                "speed": 0.5,
-                "is_ball": False,
-                "is_goalkeeper": False,
-                "team_attacking_direction": "ltr",
-            }
-        )
-    # Away attackers (4)
-    for i, (px, py) in enumerate([(40, 30), (45, 34), (38, 40), (50, 34)]):
-        rows.append(
-            {
-                **base,
-                "player_id": f"a{10 + i}",
-                "team_id": away_team_id,
-                "x": float(px),
-                "y": float(py),
-                "vx": -1.0,
-                "vy": 0.0,
-                "speed": 1.0,
-                "is_ball": False,
-                "is_goalkeeper": False,
-                "team_attacking_direction": "rtl",
-            }
-        )
-    # Away GK (defending goal at x=105 -> away attacks x=0 -> "rtl")
-    rows.append(
-        {
-            **base,
-            "player_id": "a1",
-            "team_id": away_team_id,
-            "x": 100.0,
-            "y": 34.0,
-            "vx": 0.0,
-            "vy": 0.0,
-            "speed": 0.0,
-            "is_ball": False,
-            "is_goalkeeper": True,
-            "team_attacking_direction": "rtl",
-        }
-    )
-    return pd.DataFrame(rows)
+#: Moved to `scripts/_toy_corpora.ghost_gk_frames` (ADR-128) so the toy staged corpora and these unit
+#: tests share ONE synthesis; the name stays for its many importers (tests/gkdv, tests/scripts, ...).
+_make_ghost_gk_frames = ghost_gk_frames
 
 
 # ---------------------------------------------------------------------------

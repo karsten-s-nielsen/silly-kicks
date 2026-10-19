@@ -11,30 +11,19 @@ Classifications:
 - ``frame_geometry`` -- trains on tracking-frame coordinates -> RETRAINED on float32 (F1b commit-2).
 - ``event_only``     -- trains on SPADL action coords (float64, unchanged) -> NOT retrained.
 - ``out``            -- deferred this cycle for a separate reason (recorded).
+
+ADR-128 (spec 5.7): the classification map is declared in the artifact manifest
+(``docs/artifacts/manifest.toml``, ``[roots."<dir>"]``); the reasons are copied verbatim.
 """
 
 from pathlib import Path
 
+from scripts.hf_jobs import manifest as M
+
 _ROOT = Path("silly_kicks")
 
 # dir (posix, relative to repo root) -> (classification, reason)
-WEIGHTS_CLASSIFICATION: dict[str, tuple[str, str]] = {
-    # frame-geometry -> retrained on float32 frames (commit-2)
-    "silly_kicks/tracking/_xshot_weights": ("frame_geometry", "xShot features from frame positions"),
-    "silly_kicks/tracking/_xcross_weights": ("frame_geometry", "xCross features from frame positions"),
-    "silly_kicks/tracking/_ghost_gk_weights": ("frame_geometry", "ghost-GK regresses on frame positions"),
-    "silly_kicks/tracking/_ghost_outfield_weights": ("frame_geometry", "ghost-outfield regresses on frame positions"),
-    "silly_kicks/tracking/_receiver_weights": ("frame_geometry", "receiver model reads pre-pass frame positions"),
-    "silly_kicks/corners/_run_zone_weights": ("frame_geometry", "RunZoneModel GMMs on reflected frame positions"),
-    "silly_kicks/corners/_routine_weights": ("frame_geometry", "CornerRoutineModel NMF on frame-derived run vectors"),
-    # event-only -> SPADL action coords (float64), NOT retrained
-    "silly_kicks/expected_passing/weights": ("event_only", "PassCompletion: event-only action geometry"),
-    "silly_kicks/match_outcome/weights": ("event_only", "DependenceModel rho: event-only, no frames"),
-    "silly_kicks/win_probability/weights": ("event_only", "win-probability: event-only state, no frames"),
-    "silly_kicks/xsuccess/weights": ("event_only", "xSuccess: END-BLIND event-only action geometry"),
-    # out of this cycle
-    "silly_kicks/xtgk/_retention_weights": ("out", "xt-gk-v2 rho (item #4) -- deferred, v2 quarantined"),
-}
+WEIGHTS_CLASSIFICATION: dict[str, tuple[str, str]] = M.weights_classification()
 
 _VALID = {"frame_geometry", "event_only", "out"}
 

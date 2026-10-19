@@ -25,6 +25,11 @@ from typing import Literal, NamedTuple, cast, overload
 
 import pandas as pd
 
+from scripts._driver_sources import (  # noqa: F401 -- re-exported (docs/PRIVATE_CONSUMERS.md)
+    CORPUS_CACHE_ENV,
+    LoadedMatch,
+    resolve_cache_dir,
+)
 from scripts._item_outcome import ItemExcluded  # leaf module; MatchExcluded subclasses it
 
 
@@ -74,28 +79,11 @@ def _resolve_token(token: str | None) -> str:
     return token or os.environ.get("PINING_FOR_THE_DATA_TOKEN") or _PUBLIC_TOKEN
 
 
-#: The one raw-artifact cache env var, in the repo's ``SILLY_KICKS_*`` convention (spec §4.1).
-CORPUS_CACHE_ENV = "SILLY_KICKS_CORPUS_CACHE_DIR"
-
 #: Offline manifest dir. When set, ``_list_matches`` reads ``<dir>/<provider>/matches.json`` (a staged
 #: copy of the API's ``/{provider}/matches`` response) instead of the network, so an air-gapped run
 #: (e.g. an HF Job over a staged corpus) enumerates matches with NO token and NO pining network. The
 #: per-match artifacts still resolve from the local cache (``cache_dir``), so the whole load is offline.
 PINING_MANIFEST_ENV = "SILLY_KICKS_PINING_MANIFEST_DIR"
-
-
-def resolve_cache_dir(cache_dir: str | Path | None) -> Path | None:
-    """The raw-artifact cache root: the ARGUMENT, else ``$SILLY_KICKS_CORPUS_CACHE_DIR``, else ``None``.
-
-    ``None`` is today's behaviour -- a temp dir per match, nothing persisted. Pining artifacts live
-    under ``<root>/<provider>/<match_id>/``, the layout ``cache_dir`` always had, so an existing cache
-    directory works unchanged when pointed at. A blank env value reads as unset: it is a typo, and
-    treating it as the working directory would scatter artifact trees wherever a driver ran.
-    """
-    if cache_dir is not None:
-        return Path(cache_dir)
-    env = os.environ.get(CORPUS_CACHE_ENV, "").strip()
-    return Path(env) if env else None
 
 
 def _list_matches(provider: str, token: str, base_url: str) -> list[dict]:
@@ -303,21 +291,6 @@ def select_match_ids(
             providers=providers, match_ids=match_ids, max_per_provider=max_per_provider, token=token, base_url=base_url
         )
     ]
-
-
-class LoadedMatch(NamedTuple):
-    """One loaded match. ``frames`` is ``None`` iff ``events_only`` (pining); an empty DataFrame for
-    open data. ``visible_area`` is the SB360 per-action polygon table (statsbomb full loads only), and
-    ``report`` is the SkillCorner ``TrackingConversionReport`` on a full load (it carries the S1 rates
-    Task 0 records), else ``None`` (interp 2)."""
-
-    provider: str
-    match_id: str
-    actions: pd.DataFrame
-    frames: pd.DataFrame | None
-    home_team_id: object
-    visible_area: pd.DataFrame | None
-    report: object | None
 
 
 class MatchExcluded(ItemExcluded):

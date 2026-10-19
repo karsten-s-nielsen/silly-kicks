@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 import train_xcross_attempt as xc
 import train_xshot_occurrence as xs
-from _fake_corpus import make_loaded, make_ref
+from _fake_corpus import make_ref
 
 
 @pytest.mark.parametrize("mod", [xs, xc])
@@ -21,29 +21,37 @@ def test_source_key_handles_both_a_ref_and_a_data_dir_tuple(mod):
     assert mod._source_key(("gradientsports", 10502, None, None, None)) == ("gradientsports", "10502")
 
 
-def _fake_xshot_prepare(monkeypatch):
+def test_xshot_extract_walks_refs_via_load_and_resumes(tmp_path, monkeypatch):
+    """ADR-128: the extraction is the `extract` ItemStage (refs -> load -> work through `for_each`); a
+    re-run never re-extracts a match whose shard already exists."""
     import silly_kicks.tracking._xshot_occurrence as xo
+    from scripts._stages import ItemStage, LocalStore, make_context, reduce_stage, run_unit, sorted_units
+    from scripts._toy_corpora import build_xshot_corpus, xshot_arms
+    from tests.scripts._stage_harness import PROV, params_from_args
 
-    def _prep(frames, actions, **kw):
+    calls: list = []
+
+    def _prep(frames, shots, **kw):
+        calls.append(frames["game_id"].iloc[0])
         x = pd.DataFrame({name: [0.0] for name in xo.XSHOT_FEATURE_NAMES_FAITHFUL})
         return x, np.array([1]), np.array(["g0"])
 
     monkeypatch.setattr(xo, "prepare_xshot_training_data", _prep)
-
-
-def test_xshot_extract_walks_refs_via_load_and_resumes(tmp_path, monkeypatch):
-    _fake_xshot_prepare(monkeypatch)
-    refs = [make_ref("gradientsports", "m0"), make_ref("gradientsports", "m1")]
-    calls: list = []
-
-    def _load(ref):
-        calls.append(ref.key)
-        return make_loaded(ref.provider, ref.match_id, actions=pd.DataFrame(), frames=pd.DataFrame(), home_team_id=1)
-
-    shard_root = tmp_path / "shards"
-    X, *_ = xs._extract(refs, 5.0, shard_root=shard_root, load=_load)
-    assert len(X) == 2 and len(calls) == 2  # one loaded row per match
-
-    n_first = len(calls)
-    xs._extract(refs, 5.0, shard_root=shard_root, load=_load)
-    assert len(calls) == n_first, "resume re-loaded a match whose shard already existed"
+    build_xshot_corpus(tmp_path / "d" / "toyxs", providers=("gradientsports",) * 2, episodes=1, heavy_episodes=None)
+    args = ["--dataset", "toyxs", "--arms-json", xshot_arms(tmp_path / "d" / "toyxs", paired=False)]
+    ctx = make_context(
+        xs.PIPELINE,
+        params_from_args(xs.PIPELINE, args),
+        PROV,
+        store=LocalStore(tmp_path / "s"),
+        data_root=tmp_path / "d",
+    )
+    st = xs.PIPELINE.stage("extract")
+    assert isinstance(st, ItemStage)
+    refs = st.ref_map(ctx)
+    for _ in range(2):
+        for key in sorted_units(ctx, st):
+            run_unit(ctx, st, key, worker="test", ref=refs[key])
+    assert len(calls) == 2, f"one extraction per match, and none on the re-run: {calls}"
+    reduce_stage(ctx, "extract")
+    assert len(ctx.upstream("extract")) == 2  # one row per match

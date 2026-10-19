@@ -75,14 +75,37 @@ class ResultSummary:
     refused: bool = False
 
 
-def available_ram_bytes() -> int:
-    """Portable available-RAM reading.
+#: The cgroup v2 mount. Inside a container `/proc/meminfo` and `os.cpu_count()` describe the HOST: on a
+#: real HF cpu-upgrade job (2026-10-20) they read 503 GB available and 64 CPUs, while the job's cgroup
+#: allowed 32 GB (`memory.max`) and 8 CPUs (`cpu.max` 800000 100000). The cgroup is the budget.
+_CGROUP = Path("/sys/fs/cgroup")
 
-    Linux reads ``/proc/meminfo`` ``MemAvailable`` (stdlib, no dep). Elsewhere it
-    lazy-imports ``psutil`` (only where ``/proc/meminfo`` is absent). If neither is
-    available it raises, telling the caller to pass an explicit budget -- it never
-    guesses, so a wrong reading can't silently oversubscribe the box.
-    """
+
+def _read_cgroup(cgroup: Path, name: str) -> str | None:
+    try:
+        return (cgroup / name).read_text(encoding="ascii").strip()
+    except OSError:
+        return None
+
+
+def available_cpus(*, cgroup: Path = _CGROUP, fallback: int | None = None) -> int:
+    """The CPUs this process may use: the cgroup v2 ``cpu.max`` quota (rounded up) when one is set,
+    else the CPU affinity, else ``os.cpu_count()``."""
+    if fallback is None:
+        affinity = getattr(os, "sched_getaffinity", None)
+        fallback = len(affinity(0)) if affinity is not None else (os.cpu_count() or 1)
+    raw = _read_cgroup(cgroup, "cpu.max")
+    if raw:
+        quota, _, period = raw.partition(" ")
+        if quota != "max" and period:
+            try:
+                return max(1, min(fallback, -(-int(quota) // int(period))))
+            except ValueError:
+                pass
+    return max(1, fallback)
+
+
+def _host_available_ram() -> int:
     try:
         with open("/proc/meminfo", encoding="ascii") as fh:
             for line in fh:
@@ -98,6 +121,39 @@ def available_ram_bytes() -> int:
         raise RuntimeError(
             "cannot read available RAM (no /proc/meminfo, no psutil); pass an explicit --nproc / --peak-rss-gib"
         ) from exc
+
+
+def available_ram_bytes(*, cgroup: Path = _CGROUP, host_available: int | None = None) -> int:
+    """Portable available-RAM reading.
+
+    Linux reads ``/proc/meminfo`` ``MemAvailable`` (stdlib, no dep). Elsewhere it
+    lazy-imports ``psutil`` (only where ``/proc/meminfo`` is absent). If neither is
+    available it raises, telling the caller to pass an explicit budget -- it never
+    guesses, so a wrong reading can't silently oversubscribe the box. Inside a cgroup v2 with a
+    ``memory.max`` limit the result is at most ``memory.max`` minus the working set (``memory.current``
+    less reclaimable ``inactive_file`` cache): a container's ``/proc/meminfo`` is the host's.
+    """
+    host = _host_available_ram() if host_available is None else host_available
+    limit, used = _read_cgroup(cgroup, "memory.max"), _read_cgroup(cgroup, "memory.current")
+    if limit and limit != "max" and used:
+        try:
+            return max(0, min(host, int(limit) - (int(used) - _inactive_file(cgroup))))
+        except ValueError:
+            pass
+    return host
+
+
+def _inactive_file(cgroup: Path) -> int:
+    """Reclaimable page cache (``memory.stat`` ``inactive_file``): ``memory.current`` counts it, and the
+    dataset read gate's whole-file reads fill it, so the working set excludes it (the usual reading)."""
+    for line in (_read_cgroup(cgroup, "memory.stat") or "").splitlines():
+        name, _, value = line.partition(" ")
+        if name == "inactive_file":
+            try:
+                return int(value)
+            except ValueError:
+                return 0
+    return 0
 
 
 def run_parallel(

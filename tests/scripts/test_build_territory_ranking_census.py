@@ -12,6 +12,8 @@ volume-only design cannot buy a license; a defender-null ICC cannot either).
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -445,57 +447,51 @@ def test_lineup_team_map_skips_non_dict_entries_without_crashing(monkeypatch):
 # defender+team ICC needs defenders observed on >=2 teams, which only exist ACROSS competitions --
 # so a single-competition census can only ever return "not licensed" (n_multi_team_defenders=0).
 #
-# These pin the corpus wiring OFFLINE (monkeypatched manifest stub + tiny fixture + a fake for_each);
-# the numerics / gate are covered by the pure-core tests above.
+# These pin the corpus wiring OFFLINE (a stubbed manifest + tiny fixture): ADR-128 runs the REAL stages
+# in process (`tests/scripts/_stage_harness`), stubbing only the open-data seam, the model fit and the
+# per-match scoring; the numerics / gate are covered by the pure-core tests above.
 # --------------------------------------------------------------------------------------------------
 
 
 def _fake_match(provider, match_id):
     """A minimal 5-tuple (provider, match_id, actions, frames, home_team_id). game_id == match_id so
-    the shard the fake for_each writes carries a distinct, competition-tagged game."""
+    each scored shard carries a distinct, competition-tagged game."""
     actions = pd.DataFrame({"game_id": [match_id], "player_id": [1], "player_name": ["X"]})
     return (provider, match_id, actions, pd.DataFrame(), 10)
 
 
-def _install_broad_corpus_stubs(monkeypatch, tmp_path, *, competitions, matches_per_competition=2):
-    """Stub the source factory, the clean-tree guard, and for_each; return the capture handles.
+class _FakeModel:
+    def to_dict(self) -> dict:
+        return {}
 
-    Returns ``(seen_keys, seen_tokens, loaded_competitions)`` -- the SCORED keys the SCORE for_each
-    iterated, the SCORE shard-generation token, and the (competition, season) tuples ``open_data_source``
-    was called for (so a test can prove EVERY competition was listed, independent of how the fit/score
-    split lands). Task 8.5/13: the driver is a TWO-pass for_each -- a fit prepass (``dest/fit_shards``)
-    then a score pass (``dest/shards``) -- so the fake for_each distinguishes them by shard-root name,
-    applies ``load`` per item, and captures keys/token ONLY for the score pass. Each pass WRITES one real
-    parquet shard per item so the fit read-back + the reduce run to completion off the network.
-    """
-    from _fake_corpus import make_ref
 
-    import scripts._driver as driver_mod
-    import scripts._provenance as prov_mod
+def _install_broad_corpus_stubs(monkeypatch, *, competitions, matches_per_competition=2):
+    """Stub the open-data listing + loading, the fit and the scoring; return the listed competitions.
+
+    The refs stage lists through `list_open_data_refs` and each match loads through `load_open_data_match`
+    (both looked up at call time, so the module stubs reach the stage functions)."""
+    import build_territory_ranking_census as census
+
     import scripts._sb_open_data as sbmod
+    from scripts._sb_open_data import OpenDataRef
 
     monkeypatch.setattr(sbmod, "all_open_competitions", lambda: list(competitions))
     monkeypatch.setattr(sbmod, "assert_statsbomb_open_data_mode", lambda: None)
+    listed: list[tuple[int, int]] = []
 
-    loaded_competitions: list[tuple[int, int]] = []
+    def _fake_list(comps, *, match_ids=None, max_matches=None):
+        listed.extend(tuple(c) for c in comps)
+        return [
+            OpenDataRef(int(c), int(s), f"m-{c}-{s}-{j}", 10) for c, s in comps for j in range(matches_per_competition)
+        ]
 
-    def _fake_source(comps, *, match_ids=None, max_matches=None, preserve_native=(), cache_dir=None):
-        loaded_competitions.extend(comps)
-        refs, by_id = [], {}
-        for competition_id, season_id in comps:
-            for j in range(matches_per_competition):
-                mid = f"m-{competition_id}-{season_id}-{j}"
-                refs.append(make_ref("statsbomb", mid))
-                by_id[mid] = _fake_match("statsbomb", mid)
-        return refs, lambda ref: by_id[ref.match_id]
-
-    monkeypatch.setattr(sbmod, "open_data_source", _fake_source)
-
-    # Fit is stubbed (a real xt fit needs full SPADL columns); this test pins the CORPUS WIRING.
+    monkeypatch.setattr(sbmod, "list_open_data_refs", _fake_list)
     monkeypatch.setattr(
-        "build_territory_ranking_census._fit_disjoint_models",
-        lambda fit_actions: ("XT", "CM"),
+        sbmod, "load_open_data_match", lambda ref, cache_dir=None: _fake_match("statsbomb", ref.match_id)
     )
+    # Fit is stubbed (a real xt fit needs full SPADL columns); this test pins the CORPUS WIRING.
+    monkeypatch.setattr(census, "_fit_disjoint_models", lambda fit_actions: (_FakeModel(), _FakeModel()))
+    monkeypatch.setattr(census, "_models", lambda ctx: ("XT", "CM"))
 
     # Score each match into a tiny per-(defender, game, team) shard so the reduce has data to pool.
     def _fake_score(item, *, xt, completion_model):
@@ -510,97 +506,62 @@ def _install_broad_corpus_stubs(monkeypatch, tmp_path, *, competitions, matches_
             }
         )
 
-    monkeypatch.setattr("build_territory_ranking_census._score_match", _fake_score)
+    monkeypatch.setattr(census, "_score_match", _fake_score)
+    return listed
 
-    monkeypatch.setattr(prov_mod, "git_provenance", lambda: {"commit": "0" * 40, "dirty": False, "tree_state": "clean"})
-    monkeypatch.setattr(prov_mod, "require_clean_tree", lambda prov, allow_dirty=False: prov)
 
-    seen_keys: list[str] = []
-    seen_tokens: dict = {}
+def _census(tmp_path, *args):
+    """Run every census stage in process; return ``(ctx, census.json dict)``."""
+    import json
 
-    class _FakeRes:
-        def __init__(self, gen_dir):
-            self.shard_dir = gen_dir
+    import build_territory_ranking_census as census
 
-        def manifest(self):
-            return {"generation": "fake", "n_shards": len(seen_keys)}
+    from tests.scripts._stage_harness import export, run_in_process
 
-    def _fake_for_each(items, *, key, work, shard_root, token_inputs, label, load=None):
-        gen_dir = shard_root / "gen"
-        gen_dir.mkdir(parents=True, exist_ok=True)
-        is_score = shard_root.name == "shards"  # the score pass; the fit prepass is "fit_shards"
-        if is_score:
-            seen_tokens.update(token_inputs)
-        for it in items:
-            item = load(it) if load is not None else it
-            k = key(it)
-            work(item).to_parquet(gen_dir / f"{k}.parquet", index=False)
-            if is_score:
-                seen_keys.append(k)
-        return _FakeRes(gen_dir)
-
-    monkeypatch.setattr(driver_mod, "for_each", _fake_for_each)
-    return seen_keys, seen_tokens, loaded_competitions
+    ctx = run_in_process(census.PIPELINE, list(args), store=tmp_path / "store", data_root=None)
+    out = export(ctx, tmp_path / "out")
+    return ctx, json.loads((out / "census.json").read_text(encoding="utf-8"))
 
 
 def test_all_competitions_pools_across_every_competition(monkeypatch, tmp_path):
     """--all-competitions draws from all_open_competitions() (a 2-tuple stub) and chains EVERY
     (comp, season)'s matches into ONE census pooled across the whole corpus. A regression to a single
-    competition would load only one tuple's matches, and the census would see the wrong game count."""
-    import json
+    competition would list only one tuple's matches, and the census would see the wrong game count."""
+    listed = _install_broad_corpus_stubs(monkeypatch, competitions=[(43, 106), (11, 90)], matches_per_competition=2)
+    ctx, out = _census(tmp_path, "--all-competitions")
 
-    import build_territory_ranking_census as census
-
-    competitions = [(43, 106), (11, 90)]
-    seen_keys, _seen_tokens, loaded = _install_broad_corpus_stubs(
-        monkeypatch, tmp_path, competitions=competitions, matches_per_competition=2
-    )
-
-    out_dir = tmp_path / "out"
-    monkeypatch.setattr("sys.argv", ["prog", "--all-competitions", "--out", str(out_dir), "--allow-dirty"])
-    census.main()
-
-    # EVERY competition in the manifest was LOADED (a regression to a single hard-coded competition
-    # would call the loader for one tuple only) -- proven at the load seam, independent of how the
-    # deterministic fit/score split happens to concentrate competitions.
-    assert set(loaded) == {(43, 106), (11, 90)}, loaded
-
-    # The reduce POOLED across the whole corpus into one census.json: all 4 loaded matches are
+    # EVERY competition in the manifest was LISTED (a regression to a single hard-coded competition
+    # would list one tuple only) -- proven at the listing seam, independent of the fit/score split.
+    assert set(listed) == {(43, 106), (11, 90)}, listed
+    # The reduce POOLED across the whole corpus into one census.json: all 4 listed matches are
     # accounted for (2 fit + 2 scored), and one pooled row per scored shard.
-    out = json.loads((out_dir / "census.json").read_text(encoding="utf-8"))
-    assert out["n_fit_matches"] + out["n_scored_matches"] == 4  # every loaded match accounted for
-    assert out["n_scored_matches"] == len(seen_keys)
-    # A single-club/national-team corpus is expected NOT to license (the honest limit); what matters
-    # here is that the census RAN over the pooled corpus and produced a verdict.
+    n_scored = len(ctx.upstream("refs")["score_refs"])
+    assert out["n_fit_matches"] + out["n_scored_matches"] == 4  # every listed match accounted for
+    assert out["n_scored_matches"] == n_scored
     assert "ranking_licensed" in out
-    assert out["census"]["tier1"]["n_rows"] == len(seen_keys)  # one row per scored shard, pooled
+    assert out["census"]["tier1"]["n_rows"] == n_scored  # one row per scored shard, pooled
+    # Decision P4: the corpus-scoped score counters, the score stage token as the generation.
+    assert out["generation"] == ctx.tokens["score"] and out["n_attempted"] == n_scored
 
 
 def test_all_competitions_token_differs_from_single_competition(monkeypatch, tmp_path):
     """The --all-competitions shard-generation token carries a corpus marker so its generation digest
     DIFFERS from a single-competition run's token (the 4.77.1 stale-shard rule)."""
-    import build_territory_ranking_census as census
+    from build_territory_ranking_census import _SHARD_SCHEMA_VERSION
 
-    # Broad run.
-    _keys_b, token_broad, _loaded_b = _install_broad_corpus_stubs(
-        monkeypatch, tmp_path, competitions=[(43, 106), (11, 90)]
-    )
-    monkeypatch.setattr("sys.argv", ["prog", "--all-competitions", "--out", str(tmp_path / "b"), "--allow-dirty"])
-    census.main()
+    _install_broad_corpus_stubs(monkeypatch, competitions=[(43, 106), (11, 90)])
+    broad, _ = _census(tmp_path / "b", "--all-competitions")
+    _install_broad_corpus_stubs(monkeypatch, competitions=[(43, 106)])
+    single, _ = _census(tmp_path / "s")
 
-    # Single-competition run (default path) -- fresh capture dicts via a fresh stub install.
-    _keys_s, token_single, _loaded_s = _install_broad_corpus_stubs(monkeypatch, tmp_path, competitions=[(43, 106)])
-    monkeypatch.setattr("sys.argv", ["prog", "--out", str(tmp_path / "s"), "--allow-dirty"])
-    census.main()
-
+    token_broad = cast(dict, broad.token_inputs["score"]["declared"])
+    token_single = cast(dict, single.token_inputs["score"]["declared"])
     assert token_broad.get("source") != token_single.get("source"), (token_broad, token_single)
     # The broad marker is the full-manifest sentinel; the single path keys on nothing broad.
     assert token_broad.get("source") == "open-data-all"
-    # The single-competition (default) path token is BYTE-IDENTICAL to the historical one: NO `source`
-    # key at all, so its generation directory is unchanged (a stale/new-generation regression check).
-    from build_territory_ranking_census import _SHARD_SCHEMA_VERSION
-
-    assert "source" not in token_single
+    assert broad.tokens["score"] != single.tokens["score"]
+    # The single-competition (default) path's declared score inputs are the HISTORICAL token: NO
+    # `source` key at all.
     assert token_single == {
         "metric": "territory_ranking_census",
         "schema": _SHARD_SCHEMA_VERSION,
@@ -614,68 +575,47 @@ def test_competitions_json_narrows_and_keys_the_token_disjointly(monkeypatch, tm
     disjoins from the full-manifest one and from a differently-narrowed one."""
     import json
 
-    import build_territory_ranking_census as census
-
     import scripts._sb_open_data as sbmod
 
     def _must_not_call():
         raise AssertionError("all_open_competitions must not be called with --competitions-json")
 
-    seen_keys, token, _loaded = _install_broad_corpus_stubs(monkeypatch, tmp_path, competitions=[(43, 106)])
+    _install_broad_corpus_stubs(monkeypatch, competitions=[(43, 106)])
     monkeypatch.setattr(sbmod, "all_open_competitions", _must_not_call)  # not consulted when JSON given
-
     comps_file = tmp_path / "comps.json"
     comps_file.write_text(json.dumps([[7, 27]]), encoding="utf-8")
-    monkeypatch.setattr(
-        "sys.argv",
-        ["prog", "--out", str(tmp_path / "out"), "--competitions-json", str(comps_file), "--allow-dirty"],
-    )
-    census.main()
+    ctx, _ = _census(tmp_path, "--competitions-json", str(comps_file))
 
-    assert {k.split("-")[1] for k in seen_keys} == {"7"}, seen_keys
-    assert token.get("source") != "open-data-all"  # a narrowed generation disjoins from the full one
+    scored = [r["match_id"] for r in ctx.upstream("refs")["score_refs"]]
+    assert scored and {m.split("-")[1] for m in scored} == {"7"}, scored
+    assert cast(dict, ctx.token_inputs["score"]["declared"]).get("source") != "open-data-all"
 
 
-def test_all_competitions_is_mutually_exclusive_with_competition_id(monkeypatch, tmp_path):
-    """Passing both a broad-corpus flag and a single-competition selector is a usage error (ap.error)."""
-    import build_territory_ranking_census as census
+@pytest.mark.parametrize(
+    "extra",
+    [["--all-competitions", "--competition-id", "43"], ["--all-competitions", "--season-id", "106"]],
+)
+def test_all_competitions_is_mutually_exclusive_with_competition_id(monkeypatch, tmp_path, extra):
+    """Passing both a broad-corpus flag and a single-competition selector is a usage error: the refs unit
+    fails and the stage refuses to reduce (nothing downstream runs)."""
+    from tests.scripts._stage_harness import StageIncompleteError
 
-    _install_broad_corpus_stubs(monkeypatch, tmp_path, competitions=[(43, 106)])
-
-    for extra in (["--competition-id", "43"], ["--season-id", "106"]):
-        monkeypatch.setattr(
-            "sys.argv",
-            ["prog", "--all-competitions", "--out", str(tmp_path / "x"), "--allow-dirty", *extra],
-        )
-        with pytest.raises(SystemExit):
-            census.main()
+    _install_broad_corpus_stubs(monkeypatch, competitions=[(43, 106)])
+    with pytest.raises(StageIncompleteError, match="refs"):
+        _census(tmp_path, *extra)
 
 
 def test_competitions_json_is_mutually_exclusive_with_competition_id(monkeypatch, tmp_path):
     """--competitions-json also conflicts with an explicit single-competition selector."""
     import json
 
-    import build_territory_ranking_census as census
+    from tests.scripts._stage_harness import StageIncompleteError
 
-    _install_broad_corpus_stubs(monkeypatch, tmp_path, competitions=[(43, 106)])
+    _install_broad_corpus_stubs(monkeypatch, competitions=[(43, 106)])
     comps_file = tmp_path / "comps.json"
     comps_file.write_text(json.dumps([[7, 27]]), encoding="utf-8")
-
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "prog",
-            "--competitions-json",
-            str(comps_file),
-            "--competition-id",
-            "43",
-            "--out",
-            str(tmp_path / "x"),
-            "--allow-dirty",
-        ],
-    )
-    with pytest.raises(SystemExit):
-        census.main()
+    with pytest.raises(StageIncompleteError, match="refs"):
+        _census(tmp_path, "--competitions-json", str(comps_file), "--competition-id", "43")
 
 
 # --------------------------------------------------------------------------------------------------

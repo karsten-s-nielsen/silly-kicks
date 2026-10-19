@@ -4,6 +4,8 @@ Smoke-level (``not e2e``): ``all_open_competitions`` + ``load_open_data_matches`
 a tiny in-memory fixture, so no network and no real StatsBomb corpus is touched. The single-competition
 default path stays byte-identical; the all-competitions path resolves to a DIFFERENT ``for_each``
 shard generation (the 4.77.1 stale-shard rule -- a corpus change must invalidate the generation).
+The owner-tier ``--source pining`` cross-check runs only through ``scripts/_pass_completion_pining.py``
+(the I1 severance, ADR-123 Amendment B); its loaders are monkeypatched the same way.
 """
 
 from __future__ import annotations
@@ -90,6 +92,7 @@ def test_all_competitions_trains_full_corpus_bundle(tmp_path, monkeypatch):
     assert sorted(tuple(c) for c in metrics["competitions"]) == sorted(comps)
     card = (out / "weights" / "MODEL_CARD.md").read_text(encoding="utf-8")
     assert "full public open-data corpus" in card
+    assert "`python scripts/train_pass_completion.py --out <DIR>\n--all-competitions`" in card
     # the bundle loads back through the ADR-011 integrity path
     from silly_kicks.expected_passing import PassCompletionModel
 
@@ -136,6 +139,47 @@ def test_all_competitions_token_DIFFERS_from_single_competition(tmp_path, monkey
         f"all-competitions shard generation {all_gens} collides with the single-competition "
         f"generation {single_gens}: a corpus change did not invalidate the shard generation"
     )
+
+
+def test_source_pining_is_refused_on_the_hf_module(tmp_path, capsys):
+    """I1 severance (ADR-123 Amendment B): this module runs on HF and never imports the pining client, so
+    ``--source pining`` without the injected source fails loud, names the owner entry, and does no work."""
+    with pytest.raises(SystemExit):
+        TPC.main(["--source", "pining", "--out", str(tmp_path / "out"), "--allow-dirty"])
+    assert "scripts/_pass_completion_pining.py" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+def test_the_pining_entry_trains_through_the_injected_source(tmp_path, monkeypatch):
+    """The owner entry injects the events-only pining source; the fit, metrics and card are the trainer's
+    own. The IMPL-05 warning still fires, and the card reproduces through the entry with the bare
+    ``--providers`` list (the corpus label carries a ``pining:`` prefix)."""
+    from _fake_corpus import make_ref
+
+    import scripts._pass_completion_pining as PCP
+
+    by_id = {str(g): _match(g, complete=True) for g in (1, 2)}
+    asked: dict = {}
+
+    def _refs(*, providers, match_ids=None, max_per_provider=None):
+        asked["providers"] = providers
+        return [make_ref("statsbomb", g) for g in by_id]
+
+    def _events_only_loader(refs, *, cache_dir=None):
+        return (lambda ref: by_id[ref.match_id]), None
+
+    monkeypatch.setattr("scripts._loader_pining.list_match_refs", _refs)
+    monkeypatch.setattr("scripts._events_admission.events_only_loader", _events_only_loader)
+
+    out = tmp_path / "out"
+    with pytest.warns(UserWarning, match="MUST NOT be bundled or published"):
+        PCP.main(["--source", "pining", "--providers", "statsbomb", "--out", str(out), "--allow-dirty"])
+
+    assert asked["providers"] == ["statsbomb"]
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["providers"] == "pining:statsbomb" and metrics["n_matches"] == 2
+    card = (out / "weights" / "MODEL_CARD.md").read_text(encoding="utf-8")
+    assert "`python scripts/_pass_completion_pining.py --out <DIR>\n--source pining --providers statsbomb`" in card
 
 
 @pytest.mark.parametrize(("flag", "value"), [("--competition-id", "11"), ("--season-id", "106")])

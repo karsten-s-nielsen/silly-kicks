@@ -60,3 +60,23 @@ def test_fully_observed_provider_is_noop(tmp_path):
     # A non-detection-aware provider is skipped entirely -- even an all-null visibility column is fine.
     shard = _write_shard(tmp_path / "sportec__m1.parquet", visibility=[None, None])
     assert _corpus_visibility.validate_corpus_visibility({shard: "sportec"}) is None
+
+
+@pytest.mark.parametrize(("visibility", "raises"), [([None, None], True), ([True, None], False)])
+def test_a_shard_without_statistics_is_decided_from_a_whole_file_read(tmp_path, monkeypatch, visibility, raises):
+    """The rare no-statistics fallback reads the column from the WHOLE file under the read gate, never a
+    range read on the (possibly mounted) path (ADR-128, the dataset read gate)."""
+    from scripts import _dataset_reads
+
+    path = tmp_path / "skillcorner__m4.parquet"
+    pq.write_table(pa.table({"visibility": pa.array(visibility, type=pa.bool_())}), path, write_statistics=False)
+    assert pq.ParquetFile(path).metadata.row_group(0).column(0).statistics is None  # the fallback's precondition
+    whole: list[Path] = []
+    real = _dataset_reads.read_bytes
+    monkeypatch.setattr(_dataset_reads, "read_bytes", lambda p: whole.append(Path(p)) or real(p))
+    if raises:
+        with pytest.raises(ValueError, match=r"tracking\.skillcorner"):
+            _corpus_visibility.validate_corpus_visibility({path: "skillcorner"})
+    else:
+        assert _corpus_visibility.validate_corpus_visibility({path: "skillcorner"}) is None
+    assert whole == [path]

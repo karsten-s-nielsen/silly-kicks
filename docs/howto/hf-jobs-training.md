@@ -1,145 +1,99 @@
 # How-to: train silly-kicks models on HF Jobs
 
-The operator runbook for the HF Jobs training harness (`scripts/hf_jobs/`, ADR-122 + ADR-123). Re-fits
-**9 trainers** (4 public + 5 owner-tier) on ephemeral `cpu-upgrade` HF Jobs, parallelized as a map/reduce
-DAG per trainer, head-to-head-scores each fresh fit against the committed model (no-regression floor), and
-PRs the cleared weights back. `gk_retention` is registered but blocked (no non-Databricks data path);
-`gk_completion` was retired upstream (ADR-121).
+The operator runbook for HF Jobs campaigns (ADR-128; it supersedes the ADR-122/ADR-123 launch path). A
+campaign re-fits trainers and runs corpus drivers as stage-contract pipelines (`scripts/_stages.py`) on
+`cpu-upgrade` HF Jobs: W workers per job x N jobs per stage, byte-identical for every (W, N), resumable at
+any point. One committed CLI drives it: `python -m scripts.hf_jobs campaign <file> <command>`
+(`scripts/hf_jobs/campaign.py`). Writing a new pipeline is `docs/howto/compute-pipelines.md`.
 
-Two invariants (ADR-123):
-- **The in-job code is dataset-agnostic.** It reads a staged **neutral parquet dataset** via a data path;
-  it never receives pining information (no token, no manifest, no `--providers`). How a dataset was built
-  is off-HF — anyone can stage their own in the documented shape (below) and run the harness.
-- **`cpu-upgrade` only** (8 vCPU / 32 GB / $0.03-hr). Storage is a read-write **HF Storage Bucket** mounted
-  per job (decoupled from the ≤ 50 GB ephemeral disk); `--attempts N` auto-retries and **resumes** from the
-  bucket shards (`for_each`, ADR-052). Outputs live in the bucket — no in-job upload.
+Three owner gates, every time:
+- **Commit** -- `adopt` stops at the commit gate; nothing commits without an explicit owner "yes".
+- **Push** -- a separate "yes".
+- **Hub publish** -- `publish` needs an owner go per run (`--sandbox` first); a public repo also needs
+  `--i-have-owner-approval <repo>` for every target.
+
+`cpu-upgrade` only (8 vCPU / 32 GB / $0.03 per hour, INV-4): the flavor is one constant
+(`scripts/hf_jobs/launch.py` `FLAVOR`); speed comes from W and N, never a bigger flavor.
 
 ## Prerequisites
 
-- **`hf` CLI ≥ v2.2** — the launch needs `-v/--volume` (bucket mount); v1.7.1 lacks it. If the system `hf`
-  is older, `uv pip install "huggingface_hub[cli]"` in an isolated venv and point the launcher at it.
-- `hf` logged in; the token rides `--secrets HF_TOKEN` (value from the launcher env, never the cmdline).
-- The GitHub repo must be **public** (the in-job `git clone` passes no auth).
-- The harness commit **pushed** to `feat/hf-jobs-training-harness` (the jobs clone that ref).
-- A private scratch bucket: `hf buckets create silly-kicks/hf-refit-scratch --private`.
+- `.venv-hfjobs` (Python 3.12, the pinned in-job environment; the image is the digest-pinned
+  `python:3.12.14-bookworm`, decision P1). Build it from the committed lock:
 
-## The staged-dataset contract (how anyone stages their own)
+  ```bash
+  UV_PROJECT_ENVIRONMENT=.venv-hfjobs uv sync --frozen --python 3.12.14 --extra train --extra xgboost --extra test --group hfjobs
+  ```
 
-The in-job trainers read these NEUTRAL parquet shapes. Build them however you like (the owner materializes
-with pining on the DGX; you could use statsbombpy, kloppy, or your own loader) — the repo is agnostic.
+  Run every campaign command and every local verification with `.venv-hfjobs/Scripts/python.exe` (Windows)
+  or `.venv-hfjobs/bin/python`.
+- An HF token: `hf auth login` (the `hf` CLI is for humans only; the controller uses the typed
+  `huggingface_hub` API). The token rides `secrets`, never the command line.
+- `gh auth login` (preflight checks that the campaign commit is pushed and its CI is green).
+- The campaign commit is a CLEAN, PUSHED commit (ADR-037): jobs clone exactly that commit.
 
-- **Flat** (`owner_flat`: ghost_gk/ghost_outfield, and every owner head-to-head eval): a dataset dir with
-  `shards/<gen>/<key>.parquet` (tracking frames, one match per file, carrying `source_provider`) +
-  `_actions/<key>.parquet` (SPADL actions) + `home_teams.json` (`{game_id: home_team_id}`).
-- **Per-game** (`owner_pergame`: xshot/xcross training): the harness `repackage`s the flat dataset in-job
-  to `{game}/frames.parquet`+`shots.parquet`+`actions.parquet`, so stage the flat shape.
-- **Flat, read via `--data-dir`** (`owner_sb360`: receiver): the same flat shards+`_actions` shape.
-- **xcross probe slice**: a per-game dataset of the held-out TF-19 probe matches (e.g. gradientsports
-  `10502`/`10503`), each `{game}/{frames,actions}.parquet` with `source_provider=gradientsports`. xcross
-  reproduces the probe from this via `--probe-data-dir` — no pining in-job.
-- Public trainers fetch StatsBomb **open** data in-job (no staging).
+## Staged datasets
 
-Materialize + upload (owner's DGX path; pining is used HERE, off-HF, and only neutral parquet is pushed):
+Every dataset a campaign reads is declared ONCE in `scripts/hf_jobs/datasets.toml` (name, repo, kind,
+visibility, access). Kinds: `flat_tc3` (`shards/<gen>/<provider>__<game>.parquet` frames +
+`_actions/<stem>.parquet` + `home_teams.json`), `pergame` (`<game>/frames.parquet` + `actions.parquet`), and
+StatsBomb open data (fetched per unit at the pinned revision, decision P6). In-job code reads only these
+neutral shapes (INV-5); how a dataset was built stays off HF.
 
-```python
-from scripts.hf_jobs.stage import stage_corpus   # neutral-parquet uploader; build the dirs however you stage
-stage_corpus(tc3_dir,   "silly-kicks/hf-refit-tc3",         uploader=my_uploader)  # flat (ghost + evals)
-stage_corpus(xshot17_dir, "silly-kicks/hf-refit-xshot17",   uploader=my_uploader)  # flat, committed 17 (xshot/xcross)
-stage_corpus(gs_probe_dir, "silly-kicks/hf-refit-xcross-probe", uploader=my_uploader)  # per-game probe slice
-stage_corpus(sb360_flat_dir, "silly-kicks/hf-refit-sb360",  uploader=my_uploader)  # flat (receiver)
-```
+After a dataset is staged, record it: `python -m scripts.hf_jobs datasets record <name>`. It MEASURES the
+staged dataset and writes the pinned revision, the unit list and the expected corpus identity (digest + n;
+for a public dataset the canonical id list) into `scripts/hf_jobs/datasets.lock.json`. `datasets show
+<name>` prints the record. `adopt` checks every artifact against it (INV-9).
 
-## DGX e2e gate (before any HF spend)
+## The campaign file
 
-Run every trainer's full map/reduce pipeline LOCALLY against the staged neutral corpus and measure
-**peak RSS per phase vs the 32 GB cpu-upgrade ceiling** (`scripts/hf_jobs/dgx_e2e.py`):
+`scripts/hf_jobs/campaigns/<name>.toml` (committed, INV-7): the bucket, `target_minutes` (60),
+`concurrency_cap`, `attempts`, and per job the trainer or driver, its tier, its dataset (plus
+`probe_dataset` for xcross) and its variants. Run keys are derived: `{campaign}-{commit7}-{job}-{tier}`;
+`--replica N` adds `-rN`, a FRESH store for the same-commit re-run (INV-1 gate, decision P18).
 
-```python
-from scripts.hf_jobs.dgx_e2e import run_local_e2e
-summary = run_local_e2e(spec, build, data_args="--data-dir /data/tc3/shards/<gen> --actions-dir … --home-teams …",
-                        out_dir="/tmp/e2e", corpus_dir="/data/tc3", n_extract=4, n_folds=5)
-assert not summary["blocked"], summary   # a phase >= 32 GB (OOM risk) or non-zero exit BLOCKS the wave
-```
+## The command sequence
 
-The serial reduce is the phase fan-out does not shrink; a 32 GB OOM is not `--attempts`-fixable and the
-DGX's ample RAM hides it, so it is measured here. If `blocked` (a reduce over 32 GB), **stop** and get the
-owner's ruling on the reduce executor/flavor — do not launch the HF wave.
+Run long commands in the background; `--watch` steps every 60 s until done or failed.
 
-## Launch the map/reduce waves
+1. `preflight` -- six no-spend checks (commit pushed and green, lockfile and image, API contract, datasets,
+   every instance's `--plan`, the planner's estimate). It uploads the report the launch gate requires and
+   flags any stage predicted above the target.
+2. `plan` -- each instance's next action (`profile` / `run` / `reduce`) and predicted wall; launches nothing.
+3. `profile` -- measures a sample of every unprofiled multi-unit stage (unit wall, peak RSS).
+4. `launch` / `resume --watch` -- the stateless controller: each step rebuilds state from the store
+   (`--plan` per instance) and the job labels, then launches each instance's next stage, sized by the
+   planner (N jobs x W workers to meet the target; LPT partition by measured cost). A killed job loses at
+   most its in-flight units; `resume` never redoes a finished unit.
+5. `status` -- per instance, stage progress and the running jobs. A failed instance: read its job logs and
+   the unit `*.failed.json`; a code defect is a new owner-approved commit, then `resume`.
+6. `retrieve --staging DIR` -- copies each reduced output (and `<instance>.record.json`: what the job read,
+   the extract counters) into DIR, OUTSIDE the repo.
+7. `verify --staging DIR` -- loads every artifact in `.venv-hfjobs`, checks the five expectations (training
+   commit = campaign commit; recorded dataset revision = the pin; corpus digest + n = the record; shipped
+   tier = the expected tier), certifies per the registry (`public`: head-to-head floor; `owner`: CV parity on
+   `cv_metric`; `rebaseline`: identity comparison, decision P15) and runs the ADR-126 integrity gate for
+   xShot/xCross. Writes `DIR/verify.json`.
+8. `adopt --staging DIR` -- on a clean tree at the campaign commit: bundles the verified files into the
+   wheel dirs (a public bundle is rehydrated with the canonical public ids), writes
+   `docs/artifacts/observed.json`, copies each adopted artifact's `training_commit` into
+   `docs/artifacts/manifest.toml` (the one field a tool writes there), re-renders the generated card
+   regions, writes the verdict JSONs and a CHANGELOG draft, runs the full local gate, and STOPS at the
+   commit gate. Its diff touches only the allowlisted paths.
+9. Owner gate (commit), then declare the re-fit event in the manifest (version, ADR) and re-render the
+   cards (`tests/test_card_regions.py` flags a stale region).
+10. `publish --sandbox --staging DIR` (owner go) -- private `silly-kicks/sandbox-<name>` repos, then the
+    post-verification (model-only file set, remote `SHA256SUMS` = local, README = the rendered card, a
+    `from_hub` round-trip). A public publish is a separate owner go after the artifact commit.
+11. `summary` -- writes the committed ledger summary `docs/research/hf_campaigns/<campaign>.json` (unit
+    costs the planner learns from).
 
-```python
-from huggingface_hub import get_token
-from scripts.hf_jobs import registry as reg
-from scripts.hf_jobs.launch import run_pipeline, retrieve_variant
+## The DGX as an executor
 
-BUCKET, RUN = "silly-kicks/hf-refit-scratch", "refit-2026-10-14"
-spec = reg.REGISTRY["ghost_gk"]
-for build in spec.builds:                       # one pipeline per committed variant
-    run_pipeline(
-        spec, build, tag="feat/hf-jobs-training-harness", run_key=RUN,
-        corpus_repo="silly-kicks/hf-refit-tc3",  # ghost/xshot/xcross/receiver: the staged flat/pergame dataset
-        probe_repo="silly-kicks/hf-refit-xcross-probe",  # xcross only (spec.probe)
-        bucket=BUCKET, attempts=3, n_extract=8, n_folds=spec_cv_folds,
-    )
-    retrieve_variant(BUCKET, RUN, spec.name, build.variant, f"runs/{spec.name}/{build.variant}")
-```
-
-`run_pipeline` sequences the trainer's phases (`phase_sequence(spec)`): `extract` (`--shard-index I/N`
-fan-out) → `build_cache` (ghost_gk) → `fold`/`study` (fan-out) → `reduce` (serial final fit + the
-head-to-head floor). Each stage's jobs launch in parallel and the orchestrator waits for all before the
-next; a terminal-ERROR stage raises `StagePhaseError`. Receiver's reduce is a plain no-`--shard-index` run
-(reconcile all shards + fit). Public trainers are a single `full` job. No in-job upload; `retrieve_variant`
-copies the bucket output out with `hf cp`.
-
-Per source mode (all via `corpus_repo`, no `sb360_repo`): public → none; `owner_flat` (ghost) → the flat
-dataset; `owner_pergame` (xshot/xcross) → the flat dataset (repackaged in-job), **xcross also**
-`probe_repo`; `owner_sb360` (receiver) → the flat dataset read via `--data-dir`.
-
-**Visibility-gated trainers (`xshot_occurrence`, `xcross_attempt`; ADR-123 Amendment B).** These ship a
-`public`/`sc_extended`/`full` candidate chosen by per-match public/owner visibility. The in-job code is
-visibility-blind: `run_pipeline` computes the arm membership OFF-HF (`arm_policy.compute_arms` over the
-in-repo `PUBLIC_CORPUS`, emitting the dataset's own match keys) and passes it as the neutral `--arms`
-parameter (base64-embedded `/tmp/arms.json`); the trainer applies it by membership and never computes the
-policy. Anyone staging their own corpus supplies their own `--arms` (or lets `run_pipeline` compute it from
-their registry). The DGX e2e asserts the fresh shipped candidate matches the committed one.
-
-## Apply the no-regression floor (per variant)
-
-```python
-from scripts.hf_jobs.floor import evaluate_spec
-ok, detail = evaluate_spec(spec, run_metrics)   # False => regression beyond δ => BLOCK, hand to owner
-```
-
-The reduce job wrote the head-to-head pair + stamp into the variant's `metrics.json`, extracted at the
-variant's feature vintage (`position_only` scored on a 26-feature frame). Build the delta table (metric,
-committed, fresh, δ, verdict; one row per variant); any `ok is False` BLOCKS PR-back — investigate, never
-auto-accept.
-
-## Chirality re-confirm + PR weights back
-
-Load a retrieved artifact in-repo and confirm `verify_chirality` + `SHA256SUMS` + `_feature_contract` pass
-(first HF artifact, P1). Then copy each cleared variant's weights into `silly_kicks/<weights_path>/`,
-matching the committed bundle shape (no new `metrics.json` where none existed).
-
-**Public bundles: rehydrate `corpus_match_ids`.** The in-job trainer is visibility-blind (ADR-123
-Amendment B), so a PUBLIC bundle's `metrics.json` arrives with the DIGEST (`corpus_match_ids_sha256` +
-`corpus_n_matches`), not the explicit ids. The wheel bundle must carry the explicit list
-(`test_bundled_weights_corpus_policy`). Run the single off-HF seam on each public bundle's metrics before
-committing — it rehydrates the canonical ids and REFUSES a corpus that is not the pinned public arm:
-
-```python
-import json, pathlib
-from scripts._corpus import rehydrate_public_corpus_ids
-p = pathlib.Path("silly_kicks/tracking/_xshot_weights/default/metrics.json")
-p.write_text(json.dumps(rehydrate_public_corpus_ids(json.loads(p.read_text())), indent=2), encoding="utf-8")
-```
-
-Then run the full suite green, stamp the lakehouse re-mat owed, and open the single owner-gated weights
-commit. Merge #284 **non-squash** so the harness-tune commit + the weights commit both stay reachable (the
-weights' `run_commit` provenance).
+The DGX runs the SAME contract (ruling 11): `scripts/hf_jobs/dgx_e2e.py` `run_local_e2e` plans an instance
+and runs each stage through the stage CLI with peak-RSS measurement against the 32 GB `cpu-upgrade` ceiling
+(a stage over the ceiling, or a non-zero exit, is `blocked`).
 
 ## Cost
 
-Everything on `cpu-upgrade` ($0.03/hr). Map/reduce fans extraction + folds/studies across many short jobs;
-the serial reduce is the long pole. A full re-fit is well under $50. The scratch bucket adds a small
-$/GB-month cost — delete it after the campaign (`hf buckets delete silly-kicks/hf-refit-scratch`).
+Per-second billing on `cpu-upgrade` ($0.03 per hour): N short jobs cost the same as one long job; the
+planner prints the predicted cost per action. The scratch bucket adds a small per-GB-month cost.

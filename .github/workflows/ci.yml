@@ -119,7 +119,7 @@ jobs:
       #
       # Slow-test gating (ADR-023): every leg runs the SAME `not e2e and not slow` selection, so no leg
       # is structurally heavier. The platform-/interpreter-INVARIANT heavy tests (@pytest.mark.slow) run
-      # ONCE in the dedicated `slow` job below (ubuntu-3.12, sharded x4), decoupled from this matrix.
+      # ONCE in the dedicated `slow` job below (ubuntu-3.12, sharded x6), decoupled from this matrix.
       # Version-sensitive tests (golden/snapshot/absolute) are deliberately NOT marked slow -- they stay
       # on all legs (OS + interpreter axes). Guarded by tests/test_ci_slow_gating_wired.py +
       # tests/test_ci_slow_reconcile_wired.py; pytest-split re-computes the split WITHIN the marker
@@ -171,8 +171,8 @@ jobs:
           name: full-nodeids-${{ matrix.os }}-${{ matrix.python-version }}
           path: full-nodeids.txt
 
-  # ADR-023: the platform-/interpreter-INVARIANT heavy tail (@pytest.mark.slow, ~261 tests / ~9.3 min)
-  # runs ONCE here, sharded x4, on the primary interpreter -- decoupled from the symmetric `test` matrix
+  # ADR-023: the platform-/interpreter-INVARIANT heavy tail (@pytest.mark.slow, ~272 tests / ~40.7 min CI-measured)
+  # runs ONCE here, sharded x6, on the primary interpreter -- decoupled from the symmetric `test` matrix
   # so no matrix leg is structurally heavier. Balanced by the SAME committed .test_durations (pytest-split
   # filters to the -m selection). Wiring pinned by test_ci_slow_gating_wired / _shard_wiring / _slow_reconcile_wired.
   slow:
@@ -180,7 +180,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slow-shard: [1, 2, 3, 4]
+        slow-shard: [1, 2, 3, 4, 5, 6]
     env:
       SILLY_KICKS_ASSERT_INVARIANTS: "1"
       NUMBA_CACHE_DIR: ${{ github.workspace }}/.numba_cache
@@ -198,11 +198,11 @@ jobs:
         with:
           enable-cache: true
       - run: uv pip install -e ".[kloppy,xgboost,test]"
-      - run: pytest tests/ -m "slow and not e2e" --splits 4 --group ${{ matrix.slow-shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
+      - run: pytest tests/ -m "slow and not e2e" --splits 6 --group ${{ matrix.slow-shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
       # reconcile artifacts (proofs #2/#3): each slow-shard uploads its node-ID set; slow-shard 1 also
       # uploads the slow FULL set and the combined `not e2e` (incl slow) set for the conservation check.
       - shell: bash
-        run: pytest tests/ -m "slow and not e2e" --splits 4 --group ${{ matrix.slow-shard }} -p no:randomly --co -q | grep -E "^tests/.*::" | sort > slow-shard-nodeids.txt
+        run: pytest tests/ -m "slow and not e2e" --splits 6 --group ${{ matrix.slow-shard }} -p no:randomly --co -q | grep -E "^tests/.*::" | sort > slow-shard-nodeids.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: slow-shard-nodeids-${{ matrix.slow-shard }}

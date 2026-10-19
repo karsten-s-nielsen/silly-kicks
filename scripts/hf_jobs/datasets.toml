@@ -1,0 +1,59 @@
+# ADR-128: every dataset a campaign may read, declared ONCE. Human-written; no tool writes this file.
+# `python -m scripts.hf_jobs datasets record <name>` MEASURES the staged dataset and writes the pinned
+# revision, the unit list and the expected corpus identity into datasets.lock.json (decision P2), like
+# pyproject.toml / uv.lock. Preflight check 4 compares the live dataset with the lock; `adopt` compares
+# every artifact's recorded corpus with the lock (INV-9: an expectation recorded before the run).
+# A mounted dataset declares `read_concurrency` (the job-wide whole-file read cap; see tc3).
+
+[datasets.tc3]
+repo = "silly-kicks/hf-refit-tc3"
+kind = "flat_tc3"
+visibility = "restricted"
+access = "mount"
+# The job-wide whole-file read cap (the dataset read gate, scripts/_dataset_reads.py). Measured on real HF
+# (2026-10-20, this mount, 360 files / 15.7 GB, one job): clean at 1, 2 and 4 concurrent readers, ~183 s
+# stalls at 6, `OSError: [Errno 5] Input/output error` on every large file at 8. Cycle 1's EIO came from
+# 8 workers reading parquet directly on the mount; the gate reads each file whole, at most 4 at a time.
+read_concurrency = 4
+description = "179-match TC3 flat corpus (gradientsports + skillcorner + sportec): ghost_gk, ghost_outfield"
+
+[datasets.xshot17]
+repo = "silly-kicks/hf-refit-xshot17"
+kind = "flat_tc3"
+visibility = "public"
+access = "mount"
+read_concurrency = 4  # the tc3 measurement (same mount type)
+description = "the 17-match public arm (7 idsse + 10 skillcorner): the wheel xShot and xCross bundles"
+
+[datasets.xshot115]
+repo = "silly-kicks/hf-refit-xshot115"
+kind = "flat_tc3"
+visibility = "restricted"
+access = "mount"
+read_concurrency = 4  # the tc3 measurement (same mount type)
+description = "115-match idsse + SkillCorner corpus: the Hub sc_extended xShot and xCross artifacts"
+
+[datasets.xcross_probe]
+repo = "silly-kicks/hf-refit-xcross-probe"
+kind = "pergame"
+visibility = "restricted"
+access = "mount"
+read_concurrency = 4  # the tc3 measurement (same mount type)
+description = "the held-out Gradient Sports TF-19 probe matches for xcross_attempt"
+
+[datasets.sb360]
+repo = "silly-kicks/hf-refit-sb360"
+kind = "flat_tc3"
+visibility = "restricted"
+access = "mount"
+read_concurrency = 4  # the tc3 measurement (same mount type)
+home_teams = false
+description = "licensed StatsBomb 360 freeze-frame corpus for receiver_model (no home-team map: unused)"
+
+[datasets.sb_open]
+repo = "statsbomb/open-data"
+kind = "statsbomb_open"
+visibility = "public"
+access = "open"
+revision = "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb"
+description = "StatsBomb open data pinned to a commit (decision P6): the public trainers and the census"

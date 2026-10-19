@@ -13,9 +13,14 @@ GroupKFold-by-match out-of-fold metrics + the ``save`` happen in the reduce, off
 and ``metrics.json``); the owner copies ``<out>/weights`` into
 ``silly_kicks/expected_passing/weights/`` for the bundled-weights commit.
 
-Usage (on the box, scripts/ on sys.path, pining token in env):
-  python scripts/train_pass_completion.py --out <DIR> [--providers statsbomb] \
-      [--max-per-provider N] [--tracking-limit N] [--match-ids-json FILE]
+Usage (scripts/ on sys.path):
+  python scripts/train_pass_completion.py --out <DIR> \
+      [--all-competitions | --competition-id C --season-id S] [--max-per-provider N] [--match-ids-json FILE]
+
+The owner-tier pining cross-check (``--source pining``, DGX only) runs from
+``scripts/_pass_completion_pining.py``, which injects its source into ``main``. This module runs on HF (the
+one-unit adapter stage, ADR-128), so it never imports the pining client: the I1 gate walks its static import
+closure (ADR-123 Amendment B).
 """
 
 from __future__ import annotations
@@ -23,13 +28,19 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import warnings
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
+
+#: The owner-tier pining corpus as ``(refs, load, corpus_label, source_token)``, built from the parsed
+#: arguments and the ``--match-ids-json`` selection. ``scripts/_pass_completion_pining.py`` injects it, so
+#: the HF job's import closure never reaches the pining client (I1, ADR-123 Amendment B).
+PiningSource = Callable[[argparse.Namespace, dict | None], tuple[list[Any], Callable[[Any], Any], str, dict]]
 
 #: The columns one match's pass-row shard carries (the fit corpus for that match). ``type_id`` and
 #: ``result_id`` are kept so ``PassCompletionModel.fit`` (which filters ``type_id == pass``) and the
@@ -116,9 +127,10 @@ def render_model_card(metrics: dict) -> str:
         bss_line = f" (Brier skill score {1.0 - brier / noskill:.3f} vs the base-rate baseline)"
     # A source-faithful reproduce command: the full public open-data corpus uses --all-competitions;
     # a single tournament uses --source open-data --competition-id/--season-id; the pining cross-check
-    # uses --source pining --providers.
+    # runs from its own entry with --source pining --providers.
     m_open = re.match(r"statsbomb-open \(competition (\d+), season (\d+)\)", str(providers))
     corpus_note = ""
+    entry = "train_pass_completion.py"
     if n_competitions is not None:
         reproduce_args = "--all-competitions"
         corpus_note = (
@@ -128,7 +140,9 @@ def render_model_card(metrics: dict) -> str:
     elif m_open:
         reproduce_args = f"--source open-data --competition-id {m_open.group(1)} --season-id {m_open.group(2)}"
     else:
-        reproduce_args = f"--source pining --providers {providers}"
+        # The corpus label is "pining:<providers>"; --providers takes the bare list.
+        entry = "_pass_completion_pining.py"
+        reproduce_args = f"--source pining --providers {str(providers).removeprefix('pining:')}"
     return f"""# Pass-completion model -- `default` variant (TF-54b)
 
 **What it is.** An event-only pass-completion probability `P(complete | origin -> target geometry)`,
@@ -154,7 +168,7 @@ pass rows).{corpus_note} GroupKFold-by-match out-of-fold: AUC {auc:.3f}, ECE {ec
 **Missing-value policy.** A non-finite coordinate yields an all-NaN feature row and a NaN probability
 (never a fabricated value); a consumer drops-and-counts such a target.
 
-**Provenance + reproduction.** Reproduce with `python scripts/train_pass_completion.py --out <DIR>
+**Provenance + reproduction.** Reproduce with `python scripts/{entry} --out <DIR>
 {reproduce_args}`. `metrics.json` records `training_commit` ({commit}) and the tree state (this
 bundle was produced from a clean tree). Pickle-free JSON + SHA256 envelope (`model.json` +
 `SHA256SUMS`) with a feature contract + chirality probe; `load()` is fail-closed
@@ -168,7 +182,9 @@ _DEFAULT_COMPETITION_ID = 43
 _DEFAULT_SEASON_ID = 106
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None, *, pining_source: PiningSource | None = None) -> None:
+    """The trainer CLI. ``pining_source`` serves ``--source pining``; only the owner entry
+    ``scripts/_pass_completion_pining.py`` passes it, so an HF run refuses ``--source pining``."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", required=True, help="run dir OUTSIDE the repo (shards + weights/ + metrics.json)")
     ap.add_argument(
@@ -176,7 +192,7 @@ def main(argv: list[str] | None = None) -> None:
         choices=("open-data", "pining"),
         default="open-data",
         help="'open-data' = PUBLIC StatsBomb open data (redistributable; the bundled default) via statsbombpy; "
-        "'pining' = the pining providers (owner-tier cross-check).",
+        "'pining' = the pining providers (owner-tier cross-check; run it from scripts/_pass_completion_pining.py).",
     )
     # Defaults are None so we can DISTINGUISH an explicit --competition-id/--season-id from the
     # WC2022 default, which is what makes --all-competitions a real mutual exclusion; an unset value
@@ -206,6 +222,11 @@ def main(argv: list[str] | None = None) -> None:
             ap.error("--all-competitions requires --source open-data")
         if args.competition_id is not None or args.season_id is not None:
             ap.error("--all-competitions is mutually exclusive with --competition-id/--season-id")
+    if args.source == "pining" and pining_source is None:
+        ap.error(
+            "--source pining runs from scripts/_pass_completion_pining.py (owner, DGX only): this module runs "
+            "on HF and never imports the pining client (I1 gate, ADR-123 Amendment B)"
+        )
 
     # Clean-tree guard FIRST, before any corpus work. This trainer writes BUNDLED weights, and an
     # artifact whose provenance is unknown is one nobody can reproduce or audit later (ADR-052).
@@ -221,8 +242,8 @@ def main(argv: list[str] | None = None) -> None:
     dest = Path(args.out)
 
     # The bundled default trains on PUBLIC StatsBomb open data (redistributable -> publicly reproducible);
-    # --source pining is the owner-tier cross-check. Both yield the same (provider, id, actions, frames,
-    # home) tuple so for_each is source-agnostic.
+    # --source pining is the owner-tier cross-check, served by the injected pining_source. Every source
+    # yields the same (provider, id, actions, frames, home) tuple so for_each is source-agnostic.
     competitions: list[tuple[int, int]] | None = None
     if args.all_competitions:
         # Full public open-data corpus: every (competition, season) in the manifest, chained. The
@@ -256,30 +277,10 @@ def main(argv: list[str] | None = None) -> None:
             cache_dir=args.cache_dir,
         )
         source_token = {"source": "open-data", "competition_id": competition_id, "season_id": season_id}
+    elif pining_source is not None:
+        refs, load, corpus_label, source_token = pining_source(args, match_ids)
     else:
-        from scripts._events_admission import events_only_loader
-        from scripts._loader_pining import list_match_refs
-        from scripts._partition import providers_for_slice
-
-        # IMPL-05 footgun guard: pining weights are NOT guaranteed public. The bundled default must be
-        # public-corpus-trained (the redistributability contract), so name the trap loudly here.
-        warnings.warn(
-            "Training from --source pining: these weights are NOT guaranteed public/redistributable and "
-            "MUST NOT be bundled or published. The pining 'statsbomb' provider is a PRIVATE women's corpus, "
-            "not the public men's WC2022 the bundled default uses -- pass --source open-data instead.",
-            stacklevel=2,
-        )
-        corpus_label = f"pining:{args.providers}"
-        # PassCompletionModel is EVENT-only, so this loads EVENTS ONLY (no wasteful tracking parse); the
-        # events-only actions are byte-identical to a full load's, so shards + token are unchanged. A
-        # SkillCorner ref goes through the admission edge (fail-closed); GS needs no verdict.
-        refs = list_match_refs(
-            providers=providers_for_slice(args.providers.split(","), match_ids),
-            match_ids=match_ids,
-            max_per_provider=args.max_per_provider,
-        )
-        load, _admission = events_only_loader(refs, cache_dir=args.cache_dir)
-        source_token = {"source": "pining", "providers": args.providers, "tracking_limit": args.tracking_limit}
+        raise AssertionError("unreachable: --source pining without a pining_source is refused above")
 
     def _work(item):
         _provider, match_id, actions, _frames, _home, *_ = item

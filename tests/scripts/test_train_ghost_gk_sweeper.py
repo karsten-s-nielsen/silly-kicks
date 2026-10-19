@@ -2,7 +2,7 @@
 
 Component-level (non-slow): the metric helpers, the CLI arg, `grid_spec_from_args`, and the
 BEHAVIORAL stale-shard-token proof (`grid_x_max` keys the shard generation). PLUS one `@slow`
-end-to-end `main()` smoke (`test_trainer_main_smoke_threads_grid_and_metrics`) that fits a real model
+end-to-end stage-CLI smoke (ADR-128) (`test_trainer_main_smoke_threads_grid_and_metrics`) that fits a real model
 and is therefore SKIPPED where sklearn is outside the supported fit range [1.9, 2) -- i.e. it runs on
 CI's primary leg and skips on a stale dev env (both local venvs are <1.9). The `@slow` publisher smoke
 lives in `test_publish_ghost_gk_variant.py`.
@@ -72,50 +72,40 @@ def test_grid_x_max_keys_the_shard_generation():
     assert gen_default.name != gen_sweeper.name, "a lifted ceiling must NOT reuse the default's shard generation"
 
 
+def _parse(*argv: str):
+    """The uniform stage CLI's parser (ADR-128) over the ghost pipeline's declared parameters."""
+    from scripts._stages import build_parser
+    from scripts.train_ghost_gk import PIPELINE
+
+    return build_parser(PIPELINE).parse_args(["--dataset", "x", *argv, "--plan", "--store", "s"])
+
+
 def test_grid_x_max_cli_arg_exists():
-    import sys
-
-    from scripts.train_ghost_gk import parse_args
-
-    argv = ["prog", "--data-dir", ".", "--grid-x-max", "52.5"]
-    old = sys.argv
-    try:
-        sys.argv = argv
-        args = parse_args()
-    finally:
-        sys.argv = old
-    assert args.grid_x_max == 52.5
+    assert _parse("--grid-x-max", "52.5").grid_x_max == 52.5
 
 
 def test_variant_arg_accepts_sweeper_names():
     # TF-60 PR3: the trainer must be able to NAME the sweeper variant it produces (plan B1's
     # `--variant sweeper`). The bundled artifact self-describes via grid_spec+feature_set, but the
     # metrics.json diagnostics label reads this, so the name has to be an accepted choice.
-    import sys
-
-    from scripts.train_ghost_gk import parse_args
-
     for variant in ("sweeper", "sweeper_position_only"):
-        argv = ["prog", "--data-dir", ".", "--variant", variant]
-        old = sys.argv
-        try:
-            sys.argv = argv
-            args = parse_args()
-        finally:
-            sys.argv = old
-        assert args.variant == variant
+        assert _parse("--variant", variant).variant == variant
 
 
-# --- @slow end-to-end trainer main() smoke (skips on sklearn<1.9; runs on CI's primary leg) --------
+# --- @slow end-to-end trainer stage-CLI smoke (skips on sklearn<1.9; runs on CI's primary leg) ----
 def _write_tiny_trainer_corpus(data_dir):
-    """Write a minimal 2-game flat corpus (real sportec_slim frames, split + velocity-derived) the
+    """Write a minimal 2-game STAGED flat dataset IN ``data_dir`` (real sportec_slim frames, split +
+    velocity-derived; ``shards/<gen>/sportec__<game>.parquet``, ``_actions/``, ``home_teams.json``) the
     ghost trainer can extract + CV over. Returns the {game_id: home_team_id} mapping.
 
     Verified well-formed by ``test_tiny_trainer_corpus_is_well_formed`` (runnable on any sklearn), so
     only the fit-dependent assertions of the @slow smoke depend on the CI primary leg.
     """
+    import json
+
     import pandas as pd
 
+    from scripts._toy_corpora import TOY_GENERATION
     from silly_kicks.tracking import derive_velocities, resolve_defended_goals
     from silly_kicks.tracking.preprocess import smooth_frames
 
@@ -133,9 +123,12 @@ def _write_tiny_trainer_corpus(data_dir):
         part["game_id"] = name
         part["source_provider"] = "sportec"
         part = derive_velocities(smooth_frames(part))
-        (data_dir / name).mkdir(parents=True, exist_ok=True)
-        part.to_parquet(data_dir / name / "frames.parquet")
+        shards = data_dir / "shards" / TOY_GENERATION
+        shards.mkdir(parents=True, exist_ok=True)
+        part.to_parquet(shards / f"sportec__{name}.parquet")
         home_teams[name] = str(home)
+    (data_dir / "_actions").mkdir(parents=True, exist_ok=True)
+    (data_dir / "home_teams.json").write_text(json.dumps(home_teams), encoding="utf-8")
     return home_teams
 
 
@@ -145,14 +138,16 @@ def test_tiny_trainer_corpus_is_well_formed(tmp_path):
 
     import pandas as pd
 
+    from scripts._toy_corpora import TOY_GENERATION
+
     data_dir = tmp_path / "corpus"
     home_teams = _write_tiny_trainer_corpus(data_dir)
     assert set(home_teams) == {"game_a", "game_b"}
+    assert json.loads((data_dir / "home_teams.json").read_text(encoding="utf-8")) == home_teams
     for name in home_teams:
-        f = pd.read_parquet(data_dir / name / "frames.parquet")
+        f = pd.read_parquet(data_dir / "shards" / TOY_GENERATION / f"sportec__{name}.parquet")
         assert {"vx", "vy", "is_goalkeeper", "source_provider"} <= set(f.columns)
         assert bool(f["is_goalkeeper"].astype("boolean").fillna(False).any())
-    json.dumps(home_teams)  # serializable for --home-teams
 
 
 @pytest.mark.slow
@@ -160,27 +155,20 @@ def test_tiny_trainer_corpus_is_well_formed(tmp_path):
     not __import__("scripts._train_guard", fromlist=["sklearn_supports_training"]).sklearn_supports_training(),
     reason="the ghost trainer fits real models; needs sklearn in the supported fit range [1.9, 2)",
 )
-def test_trainer_main_smoke_threads_grid_and_metrics(tmp_path, monkeypatch):
-    """End-to-end: run the trainer main() with --grid-x-max 52.5 on the tiny corpus and assert the grid
-    reaches the SAVED metadata + the metrics blocks are present. This is the behavioral end-to-end proof
-    of the CLI->grid_spec->prepare/model->metadata/metrics glue (TF-60 PR3). Skipped on sklearn<1.9."""
+def test_trainer_main_smoke_threads_grid_and_metrics(tmp_path):
+    """End-to-end: run the trainer's stage CLI with --grid-x-max 52.5 on the tiny corpus and assert the
+    grid reaches the SAVED metadata + the metrics blocks are present. This is the behavioral end-to-end
+    proof of the CLI->grid_spec->prepare/model->metadata/metrics glue (TF-60 PR3). Skipped on sklearn<1.9."""
     import json
-    import sys
 
-    data_dir = tmp_path / "corpus"
-    home_teams = _write_tiny_trainer_corpus(data_dir)
-    ht_path = tmp_path / "home_teams.json"
-    ht_path.write_text(json.dumps(home_teams))
+    from tests.scripts._parity import cli
+
+    _write_tiny_trainer_corpus(tmp_path / "corpus")
     out = tmp_path / "out"
 
-    argv = [
-        "train_ghost_gk",
-        "--data-dir",
-        str(data_dir),
-        "--output-dir",
-        str(out),
-        "--home-teams",
-        str(ht_path),
+    args = [
+        "--dataset",
+        "corpus",
         "--grid-x-max",
         "52.5",
         "--cv-folds",
@@ -192,20 +180,36 @@ def test_trainer_main_smoke_threads_grid_and_metrics(tmp_path, monkeypatch):
         "--subsample-fps",
         "25",  # keep dense samples for CV/parity
         "--skip-permutation-importance",
-        "--allow-dirty",
     ]
-    monkeypatch.setattr(sys, "argv", argv)
-    from scripts.train_ghost_gk import main
+    cli("scripts.train_ghost_gk", tmp_path / "store", tmp_path, args, "--run-all", "--out", str(out))
 
-    main()
-
-    meta = json.loads((out / "ghost_gk_v1" / "metadata.json").read_text())
+    meta = json.loads((out / "metadata.json").read_text())
     assert meta["grid_spec"]["x_max"] == 52.5  # the CLI ceiling reached the SAVED model
-    metrics = json.loads((out / "ghost_gk_v1" / "metrics.json").read_text())
-    # ADR-067 M4 caveat emitted by the trainer (combined-cycle-completion spec 0.11): a --data-dir corpus
+    metrics = json.loads((out / "metrics.json").read_text())
+    # ADR-067 M4 caveat emitted by the trainer (combined-cycle-completion spec 0.11): a staged corpus
     # carries no public-visibility proof, so it is restricted, and the note names its own commit.
     assert metrics["reproducibility"] == "restricted"
     assert metrics["training_commit"] in metrics["reproducibility_note"]
     assert metrics["grid_x_max"] == 52.5
     assert "high_sweeper_stratum_mae_mean" in metrics
     assert "per_provider_high_sweeper_coverage" in metrics
+
+
+def test_the_cache_combine_stores_a_mixed_provider_corpus_with_the_legacy_groups(tmp_path):
+    """The legacy grouped on `np.array(combined["_game_id"].tolist())`: on a mixed corpus numpy makes every
+    id a string. The combined cache stores exactly those strings, so the folds do not move."""
+    import numpy as np
+    import pandas as pd
+
+    from scripts._stages import LocalStore, read_result, write_result
+    from scripts.train_ghost_gk import _combine_packs
+
+    a = pd.DataFrame({"_game_id": [10502, 10502], "f": [1.0, 2.0]})
+    b = pd.DataFrame({"_game_id": ["J03WMX"], "f": [3.0]})
+    legacy = np.array(pd.concat([a, b], ignore_index=True)["_game_id"].tolist())
+    out = _combine_packs([a, b])
+    store = LocalStore(tmp_path)
+    write_result(store, "s/_output", out)
+    back = read_result(store, "s/_output")
+    assert np.array(back["_game_id"].tolist()).tolist() == legacy.tolist()
+    assert _combine_packs([a])["_game_id"].tolist() == [10502, 10502]

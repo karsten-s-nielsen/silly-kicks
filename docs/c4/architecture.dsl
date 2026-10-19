@@ -12,6 +12,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         kloppy = softwareSystem "kloppy" "PySport event/tracking data normalization library" "External"
         mlLibs = softwareSystem "ML Libraries" "XGBoost, CatBoost, LightGBM gradient boosting frameworks" "External"
         hfHub = softwareSystem "HuggingFace Hub" "Model artifact hosting for pre-trained xS / xCross / Ghost-GK weights (Hub-only variants)" "External"
+        hfJobs = softwareSystem "HuggingFace Jobs" "cpu-upgrade compute for stage-contract campaigns: typed run_job API, bucket store mount, revision-pinned dataset mounts" "External"
         ruthless = softwareSystem "ruthless-efficiency" "Optuna/evolutionary optimization substrate (OptunaStrategy + CachedObjective)" "External"
         pining = softwareSystem "pining-for-the-data" "Gated mock provider REST API (SkillCorner/IDSSE public, Gradient Sports + SB360 owner-tier) over S3" "External"
         databricks = softwareSystem "Databricks Lakehouse" "bronze.* SPADL/tracking + spadl_actions xT corpus + dev_gold action/shot marts (fct_action_values/context, fct_shot_xg, dim_matches) for the xT-GK v2 gate + rho retention" "External"
@@ -46,6 +47,8 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             positioning = container "silly_kicks.positioning" "TF-56 prescriptive positioning optimiser: SA solver (optimise_positions) for the best REACHABLE shape + measured positioning_gap = threat(actual) - threat(optimum). compute_*; xt injected." "Python" "Library"
             coordination = container "silly_kicks.coordination" "TF-58 team-coordination dynamics: relative phase, cross-correlation, vector coding, spectral, cluster phase, relative stretch between the two teams; per-segment surrogate baselines. ADR-110." "Python" "Library"
 
+            stageContract = container "scripts/_stages + hf_jobs.executor" "ADR-128 stage/unit contract: PIPELINE DAGs of keyed single-threaded units, checksum-verified resume, W capped workers per job, byte-identical for any (W, N)." "Python" "Library"
+            campaignCtl = container "scripts/hf_jobs campaign" "Stateless campaign controller: preflight, profile, planner, typed launcher, ledger, adopt, publish; drives HF Jobs from committed campaign files; artifact manifest." "Python" "Library"
             // Phase-2 agent-support server (shipped). Opt-in [mcp] extra; the core lib never imports it.
             mcp = container "silly_kicks.mcp" "Read-only tripwire MCP server (FastMCP, stdio): check_orientation / diagnose_provider / validate_construct_validity — binds pure read-only seams / committed memos, never run()/main()." "Python (optional [mcp] extra)" "Library"
         }
@@ -116,6 +119,10 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         calibration -> mlLibs "Trains disposable XGBoost classifiers (deterministic) via" "XGBoost"
         calibration -> kloppy "Parses SkillCorner/Sportec provider data via" "kloppy.skillcorner / kloppy.sportec"
         calibration -> pining "Loads SkillCorner/IDSSE/Gradient-Sports/SB360 matches from" "Bearer -> 302 -> presigned S3"
+        campaignCtl -> hfJobs "launches jobs, reads labels"
+        campaignCtl -> hfHub "reads datasets, publishes models (ADR-088)"
+        hfJobs -> stageContract "runs --stages S --shard I/N"
+        stageContract -> calibration "runs trainers and drivers"
         calibration -> databricks "Loads bronze tables + the spadl_actions xT corpus from" "databricks-sql-connector"
 
         // --- Relationships: DFL parse port (ADR-031 T3) ---

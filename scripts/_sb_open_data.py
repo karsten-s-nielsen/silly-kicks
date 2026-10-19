@@ -20,16 +20,49 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import cast
 
 import pandas as pd
 
-from scripts._loader_pining import LoadedMatch, resolve_cache_dir
+from scripts._driver_sources import LoadedMatch, resolve_cache_dir
 
 #: FIFA World Cup 2022 (male) -- the spec's corpus; the locked elite-defender prior matches it.
 WORLD_CUP_2022 = (43, 106)
+
+#: ADR-128 decision P6: the statsbomb/open-data COMMIT every open-data read uses. Set by the HF launcher in
+#: every open-data job (and by `datasets record sb_open`); unset, open data floats on `master` as before.
+OPEN_DATA_REVISION_ENV = "SILLY_KICKS_OPEN_DATA_REVISION"
+#: TEST-ONLY: point statsbombpy at a local http server mirroring the open-data tree (never set in a job).
+OPEN_DATA_BASE_ENV = "SILLY_KICKS_OPEN_DATA_BASE"
+_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def pin_open_data_revision(revision: str | None = None) -> str | None:
+    """Pin every statsbombpy open-data URL to ONE commit of statsbomb/open-data (ADR-128, decision P6).
+
+    statsbombpy formats ``config.OPEN_DATA_PATHS`` (``.../open-data/master/data/...``) on every call and
+    ``statsbombpy.public`` binds that same dict, so an in-place edit pins every later call in this process.
+    ``revision`` defaults to ``$SILLY_KICKS_OPEN_DATA_REVISION``; ``None`` there leaves the URLs alone.
+    ``$SILLY_KICKS_OPEN_DATA_BASE`` (tests) replaces the whole host+revision prefix instead.
+    """
+    from statsbombpy import config  # type: ignore[import-not-found]  # optional network dep
+
+    base = os.environ.get(OPEN_DATA_BASE_ENV)
+    rev = revision or os.environ.get(OPEN_DATA_REVISION_ENV)
+    if base:
+        for k, url in list(config.OPEN_DATA_PATHS.items()):
+            config.OPEN_DATA_PATHS[k] = re.sub(r"^https?://.+?/data/", base.rstrip("/") + "/data/", url)
+        return rev
+    if not rev:
+        return None
+    if not _SHA.match(rev):
+        raise ValueError(f"open-data revision must be a 40-hex commit SHA, got {rev!r}")
+    for k, url in list(config.OPEN_DATA_PATHS.items()):
+        config.OPEN_DATA_PATHS[k] = re.sub(r"/open-data/[^/]+/data/", f"/open-data/{rev}/data/", url)
+    return rev
 
 
 def assert_statsbomb_open_data_mode() -> None:
@@ -46,6 +79,10 @@ def assert_statsbomb_open_data_mode() -> None:
             "PRIVATE API. This reliability artifact is public-only (open data, reproducible by "
             "anyone); refusing to run. Unset the credentials to use the open-data corpus."
         )
+    # Every open-data consumer calls this guard first, so it is the ONE place the revision pin (P6)
+    # applies: a no-op unless $SILLY_KICKS_OPEN_DATA_REVISION (or the test base) is set.
+    if os.environ.get(OPEN_DATA_REVISION_ENV) or os.environ.get(OPEN_DATA_BASE_ENV):
+        pin_open_data_revision()
 
 
 def all_open_competitions() -> list[tuple[int, int]]:

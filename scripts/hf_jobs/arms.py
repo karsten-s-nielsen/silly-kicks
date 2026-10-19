@@ -30,16 +30,22 @@ def match_key(provider: str, match_id: str) -> str:
     return f"{provider}__{match_id}"
 
 
+def parse_arms(text: str, *, source: str = "--arms-json") -> ArmSpec:
+    """The arm spec from the payload's JSON TEXT (ADR-128: the campaign passes it as the ``--arms-json``
+    job parameter). Raises `ArmsUnavailableError` when no arm is non-empty (I4: never all-private)."""
+    raw = json.loads(text)
+    arms = {name: frozenset(map(str, members)) for name, members in raw.get("arms", {}).items()}
+    if not any(arms.values()):
+        raise ArmsUnavailableError(f"--arms defines no non-empty arm: {source}")
+    ship_order = tuple(raw.get("ship_order") or sorted(arms))
+    return ArmSpec(arms=arms, ship_order=ship_order)
+
+
 def load_arms(path: str | Path) -> ArmSpec:
     p = Path(path)
     if not p.exists():
         raise ArmsUnavailableError(f"--arms file not found: {p}")
-    raw = json.loads(p.read_text())
-    arms = {name: frozenset(map(str, members)) for name, members in raw.get("arms", {}).items()}
-    if not any(arms.values()):
-        raise ArmsUnavailableError(f"--arms defines no non-empty arm: {p}")
-    ship_order = tuple(raw.get("ship_order") or sorted(arms))
-    return ArmSpec(arms=arms, ship_order=ship_order)
+    return parse_arms(p.read_text(), source=str(p))
 
 
 def arm_masks(match_keys: Sequence[str], spec: ArmSpec) -> dict[str, np.ndarray]:

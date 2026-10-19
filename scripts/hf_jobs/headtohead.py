@@ -425,7 +425,7 @@ def build_eval(name: str, corpus_dir: Path | None, *, feature_set: str = "faithf
     from scripts.hf_jobs.registry import get
 
     spec = get(name)
-    if spec.source == "public":
+    if spec.certification == "public":  # ADR-128: the certification policy (the `source` field is gone)
         _require_statsbombpy()
         return _build_public_eval(name)
     return _build_owner_eval(name, _require_corpus(corpus_dir), feature_set=feature_set)

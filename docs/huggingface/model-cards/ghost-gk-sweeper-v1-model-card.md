@@ -58,10 +58,10 @@ variant; consumers opt in via `from_variant("sweeper")`.
 
 | Metric | Value |
 |---|---|
-| Held-out CV euclidean MAE | **1.135 m** (per-provider: Gradient Sports 1.071 / SkillCorner 1.166 / Sportec 1.717) |
+| Held-out CV euclidean MAE | <!-- generated:row:cv-mae -->**1.135 m** (per-provider: Gradient Sports 1.071 / SkillCorner 1.166 / Sportec 1.717)<!-- /generated:row:cv-mae --> |
 | Boosted-reconstruction parity vs sklearn | 1.14e-13 (exact &mdash; safe to publish) |
-| **> 30 m high-sweeper stratum MAE** | **1.96 m** (the sweeper *places* high keepers where the default is blind) |
-| Training corpus | 179 games / 1048834 frames |
+| **> 30 m high-sweeper stratum MAE** | <!-- generated:row:high-sweeper-mae -->**1.96 m** (the sweeper *places* high keepers where the default is blind)<!-- /generated:row:high-sweeper-mae --> |
+| Training corpus | <!-- generated:row:corpus -->179 games / 1048834 frames<!-- /generated:row:corpus --> |
 
 The `> 30 m` (high-sweeper) coverage of the training corpus is **IDSSE/Sportec-dominated (11.5 %)**;
 SkillCorner 0.24 %; **Gradient Sports 0.0 %** &mdash; see the data caveat below.
@@ -121,4 +121,4 @@ Pospisil &amp; Lee 2018 (RFCDE, arXiv:1804.05753). See the silly-kicks `NOTICE` 
 
 ## TF-65 velocity-gap re-fit (4.134.0)
 
-**TF-65 velocity-gap re-fit (silly-kicks 4.134.0 / ADR-120; `training_commit=a34e992`).** Re-fit on the dense-grid-corrected floor velocities (TF-65 removed fabricated through-gap velocity on broadcast providers — the prior F1b float32 re-fit at 4.128.0 / ADR-106 is superseded); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.
+<!-- generated:refit_head -->**TF-65 velocity-gap re-fit (silly-kicks 4.134.0 / ADR-120; `training_commit=a34e992`).**<!-- /generated:refit_head --> Re-fit on the dense-grid-corrected floor velocities (TF-65 removed fabricated through-gap velocity on broadcast providers — the prior F1b float32 re-fit at 4.128.0 / ADR-106 is superseded); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.

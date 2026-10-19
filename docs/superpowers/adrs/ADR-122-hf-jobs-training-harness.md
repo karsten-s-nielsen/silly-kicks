@@ -3,8 +3,10 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-10-13 |
-| **Status** | Accepted |
+| **Status** | Accepted — superseded in part by ADR-128 (launch path, per-trainer phase flags) |
 | **Deciders** | Karsten S. Nielsen (owner) |
+
+> **Superseded in part by ADR-128** (compute contract + HF campaigns): the `hf`-CLI launch path in `scripts/hf_jobs/launch.py` and the per-trainer phase flags.
 
 ## Context
 

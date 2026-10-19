@@ -60,10 +60,10 @@ on velocity-less input.
 
 | Metric | Value |
 |---|---|
-| Held-out CV euclidean MAE | **6.07 m** (per-provider: Gradient Sports 6.20 / SkillCorner 5.99 / Sportec 6.39) |
-| Per-possession CV MAE | in-possession 7.03 m / out-of-possession 5.10 m |
-| Per-slot CV MAE (slots 1&ndash;4) | 6.03 / 6.11 / 6.09 / 6.04 m |
-| Training corpus | 179 games / 4170920 rows |
+| Held-out CV euclidean MAE | <!-- generated:row:cv-mae -->**6.07 m** (per-provider: Gradient Sports 6.20 / SkillCorner 5.99 / Sportec 6.39)<!-- /generated:row:cv-mae --> |
+| Per-possession CV MAE | <!-- generated:row:possession-mae -->in-possession 7.03 m / out-of-possession 5.10 m<!-- /generated:row:possession-mae --> |
+| Per-slot CV MAE (slots 1&ndash;4) | <!-- generated:row:slot-mae -->6.03 / 6.11 / 6.09 / 6.04 m<!-- /generated:row:slot-mae --> |
+| Training corpus | <!-- generated:row:corpus -->179 games / 4170920 rows<!-- /generated:row:corpus --> |
 | Rearguard coherence (slot ordering) | `ordering_fraction = 1.0` |
 | Boosted-reconstruction parity vs sklearn | exact (round-trip verified &mdash; safe to publish) |
 
@@ -109,4 +109,4 @@ ghosting concept (no density estimation). See the silly-kicks `NOTICE` for the f
 
 ## F1b re-fit (4.128.0)
 
-**F1b float32-frame re-fit (silly-kicks 4.128.0 / ADR-106; `training_commit=3ca609f`).** Re-fit on float32-stored frames (the storage rounding exceeds the trained-model feature-contract atol); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.
+<!-- generated:refit_head -->**F1b float32-frame re-fit (silly-kicks 4.128.0 / ADR-106; `training_commit=3ca609f`).**<!-- /generated:refit_head --> Re-fit on float32-stored frames (the storage rounding exceeds the trained-model feature-contract atol); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.

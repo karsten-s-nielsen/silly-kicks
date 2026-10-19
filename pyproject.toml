@@ -156,6 +156,8 @@ test = [
     # here (not just optional [mcp]) so CI always validates the server + its read-only tripwire tools;
     # the core library never imports mcp (server import is guarded). Pinned <2 (mcp 2.x moved FastMCP).
     "mcp[cli]>=1,<2",
+    # ADR-128: scripts/_toml.py reads the campaign/dataset/manifest TOML files; tomllib is 3.11+.
+    "tomli>=2.0; python_version < '3.11'",
 ]
 # Generic trained-model HPO/training extra (ADR-011). Shared by future trainers
 # (TF-16 xShotOccurrence + others) — same pins as [calibration]. Inference of a
@@ -201,6 +203,23 @@ dev = [
     "pyright>=1.1.409",
     "pandas-stubs>=2.2.0",
 ]
+
+[dependency-groups]
+# ADR-128: the HF campaign launcher and the in-job fetch/run environment. Locked in uv.lock and
+# installed with `uv sync --frozen --group hfjobs` -- in every HF job and in the local `.venv-hfjobs`
+# verification environment (never in `.venv`). statsbombpy is here so public-data jobs never resolve it
+# at job time (the 4.138.0 jobs `pip install`ed it floating).
+hfjobs = [
+    "huggingface_hub>=2.2,<3",
+    "statsbombpy>=1.13",
+]
+
+[tool.uv]
+# ADR-128: the HF job image and `.venv-hfjobs` run python 3.12 from uv.lock. Pin xgboost there to the
+# version that fit the 4.138.0 xshot/xcross artifacts (their metadata records 3.4.1), so the pinned
+# re-fit differs from that baseline by as little environment as possible. xgboost 3.4.1 needs
+# python >= 3.12, hence the marker. uv-only: the published package metadata keeps `xgboost>=2.0,<4.0`.
+constraint-dependencies = ["xgboost==3.4.1; python_version >= '3.12'"]
 
 [project.urls]
 Homepage = "https://github.com/karsten-s-nielsen/silly-kicks"
