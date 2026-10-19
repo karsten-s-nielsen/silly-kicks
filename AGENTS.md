@@ -2,7 +2,7 @@
 
 Maintained fork of socceraction — SPADL event conversion + VAEP action valuation for soccer analytics.
 
-> **Maintaining this file.** `AGENTS.md` = always-loaded class-1 surface: CURRENT terse rules + pointers ONLY; rationale/history/measurement lives on-demand in `docs/context/<domain>.md`. A Key-conventions bullet is ≤ 600 chars and carries an `ADR-NNN` ref or a `docs/context/` pointer. Enforced by `tests/test_agents_md_budget.py` (byte ceiling + per-bullet char cap + per-invariant completeness vs `tests/fixtures/agents_md_invariant_inventory.json`, snapshotted `CLAUDE.md`@77286f4). `CLAUDE.md` is the one-line `@AGENTS.md` importer. Design: `docs/superpowers/specs/2026-09-24-agents-md-restructure-design.md`.
+> **Maintaining this file.** `AGENTS.md` = always-loaded class-1 terse rules + pointers ONLY; rationale in `docs/context/<domain>.md`. A Key-conventions bullet is ≤ 600 chars with an `ADR-NNN`/`docs/context/` pointer. Enforced by `tests/test_agents_md_budget.py`. `CLAUDE.md` = the `@AGENTS.md` importer.
 
 ## Architecture
 
@@ -56,6 +56,8 @@ Hexagonal: all core functions are pure (pandas in, pandas out), zero I/O, zero g
 - **Tracking metrics** (`territorial_defense/`,`positioning/`): `compute_territorial_defense`/`a_threat_suppressed`/`b_attribution_slippage`/`frame_convention`/`build_trimmed_hull` (ADR-090, experimental); `optimise_positions`/`compute_positioning_gap`/`ThreatObjective`/`ReachabilityConstraint` (ADR-104). → `docs/context/tracking-metrics.md`.
 - **Coordination** (`coordination/`, TF-58): `compute_team_coordination`/`build_coordination_signals` + 7 family computes (relative phase, cross-correlation, vector coding, spectral, coherence, cluster phase+SampEn, RSI) with seeded surrogate nulls (spec 7.9 identities; `SILLY_KICKS_COORDINATION_REFERENCE_NUMERICS` = as-built oracle); tracking-only; windows `period_windows`/`possession_windows_from_*`; `compute_collective_variables` single-sources team shape + back line; resample run edges via `grid_span` (ADR-111). → `docs/context/tracking-metrics.md`.
 - **Causal** (`causal/`): `att_power_curve`/`placebo_shift`/`OpportunityConfig`/`sensitivity_analysis` (ADR-015). **Atomic-SPADL** (`atomic/`): `convert_to_atomic`/`ATOMIC_SPADL_COLUMNS`. **Calibration** (`calibration/`): `CarrierAccuracyObjective`/`AugmentedVaepBrierObjective`/`FrozenXt`/`select_recommended_point` (ADR-009/060). **Providers** (`providers/`): parse ports `parse_dfl_events`/`shape_events_to_native`/`snapshot_to_tracking_frames` (ADR-031/054). → `docs/context/vaep.md`, `providers.md`.
+
+- **Corners** (`corners/`, TF-46): `identify_corners`/`add_corner_windows`; `RunZoneModel` (GMM) + `CornerRoutineModel` (NMF), ADR-011 params-only weights; `compute_corner_run_encoding`/`compute_corner_chance_quality` (ADR-110); sportec `corner_crossed` via `play_height` (ADR-127). → `docs/context/corners.md`.
 
 ## Where the history lives
 

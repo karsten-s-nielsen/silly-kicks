@@ -1,0 +1,158 @@
+{
+  "run_commit": "6ee7e627f82ef468cfb1b0fdb8140ce05c3a3f8c",
+  "run_tree_dirty": false,
+  "input_contract": {
+    "version": 1,
+    "driver": "validate_corners",
+    "min_per_team": 5,
+    "seams": [
+      "RunZoneModel",
+      "CornerRoutineModel",
+      "compute_corner_chance_quality"
+    ],
+    "digest": "bcf31a61352b98f956bd97adc4ff95bc73d19fe3c3bffb36db992ff1f04ef5d4"
+  },
+  "verdicts": {
+    "n_corners": 6082,
+    "n_teams": 201,
+    "responsiveness": {
+      "n_goals_mean": 0.022689904636632688,
+      "n_shots_mean": 0.2650443932916804,
+      "sum_xg_mean": 0.03231908120025898
+    },
+    "discrimination_one_way": {
+      "n_goals": {
+        "icc": 0.03365038646164794,
+        "null_p95": 0.04403828734527149,
+        "p": 0.404,
+        "n": 6082
+      },
+      "n_shots": {
+        "icc": 0.06750519852236726,
+        "null_p95": 0.03831309401141866,
+        "p": 0.0,
+        "n": 6082
+      },
+      "sum_xg": {
+        "icc": 0.04269887205607983,
+        "null_p95": 0.05071071235387061,
+        "p": 0.174,
+        "n": 3089
+      }
+    },
+    "net_of_team": {
+      "n_goals": {
+        "team_one_way": {
+          "icc": 0.03365038646164794,
+          "null_p95": 0.04403828734527149,
+          "p": 0.404,
+          "n": 6082
+        },
+        "opponent_adjusted": {
+          "icc": 0.038464980883402354,
+          "null_p95": 0.04453206915660925,
+          "p": 0.199,
+          "n": 5705
+        },
+        "routine_fixed_effect": {
+          "icc": 0.03356184365085514,
+          "null_p95": 0.043854000495090695,
+          "p": 0.41,
+          "n": 6082
+        }
+      },
+      "n_shots": {
+        "team_one_way": {
+          "icc": 0.06750519852236726,
+          "null_p95": 0.03831309401141866,
+          "p": 0.0,
+          "n": 6082
+        },
+        "opponent_adjusted": {
+          "icc": 0.040227909743947236,
+          "null_p95": 0.03994704029954881,
+          "p": 0.043,
+          "n": 5705
+        },
+        "routine_fixed_effect": {
+          "icc": 0.05463929262268641,
+          "null_p95": 0.03824298102283329,
+          "p": 0.0,
+          "n": 6082
+        }
+      },
+      "sum_xg": {
+        "team_one_way": {
+          "icc": 0.04269887205607983,
+          "null_p95": 0.05071071235387061,
+          "p": 0.174,
+          "n": 3089
+        },
+        "opponent_adjusted": {
+          "icc": 0.041370253202638256,
+          "null_p95": 0.0506887216816287,
+          "p": 0.236,
+          "n": 2883
+        },
+        "routine_fixed_effect": {
+          "icc": 0.04322908564749582,
+          "null_p95": 0.05046871646021844,
+          "p": 0.16,
+          "n": 3089
+        }
+      }
+    },
+    "transfer": {
+      "n_goals": {
+        "n_transfer_teams": 59,
+        "sign_agreement": 0.4745762711864407,
+        "resid_corr": -0.10749357067270508
+      },
+      "n_shots": {
+        "n_transfer_teams": 59,
+        "sign_agreement": 0.4576271186440678,
+        "resid_corr": 0.08124260269435478
+      },
+      "sum_xg": {
+        "n_transfer_teams": 36,
+        "sign_agreement": 0.5,
+        "resid_corr": -0.12175032175032177
+      }
+    },
+    "cross_provider": {
+      "idsse": {
+        "n": 57,
+        "n_goals_mean": 0.03508771929824561,
+        "n_shots_mean": 0.17543859649122806,
+        "sum_xg_mean": 0.01466842105263158
+      },
+      "skillcorner": {
+        "n": 2993,
+        "n_goals_mean": 0.02071500167056465,
+        "n_shots_mean": 0.18777146675576345,
+        "sum_xg_mean": NaN
+      },
+      "statsbomb": {
+        "n": 3032,
+        "n_goals_mean": 0.024406332453825858,
+        "n_shots_mean": 0.34300791556728233,
+        "sum_xg_mean": 0.032650904296701845
+      }
+    },
+    "convergent_timing": {
+      "n": 2965,
+      "rho": 0.9996871328030916,
+      "p": 0.0,
+      "offset_mean_s": 8.255244519392923,
+      "offset_median_s": 1.5
+    },
+    "n_matches_gi_fetch_failed": 0,
+    "n_manifest_listing_failed": 0,
+    "sb360_init_divergence": {
+      "n_players": 577,
+      "delta_mean_m": 1.0960971866361429,
+      "delta_p95_m": 3.348010628219227,
+      "zone_reassignment_rate": 0.05199306759098787
+    }
+  }
+}

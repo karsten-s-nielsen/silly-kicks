@@ -25,6 +25,8 @@ WEIGHTS_CLASSIFICATION: dict[str, tuple[str, str]] = {
     "silly_kicks/tracking/_ghost_gk_weights": ("frame_geometry", "ghost-GK regresses on frame positions"),
     "silly_kicks/tracking/_ghost_outfield_weights": ("frame_geometry", "ghost-outfield regresses on frame positions"),
     "silly_kicks/tracking/_receiver_weights": ("frame_geometry", "receiver model reads pre-pass frame positions"),
+    "silly_kicks/corners/_run_zone_weights": ("frame_geometry", "RunZoneModel GMMs on reflected frame positions"),
+    "silly_kicks/corners/_routine_weights": ("frame_geometry", "CornerRoutineModel NMF on frame-derived run vectors"),
     # event-only -> SPADL action coords (float64), NOT retrained
     "silly_kicks/expected_passing/weights": ("event_only", "PassCompletion: event-only action geometry"),
     "silly_kicks/match_outcome/weights": ("event_only", "DependenceModel rho: event-only, no frames"),
