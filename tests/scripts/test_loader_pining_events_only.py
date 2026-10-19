@@ -249,7 +249,18 @@ def test_load_matches_default_is_unchanged_full_path(monkeypatch):
     monkeypatch.setattr(lp, "_base_url", lambda: "http://x")
     monkeypatch.setattr(lp, "_list_matches", lambda provider, tok, base: [{"id": "m1", "artifacts": {}}])
 
-    def _fake_retry(provider, match_id, artifacts, tok, base_url, tracking_limit, *, cache_dir=None, events_only=False):
+    def _fake_retry(
+        provider,
+        match_id,
+        artifacts,
+        tok,
+        base_url,
+        tracking_limit,
+        *,
+        cache_dir=None,
+        events_only=False,
+        with_velocity=True,
+    ):
         seen.append(events_only)
         return pd.DataFrame(), pd.DataFrame({"f": [1]}), "H", None, None
 
@@ -280,3 +291,26 @@ def test_build_match_with_retry_threads_events_only_on_both_paths(monkeypatch, t
     )
     assert lp._build_match_with_retry("idsse", "m", {}, "t", "u", None, events_only=True) == expected
     assert seen == [("download", True, True), ("actions", "m"), ("download", False, True), ("actions", "m")]
+
+
+# --------------------------------------------------------------------------------------------------
+# TF-46 Tier-2: per-provider native shot-xG surfaced as the uniform `xg` column (no xG model built)
+# --------------------------------------------------------------------------------------------------
+
+
+def test_normalize_native_xg_renames_coerces_and_no_ops_when_absent():
+    a = pd.DataFrame({"type_id": [11, 0], "shot_x_g": ["0.37", None]})
+    out = lp._normalize_native_xg(a, "shot_x_g")
+    assert "shot_x_g" not in out.columns and "xg" in out.columns
+    assert out["xg"].iloc[0] == pytest.approx(0.37)  # native string coerced to float
+    assert pd.isna(out["xg"].iloc[1])  # missing native -> NaN, never fabricated
+    # absent native column -> no-op; no xg column invented
+    assert "xg" not in lp._normalize_native_xg(pd.DataFrame({"type_id": [11]}), "shot_x_g").columns
+
+
+def test_sb_shot_xg_column_extracts_nested_statsbomb_xg():
+    flat = pd.DataFrame({"extra": [{"shot": {"statsbomb_xg": 0.52}}, {"pass": {}}, {}, None]})
+    xg = lp._sb_shot_xg_column(flat)
+    assert xg.iloc[0] == pytest.approx(0.52)  # nested extra.shot.statsbomb_xg
+    # non-shot / empty / non-dict -> missing (pandas coerces the mixed list to float64, so None -> NaN)
+    assert pd.isna(xg.iloc[1]) and pd.isna(xg.iloc[2]) and pd.isna(xg.iloc[3])

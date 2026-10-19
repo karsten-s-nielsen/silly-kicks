@@ -5,6 +5,30 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.139.0] — 2026-10-18 — TF-46 Arm 1 corner offence (Shaw) + section-12 construct validity + sportec corner-crossed (ADR-127)
+
+### Added
+
+- **`silly_kicks/corners/`** — TF-46 Arm 1 corner-offence family (Shaw & Gopaladesikan playbook; raw
+  primitives, ADR-110): `identify_corners`, `add_corner_windows` (TF-79 timing + first-contact winner),
+  reflect-to-canonical-side, `compute_corner_run_encoding` ((initial × target) GMM zones),
+  `cluster_corner_routines`, descriptive per-routine chance quality.
+- **Bundled fitted weights** — `RunZoneModel` (GMM) + `CornerRoutineModel` (NMF), params-only npz +
+  metadata + `SHA256SUMS` + wheel `MODEL_CARD.md` under `silly_kicks/corners/_run_zone_weights/default`
+  and `_routine_weights/default` (ADR-011; `training_commit` stamped, fit on a clean tree). Plus the
+  section-12 construct-validity memo `docs/research/corner_routines/`.
+- Corpus drivers `scripts/build_corner_routines.py` (fit) + `scripts/validate_corners.py` — the
+  section-12 battery: responsiveness, discrimination net-of-team (opponent leave-one-out + routine
+  fixed-effect), season-to-season transfer, section-12.6 convergent timing (TF-79 first-contact vs
+  SkillCorner GI first player-possession), section-12.7 SB360 init divergence.
+
+### Changed
+
+- **`sportec`/IDSSE `corner_crossed` now discriminates via DFL `play_height`** (ADR-127) —
+  **VALUE-CHANGING** (not additive): ~93% of DFL corners flip `corner_short` → `corner_crossed`. SemVer
+  minor; measured consumer blast radius (`type_corner_crossed`/`_short` one-hots in xSuccess/VAEP;
+  `defensive_credit` bravery) — shifts toward correctness, no consumer breaks, no retrain.
+
 ## [4.138.0] — 2026-10-16 — HF visibility-blind harness (ADR-123 Am B) + xShot label-filter fix & trained-artifact integrity gate (ADR-126)
 
 > Two commits under one release (ADR-037 clean-tree split): the **code** commit ships the corrected xShot

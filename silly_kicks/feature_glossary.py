@@ -198,6 +198,7 @@ _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 d
 _M_SHOT_STOPPING = "silly_kicks.shot_stopping._compute"  # TF-59 PR2 GK shot-stopping (GP / GSAA)
 _M_TERRITORY = "silly_kicks.territory._compute"  # TF-54 territorial dominance (trimmed hull x injected xT)
 _M_TERRITORY_CF = "silly_kicks.territory._counterfactual"  # TF-54b counterfactual q*c*xT prevented-valuation
+_M_CORNERS = "silly_kicks.corners._effectiveness"  # TF-46 Arm 1 per-routine chance quality (descriptive)
 _M_DUELS = "silly_kicks.duels._compute"  # TF-55 Glicko-2 duel ratings (per-match rating period)
 _M_GK_DECISION = "silly_kicks.gk_decision._compute"  # TF-62 GK build-up decision-quality (chosen-vs-available)
 _M_TEAM_PRESSING = "silly_kicks.team_metrics._pressing"  # TF-52 pressing / defensive KPIs
@@ -3482,6 +3483,31 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="dimensionless",
         emitting_module=_M_COORDINATION,
         attribution=_A_TF58_MOURA_2016,
+    ),
+    # --- TF-46 Arm 1 corner per-routine chance quality (descriptive outcome-association) ----------
+    FeatureColumn(
+        name="n_shots",
+        definition="Shots taken inside a corner's outcome window [t_kick, t_kick+6s] (Shaw's shot-within-6s).",
+        unit="count",
+        emitting_module=_M_CORNERS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="n_goals",
+        definition="Goals scored inside a corner's outcome window [t_kick, t_kick+6s].",
+        unit="count",
+        emitting_module=_M_CORNERS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="sum_xg",
+        definition=(
+            "Summed (injected) xG of the shots inside a corner's outcome window -- a DESCRIPTIVE "
+            "chance-quality association for the corner, not a causal routine valuation (that is Arm 3)."
+        ),
+        unit="xG",
+        emitting_module=_M_CORNERS,
+        higher_is_better=True,
     ),
 )
 

@@ -89,6 +89,7 @@ _PKG: dict[str, tuple[str, str, str, str | None]] = {
         "COORDINATION_RSI_METRIC_COLUMNS",
         "COORDINATION_RSI_COLUMNS",
     ),
+    "corners": ("silly_kicks.corners", "CORNER_KEYS", "CORNER_CHANCE_METRIC_COLUMNS", "CORNER_CHANCE_COLUMNS"),
 }
 
 #: xsuccess is a VAEP rating method (TF-61) with no mart column-set -> deliberately not in the registry.

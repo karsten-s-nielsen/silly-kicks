@@ -138,7 +138,7 @@ def test_load_matches_dispatches_per_provider(monkeypatch, tmp_path):
         # _build_match returns a uniform 5-tuple (actions, frames, home, visible_area, report);
         # visible_area + report are None for idsse (no per-action polygon, no native geometry gate)
         # -> load_matches never excludes it (spec 4.4).
-        lambda provider, match_id, paths, tracking_limit: (
+        lambda provider, match_id, paths, tracking_limit, **k: (
             built["actions"],
             built["frames"],
             built["home"],
@@ -243,7 +243,8 @@ def test_build_skillcorner_frames_chains_bronze_native_preprocess(tmp_path, monk
         return pd.DataFrame({"x": [1.0, 2.0]}), "REPORT"
 
     monkeypatch.setattr("silly_kicks.tracking.skillcorner.convert_to_frames", _fake_convert)
-    monkeypatch.setattr(L, "_preprocess", lambda f: f.assign(_preprocessed=True))
+    # stub records the with_velocity it was threaded (keyword-only kwarg added for the TF-46 opt-in)
+    monkeypatch.setattr(L, "_preprocess", lambda f, *, with_velocity=True: f.assign(_with_velocity=with_velocity))
 
     frames, report = L.build_skillcorner_frames(
         {"metadata": str(tmp_path / "m.json"), "tracking": str(tmp_path / "t.jsonl")},
@@ -257,7 +258,23 @@ def test_build_skillcorner_frames_chains_bronze_native_preprocess(tmp_path, monk
     assert seen["bronze"]["ball_z"].iloc[0] == 1.5  # ball_z recovered
     assert seen["home_team_id"] == "7"  # read from meta before the call
     assert report == "REPORT"  # the native geometry report is threaded (Task 4's exclusion needs it)
-    assert frames["_preprocessed"].all() and list(frames["x"]) == [1.0, 2.0]  # preprocess applied
+    assert frames["_with_velocity"].all() and list(frames["x"]) == [1.0, 2.0]  # preprocess applied, velocity default
+
+
+def test_preprocess_with_velocity_false_skips_velocity_keeps_smoothing(monkeypatch):
+    # TF-46 optimisation: _preprocess(with_velocity=False) runs smooth_frames but SKIPS
+    # derive_velocities (the ~32 s/match Savitzky-Golay step corners never read).
+    import silly_kicks.tracking.preprocess as P
+
+    calls = {"smooth": 0, "vel": 0}
+    monkeypatch.setattr(P, "smooth_frames", lambda f: (calls.__setitem__("smooth", calls["smooth"] + 1), f)[1])
+    monkeypatch.setattr(P, "derive_velocities", lambda f: (calls.__setitem__("vel", calls["vel"] + 1), f)[1])
+
+    frame = pd.DataFrame({"x": [1.0]})
+    L._preprocess(frame, with_velocity=False)
+    assert calls == {"smooth": 1, "vel": 0}  # smoothed, no velocity
+    L._preprocess(frame, with_velocity=True)
+    assert calls == {"smooth": 2, "vel": 1}  # default still derives velocity
 
 
 def test_download_to_temp_cache_hit_skips_network(tmp_path, monkeypatch):

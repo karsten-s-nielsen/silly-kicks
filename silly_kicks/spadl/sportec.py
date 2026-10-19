@@ -886,8 +886,20 @@ def _build_raw_actions(
     is_corner = et == "Corner"
     corner_target = _opt("corner_target_area", "").fillna("").to_numpy()
     corner_placing = _opt("corner_placing", "").fillna("").to_numpy()
+    corner_height = _opt("play_height", "").fillna("").to_numpy()
+    # A corner is CROSSED when delivered aerially into the box, else corner_short. The primary
+    # discriminator is the DFL ``play_height`` qualifier on the corner's Play: on CornerKick events it
+    # takes {high, flat} (distinct from the {cross, head} vocabulary it carries on open-play passes).
+    # Measured across the 7 IDSSE matches (57 corners): play_height=="high" ⟺ corner_target_area in
+    # {center, nearPost, farPost, centerOutsideBox, outOfPlay} (53 crossed); play_height=="flat" ⟺
+    # corner_target_area=="short" (4 short) -- a clean partition. The older
+    # {box, penaltyBox, sixYardBox}/{aerial, high} tokens matched NO real DFL value (they came from a
+    # self-referential unit fixture), so every DFL corner was silently mistyped corner_short; they are
+    # kept in the union only for backward-compatibility with any pre-normalized bronze input.
     is_corner_crossed = is_corner & (
-        np.isin(corner_target, ["box", "penaltyBox", "sixYardBox"]) | np.isin(corner_placing, ["aerial", "high"])
+        (corner_height == "high")
+        | np.isin(corner_target, ["box", "penaltyBox", "sixYardBox"])
+        | np.isin(corner_placing, ["aerial", "high"])
     )
     type_ids[is_corner & ~is_corner_crossed] = spadlconfig.actiontype_id["corner_short"]
     type_ids[is_corner_crossed] = spadlconfig.actiontype_id["corner_crossed"]
