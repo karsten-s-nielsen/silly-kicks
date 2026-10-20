@@ -158,3 +158,33 @@ class ConversionReport:
     def has_unrecognized(self) -> bool:
         """Return True if any unrecognized event types were encountered."""
         return len(self.unrecognized_counts) > 0
+
+
+@dataclasses.dataclass(frozen=True)
+class SkillCornerConversionReport(ConversionReport):
+    """SkillCorner conversion report: the base audit plus the TF-46 restart + goals diagnostics.
+
+    An ``isinstance(report, ConversionReport)`` check still holds. The appended fields carry the derived
+    restart census (per type and per ``restart_evidence`` class), the goals-reconciliation summary, and
+    the C4 repeated-restart / kick-off diagnostics. ``dataclasses.asdict`` round-trips every field.
+
+    Examples
+    --------
+    Read the restart + goals diagnostics off a SkillCorner conversion::
+
+        actions, report = skillcorner.convert_to_actions(events, match_metadata)
+        report.restart_counts          # e.g. {"corner_crossed": 9, "throw_in": 44, ...}
+        report.restart_evidence_counts # e.g. {"tagged": 79, "chain_ambiguous": 2, ...}
+        report.goals_repaired          # e.g. {"normal": 2, "own_goal_unsignalled": 1}
+        assert not report.goals_coverage_gap
+    """
+
+    restart_counts: dict[str, int] = dataclasses.field(default_factory=dict)
+    restart_evidence_counts: dict[str, int] = dataclasses.field(default_factory=dict)
+    restart_unresolved: int = 0
+    goals_repaired: dict[str, int] = dataclasses.field(default_factory=dict)
+    goals_ambiguous: int = 0
+    goals_unresolved: int = 0
+    goals_coverage_gap: bool = False
+    repeated_restart_count: int = 0
+    kickoff_unresolved: int = 0

@@ -1,0 +1,233 @@
+{
+  "away_team": {
+    "id": 871,
+    "name": "Perth Glory Football Club"
+  },
+  "away_team_score": 1,
+  "home_team": {
+    "id": 1802,
+    "name": "Brisbane Roar FC"
+  },
+  "home_team_score": 0,
+  "id": 1925299,
+  "pitch_length": 105,
+  "pitch_width": 68,
+  "players": [
+    {
+      "goal": 0,
+      "id": 51050,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 333110,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 966112,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 797298,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 560987,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 795530,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 560986,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 51722,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 809869,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 51002,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 560988,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 966113,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 560882,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 795533,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 560989,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 966115,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 795541,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 965698,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 69111,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 51021,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 796014,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 1,
+      "id": 560984,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 51694,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 11897,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 560985,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 809166,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 50982,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 966114,
+      "own_goal": 0,
+      "team_id": 871
+    },
+    {
+      "goal": 0,
+      "id": 50950,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 560898,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 287934,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 795537,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 50999,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 965697,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 560983,
+      "own_goal": 0,
+      "team_id": 1802
+    },
+    {
+      "goal": 0,
+      "id": 51043,
+      "own_goal": 0,
+      "team_id": 1802
+    }
+  ]
+}

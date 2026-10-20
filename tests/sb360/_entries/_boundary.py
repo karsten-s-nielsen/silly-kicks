@@ -529,6 +529,7 @@ def _call_corner_windows(actions, frames, links, home_team_id):
                 "kick_y": 1.0,
                 "corner_kind": "direct",
                 "corner_source": "spadl_corner",
+                "type_source": None,  # TF-46 Arm 1: travels from the action; NA on this synthesized corner
             }
         ]
     ).astype(CORNER_IDENTIFY_COLUMNS)

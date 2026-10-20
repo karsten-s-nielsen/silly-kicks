@@ -120,3 +120,13 @@ def test_pure_does_not_mutate_inputs():
     pd.testing.assert_frame_equal(frames, fb)
     pd.testing.assert_frame_equal(contacts, kb)
     assert out is not corners
+
+
+def test_nan_t_kick_keeps_row_with_nan_window():
+    # A derived (events-only) corner has a NaN t_kick (spec section 9.4): the row is KEPT with NaN
+    # window outputs and no target source (ADR-042), never dropped and never crashed.
+    out = add_corner_windows(_corner(t_kick=float("nan")), _frames(), _no_contacts())
+    assert len(out) == 1
+    r = out.iloc[0]
+    assert pd.isna(r["t_init"]) and pd.isna(r["t_target"]) and pd.isna(r["t_outcome"])
+    assert pd.isna(r["target_snapshot_source"])

@@ -24,11 +24,14 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
+from ..id_compat import canonical_id
 from . import config as spadlconfig
+from ._skillcorner_goals import reconcile_goals
 from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves
+from ._skillcorner_restarts import derive_restarts
 from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr
-from .schema import SKILLCORNER_SPADL_COLUMNS, ConversionReport
+from .schema import SKILLCORNER_SPADL_COLUMNS, SkillCornerConversionReport
 from .utils import _blocked_flag, _ensure_base_signal_columns, _finalize_output
 
 
@@ -188,7 +191,10 @@ def _native_completion_result(
     src = np.full(n, "stopgap", dtype=object)
     po = pass_outcome.astype("string").str.lower()
     has_po = po.isin(["successful", "unsuccessful", "offside"]).to_numpy()
-    po_succ = (po == "successful").to_numpy()
+    # fillna(False) + bool dtype: the nullable-string `==` yields <NA> for rows without a known outcome,
+    # which makes `~po_succ` a per-element Python-bool inversion (deprecated). Those rows are masked out
+    # by `has_po &` below, so coercing <NA> to False is behaviour-preserving and keeps a numpy bool array.
+    po_succ = (po == "successful").fillna(False).to_numpy(dtype=bool)
     rec_true = received.astype("string").str.lower().isin(["true", "1", "1.0"]).to_numpy()
     stn = same_team_next.fillna(False).to_numpy()
     passlike = is_passlike.fillna(False).to_numpy()
@@ -209,12 +215,56 @@ def _native_completion_result(
     return rid, src
 
 
+def _resolve_opponent(pp: pd.DataFrame, match_metadata: dict) -> str | None:
+    """Resolve the single opponent team id from the possession team ids (decision C6, spec 5.2).
+
+    The opponent is the distinct event ``team_id`` that is not ``home_team.id``. Ids compare
+    through :mod:`silly_kicks.id_compat` (``canonical_id``), never ``str()`` -- a float id would
+    stringify to ``"866.0"`` and never equal ``"866"``. Returns the canonical opponent id, or
+    ``None`` when the slice carries a single team (no ``_against`` restart is derivable; the caller
+    counts it unresolved).
+
+    Raises
+    ------
+    ValueError
+        When more than two distinct team ids appear; when ``home_team.id`` is absent from the event
+        team ids; or when ``away_team.id`` is present and the event team set is not
+        ``{home_team.id, away_team.id}``. Each message names ``match_metadata["id"]``.
+    """
+    match_id = match_metadata.get("id")
+    home_id = str(canonical_id(match_metadata["home_team"]["id"]))
+    team_ids = {str(canonical_id(t)) for t in pp["team_id"].dropna().unique()}
+    if len(team_ids) > 2:
+        raise ValueError(
+            f"SkillCorner match {match_id!r}: more than two distinct team ids in the possessions "
+            f"{sorted(team_ids)}; cannot resolve the opponent."
+        )
+    if home_id not in team_ids:
+        raise ValueError(
+            f"SkillCorner match {match_id!r}: home_team.id {home_id!r} is not among the event team "
+            f"ids {sorted(team_ids)}."
+        )
+    away = match_metadata.get("away_team") or {}
+    away_raw = away.get("id")
+    if away_raw is not None:
+        away_id = str(canonical_id(away_raw))
+        if team_ids != {home_id, away_id}:
+            raise ValueError(
+                f"SkillCorner match {match_id!r}: event team set {sorted(team_ids)} does not equal "
+                f"{{home_team.id, away_team.id}} = {sorted({home_id, away_id})}."
+            )
+    others = team_ids - {home_id}
+    if not others:
+        return None
+    return next(iter(others))
+
+
 def convert_to_actions(
     events: pd.DataFrame,
     match_metadata: dict,
     *,
     preserve_native: bool = False,
-) -> tuple[pd.DataFrame, ConversionReport]:
+) -> tuple[pd.DataFrame, SkillCornerConversionReport]:
     """Convert SkillCorner dynamic_events.csv to SPADL actions.
 
     Parameters
@@ -231,8 +281,9 @@ def convert_to_actions(
 
     Returns
     -------
-    tuple[pd.DataFrame, ConversionReport]
-        SPADL actions and conversion audit trail.
+    tuple[pd.DataFrame, SkillCornerConversionReport]
+        SPADL actions and the conversion audit trail (a ``ConversionReport`` subclass carrying the
+        TF-46 restart + goals diagnostics).
 
     Examples
     --------
@@ -341,21 +392,11 @@ def convert_to_actions(
     next_team = pp["team_id"].shift(-1)
     same_team_next = (pp["team_id"] == next_team).fillna(False)
 
-    # Short corner/freekick detection: next action same team within 15m
-    next_sx = sx.shift(-1)
-    next_sy = sy.shift(-1)
-    dist_to_next = np.sqrt((sx - next_sx) ** 2 + (sy - next_sy) ** 2)
-    is_short = same_team_next & (dist_to_next < 15.0)
-
     # --- Vectorized dispatch ---
-    # Priority 1: set pieces from game_interruption_before
-    # Exclude shots -- a free kick or corner that ends with a shot is a shot, not a set piece pass
-    is_goalkick = gi_before == "goal_kick_for"
-    is_corner = (gi_before == "corner_for") & (end_type != "shot")
-    is_throw_in = gi_before == "throw_in_for"
-    is_freekick = (gi_before == "free_kick_for") & (end_type != "shot")
-
-    # Priority 2: end_type
+    # Every possession keeps its own type from end_type (spec section 5.3, F2 fix). The former
+    # priority-1 GI relabel (receiver -> set piece) and the native 15 m short rule are deleted: each
+    # restart is now a separate DERIVED row (_skillcorner_restarts.derive_restarts), so a receiver's
+    # shot or cross stays visible and a defence-won restart is no longer dropped.
     is_shot = end_type == "shot"
     is_pass = (end_type == "pass") & ~cross_mask
     is_cross_action = (end_type == "pass") & cross_mask
@@ -367,18 +408,12 @@ def convert_to_actions(
     # VAEP foul credit in cross-provider analyses.
     is_foul = end_type == "foul_suffered"
 
-    # Priority 3: residuals
+    # Priority: residuals
     is_possession_loss = end_type == "possession_loss"
     is_unknown = end_type == "unknown"
 
     type_id_arr = np.select(
         [
-            is_goalkick,
-            is_corner & is_short,
-            is_corner & ~is_short,
-            is_throw_in,
-            is_freekick & is_short,
-            is_freekick & ~is_short,
             is_shot,
             is_cross_action,
             is_pass,
@@ -388,12 +423,6 @@ def convert_to_actions(
             is_unknown,
         ],
         [
-            spadlconfig.actiontype_id["goalkick"],
-            spadlconfig.actiontype_id["corner_short"],
-            spadlconfig.actiontype_id["corner_crossed"],
-            spadlconfig.actiontype_id["throw_in"],
-            spadlconfig.actiontype_id["freekick_short"],
-            spadlconfig.actiontype_id["freekick_crossed"],
             spadlconfig.actiontype_id["shot"],
             spadlconfig.actiontype_id["cross"],
             spadlconfig.actiontype_id["pass"],
@@ -473,8 +502,35 @@ def convert_to_actions(
             "result_source": result_source_arr,
             "bodypart_id": bodypart_arr,
             "action_provenance": "native",
+            # Base signal columns pre-created so the derived-restart concat (which sets real values)
+            # survives the `[actions.columns]` reindex; <NA> on native rows.
+            "restart_evidence": pd.NA,
+            "type_source": pd.NA,
+            "repair_kind": pd.NA,
         }
     )
+
+    # --- Derived restarts (marker-keyed; spec section 5) ---
+    opponent = _resolve_opponent(pp, match_metadata)
+    restart_start_type = (
+        pp["start_type"].fillna("").astype(str).to_numpy()
+        if "start_type" in pp.columns
+        else np.full(len(pp), "", dtype=object)
+    )
+    pp_restart = pd.DataFrame(
+        {
+            "event_id": pp["event_id"].astype("object").to_numpy(),
+            "period_id": pp["period"].astype("int64").to_numpy(),
+            "time_seconds": pp["time_seconds"].to_numpy(),
+            "team_id": pp["team_id"].to_numpy(),
+            "start_type": restart_start_type,
+            "game_interruption_before": gi_before.to_numpy(),
+            "game_interruption_after": gi_after.to_numpy(),
+            "start_x": sx.to_numpy(),
+            "start_y": sy.to_numpy(),
+        }
+    )
+    derived_restarts = derive_restarts(pp_restart, opponent, match_metadata)
 
     # --- Derived actions ---
     # Prepare OBE for inference
@@ -529,10 +585,18 @@ def convert_to_actions(
         ks["action_id"] = 0
 
     # Derived defensive / keeper-save actions have deterministic (non-completion) results -> tag
-    # their result_source "native" so the `[actions.columns]` reindex below finds the column.
+    # result_source "native"; they are not restarts/repairs -> base signal columns <NA>. All four are
+    # set so the `[actions.columns]` reindex below finds every column.
     for _derived in (defensive, ks):
-        if len(_derived) > 0 and "result_source" not in _derived.columns:
-            _derived["result_source"] = "native"
+        if len(_derived) > 0:
+            for _col, _val in (
+                ("result_source", "native"),
+                ("restart_evidence", pd.NA),
+                ("type_source", pd.NA),
+                ("repair_kind", pd.NA),
+            ):
+                if _col not in _derived.columns:
+                    _derived[_col] = _val
 
     # Merge all actions
     parts = [actions]
@@ -540,9 +604,36 @@ def convert_to_actions(
         parts.append(defensive[actions.columns])
     if len(ks) > 0:
         parts.append(ks[actions.columns])
+    if len(derived_restarts) > 0:
+        parts.append(derived_restarts[actions.columns])
 
     actions = pd.concat(parts, ignore_index=True)
-    actions = actions.sort_values(["period_id", "time_seconds"]).reset_index(drop=True)
+
+    # --- Goals reconciliation (spec section 6): repairs shot results, sets repair_kind, and may append
+    # own-goal / derived-shot rows. Runs on the combined frame before the sort so appended rows order in.
+    pp_goals = pd.DataFrame(
+        {
+            "event_id": pp["event_id"].astype("object").to_numpy(),
+            "period_id": pp["period"].astype("int64").to_numpy(),
+            "time_seconds": pp["time_seconds"].to_numpy(),
+            "team_id": pp["team_id"].to_numpy(),
+            "player_id": pp["player_id"].to_numpy(),
+            "end_type": end_type.to_numpy(),
+            "start_type": restart_start_type,
+            "game_interruption_before": gi_before.to_numpy(),
+            "game_interruption_after": gi_after.to_numpy(),
+            "team_score": pp["team_score"].to_numpy() if "team_score" in pp.columns else np.nan,
+            "opponent_team_score": (
+                pp["opponent_team_score"].to_numpy() if "opponent_team_score" in pp.columns else np.nan
+            ),
+        }
+    )
+    actions, goals_report = reconcile_goals(actions, pp_goals, match_metadata)
+
+    # ADR-065 order-insensitive combined sort (the placeholder restart times make co-timestamped rows
+    # likelier, so the guarded chronological path matters); _assert_chronological_action_id runs in
+    # _finalize_output.
+    actions = sort_actions_chronologically(actions, by=("period_id", "time_seconds")).reset_index(drop=True)
     actions["action_id"] = np.arange(len(actions), dtype="int64")
 
     # --- Post-processors ---
@@ -574,15 +665,39 @@ def convert_to_actions(
         name = id_to_name.get(int(tid), "unknown")
         mapped_counts[name] = mapped_counts.get(name, 0) + 1
 
-    # Field names verified against schema.py ConversionReport dataclass:
-    # mapped_counts, excluded_counts, unrecognized_counts (not _types)
-    report = ConversionReport(
+    # --- Restart + goals census (C4): per-type and per-restart_evidence derived-row counts, the
+    # repeated-restart diagnostic, and the goals-reconciliation summary. ``derived_restarts`` is the
+    # pre-concat frame (its .attrs carry the unresolved-against count).
+    restart_counts: dict[str, int] = {}
+    restart_evidence_counts: dict[str, int] = {}
+    repeated_restart_count = 0
+    if len(derived_restarts) > 0:
+        for tid in derived_restarts["type_id"].to_numpy():
+            name = id_to_name.get(int(tid), "unknown")
+            restart_counts[name] = restart_counts.get(name, 0) + 1
+        restart_evidence_counts = {
+            str(k): int(v) for k, v in derived_restarts["restart_evidence"].value_counts().items()
+        }
+        repeated_restart_count = int(
+            derived_restarts["restart_evidence"].isin(["chain", "chain_ambiguous", "tag_only"]).sum()
+        )
+
+    report = SkillCornerConversionReport(
         provider="skillcorner",
         total_events=total_pp,
         total_actions=len(actions),
         mapped_counts=mapped_counts,
         excluded_counts=excluded_counts,
         unrecognized_counts={},
+        restart_counts=restart_counts,
+        restart_evidence_counts=restart_evidence_counts,
+        restart_unresolved=int(derived_restarts.attrs.get("unresolved_against", 0)),
+        goals_repaired=dict(goals_report.repaired),
+        goals_ambiguous=goals_report.ambiguous,
+        goals_unresolved=goals_report.unresolved,
+        goals_coverage_gap=goals_report.coverage_gap,
+        repeated_restart_count=repeated_restart_count,
+        kickoff_unresolved=0,
     )
 
     # --- Finalize output ---
@@ -592,11 +707,9 @@ def convert_to_actions(
     extra = ["original_event_id"] if preserve_native else None
     actions["shot_blocked"] = _blocked_flag(len(actions))
     actions["cross_blocked"] = _blocked_flag(len(actions))
-    # Base signal columns: result_source is already set above; restart_evidence / type_source come in
-    # Part 1 Commit 2 (marker-keyed restarts), <NA> until then. repair_kind (goals reconciliation) is
-    # SkillCorner-specific and Commit 2; <NA> here.
-    if "repair_kind" not in actions.columns:
-        actions["repair_kind"] = pd.NA
+    # Base signal columns are pre-created on every part above (native <NA>; derived restarts carry real
+    # result_source / restart_evidence / type_source; goals reconciliation (Task 2.4) sets repair_kind).
+    # _ensure_base_signal_columns is the contract no-op guaranteeing presence before strict projection.
     actions = _ensure_base_signal_columns(actions)
     actions = _finalize_output(actions, SKILLCORNER_SPADL_COLUMNS, extra_columns=extra)
 

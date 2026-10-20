@@ -1,15 +1,18 @@
 """identify_corners -- provider-aware corner anchoring (TF-46 Arm 1, spec §7).
 
 Anchors every corner on its SPADL ``corner_crossed`` / ``corner_short`` action (present for every
-provider -- the converters map a ``corner_for`` restart to one of these). ``corner_short`` -> a short
-corner; ``corner_crossed`` -> a direct corner. For SkillCorner, an optional ``gi`` frame carrying the
-first-possession ``start_type`` after the restart refines the classification: a ``corner_for`` whose
-start type is not ``corner_reception`` / ``corner_interception`` is ``unclear`` (spec amendment (a)).
+provider -- the converters map a corner restart to one of these). ``corner_short`` -> a short corner;
+``corner_crossed`` -> a direct corner. ``type_source`` travels from the action. A derived (events-only)
+corner carries a NaN start, so its ``t_kick`` / ``kick_x`` / ``kick_y`` / ``corner_side`` are NaN (spec
+section 9.4). The legacy ``gi=`` refinement is deprecated and ignored (decision B1): GI ``start_type`` is
+the receiver's possession, not the taker's.
 
 PURE -- never mutates ``actions``. Returns the per-``(game_id, corner_id)`` identification table.
 """
 
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -27,11 +30,8 @@ _CORNER_TYPE_IDS = frozenset({_CORNER_CROSSED_ID, _CORNER_SHORT_ID})
 
 _REQUIRED = ("game_id", "period_id", "time_seconds", "team_id", "start_x", "start_y", "type_id")
 
-#: GI start types that confirm a direct corner reception (SkillCorner amendment (a)).
-_CONFIRMING_START_TYPES = frozenset({"corner_reception", "corner_interception"})
-
 _SOURCE_BY_PROVIDER = {
-    "skillcorner": "skillcorner_gi",
+    "skillcorner": "skillcorner_marker",  # the interruption MARKER, not the GI reception (decision C7)
     "statsbomb": "sb360_event",
     "sb360": "sb360_event",
 }
@@ -53,10 +53,10 @@ def identify_corners(
     Parameters
     ----------
     actions: SPADL actions (one or more games).
-    provider: the source provider; sets ``corner_source`` and whether ``gi`` refinement applies.
+    provider: the source provider; sets ``corner_source``.
     params: window params (only ``short_corner_max_m`` consulted here; timing is in ``add_corner_windows``).
-    gi: optional SkillCorner first-possession tokens with columns ``game_id``, ``period_id``,
-        ``time_seconds`` (aligned to the corner action time), ``game_interruption_before``, ``start_type``.
+    gi: DEPRECATED and ignored (decision B1); passing it emits ``DeprecationWarning``. GI ``start_type`` is
+        the receiver's possession, not the taker's, so it cannot refine a corner. Removed next major.
 
     Returns
     -------
@@ -77,41 +77,44 @@ def identify_corners(
     if not bool(is_corner.any()):
         return _empty()
 
-    c = actions.loc[is_corner, list(_REQUIRED)].copy()
+    if gi is not None:
+        warnings.warn(
+            "identify_corners(gi=) is deprecated and ignored: a SkillCorner corner now comes from the "
+            "interruption marker, and GI start_type is the receiver's possession, not the taker's, so it "
+            "cannot refine a corner (decision B1). The parameter is removed at the next major version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    sel = list(_REQUIRED) + (["type_source"] if "type_source" in actions.columns else [])
+    c = actions.loc[is_corner, sel].copy()
     c = c.sort_values(["game_id", "period_id", "time_seconds"], kind="stable")
+
+    start_x = c["start_x"].astype("float64").to_numpy()
+    start_y = c["start_y"].astype("float64").to_numpy()
+    # A derived (events-only) restart carries a NaN start; its kick geometry, side and time are unknown,
+    # so t_kick is NaN -- never the ordering placeholder (spec section 9.4).
+    derived = np.isnan(start_x)
 
     out = pd.DataFrame(index=c.index)
     out["game_id"] = c["game_id"].to_numpy()
     out["corner_id"] = c.groupby("game_id", sort=False).cumcount().to_numpy()
     out["period_id"] = c["period_id"].to_numpy()
-    out["t_kick"] = c["time_seconds"].astype("float64").to_numpy()
+    out["t_kick"] = np.where(derived, np.nan, c["time_seconds"].astype("float64").to_numpy())
     out["attacking_team_id"] = c["team_id"].to_numpy()
 
     midline = float(spadlconfig.field_width) / 2.0
-    out["corner_side"] = np.where(c["start_y"].to_numpy() >= midline, "left", "right")
-    out["kick_x"] = c["start_x"].astype("float64").to_numpy()
-    out["kick_y"] = c["start_y"].astype("float64").to_numpy()
+    # NaN start_y -> NaN side on every provider (was "right" without warning at the old :91).
+    side = np.where(start_y >= midline, "left", "right").astype(object)
+    side[np.isnan(start_y)] = None
+    out["corner_side"] = side
+    out["kick_x"] = start_x
+    out["kick_y"] = start_y
 
     kind = np.where(c["type_id"].to_numpy() == _CORNER_SHORT_ID, "short", "direct")
     out["corner_kind"] = kind
     out["corner_source"] = _SOURCE_BY_PROVIDER.get(provider, "spadl_corner")
-
-    if provider == "skillcorner" and gi is not None and len(gi) > 0:
-        out = _apply_gi_refinement(out, gi)
+    out["type_source"] = c["type_source"].to_numpy() if "type_source" in c.columns else None
 
     out = out.reset_index(drop=True)
     return out.reindex(columns=list(CORNER_IDENTIFY_COLUMNS)).astype(CORNER_IDENTIFY_COLUMNS)
-
-
-def _apply_gi_refinement(out: pd.DataFrame, gi: pd.DataFrame) -> pd.DataFrame:
-    """Mark a corner ``unclear`` when its GI first-possession start type does not confirm a reception."""
-    cols = ["game_id", "period_id", "time_seconds", "game_interruption_before", "start_type"]
-    g = gi.loc[:, cols].rename(columns={"time_seconds": "t_kick"})
-    merged = out.merge(g, on=["game_id", "period_id", "t_kick"], how="left")
-    unclear = (
-        (merged["game_interruption_before"] == "corner_for")
-        & merged["start_type"].notna()
-        & ~merged["start_type"].isin(_CONFIRMING_START_TYPES)
-    )
-    merged.loc[unclear, "corner_kind"] = "unclear"
-    return merged.drop(columns=["game_interruption_before", "start_type"])

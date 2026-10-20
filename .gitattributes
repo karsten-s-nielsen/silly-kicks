@@ -43,3 +43,11 @@ silly_kicks/win_probability/weights/SHA256SUMS binary
 # the digest was computed on a CRLF working copy and ubuntu read LF. Same reason as the three
 # model-artifact pins above; recorded because this is now the fourth time.
 tests/datasets/statsbomb/three-sixty/*.json binary
+# TF-46 Arm 1 slim fixtures: SHA-256 verified offline (tests/datasets/tf46_fixture_sha256sums.txt,
+# tests/datasets/test_tf46_fixture_hashes.py). Same reason as the statsbomb 360 slice above -- Windows
+# autocrlf would rewrite the slim CSVs / match.json / meta.json and the digests computed on LF would
+# no longer match on checkout. The parquet are binary by nature; pinned for completeness.
+tests/datasets/skillcorner/opendata/** binary
+tests/datasets/idsse/*_events_native.parquet binary
+tests/datasets/idsse/*_meta.json binary
+tests/datasets/tf46_fixture_sha256sums.txt binary
