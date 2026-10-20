@@ -26,14 +26,16 @@ def _manifest(text: str) -> dict[str, str]:
     reason="pining network e2e; set SILLY_KICKS_RUN_PINING_E2E=1 (owner/DGX) to run",
 )
 def test_regen_reproduces_committed_fixtures():
-    from scripts import regen_tf46_fixtures as R
-    from scripts._loader_pining import _base_url, _resolve_token
+    import subprocess
+    import sys
 
+    repo_root = _DATASETS.parents[1]
     with tempfile.TemporaryDirectory() as tmp:
-        out = Path(tmp)
-        token, base = _resolve_token(None), _base_url()
-        files = R._regen_skillcorner(out, token, base) + R._regen_idsse(out, token, base)
-        R._write_sha256sums(out, files)
-        regenerated = _manifest((out / "SHA256SUMS").read_text(encoding="utf-8"))
+        subprocess.run(  # noqa: S603  # fixed command (this interpreter + a repo script), no untrusted input
+            [sys.executable, "scripts/regen_tf46_fixtures.py", "--out-dir", tmp],
+            check=True,
+            cwd=repo_root,
+        )
+        regenerated = _manifest((Path(tmp) / "SHA256SUMS").read_text(encoding="utf-8"))
         committed = _manifest((_DATASETS / "tf46_fixture_sha256sums.txt").read_text(encoding="utf-8"))
         assert regenerated == committed
