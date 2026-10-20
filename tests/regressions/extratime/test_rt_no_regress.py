@@ -48,6 +48,10 @@ def test_rt_only_output_value_identical_to_3_30_golden(case):
     # ADDITIVE and post-date the 3.30 golden; each declares converter provenance and changes no
     # existing value, so they are carved out exactly like the block-detection columns above.
     current = current.drop(columns=["result_source", "restart_evidence", "type_source"], errors="ignore")
+    # TF-46 Arm 1 Commit 3 ADDED action_provenance + ball_claim_type to SPORTEC_SPADL_COLUMNS (decision B2);
+    # both post-date the 3.30 golden and are additive (they declare row provenance / a DFL claim qualifier
+    # and change no existing value), so they are carved out exactly like the base signal columns above.
+    current = current.drop(columns=["action_provenance", "ball_claim_type"], errors="ignore")
     # ADR-103 (4.125.0) DROPPED the all-null `confidence` frame column; it is present in the 3.30
     # golden and gone from current output. Removing a column that was uniformly null is not a value
     # change, so it is carved out of the invariance claim (mirrors the additive carve-out above).

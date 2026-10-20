@@ -32,6 +32,15 @@ def test_skillcorner_schema_repair_kind_and_base_result_source():
     assert SKILLCORNER_SPADL_COLUMNS["result_source"] == "object"
 
 
+def test_sportec_schema_action_provenance_and_ball_claim_type():
+    from silly_kicks.spadl.schema import SPORTEC_SPADL_COLUMNS
+
+    # F4 (TF-46 Arm 1): action_provenance (native/derived) + ball_claim_type (DFL claim_type token),
+    # both nullable object (ADR-001 dedicated-column pattern).
+    assert SPORTEC_SPADL_COLUMNS["action_provenance"] == "object"
+    assert SPORTEC_SPADL_COLUMNS["ball_claim_type"] == "object"
+
+
 def test_provider_schemas_inherit_base_signal_columns():
     from silly_kicks.spadl.schema import (
         GRADIENTSPORTS_SPADL_COLUMNS,

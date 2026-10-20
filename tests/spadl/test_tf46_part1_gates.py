@@ -25,10 +25,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from scripts.measure_tf46_census import expected_restart_census
+from scripts.measure_tf46_census import expected_restart_census, expected_sportec_f4_f7_census
 from silly_kicks.id_compat import canonical_id as _ci
 from silly_kicks.spadl import config as spadlcfg
-from silly_kicks.spadl import skillcorner
+from silly_kicks.spadl import skillcorner, sportec
 
 
 def _cid(value: object) -> str:
@@ -199,3 +199,130 @@ def test_named_wrong_throw_in_for_case_2011166():
     ]
     assert len(throw_in) == 49  # pinned (independent census route in measure_tf46_census.py)
     assert report.goals_unresolved == 0 and report.goals_ambiguous == 0 and report.goals_coverage_gap is False
+
+
+# ---------------------------------------------------------------------------
+# Sportec F4 (BallClaiming) + F7 (free-kick crossed) gates on the IDSSE fixtures (Task 3.4)
+# ---------------------------------------------------------------------------
+_IDSSE = Path(__file__).parents[1] / "datasets" / "idsse"
+
+# Pinned from scripts/measure_tf46_census.py (expected_sportec_f4_f7_census, independent oracle) over the 7
+# committed IDSSE fixtures, 2026-10-20. Fixture SHAs: tests/datasets/tf46_fixture_sha256sums.txt.
+_PIN_BALL_CLAIM_COUNTS = {"BallClaimed": 42, "BallHeld": 17, "Block": 1, "InterceptedBall": 146}
+# interceptions_added = 134 InterceptedBall + 42 BallClaimed. Spec section 7.1 amended 2026-10-20:
+# BallClaimed is an outfield ball win, mapped to a derived interception (house precedent: Metrica RECOVERY,
+# SkillCorner "recovery"). Every claim now lands -> ball_claim_unattached == 0 (Block's one partner survives).
+_PIN_INTERCEPTIONS_ADDED = 176
+_PIN_KEEPER_PICK_UPS_ADDED = 4
+_PIN_BALL_CLAIM_UNATTACHED = 0
+_PIN_FREEKICK_CROSSED = 48
+_PIN_FREEKICK_SHORT = 124
+_PIN_FREEKICK_INFERRED = 4
+
+
+def _idsse_fixtures() -> list[tuple[str, pd.DataFrame, dict]]:
+    out = []
+    for pq in sorted(_IDSSE.glob("*_events_native.parquet")):
+        bare = pq.name.replace("_events_native.parquet", "")
+        meta = json.loads((_IDSSE / f"{bare}_meta.json").read_text(encoding="utf-8"))
+        out.append((bare, pd.read_parquet(pq), meta))
+    return out
+
+
+@lru_cache(maxsize=1)
+def _sportec_converted() -> tuple:
+    out = []
+    for bare, ev, meta in _idsse_fixtures():
+        # Orientation key is the role literal "home", NOT meta["home_team_id"] (the DFL
+        # club id). The IDSSE bronze `team` column holds {"home","away"} and the converter
+        # maps `team` -> `team_id` verbatim (sportec.py), so _mirror_per_period keys is_home
+        # on `team_id == "home"`. Passing the club id leaves is_home all-False, so the home
+        # team is never mirrored to LTR and the ADR-006 direction-of-play invariant
+        # (SILLY_KICKS_ASSERT_INVARIANTS=1, set by CI) fails. Matches the canonical sportec
+        # per-period loader (tests/invariants/_loaders.py). The per-fixture regular/ET start
+        # flags still come from the meta.
+        actions, report = sportec.convert_to_actions(
+            ev,
+            home_team_id="home",
+            home_team_start_left=meta["home_team_start_left"],
+            home_team_start_left_extratime=meta.get("home_team_start_left_extratime"),
+        )
+        out.append((bare, actions, report))
+    return tuple(out)
+
+
+def test_sportec_f4_f7_pins_match_independent_oracle():
+    # Ties the pinned F4/F7 constants to the INDEPENDENT oracle (raw-event re-derivation, no converter).
+    claims: Counter = Counter()
+    interceptions = keeper = unattached = crossed = short = inferred = 0
+    for _bare, ev, _meta in _idsse_fixtures():
+        c = expected_sportec_f4_f7_census(ev)
+        claims.update(c["ball_claim_counts"])
+        interceptions += c["interceptions_added"]
+        keeper += c["keeper_pick_ups_added"]
+        unattached += c["ball_claim_unattached"]
+        crossed += c["freekick_crossed"]
+        short += c["freekick_short"]
+        inferred += c["freekick_inferred"]
+    assert dict(claims) == _PIN_BALL_CLAIM_COUNTS
+    assert interceptions == _PIN_INTERCEPTIONS_ADDED
+    assert keeper == _PIN_KEEPER_PICK_UPS_ADDED
+    assert unattached == _PIN_BALL_CLAIM_UNATTACHED
+    assert (crossed, short, inferred) == (_PIN_FREEKICK_CROSSED, _PIN_FREEKICK_SHORT, _PIN_FREEKICK_INFERRED)
+
+
+def test_g6_sportec_f4_converter_matches_pins():
+    claims: Counter = Counter()
+    report_interceptions = report_keeper = report_unattached = 0
+    stream_interceptions = stream_keeper = 0
+    dup_keeper_rows = 0
+    bad_token_rows = 0
+    valid_tokens = {"InterceptedBall", "BallClaimed", "BallHeld", "Block"}
+    keeper_ids = {spadlcfg.actiontype_id[k] for k in ("keeper_save", "keeper_claim", "keeper_punch", "keeper_pick_up")}
+    for _bare, actions, report in _sportec_converted():
+        claims.update(report.ball_claim_counts)
+        report_interceptions += report.interceptions_added
+        report_keeper += report.keeper_pick_ups_added
+        report_unattached += report.ball_claim_unattached
+        oeid = actions["original_event_id"].astype(str)
+        stream_interceptions += int(oeid.str.endswith("_f4_interception").sum())
+        f4_kpu = actions[oeid.str.endswith("_f4_keeper_pick_up")]
+        stream_keeper += len(f4_kpu)
+        bct = actions["ball_claim_type"]
+        bad_token_rows += int((bct.notna() & ~bct.isin(valid_tokens)).sum())
+        # Duplicate-keeper guard: no F4 keeper_pick_up coincides with another keeper action (same player, <=0.1 s).
+        keepers = actions[actions["type_id"].isin(keeper_ids)]
+        for _, row in f4_kpu.iterrows():
+            same = keepers[
+                (keepers["player_id"].astype(str) == str(row["player_id"]))
+                & (keepers["period_id"] == row["period_id"])
+                & ((keepers["time_seconds"] - row["time_seconds"]).abs() <= 0.1)
+                & (keepers["original_event_id"].astype(str) != str(row["original_event_id"]))
+            ]
+            dup_keeper_rows += len(same)
+    # The converter's own audit matches the pins ...
+    assert dict(claims) == _PIN_BALL_CLAIM_COUNTS
+    assert report_interceptions == _PIN_INTERCEPTIONS_ADDED
+    assert report_keeper == _PIN_KEEPER_PICK_UPS_ADDED
+    assert report_unattached == _PIN_BALL_CLAIM_UNATTACHED
+    # ... and so does an independent re-count of the actual SPADL stream (not just the report).
+    assert stream_interceptions == _PIN_INTERCEPTIONS_ADDED
+    assert stream_keeper == _PIN_KEEPER_PICK_UPS_ADDED
+    assert bad_token_rows == 0  # ball_claim_type only ever carries the 4 DFL claim_type tokens
+    assert dup_keeper_rows == 0  # the duplicate-keeper guard held on every F4 keeper_pick_up
+
+
+def test_g7_sportec_f7_converter_matches_pins():
+    crossed = short = inferred = pen_box_true = 0
+    for _bare, ev, _meta in _idsse_fixtures():
+        pb = ev.loc[ev["event_type"] == "FreeKick", "play_penalty_box"].astype(str).str.lower()
+        pen_box_true += int((pb == "true").sum())
+    for _bare, actions, _report in _sportec_converted():
+        tn = actions["type_id"].map(_ID_TO_NAME)
+        crossed += int((tn == "freekick_crossed").sum())
+        short += int((tn == "freekick_short").sum())
+        # A missing-qualifier free kick stays freekick_short with type_source="inferred".
+        inferred += int(((tn == "freekick_short") & (actions["type_source"] == "inferred")).sum())
+    assert crossed == pen_box_true == _PIN_FREEKICK_CROSSED  # crossed count equals the play_penalty_box true count
+    assert short == _PIN_FREEKICK_SHORT
+    assert inferred == _PIN_FREEKICK_INFERRED

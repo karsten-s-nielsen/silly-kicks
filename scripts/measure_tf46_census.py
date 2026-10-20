@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from silly_kicks.id_compat import canonical_id, same_id
+from silly_kicks.id_compat import canonical_id, canonical_id_series, same_id
 from silly_kicks.spadl.skillcorner import _parse_time_start, _to_period_relative, sort_actions_chronologically
 
 _RESTART_BASES = {"corner", "free_kick", "goal_kick", "throw_in"}
@@ -126,12 +126,119 @@ def expected_restart_census(events: pd.DataFrame, meta: dict) -> tuple[Counter, 
     return per_type, per_evidence
 
 
+_SPORTEC_KEEPER_GK = frozenset({"save", "claim", "punch", "pickUp", "throwOut", "punt"})
+
+
+def _sportec_survives_as(event_type: str, gk_action: str, defensive_clearance: str) -> str | None:
+    """Independent SPADL-survival classifier for a DFL event (Sportec F4 oracle).
+
+    Returns a coarse SPADL class (``tackle`` / ``keeper`` / ``pass`` / ``setpiece`` / ``shot`` / ``foul`` /
+    ``clearance``) for an event that produces a surviving SPADL action, or ``None`` for one that maps to
+    ``non_action`` (dropped) or is excluded. This re-derives the type dispatch separately from
+    ``sportec._build_raw_actions`` -- never imported here -- so the F4 census ties to the raw events, not to
+    the converter. Only the subset of event types that can be a BallClaiming partner needs to be exact.
+    """
+    if event_type == "TacklingGame":
+        return "tackle"
+    if event_type == "Play":
+        if gk_action in _SPORTEC_KEEPER_GK:
+            return "keeper"
+        return "pass" if gk_action == "" else None  # unrecognized GK qualifier -> non_action
+    if event_type in ("FreeKick", "Corner", "ThrowIn", "GoalKick"):
+        return "setpiece"
+    if event_type == "ShotAtGoal":
+        return "shot"
+    if event_type == "Foul":
+        return "foul"
+    if event_type == "OtherBallAction":
+        return "clearance" if defensive_clearance == "true" else None
+    return None
+
+
+def expected_sportec_f4_f7_census(events: pd.DataFrame) -> dict:
+    """``BallClaiming`` (F4) and free-kick-crossed (F7) expected counts, re-derived from raw DFL events.
+
+    INDEPENDENT ORACLE (TF46C Part-1 Commit 3): does NOT import ``sportec.convert_to_actions``. It
+    classifies each event's SPADL survival with ``_sportec_survives_as`` and resolves every ``BallClaiming``
+    to its nearest same-player surviving partner within +-0.1 s (same partner rule the converter uses),
+    then counts: a derived ``interception`` for each ``InterceptedBall`` AND each ``BallClaimed`` whose
+    partner is not already a ``tackle`` / ``keeper`` action (spec section 7.1 amended -- BallClaimed is an
+    outfield ball win, mapped like InterceptedBall); a derived ``keeper_pick_up`` for each ``BallHeld`` with
+    no surviving keeper partner (the duplicate-keeper guard); and the ``Block`` claims whose partner did not
+    survive (``ball_claim_unattached`` -- now Block-only). F7 counts free kicks by ``play_penalty_box``.
+    """
+    ev = events.copy()
+    gk = (
+        ev["play_goal_keeper_action"].fillna("").astype(str)
+        if "play_goal_keeper_action" in ev.columns
+        else pd.Series([""] * len(ev), index=ev.index)
+    )
+    dc = (
+        ev["otherball_defensive_clearance"].fillna("").astype(str).str.lower()
+        if "otherball_defensive_clearance" in ev.columns
+        else pd.Series([""] * len(ev), index=ev.index)
+    )
+    et = ev["event_type"].astype(str)
+    cls = [_sportec_survives_as(et.iloc[k], gk.iloc[k], dc.iloc[k]) for k in range(len(ev))]
+    ev["_cls"] = pd.Series(cls, index=ev.index, dtype=object)
+    ev["_pid"] = canonical_id_series(ev["player_id"])  # ADR-019: canonical key, not astype(str)
+    surv = ev[ev["_cls"].notna()]
+
+    claims: Counter = Counter()
+    interceptions = keeper_pick_ups = unattached = 0
+    bc = ev[ev["event_type"] == "BallClaiming"]
+    for _, r in bc.iterrows():
+        ct = str(r["claim_type"])
+        claims[ct] += 1
+        pid = canonical_id(r["player_id"])  # ADR-019: canonical key, not str()
+        per = int(r["period"])
+        t = float(r["timestamp_seconds"])
+        cand = surv[(surv["_pid"] == pid) & (surv["period"] == per) & ((surv["timestamp_seconds"] - t).abs() <= 0.1)]
+        has_partner = len(cand) > 0
+        if has_partner:
+            j = (cand["timestamp_seconds"] - t).abs().idxmin()
+            partner_cls = cand.loc[j, "_cls"]
+            near_keeper = bool((cand["_cls"] == "keeper").any())
+        else:
+            partner_cls = None
+            near_keeper = False
+        if ct in ("InterceptedBall", "BallClaimed"):
+            # Both map to a derived interception unless the partner is already a tackle/keeper touch
+            # (spec section 7.1 amended: BallClaimed follows the InterceptedBall rule).
+            if not (has_partner and partner_cls in ("tackle", "keeper")):
+                interceptions += 1
+        elif ct == "BallHeld":
+            if not near_keeper:
+                keeper_pick_ups += 1
+        elif not has_partner:  # Block with no surviving partner -- the only unattached class
+            unattached += 1
+
+    fk = ev[ev["event_type"] == "FreeKick"]
+    pb = (
+        fk["play_penalty_box"].astype(str).str.lower() if "play_penalty_box" in fk.columns else pd.Series([], dtype=str)
+    )
+    return {
+        "ball_claim_counts": dict(sorted(claims.items())),
+        "interceptions_added": interceptions,
+        "keeper_pick_ups_added": keeper_pick_ups,
+        "ball_claim_unattached": unattached,
+        "freekick_crossed": int((pb == "true").sum()),
+        "freekick_short": int((~(pb == "true")).sum()),
+        "freekick_inferred": int((~pb.isin(["true", "false"])).sum()),
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Independent TF-46 restart + goals census (opendata).")
     ap.add_argument(
         "--opendata-dir",
         default="tests/datasets/skillcorner/opendata",
         help="Directory of the committed <id>_events_slim.csv + <id>_match.json fixtures.",
+    )
+    ap.add_argument(
+        "--idsse-dir",
+        default="tests/datasets/idsse",
+        help="Directory of the committed <bare>_events_native.parquet IDSSE fixtures (Sportec F4/F7 census).",
     )
     args = ap.parse_args()
     root = Path(args.opendata_dir)
@@ -155,6 +262,27 @@ def main() -> None:
         "restart_type_counts_fk_combined": dict(sorted(per_type.items())),
         "restart_evidence_counts": dict(sorted(per_evidence.items())),
         "match_json_goal_total": goal_total,
+    }
+
+    # Sportec F4 (BallClaiming) + F7 (free-kick crossed) census over the committed IDSSE fixtures.
+    idsse = Path(args.idsse_dir)
+    f4_claims: Counter = Counter()
+    f4 = {"interceptions_added": 0, "keeper_pick_ups_added": 0, "ball_claim_unattached": 0}
+    f7 = {"freekick_crossed": 0, "freekick_short": 0, "freekick_inferred": 0}
+    n_idsse = 0
+    for pq in sorted(idsse.glob("*_events_native.parquet")):
+        c = expected_sportec_f4_f7_census(pd.read_parquet(pq))
+        f4_claims.update(c["ball_claim_counts"])
+        for k in f4:
+            f4[k] += c[k]
+        for k in f7:
+            f7[k] += c[k]
+        n_idsse += 1
+    census["sportec_f4_f7"] = {
+        "n_matches": n_idsse,
+        "ball_claim_counts": dict(sorted(f4_claims.items())),
+        **f4,
+        **f7,
     }
     print(json.dumps(census, indent=2, sort_keys=True))
 

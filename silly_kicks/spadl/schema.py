@@ -64,12 +64,26 @@ SPORTEC_SPADL_COLUMNS: dict[str, str] = {
     "tackle_winner_team_id": "object",
     "tackle_loser_player_id": "object",
     "tackle_loser_team_id": "object",
+    "action_provenance": "object",
+    "ball_claim_type": "object",
 }
-"""Sportec SPADL output schema: KLOPPY_SPADL_COLUMNS + 4 sportec-specific
-qualifier passthrough columns surfacing DFL ``tackle_winner`` /
-``tackle_winner_team`` / ``tackle_loser`` / ``tackle_loser_team`` qualifier
-values verbatim. NaN on rows where the qualifier is absent in the source;
-always NaN on non-tackle rows. See ADR-001 for the contract rationale."""
+"""Sportec SPADL output schema: KLOPPY_SPADL_COLUMNS + 6 sportec-specific
+qualifier passthrough / provenance columns.
+
+The 4 tackle columns surface the DFL ``tackle_winner`` / ``tackle_winner_team`` /
+``tackle_loser`` / ``tackle_loser_team`` qualifier values verbatim. NaN on rows
+where the qualifier is absent in the source; always NaN on non-tackle rows. See
+ADR-001 for the dedicated-column contract rationale.
+
+``action_provenance`` (``"native"`` / ``"derived"``) marks rows the converter
+synthesizes rather than lifts one-to-one from a DFL event: the F4 ``BallClaiming``
+interception / keeper_pick_up rows and the ``throwOut`` / ``punt`` keeper_pick_up
+distribution halves. ``native`` elsewhere.
+
+``ball_claim_type`` carries the DFL ``BallClaiming`` ``claim_type``
+(``InterceptedBall`` / ``BallClaimed`` / ``BallHeld`` / ``Block``) on the partner
+action the claim annotates (ADR-001 dedicated column); NaN where the row is not a
+``BallClaiming`` partner. See the TF-46 Arm 1 corrections spec (F4)."""
 
 GRADIENTSPORTS_SPADL_COLUMNS: dict[str, str] = {
     **SPADL_COLUMNS,
@@ -188,3 +202,36 @@ class SkillCornerConversionReport(ConversionReport):
     goals_coverage_gap: bool = False
     repeated_restart_count: int = 0
     kickoff_unresolved: int = 0
+
+
+@dataclasses.dataclass(frozen=True)
+class SportecConversionReport(ConversionReport):
+    """Sportec conversion report: the base audit plus the TF-46 Arm 1 F4 / F7 diagnostics.
+
+    An ``isinstance(report, ConversionReport)`` check still holds. ``dataclasses.asdict`` round-trips every
+    field. The appended fields carry the ``BallClaiming`` (F4) folding census and the free-kick-crossed
+    (F7) stopgap count:
+
+    - ``ball_claim_counts`` -- ``BallClaiming`` events seen, keyed by ``claim_type``
+      (``InterceptedBall`` / ``BallClaimed`` / ``BallHeld`` / ``Block``).
+    - ``interceptions_added`` / ``keeper_pick_ups_added`` -- derived rows emitted by F4.
+    - ``ball_claim_unattached`` -- qualifier-only claims (``BallClaimed`` / ``Block``) whose partner action
+      did not survive, so the qualifier had nowhere to land.
+    - ``freekick_inferred_count`` -- free kicks that fell back to ``freekick_short`` with
+      ``type_source="inferred"`` because the DFL ``play_penalty_box`` qualifier was absent.
+
+    Examples
+    --------
+    Read the F4 / F7 diagnostics off a Sportec conversion::
+
+        actions, report = sportec.convert_to_actions(events, home_team_id="DFL-CLU-...")
+        report.ball_claim_counts        # e.g. {"InterceptedBall": 146, "BallClaimed": 42, ...}
+        report.interceptions_added      # e.g. 134
+        report.freekick_inferred_count  # e.g. 4
+    """
+
+    ball_claim_counts: dict[str, int] = dataclasses.field(default_factory=dict)
+    interceptions_added: int = 0
+    keeper_pick_ups_added: int = 0
+    ball_claim_unattached: int = 0
+    freekick_inferred_count: int = 0

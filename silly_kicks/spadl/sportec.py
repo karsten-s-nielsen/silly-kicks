@@ -115,11 +115,12 @@ from collections.abc import Mapping
 import numpy as np
 import pandas as pd
 
+from ..id_compat import canonical_id, canonical_id_series
 from ..tracking import direction
 from . import config as spadlconfig
 from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
-from .schema import KLOPPY_SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
+from .schema import KLOPPY_SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, SportecConversionReport
 from .utils import (
     _blocked_flag,
     _ensure_base_signal_columns,
@@ -186,6 +187,12 @@ _EXCLUDED_EVENT_TYPES: frozenset[str] = frozenset(
         "FairPlay",
         "PlayerOff",
         "PlayerOn",
+        # BallClaiming produces no 1:1 SPADL row; it is consumed as an F4 annotation
+        # (_synthesize_ball_claiming_actions) -- a derived interception / keeper_pick_up row plus a
+        # ball_claim_type qualifier (on the partner for InterceptedBall / BallHeld / Block, on the derived
+        # row for BallClaimed). Listing it here keeps it out of the "unrecognized, dropped" warning (it is
+        # recognized and consumed, just not mapped 1:1). See the TF-46 spec (F4).
+        "BallClaiming",
     }
 )
 
@@ -534,7 +541,7 @@ def convert_to_actions(
     home_attacks_right_per_period: Mapping[int, bool] | None = None,
     preserve_native: list[str] | None = None,
     goalkeeper_ids: set[str] | None = None,
-) -> tuple[pd.DataFrame, ConversionReport]:
+) -> tuple[pd.DataFrame, SportecConversionReport]:
     """Convert normalized Sportec/DFL event DataFrame to SPADL actions.
 
     Parameters
@@ -579,8 +586,9 @@ def convert_to_actions(
     -------
     actions : pd.DataFrame
         SPADL actions with ``KLOPPY_SPADL_COLUMNS`` schema plus preserved extras.
-    report : ConversionReport
-        Audit trail with mapped/excluded/unrecognized event-type counts.
+    report : SportecConversionReport
+        Audit trail with mapped/excluded/unrecognized event-type counts plus the
+        F4 BallClaiming and F7 free-kick-crossed diagnostics.
 
     Examples
     --------
@@ -649,7 +657,7 @@ def convert_to_actions(
             x_max=105.0,
         )
 
-    raw_actions = _build_raw_actions(events, preserve_native, goalkeeper_ids=goalkeeper_ids)
+    raw_actions, claim_counts = _build_raw_actions(events, preserve_native, goalkeeper_ids=goalkeeper_ids)
 
     # Chronological-action_id invariant: sort the raw actions into
     # (game_id, period_id, time_seconds) order at the TOP of the frame -- before
@@ -701,13 +709,21 @@ def convert_to_actions(
             f"dropped: {dict(unrecognized_counts)}",
             stacklevel=2,
         )
-    report = ConversionReport(
+    # F7 (TF-46 Arm 1): count the free kicks whose subtype fell back to freekick_short because the DFL
+    # play_penalty_box qualifier was absent (type_source=="inferred"). Only F7 sets "inferred" on sportec.
+    freekick_inferred_count = int((actions["type_source"] == "inferred").sum()) if len(actions) else 0
+    report = SportecConversionReport(
         provider="Sportec",
         total_events=sum(event_type_counts.values()),
         total_actions=len(actions),
         mapped_counts=mapped_counts,
         excluded_counts=excluded_counts,
         unrecognized_counts=unrecognized_counts,
+        ball_claim_counts=dict(claim_counts["ball_claim_counts"]),
+        interceptions_added=int(claim_counts["interceptions_added"]),
+        keeper_pick_ups_added=int(claim_counts["keeper_pick_ups_added"]),
+        ball_claim_unattached=int(claim_counts["ball_claim_unattached"]),
+        freekick_inferred_count=freekick_inferred_count,
     )
     return actions, report
 
@@ -802,7 +818,7 @@ def _build_raw_actions(
     preserve_native: list[str] | None,
     *,
     goalkeeper_ids: set[str] | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict]:
     """Build raw SPADL actions DataFrame from DFL event rows.
 
     For each row, dispatches on ``event_type`` to determine SPADL
@@ -810,13 +826,16 @@ def _build_raw_actions(
     ``_EXCLUDED_EVENT_TYPES`` or not in ``_MAPPED_EVENT_TYPES``.
     Direction-of-play flipping happens later in ``convert_to_actions``;
     this function emits source-orientation coords.
+
+    Returns the raw actions frame and the F4 ``BallClaiming`` audit counts
+    (``_ball_claim_report_template`` shape).
     """
     mask = events["event_type"].isin(_MAPPED_EVENT_TYPES)
     rows = events.loc[mask].copy().reset_index(drop=True)
     n = len(rows)
 
     if n == 0:
-        return _empty_raw_actions(preserve_native, events)
+        return _empty_raw_actions(preserve_native, events), _ball_claim_report_template()
 
     type_ids = np.zeros(n, dtype=np.int64)
     result_ids = np.zeros(n, dtype=np.int64)
@@ -883,12 +902,25 @@ def _build_raw_actions(
     bodypart_ids[is_head] = spadlconfig.bodypart_id["head"]
 
     # --- Set pieces ---
+    # F7 (TF-46 Arm 1): the free-kick subtype reads the DFL ``play_penalty_box`` qualifier, NOT the old
+    # ``freekick_execution_mode`` crossed mapping whose {cross,long,longBall,highPass} values never occur in
+    # DFL (IDSSE emits only direct/indirect), so every DFL free kick was silently mistyped freekick_short.
+    # ``play_penalty_box == "true"`` -> freekick_crossed; "false" -> freekick_short; missing -> freekick_short
+    # with type_source="inferred" (counted in the report). The subtype is the provider flag, not a derived
+    # box-delivery judgement (ADR-127 fix class). See the TF-46 Arm 1 corrections spec section 7.3.
     is_freekick = et == "FreeKick"
-    fk_exec = _opt("freekick_execution_mode", "").fillna("").to_numpy()
-    is_fk_crossed = is_freekick & np.isin(fk_exec, ["cross", "long", "longBall", "highPass"])
+    pen_box = _opt("play_penalty_box", "").fillna("").astype(str).str.lower().to_numpy()
+    fk_pen_box_present = is_freekick & np.isin(pen_box, ["true", "false"])
+    fk_pen_box_missing = is_freekick & ~fk_pen_box_present
+    is_fk_crossed = is_freekick & (pen_box == "true")
     type_ids[is_freekick & ~is_fk_crossed] = spadlconfig.actiontype_id["freekick_short"]
     type_ids[is_fk_crossed] = spadlconfig.actiontype_id["freekick_crossed"]
     result_ids[is_freekick] = spadlconfig.result_id["success"]
+    # type_source: native where the flag drives the subtype, inferred where the flag is absent (stopgap
+    # freekick_short). Base-schema column (decision D); NA elsewhere, filled by _ensure_base_signal_columns.
+    type_source = np.full(n, None, dtype=object)
+    type_source[fk_pen_box_present] = "native"
+    type_source[fk_pen_box_missing] = "inferred"
 
     is_corner = et == "Corner"
     corner_target = _opt("corner_target_area", "").fillna("").to_numpy()
@@ -999,8 +1031,12 @@ def _build_raw_actions(
     type_ids[is_play_unrecognized_gk] = spadlconfig.actiontype_id["non_action"]
 
     # --- OtherBallAction (DFL XML tag) ---
-    # DefensiveClearance=true → clearance; otherwise → non_action (preserves
-    # the event in the action stream for VAEP game-state context).
+    # DefensiveClearance=true → clearance; otherwise → non_action. DFL OtherBallAction
+    # has NO sub-type qualifier beyond DefensiveClearance (BallPossessionPhase is a
+    # possession-sequence id, not a class) and no published definition (IDSSE Scientific
+    # Data paper), so a non-clearance one has no concrete SPADL action type. kloppy's
+    # Sportec deserializer likewise keeps it a GENERIC (untyped) event. non_action is the
+    # honest mapping -- NOT a placeholder "preserved for VAEP context" (the row is dropped).
     # Column name varies by caller: "otherball_defensive_clearance" (recognized
     # qualifier list) or "other_ball_action_defensive_clearance" (lakehouse).
     is_other_ball = et == "OtherBallAction"
@@ -1040,6 +1076,13 @@ def _build_raw_actions(
     )
     _shot_blocked_mask = (shot_outcome == "blocked") & ~_own_team_block
 
+    # action_provenance (F4 / decision B2): "native" for a row lifted 1:1 from a DFL event, "derived" for
+    # a converter-synthesized row. The throwOut/punt keeper_pick_up (and its distribution second half, added
+    # by _synthesize_gk_distribution_actions) and the supplementary-path keeper_pick_up are synthesized ->
+    # "derived"; the F4 BallClaiming interception / keeper_pick_up rows are marked "derived" by the F4 helper.
+    action_provenance = np.full(n, "native", dtype=object)
+    action_provenance[play_gk_distribution | play_gk_supplementary] = "derived"
+
     # Assemble main actions DataFrame (1:1 with rows).
     actions = pd.DataFrame(
         {
@@ -1062,6 +1105,9 @@ def _build_raw_actions(
             "tackle_winner_team_id": tackle_winner_team_arr,
             "tackle_loser_player_id": tackle_loser_player_arr,
             "tackle_loser_team_id": tackle_loser_team_arr,
+            "action_provenance": action_provenance,
+            "ball_claim_type": np.full(n, None, dtype=object),
+            "type_source": type_source,
         }
     )
 
@@ -1074,6 +1120,12 @@ def _build_raw_actions(
             else:
                 actions[col] = np.nan
 
+    # F4 (TF-46 Arm 1): fold DFL BallClaiming annotations in -- set ball_claim_type on the partner action
+    # and emit derived interception / keeper_pick_up rows. Runs on the main 1:1 frame BEFORE the non_action
+    # drop so partner matching sees (and explicitly excludes) non_action rows. See _synthesize_ball_claiming_actions.
+    claim_arr, claim_derived, claim_counts = _synthesize_ball_claiming_actions(events, actions, preserve_native)
+    actions["ball_claim_type"] = claim_arr
+
     # Synthesize keeper-distribution second-action rows (throwOut/punt
     # and supplementary goalkeeper_ids path; the latter is zeros until
     # Task 5 lights it up).
@@ -1084,9 +1136,13 @@ def _build_raw_actions(
         play_gk_supplementary=play_gk_supplementary,
         preserve_native=preserve_native,
     )
-    if len(synth) > 0:
-        actions["_row_order"] = np.arange(len(actions), dtype=np.int64) * 2
-        combined = pd.concat([actions, synth], ignore_index=True, sort=False)
+    # Interleave synth (GK distribution) and F4 derived rows onto the shared *10 _row_order grid, then sort
+    # once. A stable mergesort keeps the grid order; the later chronological sort (convert_to_actions) is
+    # also stable, so same-timestamp derived rows keep their just-before-partner placement.
+    extra_frames = [f for f in (synth, claim_derived) if len(f) > 0]
+    if extra_frames:
+        actions["_row_order"] = np.arange(len(actions), dtype=np.int64) * 10
+        combined = pd.concat([actions, *extra_frames], ignore_index=True, sort=False)
         actions = (
             combined.sort_values("_row_order", kind="mergesort").drop(columns=["_row_order"]).reset_index(drop=True)
         )
@@ -1095,9 +1151,9 @@ def _build_raw_actions(
     actions = actions[actions["type_id"] != spadlconfig.actiontype_id["non_action"]].reset_index(drop=True)
 
     if len(actions) == 0:
-        return _empty_raw_actions(preserve_native, events)
+        return _empty_raw_actions(preserve_native, events), claim_counts
 
-    return actions
+    return actions, claim_counts
 
 
 def _synthesize_gk_distribution_actions(
@@ -1180,12 +1236,15 @@ def _synthesize_gk_distribution_actions(
             # Synthetic GK-distribution rows are never shots/crosses -> pd.NA (TF-51 prereq).
             "shot_blocked": _blocked_flag(n_synth),
             "cross_blocked": _blocked_flag(n_synth),
+            # Converter-synthesized second half of a GK distribution -> derived (F4 / decision B2).
+            "action_provenance": np.full(n_synth, "derived", dtype=object),
         }
     )
 
-    # _row_order: interleave key. Source rows get index*2; synth rows
-    # get the source's index*2 + 1 so synth sorts immediately after.
-    synth["_row_order"] = src_indices.astype(np.int64) * 2 + 1
+    # _row_order: interleave key on a *10 grid shared with the F4 BallClaiming synthesis. Source rows get
+    # index*10; a distribution second half gets source_index*10 + 5 so it sorts immediately after its
+    # keeper_pick_up; an F4 derived row gets partner_index*10 - 1 (just before its partner).
+    synth["_row_order"] = src_indices.astype(np.int64) * 10 + 5
 
     if preserve_native:
         for col in preserve_native:
@@ -1195,6 +1254,196 @@ def _synthesize_gk_distribution_actions(
                 synth[col] = np.nan
 
     return synth
+
+
+def _ball_claim_report_template() -> dict:
+    """Empty F4 ``BallClaiming`` audit counts (returned when no BallClaiming events are present)."""
+    return {
+        "ball_claim_counts": {},
+        "interceptions_added": 0,
+        "keeper_pick_ups_added": 0,
+        "ball_claim_unattached": 0,
+    }
+
+
+def _synthesize_ball_claiming_actions(
+    events: pd.DataFrame,
+    actions: pd.DataFrame,
+    preserve_native: list[str] | None,
+) -> tuple[np.ndarray, pd.DataFrame, dict]:
+    """F4: fold DFL ``BallClaiming`` annotations into the SPADL stream (spec section 7.1, option B).
+
+    ``BallClaiming`` is an annotation, not a touch (it produces no SPADL row by itself). Each one is
+    resolved to a PARTNER action -- the same player's nearest SURVIVING SPADL action within +-0.1 s in the
+    same period -- and handled per ``claim_type``:
+
+    - ``ball_claim_type`` is recorded as a qualifier on the partner action for ``InterceptedBall`` /
+      ``BallHeld`` / ``Block`` (ADR-001 dedicated column); ``BallClaimed`` carries it on its own derived row.
+    - ``InterceptedBall`` emits a derived ``interception`` row unless the partner is already a ``tackle`` /
+      ``keeper_*`` action (no double count). The row is placed just before the partner (partner timestamp,
+      same player, partner start coordinates); with no surviving partner it is a standalone row at the
+      claim's own time and coordinates.
+    - ``BallClaimed`` is an outfield ball win; spec section 7.1 (amended 2026-10-20) maps it to a derived
+      ``interception`` exactly like ``InterceptedBall`` (house precedent: Metrica RECOVERY, SkillCorner
+      ``start_type=="recovery"``). Its derived row carries ``ball_claim_type="BallClaimed"`` so ball wins
+      stay separable from pass interceptions. Same skip guard and standalone-row rule as ``InterceptedBall``.
+    - ``BallHeld`` emits a derived ``keeper_pick_up`` unless a ``keeper_*`` action already exists for that
+      player within +-0.1 s (the duplicate-keeper guard). All ``BallHeld`` are by a goalkeeper.
+    - ``Block`` sets the qualifier only; never a derived row, never ``keeper_claim``.
+
+    ``actions`` is the main 1:1 frame BEFORE the ``non_action`` drop; partner matching excludes
+    ``non_action`` rows explicitly so a dropped partner never attaches. Returns
+    ``(ball_claim_type_array, derived_rows, counts)``: the per-main-row ``ball_claim_type`` to assign, a
+    derived-rows frame carrying ``_row_order`` (``partner_index*10 - 1``), and the audit counts.
+    """
+    n = len(actions)
+    claim_arr = np.full(n, None, dtype=object)
+    counts = _ball_claim_report_template()
+    if "event_type" not in events.columns:
+        return claim_arr, pd.DataFrame(), counts
+    bc = events[events["event_type"] == "BallClaiming"]
+    if len(bc) == 0 or n == 0:
+        return claim_arr, pd.DataFrame(), counts
+
+    non_action_id = spadlconfig.actiontype_id["non_action"]
+    tackle_id = spadlconfig.actiontype_id["tackle"]
+    keeper_ids = {
+        spadlconfig.actiontype_id["keeper_save"],
+        spadlconfig.actiontype_id["keeper_claim"],
+        spadlconfig.actiontype_id["keeper_punch"],
+        spadlconfig.actiontype_id["keeper_pick_up"],
+    }
+    skip_ids = keeper_ids | {tackle_id}
+
+    survive = actions["type_id"].to_numpy() != non_action_id
+    # ADR-019: canonical id as the dict-key token (never astype(str), which yields '366.0' for a float id).
+    a_player = canonical_id_series(actions["player_id"]).to_numpy()
+    a_period = actions["period_id"].to_numpy()
+    a_time = actions["time_seconds"].to_numpy(dtype=np.float64)
+    a_type = actions["type_id"].to_numpy()
+
+    # Index surviving actions by (player, period) once so each claim does a small lookup, not a full scan
+    # (ADR-068 no-rescan-in-loop; BallClaiming count is tiny but the index keeps the cost linear).
+    from collections import defaultdict
+
+    by_key: dict[tuple[object, int], list[int]] = defaultdict(list)  # key[0] is a canonical id (str | NA)
+    for j in range(n):
+        if survive[j]:
+            by_key[(a_player[j], int(a_period[j]))].append(j)
+
+    derived: list[dict] = []
+    for _, r in bc.iterrows():
+        ct = r.get("claim_type")
+        if ct is None or (isinstance(ct, float) and np.isnan(ct)):
+            continue
+        ct = str(ct)
+        counts["ball_claim_counts"][ct] = counts["ball_claim_counts"].get(ct, 0) + 1
+        pid = canonical_id(r["player_id"])  # ADR-019 dict-key token
+        per = int(r["period"])
+        t = float(r["timestamp_seconds"])
+        cands = [j for j in by_key.get((pid, per), ()) if abs(a_time[j] - t) <= 0.1]
+        if cands:
+            j = min(cands, key=lambda k: abs(a_time[k] - t))
+            partner_type = int(a_type[j])
+            near_keeper = any(int(a_type[k]) in keeper_ids for k in cands)
+            # Record the qualifier on the nearest surviving partner for every claim type EXCEPT BallClaimed.
+            # A BallClaimed is itself the ball win; it carries its claim_type on its own derived interception
+            # row (below), not on the partner (the claimer's own next touch). See spec section 7.1 (amended).
+            if ct != "BallClaimed":
+                claim_arr[j] = ct
+        else:
+            j = None
+            partner_type = None
+            near_keeper = False
+
+        if ct in ("InterceptedBall", "BallClaimed"):
+            # F4 (spec section 7.1, amended 2026-10-20): a BallClaimed is an outfield ball win, mapped to a
+            # derived interception exactly like InterceptedBall (house precedent: Metrica RECOVERY ->
+            # interception, SkillCorner start_type=="recovery"). The InterceptedBall row carries no
+            # ball_claim_type -- its qualifier sits on the intercepted partner -- while the BallClaimed row
+            # carries ball_claim_type="BallClaimed", so a consumer keeps ball wins separable from pass
+            # interceptions. Both skip when the partner is already a tackle/keeper touch (0 BallClaimed cases
+            # on IDSSE) and emit a standalone row at the claim's own time/coords when no partner survives.
+            if j is not None and partner_type in skip_ids:
+                # Partner already carries the defensive touch -> qualifier only, no derived row. BallClaimed's
+                # qualifier was not set in the cands block above (it normally rides its derived row), so set it
+                # here -- matching InterceptedBall-skip -- so the claim still lands (closes the "206 land"
+                # invariant; 0 such BallClaimed cases on IDSSE). TF46C-IMPL-19 / A1-IMPL-12.
+                if ct == "BallClaimed":
+                    claim_arr[j] = ct
+                continue
+            token = "BallClaimed" if ct == "BallClaimed" else None
+            derived.append(_build_claim_row(r, actions, j, "interception", preserve_native, ball_claim_type=token))
+            counts["interceptions_added"] += 1
+        elif ct == "BallHeld":
+            if near_keeper:
+                continue  # a keeper action already exists -- the duplicate-keeper guard
+            derived.append(_build_claim_row(r, actions, j, "keeper_pick_up", preserve_native))
+            counts["keeper_pick_ups_added"] += 1
+        elif j is None:  # Block with no surviving partner: the qualifier has nowhere to land
+            counts["ball_claim_unattached"] += 1
+
+    derived_df = pd.DataFrame(derived) if derived else pd.DataFrame()
+    return claim_arr, derived_df, counts
+
+
+def _build_claim_row(
+    claim: pd.Series,
+    actions: pd.DataFrame,
+    partner_idx: int | None,
+    spadl_type: str,
+    preserve_native: list[str] | None,
+    ball_claim_type: str | None = None,
+) -> dict:
+    """Build one derived F4 row (``interception`` / ``keeper_pick_up``).
+
+    With a partner it inherits the partner action's (game, period, time, team, player, start coordinates)
+    and sorts just before it (``_row_order = partner_index*10 - 1``); without one it uses the claim event's
+    own fields and sorts after the main grid (its own timestamp drives its final chronological position).
+
+    ``ball_claim_type`` is set on the row itself only for a BallClaimed-origin interception (so ball wins
+    stay separable from pass interceptions); it is None (omitted) for every other derived row.
+    """
+    bodypart = spadlconfig.bodypart_id["other" if spadl_type == "keeper_pick_up" else "foot"]
+    # Only non-NA fields are set here. The remaining all-NA columns (shot_blocked / cross_blocked / tackle_* /
+    # type_source, and ball_claim_type when None below) are omitted so the downstream pd.concat fills them
+    # from the main frame without the "concatenation with empty or all-NA entries" FutureWarning -- matching
+    # the GK-distribution synth frame, which likewise omits columns it never populates.
+    base: dict = {
+        "type_id": spadlconfig.actiontype_id[spadl_type],
+        "result_id": spadlconfig.result_id["success"],
+        "bodypart_id": bodypart,
+        "action_provenance": "derived",
+    }
+    if ball_claim_type is not None:
+        base["ball_claim_type"] = ball_claim_type
+    suffix = "_f4_interception" if spadl_type == "interception" else "_f4_keeper_pick_up"
+    base["original_event_id"] = str(claim["event_id"]) + suffix
+    if partner_idx is not None:
+        p = actions.iloc[partner_idx]
+        base["game_id"] = p["game_id"]
+        base["period_id"] = int(p["period_id"])
+        base["time_seconds"] = float(p["time_seconds"])
+        base["team_id"] = p["team_id"]
+        base["player_id"] = p["player_id"]
+        base["start_x"] = float(p["start_x"])
+        base["start_y"] = float(p["start_y"])
+        base["_row_order"] = int(partner_idx) * 10 - 1
+    else:
+        base["game_id"] = claim["match_id"]
+        base["period_id"] = int(claim["period"])
+        base["time_seconds"] = float(claim["timestamp_seconds"])
+        base["team_id"] = claim["team"]
+        base["player_id"] = claim["player_id"]
+        base["start_x"] = float(claim["x"])
+        base["start_y"] = float(claim["y"])
+        base["_row_order"] = len(actions) * 10 + 1_000_000  # after the grid; chronological sort re-places it
+    base["end_x"] = base["start_x"]
+    base["end_y"] = base["start_y"]
+    if preserve_native:
+        for col in preserve_native:
+            base[col] = np.nan
+    return base
 
 
 _USE_TACKLE_WINNER_AS_ACTOR_REQUIRED_COLUMNS: tuple[str, ...] = (
