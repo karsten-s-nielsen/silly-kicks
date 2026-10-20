@@ -278,6 +278,14 @@ _NOT_A_DRIVER: dict[str, str] = {
         "regenerates the committed gs_et ET tracking fixture from the local pining CACHE (no "
         "network, no token). Output is a test input, not a cited number."
     ),
+    "regen_tf46_fixtures": (
+        "regenerates the committed TF-46 Arm 1 slim test fixtures (20 SkillCorner opendata + 7 IDSSE) "
+        "from pining (public token). Output is a test input, SHA-pinned by "
+        "tests/datasets/tf46_fixture_sha256sums.txt and policed by the offline "
+        "tests/datasets/test_tf46_fixture_hashes.py gate -- not a cited number. Same class as "
+        "build_worldcup_fixture / regenerate_gs_et_native_gk: a fixture regenerated during a "
+        "converter change must run on the dirty tree carrying that change."
+    ),
     "audit_velocity_fixtures": (
         "reads COMMITTED test sources and runs library code on a synthetic frame -- no corpus "
         "pass, no external data, nothing whose provenance could be misattributed. Its `--out` JSON "
