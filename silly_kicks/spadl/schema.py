@@ -27,6 +27,13 @@ SPADL_COLUMNS: dict[str, str] = {
     # cannot encode the signal (Opta, SkillCorner). See the block-detection spec.
     "shot_blocked": "boolean",
     "cross_blocked": "boolean",
+    # TF-46 Arm 1 base signal columns (ADR-046 pattern: a cross-provider signal read by a shared
+    # consumer lives on the base schema, nullable, pd.NA where a provider or row does not carry it).
+    # The shared training-exclusion helper reads result_source + restart_evidence; the corner layer
+    # reads type_source. Nullable string ("object"). See the TF-46 Arm 1 corrections spec (decision D).
+    "result_source": "object",  # native / inferred / stopgap; <NA> = tier not classified
+    "restart_evidence": "object",  # tagged / untagged / chain / chain_ambiguous / tag_only; <NA> otherwise
+    "type_source": "object",  # native / inferred / default / tracking; <NA> where no subtype judgement
 }
 
 SPADL_NAME_COLUMNS: dict[str, str] = {
@@ -100,15 +107,18 @@ is a follow-up TODO."""
 SKILLCORNER_SPADL_COLUMNS: dict[str, str] = {
     **KLOPPY_SPADL_COLUMNS,
     "action_provenance": "object",
-    "result_source": "object",
+    # result_source now comes from base SPADL_COLUMNS (ADR-046 / decision D); not re-declared here.
+    "repair_kind": "object",  # SkillCorner goals-reconciliation provenance (owngoal/missing_goal/...)
 }
 """SkillCorner SPADL output schema: KLOPPY_SPADL_COLUMNS (object-dtype IDs) +
-``action_provenance`` column (``"native"`` or ``"derived"``) + ``result_source``
-(``"native"`` / ``"inferred"`` / ``"stopgap"``: the pass-completion-label tier behind
-``result_id``; native = SkillCorner ``pass_outcome``, inferred = ``received==True``,
-stopgap = ``same_team_next`` residual. D-S8/G1: only ``native`` trains the GK-completion
-model). Derived actions include ``start_type``-based interceptions/recoveries, OBE-enriched
-tackles, keeper saves, and synthetic dribbles. See spec §6."""
+``action_provenance`` (``"native"`` or ``"derived"``) + ``repair_kind`` (goals-reconciliation
+provenance: ``owngoal`` / ``missing_goal`` / ``own_goal_unsignalled`` / ...; ``<NA>`` on un-repaired
+rows). ``result_source`` (``"native"`` / ``"inferred"`` / ``"stopgap"``: the completion-label tier
+behind ``result_id``; native = SkillCorner ``pass_outcome``, inferred = ``received==True``, stopgap =
+``same_team_next`` residual; D-S8/G1: only ``native`` trains the GK-completion model) now comes from
+base ``SPADL_COLUMNS`` (ADR-046 / TF-46 Arm 1 decision D), not re-declared here. Derived actions include
+``start_type``-based interceptions/recoveries, OBE-enriched tackles, keeper saves, and synthetic
+dribbles. See the TF-46 Arm 1 corrections spec."""
 
 
 @dataclasses.dataclass(frozen=True)

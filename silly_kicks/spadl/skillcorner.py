@@ -29,7 +29,7 @@ from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves
 from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr
 from .schema import SKILLCORNER_SPADL_COLUMNS, ConversionReport
-from .utils import _blocked_flag, _finalize_output
+from .utils import _blocked_flag, _ensure_base_signal_columns, _finalize_output
 
 
 def _scale_to_spadl(
@@ -592,6 +592,12 @@ def convert_to_actions(
     extra = ["original_event_id"] if preserve_native else None
     actions["shot_blocked"] = _blocked_flag(len(actions))
     actions["cross_blocked"] = _blocked_flag(len(actions))
+    # Base signal columns: result_source is already set above; restart_evidence / type_source come in
+    # Part 1 Commit 2 (marker-keyed restarts), <NA> until then. repair_kind (goals reconciliation) is
+    # SkillCorner-specific and Commit 2; <NA> here.
+    if "repair_kind" not in actions.columns:
+        actions["repair_kind"] = pd.NA
+    actions = _ensure_base_signal_columns(actions)
     actions = _finalize_output(actions, SKILLCORNER_SPADL_COLUMNS, extra_columns=extra)
 
     return actions, report

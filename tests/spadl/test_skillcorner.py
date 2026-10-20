@@ -24,10 +24,13 @@ class TestSkillcornerSchema:
         assert SKILLCORNER_SPADL_COLUMNS["action_provenance"] == "object"
 
     def test_skillcorner_extra_columns(self):
-        # action_provenance (native/derived) + result_source (completion-label tier, D-S8/G1)
+        # SkillCorner-specific extras over the KLOPPY family: action_provenance (native/derived) +
+        # repair_kind (goals-reconciliation provenance, TF-46 Arm 1). result_source / restart_evidence /
+        # type_source are now base SPADL_COLUMNS (ADR-046 / decision D), so KLOPPY inherits them too and
+        # they cancel in the set difference.
         extra = set(SKILLCORNER_SPADL_COLUMNS) - set(KLOPPY_SPADL_COLUMNS)
-        assert extra == {"action_provenance", "result_source"}
-        assert SKILLCORNER_SPADL_COLUMNS["result_source"] == "object"
+        assert extra == {"action_provenance", "repair_kind"}
+        assert SKILLCORNER_SPADL_COLUMNS["result_source"] == "object"  # from base, dtype unchanged (Hyrum)
 
 
 class TestCoordinateTransform:

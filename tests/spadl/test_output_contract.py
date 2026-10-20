@@ -34,6 +34,10 @@ def _make_valid_spadl_df(n: int = 3) -> pd.DataFrame:
             "bodypart_id": [spadlcfg.bodypart_id["foot"]] * n,
             "shot_blocked": pd.array([pd.NA] * n, dtype="boolean"),
             "cross_blocked": pd.array([pd.NA] * n, dtype="boolean"),
+            # TF-46 Arm 1 base signal columns (ADR-046 / decision D).
+            "result_source": pd.array([pd.NA] * n, dtype="object"),
+            "restart_evidence": pd.array([pd.NA] * n, dtype="object"),
+            "type_source": pd.array([pd.NA] * n, dtype="object"),
         }
     )
 

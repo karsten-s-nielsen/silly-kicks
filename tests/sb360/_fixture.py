@@ -250,6 +250,14 @@ def _actions_frame() -> pd.DataFrame:
     out = pd.DataFrame(rows)
     from silly_kicks.spadl.schema import SPADL_COLUMNS
 
+    # Base signal columns (result_source / restart_evidence / type_source) are emitted by every
+    # converter via _ensure_base_signal_columns; this fixture builds actions by hand, so fill
+    # exactly those three with NA. Any OTHER missing SPADL column must still raise in the astype
+    # loop below -- that is the drift canary -- so the fill is scoped to the three, never to every
+    # absent column.
+    for col in ("result_source", "restart_evidence", "type_source"):
+        if col not in out.columns:
+            out[col] = pd.NA
     for col, dtype in SPADL_COLUMNS.items():
         out[col] = out[col].astype(dtype)  # type: ignore[arg-type]
     return out

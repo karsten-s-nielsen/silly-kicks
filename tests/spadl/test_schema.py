@@ -13,7 +13,40 @@ from silly_kicks.spadl.schema import (
 
 
 def test_spadl_columns_count():
-    assert len(SPADL_COLUMNS) == 16  # +2: shot_blocked / cross_blocked (TF-51 prereq)
+    # 16 + 3 TF-46-Arm1 base signal columns (result_source / restart_evidence / type_source; ADR-046
+    # pattern: cross-provider signal read by a shared consumer -> base nullable, <NA> where not carried).
+    assert len(SPADL_COLUMNS) == 19
+
+
+def test_spadl_base_signal_columns_present():
+    for col in ("result_source", "restart_evidence", "type_source"):
+        assert SPADL_COLUMNS[col] == "object"
+
+
+def test_skillcorner_schema_repair_kind_and_base_result_source():
+    from silly_kicks.spadl.schema import SKILLCORNER_SPADL_COLUMNS
+
+    # repair_kind is SkillCorner-specific (goals reconciliation); result_source now comes from base,
+    # same dtype (Hyrum) -- not re-declared on the SkillCorner literal.
+    assert SKILLCORNER_SPADL_COLUMNS["repair_kind"] == "object"
+    assert SKILLCORNER_SPADL_COLUMNS["result_source"] == "object"
+
+
+def test_provider_schemas_inherit_base_signal_columns():
+    from silly_kicks.spadl.schema import (
+        GRADIENTSPORTS_SPADL_COLUMNS,
+        SKILLCORNER_SPADL_COLUMNS,
+        SPORTEC_SPADL_COLUMNS,
+    )
+
+    for schema in (
+        KLOPPY_SPADL_COLUMNS,
+        SPORTEC_SPADL_COLUMNS,
+        GRADIENTSPORTS_SPADL_COLUMNS,
+        SKILLCORNER_SPADL_COLUMNS,
+    ):
+        for col in ("result_source", "restart_evidence", "type_source"):
+            assert schema[col] == "object"
 
 
 def test_atomic_spadl_columns_count():

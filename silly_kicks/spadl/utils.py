@@ -1665,6 +1665,30 @@ def _assert_chronological_action_id(actions: pd.DataFrame) -> None:
             )
 
 
+#: TF-46 Arm 1 base signal columns (ADR-046 / decision D). On base ``SPADL_COLUMNS``; every converter
+#: emits them. The shared training-exclusion helper reads ``result_source`` + ``restart_evidence``; the
+#: corner layer reads ``type_source``.
+_BASE_SIGNAL_COLUMNS: tuple[str, ...] = ("result_source", "restart_evidence", "type_source")
+
+
+def _ensure_base_signal_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Set the three base signal columns to ``pd.NA`` where a converter has not assigned a real value.
+
+    Fill-if-absent, never overwrite: a converter that classifies a row (e.g. SkillCorner ``result_source``,
+    Sportec ``type_source``) keeps its value; everything else is ``<NA>`` = "tier not classified". Call this
+    immediately before ``_finalize_output``. A converter that forgets the call trips ``_finalize_output``
+    strict projection (``KeyError``) -- that is the producer-side guarantee the tolerant exclusion helper
+    relies on (decision E).
+
+    Mutates *df* in place (adds the missing columns) and returns the same object; converters own their
+    working frame and reassign the result, so no copy is made.
+    """
+    for col in _BASE_SIGNAL_COLUMNS:
+        if col not in df.columns:
+            df[col] = pd.NA
+    return df
+
+
 def _finalize_output(
     df: pd.DataFrame,
     schema: dict[str, str] | None = None,

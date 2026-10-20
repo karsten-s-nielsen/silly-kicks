@@ -120,7 +120,13 @@ from . import config as spadlconfig
 from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
-from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
+from .utils import (
+    _blocked_flag,
+    _ensure_base_signal_columns,
+    _finalize_output,
+    _validate_input_columns,
+    _validate_preserve_native,
+)
 
 # ---------------------------------------------------------------------------
 # Required input columns (raise ValueError if any are missing)
@@ -675,6 +681,7 @@ def convert_to_actions(
         actions = raw_actions
 
     extras = list(preserve_native) if preserve_native else None
+    actions = _ensure_base_signal_columns(actions)
     actions = _finalize_output(actions, schema=SPORTEC_SPADL_COLUMNS, extra_columns=extras)
 
     mapped_counts: dict[str, int] = {}

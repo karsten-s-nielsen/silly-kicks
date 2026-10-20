@@ -44,6 +44,10 @@ def test_rt_only_output_value_identical_to_3_30_golden(case):
     # (tracking cases only); it post-dates the 3.30 golden and is additive (declares provenance, changes
     # no existing value), so it is carved out exactly like the block-detection columns above.
     current = current.drop(columns=["z_source"], errors="ignore")
+    # The TF-46 Arm 1 base signal columns (result_source / restart_evidence / type_source) are
+    # ADDITIVE and post-date the 3.30 golden; each declares converter provenance and changes no
+    # existing value, so they are carved out exactly like the block-detection columns above.
+    current = current.drop(columns=["result_source", "restart_evidence", "type_source"], errors="ignore")
     # ADR-103 (4.125.0) DROPPED the all-null `confidence` frame column; it is present in the 3.30
     # golden and gone from current output. Removing a column that was uniformly null is not a value
     # change, so it is carved out of the invariance claim (mirrors the additive carve-out above).
