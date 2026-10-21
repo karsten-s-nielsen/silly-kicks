@@ -43,6 +43,12 @@ from scripts._item_outcome import ItemExcluded  # leaf module (imports nothing f
 #: Joins the components of a composite shard key. Rejected in any component -- see `shard_path`.
 KEY_SEPARATOR = "__"
 
+#: Written into every generation directory this module CREATES (ADR-128, spec 5.3 item 4). In a marked
+#: generation every shard carries a ``<key>.sha256`` sidecar and a shard whose sidecar is missing or does
+#: not match is NOT done. A generation without the marker predates checksums and keeps the old rule
+#: (file exists == done), so resuming a pre-ADR-128 generation behaves exactly as before.
+_CHECKSUMMED = ".checksummed"
+
 
 def _normalise(value: object) -> object:
     """Make a declared input's digest platform-independent before it reaches `fingerprint`.
@@ -111,7 +117,10 @@ def generation_dir(shard_root, *, token_inputs, token_reason: str | None = None)
     root = pathlib.Path(shard_root)
     gen = root / _token(token_inputs, token_reason)
     _warn_on_flat_shards(root, gen)
+    is_new = not gen.exists()
     gen.mkdir(parents=True, exist_ok=True)
+    if is_new:  # idempotent: two processes creating one new generation both write the same marker
+        (gen / _CHECKSUMMED).write_text("sha256\n", encoding="utf-8")
     return gen
 
 
@@ -219,8 +228,51 @@ def shard_path(generation, key) -> pathlib.Path:
     return pathlib.Path(generation) / f"{join_key(key)}.parquet"
 
 
+def checksum_path(generation, key) -> pathlib.Path:
+    """The ``<key>.sha256`` sidecar beside a shard -- invisible to every ``*.parquet`` glob."""
+    return pathlib.Path(generation) / f"{join_key(key)}.sha256"
+
+
+#: `_write_bytes_atomically`'s replace attempts and linear backoff step under a Windows sharing violation.
+_REPLACE_ATTEMPTS = 6
+_REPLACE_BACKOFF_S = 0.05
+
+
+def _write_bytes_atomically(path: pathlib.Path, data: bytes) -> None:
+    """Write ``data`` to ``path`` through a UNIQUE temp name + ``os.replace``.
+
+    Unique (uuid) rather than ``write_table_atomically``'s fixed ``{stem}.{tag}.tmp`` name, because two
+    jobs may write the same deterministic file concurrently (an idempotent reduce, ADR-128); a fixed temp
+    name lets one writer replace the other's half-written temp.
+    """
+    import os
+    import time
+    import uuid
+
+    # ".tmp-" not "." + name: a `_`-prefixed name would give `._*`, the macOS AppleDouble prefix, which the HF
+    # bucket mount refuses to create (real HF, Cycle 1: PermissionError on `._profile.json.<uuid>.part`).
+    tmp = path.with_name(f".tmp-{path.name}.{uuid.uuid4().hex}.part")
+    tmp.write_bytes(data)
+    for attempt in range(_REPLACE_ATTEMPTS - 1):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            # Windows only: a concurrent writer is replacing (or reading) the same target -- the idempotent
+            # reduce case. POSIX renames never collide. The target already holding these exact bytes IS
+            # success; otherwise the sharing violation is transient, so retry the replace.
+            try:
+                if path.read_bytes() == data:
+                    tmp.unlink(missing_ok=True)
+                    return
+            except OSError:
+                pass
+            time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
+    os.replace(tmp, path)  # the last attempt raises a persistent failure, never swallows it
+
+
 def shard_select(seq, index, n):
-    """Disjoint-cover slice for ``--shard-index I/N``: ``list(seq)[index::n]``.
+    """Disjoint-cover slice for shard ``I/N``: ``list(seq)[index::n]``.
 
     The union over ``index in range(n)`` is exactly ``seq`` with no overlap -- the invariant every
     fan-out extraction relies on (and the determinism tests assert with >=2 shards). Order-preserving
@@ -246,17 +298,58 @@ def write_shard(path, frame, *, tag: str) -> None:
     stale by the time this shipped -- the counter now sits at ``:236`` and line 133 is an unrelated
     comment. ``docs/PRIVATE_CONSUMERS.md`` records that PATH pins fail silently; LINE pins fail the
     same way and rot faster, since any edit above them moves the target.
+
+    ``tag`` is accepted for signature compatibility and no longer names the temp file (ADR-128: temp
+    names are unique). Every shard gets a ``<key>.sha256`` sidecar; `already_done` verifies it.
     """
+    import hashlib
+    import io
+
     import pandas as pd
 
-    from scripts._partition import write_table_atomically
-
-    write_table_atomically(pd.DataFrame() if frame is None else frame, pathlib.Path(path), tag=tag)
+    path = pathlib.Path(path)
+    buf = io.BytesIO()
+    (pd.DataFrame() if frame is None else frame).to_parquet(buf, index=False)
+    data = buf.getvalue()
+    # Sidecar FIRST: a kill between the two writes leaves a sidecar with no shard, which reads as "not
+    # run" and is overwritten by the re-run. The reverse order would leave a marked-generation shard
+    # with no sidecar, which reads as untrusted and is redone -- also safe, but wasteful.
+    side = path.with_name(f"{path.name[: -len('.parquet')]}.sha256")
+    _write_bytes_atomically(side, f"{hashlib.sha256(data).hexdigest()}\n".encode("ascii"))
+    _write_bytes_atomically(path, data)
 
 
 def already_done(generation, key) -> bool:
-    """True when this item's shard exists in this generation -- empty shards included."""
-    return shard_path(generation, key).is_file()
+    """True when this item's shard exists in this generation and can be TRUSTED -- empty shards included.
+
+    In a ``.checksummed`` generation (ADR-128) the shard's sidecar must exist and match its bytes; a
+    mismatching or missing sidecar means the shard was truncated or poisoned (e.g. on a bucket mount),
+    so the shard and sidecar are deleted with a warning and the item is redone (INV-3: never trust a unit
+    whose checksum fails). In a legacy generation a present sidecar is still verified; an absent one
+    keeps the old "file exists == done" rule.
+    """
+    import hashlib
+
+    gen = pathlib.Path(generation)
+    shard = shard_path(gen, key)
+    if not shard.is_file():
+        return False
+    side = checksum_path(gen, key)
+    if not side.is_file():
+        if (gen / _CHECKSUMMED).is_file():
+            warnings.warn(
+                f"untrusted shard {shard} (no checksum sidecar in a checksummed generation); redoing it", stacklevel=2
+            )
+            shard.unlink()
+            return False
+        return True
+    want = side.read_text(encoding="ascii").strip()
+    if hashlib.sha256(shard.read_bytes()).hexdigest() == want:
+        return True
+    warnings.warn(f"checksum mismatch for {shard}; deleting it and redoing the item", stacklevel=2)
+    shard.unlink()
+    side.unlink()
+    return False
 
 
 def _counters_path(generation, key) -> pathlib.Path:

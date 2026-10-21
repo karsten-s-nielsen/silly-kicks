@@ -1,87 +1,105 @@
-"""ADR-123 DGX e2e gate: the phase DAG runs locally with per-phase peak-RSS vs the 32 GB cpu-upgrade
-ceiling. Sequencing + ceiling logic tested offline with an injected ``measure``; ``measure_rss`` itself is
-a DGX/Linux step (GNU time), so its test skips where GNU time is unavailable."""
+"""DGX e2e gate (ADR-123, ADR-128): every stage of a campaign instance runs LOCALLY in DAG order with per-stage
+peak RSS vs the 32 GB cpu-upgrade ceiling. Sequencing + ceiling logic tested offline with an injected
+``measure`` and ``plan_fn``; ``measure_rss`` itself is a DGX/Linux step (GNU time), so its test skips where GNU
+time is unavailable."""
 
 from __future__ import annotations
 
+import json
 import shutil
 
 import pytest
 
-from scripts.hf_jobs import registry as reg
+from scripts.hf_jobs.campaign import Instance
 from scripts.hf_jobs.dgx_e2e import CPU_UPGRADE_RAM_BYTES, measure_rss, run_local_e2e
 
-
-def _default(name):
-    spec = reg.REGISTRY[name]
-    return spec, spec.builds[0]
+_GHOST_STAGES = ["validate", "extract", "cache", "cv", "fit", "importance", "assemble"]
 
 
-def test_run_local_e2e_ghost_sequences_and_passes_under_ceiling():
-    spec, b = _default("ghost_gk")
-    seen = []
+def _instance(job="ghost_gk", variant="default", module="scripts.train_ghost_gk", args=("--dataset", "tc3")):
+    return Instance(job, "owner", variant, module, tuple(args), (), "rk")
+
+
+def _plan(names, inner=("importance",)):
+    return lambda _instance: {"stages": [{"name": n, "inner_parallel": n in inner} for n in names]}
+
+
+def test_every_stage_runs_in_dag_order_and_passes_under_the_ceiling(tmp_path):
+    seen: list[str] = []
 
     def fake(cmd):
         seen.append(cmd)
         return "", 0, 1_000_000  # 1 MB peak -- well under the 32 GB ceiling
 
     summary = run_local_e2e(
-        spec,
-        b,
-        data_args="--data-dir /c --actions-dir /c/_actions --home-teams /c/home.json",
-        out_dir="/o",
-        corpus_dir="/c",
-        n_extract=2,
-        n_folds=2,
+        _instance(),
+        data_root=tmp_path / "d",
+        store=tmp_path / "s",
+        out=tmp_path / "o",
         measure=fake,
+        plan_fn=_plan(_GHOST_STAGES),
     )
     assert summary["blocked"] is False
-    assert [p["phase"] for p in summary["phases"]] == ["extract", "extract", "build_cache", "fold", "fold", "reduce"]
-    assert any("headtohead ghost_gk" in c for c in seen)  # reduce runs the floor over the local corpus
+    assert [s["stage"] for s in summary["stages"]] == _GHOST_STAGES
+    assert all(f"--stages {n}" in c for n, c in zip(_GHOST_STAGES, seen, strict=False))
+    assert "--inner-workers" in seen[_GHOST_STAGES.index("importance")]  # the inner_parallel stage owns the pool
+    assert "--run-all" in seen[-1] and "--out" in seen[-1]  # the export after every stage
 
 
-def test_run_local_e2e_blocks_when_reduce_exceeds_the_rss_ceiling():
-    spec, b = _default("ghost_gk")
-
+def test_a_stage_over_the_rss_ceiling_blocks_and_stops_the_run(tmp_path):
     def fake(cmd):
-        rss = 40 * 2**30 if "--assemble" in cmd else 1_000_000  # the serial reduce OOM-risks (> 32 GB)
+        rss = 40 * 2**30 if "--stages fit" in cmd else 1_000_000  # the serial final fit OOM-risks (> 32 GB)
         return "", 0, rss
 
     summary = run_local_e2e(
-        spec,
-        b,
-        data_args="--data-dir /c",
-        out_dir="/o",
-        corpus_dir="/c",
-        n_extract=2,
-        n_folds=2,
+        _instance(),
+        data_root=tmp_path / "d",
+        store=tmp_path / "s",
+        out=tmp_path / "o",
         rss_ceiling=CPU_UPGRADE_RAM_BYTES,
         measure=fake,
+        plan_fn=_plan(_GHOST_STAGES),
     )
     assert summary["blocked"] is True
-    reduce = next(p for p in summary["phases"] if p["phase"] == "reduce")
-    assert reduce["ok"] is False and reduce["peak_rss"] == 40 * 2**30
+    fit = next(s for s in summary["stages"] if s["stage"] == "fit")
+    assert fit["ok"] is False and fit["peak_rss"] == 40 * 2**30
+    assert [s["stage"] for s in summary["stages"]][-1] == "fit", "a later stage ran on a failed upstream"
 
 
-def test_run_local_e2e_xshot_enumerates_studies_from_prep():
-    spec, b = _default("xshot_occurrence")
+def test_a_failing_stage_blocks(tmp_path):
+    summary = run_local_e2e(
+        _instance(),
+        data_root=tmp_path / "d",
+        store=tmp_path / "s",
+        out=tmp_path / "o",
+        measure=lambda cmd: ("", 3 if "--stages cv" in cmd else 0, 1000),
+        plan_fn=_plan(_GHOST_STAGES),
+    )
+    assert summary["blocked"] is True and summary["stages"][-1]["stage"] == "cv"
+
+
+def test_a_visibility_gated_instance_must_ship_the_committed_candidate(tmp_path):
+    """ADR-123 Amendment B: an exit-0 run that ships a different candidate than the committed bundle BLOCKS."""
+    inst = _instance("xshot_occurrence", "default", "scripts.train_xshot_occurrence", ("--dataset", "xshot17"))
+    out = tmp_path / "o"
 
     def fake(cmd):
-        if "--prep-only" in cmd:
-            return '{"study_root": "/s", "studies": ["a_f0", "a_f1"]}', 0, 1000
+        if "--run-all" in cmd:  # the export writes the fresh bundle
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "metrics.json").write_text(json.dumps({"shipped_variant": "sc_extended"}), encoding="utf-8")
         return "", 0, 1000
 
     summary = run_local_e2e(
-        spec,
-        b,
-        data_args="--data-dir /pg",
-        out_dir="/o",
-        corpus_dir="/c",
-        n_extract=2,
-        arms_path="/tmp/arms.json",  # noqa: S108 -- a fixed in-job path string, not a real local tempfile
+        inst,
+        data_root=tmp_path / "d",
+        store=tmp_path / "s",
+        out=out,
         measure=fake,
+        plan_fn=_plan(["extract"], inner=()),
     )
-    assert [p["phase"] for p in summary["phases"]] == ["extract", "extract", "prep", "study", "study", "reduce"]
+    committed = json.loads(open("silly_kicks/tracking/_xshot_weights/default/metrics.json", encoding="utf-8").read())
+    assert summary["shipped_variant"] == {"fresh": "sc_extended", "committed": committed["shipped_variant"]}
+    assert summary["blocked"] is (committed["shipped_variant"] != "sc_extended")
 
 
 def test_measure_rss_reports_peak_or_skips_off_linux():

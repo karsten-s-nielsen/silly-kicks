@@ -1,5 +1,8 @@
 #!/usr/bin/env python
-"""Stream pining matches -> per-match tc3-layout cache for train_ghost_gk.py (PR-S81).
+"""Stream pining matches -> per-match tc3-layout cache (PR-S81).
+
+ADR-128 (decision P17): the trainers read STAGED datasets only, so this tc3 cache is an input to
+staging (``scripts/hf_jobs/datasets.toml``), never a trainer ``--data-dir``.
 
 Writes {out}/{provider}/{match_id}/frames.parquet + meta.json (home_team_id), and
 optional actions to {out}/_actions/{match_id}.parquet. Frames carry vx/vy because

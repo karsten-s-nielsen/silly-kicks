@@ -1,0 +1,574 @@
+# ADR-128 artifact manifest (spec 5.7). HUMAN-WRITTEN, with ONE exception (spec INV-9, 5.7 step 6): `adopt`
+# sets an adopted artifact's `training_commit` to the verified campaign commit. No tool writes any other field.
+#
+# Two field classes (INV-9):
+#   * EXPECTATIONS (this file): declared before a run -- destination, job/variant/tier, certification,
+#     dataset, corpus rule, training commit + where it is recorded, the re-fit event, and `expect` values.
+#     A check compares an artifact AGAINST these; nothing here is derived from the artifact it checks.
+#   * OBSERVED fields (sha256, metrics summary, env, campaign, adopted_at) live in observed.json, written
+#     ONLY by `python -m scripts.hf_jobs campaign ... adopt`.
+#
+# Every value below was copied from the reviewed test constants it replaces (tests/test_bundled_weights_*,
+# tests/tracking/test_position_only_bundled.py, tests/test_model_cards_match_bundles.py,
+# scripts/validate_hub_variants.py, scripts/_hub_publish.py) and the committed metadata: a value no artifact
+# carries is a defect (the corpus-policy test's own rule).
+
+# ---- Re-fit events (cards render these; the version / ADR a card states comes from HERE) -----------------
+[events.f1b]
+version = "4.128.0"
+adr = "ADR-106"
+title = "F1b float32-frame re-fit"
+basis = "on float32-stored frames"
+cite = ""
+
+[events.tf65]
+version = "4.134.0"
+adr = "ADR-120"
+title = "TF-65 velocity-gap re-fit"
+basis = "on the corrected floor velocities"
+cite = "TF-65 / ADR-120, "
+
+[events.adr126]
+version = "4.138.0"
+adr = "ADR-126"
+title = "ADR-126 xShot type_id label re-fit"
+basis = "on the corrected type_id shot label"
+cite = "ADR-126, "
+
+# Hub-only events (a Hub training_commit that matches no wheel event gets its own entry; values from
+# CHANGELOG.md). [4.138.0]: "This cleared two defects: the ADR-126 xShot label defect, and the ADR-120
+# floor-velocity staleness the owner-tier Hub artifacts had carried."
+[events.hub_velocity]
+version = "4.138.0"
+adr = "ADR-120"
+title = "ADR-120 floor-velocity Hub re-fit"
+basis = "on the corrected floor velocities"
+cite = "TF-65 / ADR-120, "
+
+# [4.116.0]: the TF-61 xSuccess fit, trained on the full redistributable StatsBomb open-data corpus.
+[events.tf61]
+version = "4.116.0"
+adr = "ADR-095"
+title = "TF-61 xSuccess fit"
+basis = "on the full redistributable StatsBomb open-data corpus"
+cite = "TF-61 / ADR-095, "
+
+# ---- Weights roots (replaces WEIGHTS_CLASSIFICATION; reasons copied verbatim) -----------------------------
+[roots."silly_kicks/tracking/_xshot_weights"]
+classification = "frame_geometry"
+reason = "xShot features from frame positions"
+
+[roots."silly_kicks/tracking/_xcross_weights"]
+classification = "frame_geometry"
+reason = "xCross features from frame positions"
+
+[roots."silly_kicks/tracking/_ghost_gk_weights"]
+classification = "frame_geometry"
+reason = "ghost-GK regresses on frame positions"
+
+[roots."silly_kicks/tracking/_ghost_outfield_weights"]
+classification = "frame_geometry"
+reason = "ghost-outfield regresses on frame positions"
+
+[roots."silly_kicks/tracking/_receiver_weights"]
+classification = "frame_geometry"
+reason = "receiver model reads pre-pass frame positions"
+
+[roots."silly_kicks/corners/_run_zone_weights"]
+classification = "frame_geometry"
+reason = "RunZoneModel GMMs on reflected frame positions"
+
+[roots."silly_kicks/corners/_routine_weights"]
+classification = "frame_geometry"
+reason = "CornerRoutineModel NMF on frame-derived run vectors"
+
+[roots."silly_kicks/expected_passing/weights"]
+classification = "event_only"
+reason = "PassCompletion: event-only action geometry"
+
+[roots."silly_kicks/match_outcome/weights"]
+classification = "event_only"
+reason = "DependenceModel rho: event-only, no frames"
+
+[roots."silly_kicks/win_probability/weights"]
+classification = "event_only"
+reason = "win-probability: event-only state, no frames"
+
+[roots."silly_kicks/xsuccess/weights"]
+classification = "event_only"
+reason = "xSuccess: END-BLIND event-only action geometry"
+
+[roots."silly_kicks/xtgk/_retention_weights"]
+classification = "out"
+reason = "xt-gk-v2 rho (item #4) -- deferred, v2 quarantined"
+
+# ---- Wheel artifacts: tracking (11) ---------------------------------------------------------------------
+[[artifacts]]
+id = "xshot_default"
+destination = "wheel:silly_kicks/tracking/_xshot_weights/default"
+job = "xshot_occurrence"
+variant = "default"
+tier = "public"
+certification = "public"
+dataset = "xshot17"
+naming = "pergame"
+corpus = "public_ids"
+training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+commit_field = "metadata.json:training_commit"
+refit_event = "adr126"
+[artifacts.expect]
+"metadata.json:shipped_variant" = "public"
+"metadata.json:provider_list" = ["idsse", "skillcorner"]
+"metrics.json:shipped_variant" = "public"
+"metrics.json:reproducibility" = "public"
+
+[[artifacts]]
+id = "xshot_position_only"
+destination = "wheel:silly_kicks/tracking/_xshot_weights/position_only"
+job = "xshot_occurrence"
+variant = "position_only"
+tier = "public"
+certification = "public"
+dataset = "xshot17"
+naming = "pergame"
+corpus = "public_ids"
+training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+commit_field = "metadata.json:training_commit"
+refit_event = "adr126"
+[artifacts.expect]
+"metadata.json:shipped_variant" = "public"
+"metadata.json:provider_list" = ["idsse", "skillcorner"]
+"metrics.json:shipped_variant" = "public"
+"metrics.json:reproducibility" = "public"
+
+[[artifacts]]
+id = "xcross_default"
+destination = "wheel:silly_kicks/tracking/_xcross_weights/default"
+job = "xcross_attempt"
+variant = "default"
+tier = "public"
+certification = "public"
+dataset = "xshot17"
+naming = "pergame"
+corpus = "public_ids"
+training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+commit_field = "metadata.json:training_commit"
+refit_event = "tf65"
+[artifacts.expect]
+"metadata.json:shipped_variant" = "public"
+"metadata.json:provider_list" = ["idsse", "skillcorner"]
+"metrics.json:shipped_variant" = "public"
+"metrics.json:reproducibility" = "public"
+
+[[artifacts]]
+id = "xcross_position_only"
+destination = "wheel:silly_kicks/tracking/_xcross_weights/position_only"
+job = "xcross_attempt"
+variant = "position_only"
+tier = "public"
+certification = "public"
+dataset = "xshot17"
+naming = "pergame"
+corpus = "public_ids"
+training_commit = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
+commit_field = "metadata.json:training_commit"
+refit_event = "f1b"
+[artifacts.expect]
+"metadata.json:shipped_variant" = "public"
+"metadata.json:provider_list" = ["idsse", "skillcorner"]
+"metrics.json:shipped_variant" = "public"
+"metrics.json:reproducibility" = "public"
+
+[[artifacts]]
+id = "ghost_default"
+destination = "wheel:silly_kicks/tracking/_ghost_gk_weights/default"
+job = "ghost_gk"
+variant = "default"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+commit_field = "metadata.json:training_commit"
+refit_event = "tf65"
+[artifacts.expect]
+"metadata.json:corpus_provenance.providers" = ["gradientsports", "skillcorner", "sportec"]
+"metadata.json:corpus_provenance.n_games" = 179
+
+[[artifacts]]
+id = "ghost_position_only"
+destination = "wheel:silly_kicks/tracking/_ghost_gk_weights/position_only"
+job = "ghost_gk"
+variant = "position_only"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
+commit_field = "metadata.json:training_commit"
+refit_event = "f1b"
+[artifacts.expect]
+"metadata.json:corpus_provenance.providers" = ["gradientsports", "skillcorner", "sportec"]
+"metadata.json:corpus_provenance.n_games" = 179
+"metrics.json:reproducibility" = "restricted"
+
+[[artifacts]]
+id = "ghost_sweeper"
+destination = "wheel:silly_kicks/tracking/_ghost_gk_weights/sweeper"
+job = "ghost_gk"
+variant = "sweeper"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+commit_field = "metadata.json:training_commit"
+refit_event = "tf65"
+[artifacts.expect]
+"metadata.json:corpus_provenance.providers" = ["gradientsports", "skillcorner", "sportec"]
+"metadata.json:corpus_provenance.n_games" = 179
+
+[[artifacts]]
+id = "ghost_sweeper_position_only"
+destination = "wheel:silly_kicks/tracking/_ghost_gk_weights/sweeper_position_only"
+job = "ghost_gk"
+variant = "sweeper_position_only"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
+commit_field = "metadata.json:training_commit"
+refit_event = "f1b"
+[artifacts.expect]
+"metadata.json:corpus_provenance.providers" = ["gradientsports", "skillcorner", "sportec"]
+"metadata.json:corpus_provenance.n_games" = 179
+
+[[artifacts]]
+id = "outfield_default"
+destination = "wheel:silly_kicks/tracking/_ghost_outfield_weights/default"
+job = "ghost_outfield"
+variant = "default"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+commit_field = "metadata.json:training_commit"
+refit_event = "tf65"
+[artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179
+"metadata.json:corpus_provenance.variant" = "default"
+
+[[artifacts]]
+id = "outfield_position_only"
+destination = "wheel:silly_kicks/tracking/_ghost_outfield_weights/position_only"
+job = "ghost_outfield"
+variant = "position_only"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
+commit_field = "metadata.json:training_commit"
+refit_event = "f1b"
+[artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179
+"metadata.json:corpus_provenance.variant" = "position_only"
+
+[[artifacts]]
+id = "receiver_default"
+destination = "wheel:silly_kicks/tracking/_receiver_weights/default"
+job = "receiver_model"
+variant = "default"
+tier = "owner"
+certification = "owner"
+dataset = "sb360"
+naming = "flat"
+training_commit = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
+commit_field = "metrics.json:run_commit"
+refit_event = "f1b"
+card = "silly_kicks/tracking/_receiver_weights/default/MODEL_CARD.md"
+[artifacts.expect]
+"metrics.json:providers_trained" = ["statsbomb"]
+"metrics.json:corpus_visibility" = "restricted"
+
+# ---- Wheel artifacts: event-only and blocked (6) --------------------------------------------------------
+[[artifacts]]
+id = "win_probability"
+destination = "wheel:silly_kicks/win_probability/weights"
+job = "win_probability"
+variant = "default"
+tier = "public"
+certification = "public"
+dataset = "sb_open"
+training_commit = "ae10f8a75c84ef7f8b55297c8ac1d96bbfae8a32"
+commit_field = "metrics.json:training_commit"
+
+[[artifacts]]
+id = "match_outcome"
+destination = "wheel:silly_kicks/match_outcome/weights"
+job = "match_outcome_dependence"
+variant = "default"
+tier = "public"
+certification = "public"
+dataset = "sb_open"
+
+[[artifacts]]
+id = "expected_passing"
+destination = "wheel:silly_kicks/expected_passing/weights"
+job = "pass_completion"
+variant = "default"
+tier = "public"
+certification = "public"
+dataset = "sb_open"
+
+[[artifacts]]
+id = "xsuccess"
+destination = "wheel:silly_kicks/xsuccess/weights"
+job = "xsuccess"
+variant = "default"
+tier = "public"
+certification = "public"
+dataset = "sb_open"
+training_commit = "12e5677e7301a7201c6c5c18160ef6a655bb5f23"
+commit_field = "metadata.json:training_commit"
+
+[[artifacts]]
+id = "retention_default"
+destination = "wheel:silly_kicks/xtgk/_retention_weights/default"
+job = "gk_retention"
+variant = "default"
+tier = "owner"
+certification = "blocked"
+
+[[artifacts]]
+id = "retention_skillcorner"
+destination = "wheel:silly_kicks/xtgk/_retention_weights/skillcorner"
+job = "gk_retention"
+variant = "skillcorner"
+tier = "owner"
+certification = "blocked"
+
+# ---- Wheel artifacts: TF-46 corners (2; 4.139.0, fitted by `build_corner_routines`, a driver on the
+# compute gate's _LEGACY_UNMIGRATED list -- not campaign-launched until its burn-down) ----------------
+[[artifacts]]
+id = "corners_run_zone"
+destination = "wheel:silly_kicks/corners/_run_zone_weights/default"
+job = "build_corner_routines"
+variant = "default"
+tier = "owner"
+certification = "legacy"
+training_commit = "6ee7e627f82ef468cfb1b0fdb8140ce05c3a3f8c"
+commit_field = "metadata.json:training_commit"
+[artifacts.expect]
+"metadata.json:version" = "run-zone-1"
+
+[[artifacts]]
+id = "corners_routine"
+destination = "wheel:silly_kicks/corners/_routine_weights/default"
+job = "build_corner_routines"
+variant = "default"
+tier = "owner"
+certification = "legacy"
+training_commit = "6ee7e627f82ef468cfb1b0fdb8140ce05c3a3f8c"
+commit_field = "metadata.json:training_commit"
+[artifacts.expect]
+"metadata.json:version" = "corner-routine-1"
+
+# ---- Hub artifacts (10) ---------------------------------------------------------------------------------
+# Every Hub training_commit below was READ from the published metadata.json (anonymous hf_hub_download,
+# 2026-10-18), never inferred; refit_event names the event declared for that commit.
+[[artifacts]]
+id = "hub_xshot_sc_extended"
+destination = "hub:silly-kicks/xshot-occurrence-v1"
+job = "xshot_occurrence"
+variant = "default"
+tier = "sc_extended"
+certification = "owner"
+dataset = "xshot115"
+naming = "pergame"
+corpus = "digest"
+training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+commit_field = "metadata.json:training_commit"
+refit_event = "adr126"
+card = "docs/huggingface/model-cards/xshot-occurrence-v1-model-card.md"
+wheel_sibling = "xshot_default"
+hub_class = "XShotOccurrenceModel"
+hub_role = "hf_only"
+[artifacts.expect]
+"metadata.json:shipped_variant" = "sc_extended"
+"metrics.json:shipped_variant" = "sc_extended"
+
+[[artifacts]]
+id = "hub_xshot_sc_extended_position_only"
+destination = "hub:silly-kicks/xshot-occurrence-position-only-v1"
+job = "xshot_occurrence"
+variant = "position_only"
+tier = "sc_extended"
+certification = "owner"
+dataset = "xshot115"
+naming = "pergame"
+corpus = "digest"
+training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+commit_field = "metadata.json:training_commit"
+refit_event = "adr126"
+card = "docs/huggingface/model-cards/xshot-occurrence-position-only-v1-model-card.md"
+wheel_sibling = "xshot_position_only"
+hub_class = "XShotOccurrenceModel"
+hub_role = "hf_only"
+[artifacts.expect]
+"metadata.json:shipped_variant" = "sc_extended"
+"metrics.json:shipped_variant" = "sc_extended"
+
+[[artifacts]]
+id = "hub_xcross_sc_extended"
+destination = "hub:silly-kicks/xcross-attempt-v1"
+job = "xcross_attempt"
+variant = "default"
+tier = "sc_extended"
+certification = "owner"
+dataset = "xshot115"
+naming = "pergame"
+corpus = "digest"
+training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+commit_field = "metadata.json:training_commit"
+refit_event = "hub_velocity"
+card = "docs/huggingface/model-cards/xcross-attempt-v1-model-card.md"
+wheel_sibling = "xcross_default"
+hub_class = "XCrossAttemptModel"
+hub_role = "hf_only"
+[artifacts.expect]
+"metadata.json:shipped_variant" = "sc_extended"
+"metrics.json:shipped_variant" = "sc_extended"
+
+[[artifacts]]
+id = "hub_xcross_sc_extended_position_only"
+destination = "hub:silly-kicks/xcross-attempt-position-only-v1"
+job = "xcross_attempt"
+variant = "position_only"
+tier = "sc_extended"
+certification = "owner"
+dataset = "xshot115"
+naming = "pergame"
+corpus = "digest"
+training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+commit_field = "metadata.json:training_commit"
+refit_event = "hub_velocity"
+card = "docs/huggingface/model-cards/xcross-attempt-position-only-v1-model-card.md"
+wheel_sibling = "xcross_position_only"
+hub_class = "XCrossAttemptModel"
+hub_role = "hf_only"
+[artifacts.expect]
+"metadata.json:shipped_variant" = "sc_extended"
+"metrics.json:shipped_variant" = "sc_extended"
+
+[[artifacts]]
+id = "ghost_full"
+destination = "hub:silly-kicks/ghost-gk-v1"
+job = "ghost_gk"
+variant = "full"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+commit_field = "metadata.json:training_commit"
+refit_event = "hub_velocity"
+card = "docs/huggingface/model-cards/ghost-gk-v1-model-card.md"
+wheel_sibling = "ghost_default"
+hub_class = "GhostGkModel"
+hub_role = "hf_only"
+[artifacts.expect]
+"metrics.json:variant" = "full"
+
+[[artifacts]]
+id = "hub_ghost_sweeper"
+destination = "hub:silly-kicks/ghost-gk-sweeper-v1"
+job = "ghost_gk"
+variant = "sweeper"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+commit_field = "metadata.json:training_commit"
+refit_event = "tf65"
+card = "docs/huggingface/model-cards/ghost-gk-sweeper-v1-model-card.md"
+mirror_of = "ghost_sweeper"
+hub_class = "GhostGkModel"
+hub_role = "mirror"
+[artifacts.expect]
+"metrics.json:variant" = "sweeper"
+
+[[artifacts]]
+id = "hub_ghost_sweeper_position_only"
+destination = "hub:silly-kicks/ghost-gk-sweeper-position-only-v1"
+job = "ghost_gk"
+variant = "sweeper_position_only"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
+commit_field = "metadata.json:training_commit"
+refit_event = "f1b"
+card = "docs/huggingface/model-cards/ghost-gk-sweeper-position-only-v1-model-card.md"
+mirror_of = "ghost_sweeper_position_only"
+hub_class = "GhostGkModel"
+hub_role = "mirror"
+[artifacts.expect]
+"metrics.json:variant" = "sweeper_position_only"
+
+[[artifacts]]
+id = "hub_outfield_default"
+destination = "hub:silly-kicks/ghost-outfield-v1"
+job = "ghost_outfield"
+variant = "default"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+commit_field = "metadata.json:training_commit"
+refit_event = "tf65"
+card = "docs/huggingface/model-cards/ghost-outfield-v1-model-card.md"
+mirror_of = "outfield_default"
+hub_class = "GhostOutfieldModel"
+hub_role = "mirror"
+[artifacts.expect]
+"metadata.json:corpus_provenance.variant" = "default"
+
+[[artifacts]]
+id = "hub_outfield_position_only"
+destination = "hub:silly-kicks/ghost-outfield-position-only-v1"
+job = "ghost_outfield"
+variant = "position_only"
+tier = "owner"
+certification = "owner"
+dataset = "tc3"
+naming = "flat"
+training_commit = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
+commit_field = "metadata.json:training_commit"
+refit_event = "f1b"
+card = "docs/huggingface/model-cards/ghost-outfield-position-only-v1-model-card.md"
+mirror_of = "outfield_position_only"
+hub_class = "GhostOutfieldModel"
+hub_role = "mirror"
+[artifacts.expect]
+"metadata.json:corpus_provenance.variant" = "position_only"
+
+[[artifacts]]
+id = "hub_xsuccess"
+destination = "hub:silly-kicks/xsuccess-v1"
+job = "xsuccess"
+variant = "default"
+tier = "public"
+certification = "public"
+dataset = "sb_open"
+training_commit = "12e5677e7301a7201c6c5c18160ef6a655bb5f23"
+commit_field = "metadata.json:training_commit"
+refit_event = "tf61"
+card = "silly_kicks/xsuccess/weights/MODEL_CARD.md"
+hub_class = ""
+hub_role = "event_only"

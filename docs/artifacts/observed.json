@@ -1,0 +1,2237 @@
+{
+  "corners_routine": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {},
+    "sha256": {
+      "MODEL_CARD.md": "f1586ca06b5686e201672b8a4335b9bce672f0e8224ae7bb192ff925ca156560",
+      "SHA256SUMS": "bff0c8ad2776d12fa7a1486e538446fe75f6cc10132b88e896d569e87f994a0b",
+      "metadata.json": "297779d5ed60667c057003f2640d220b458fa6e0a69bb0602bd2a6c2ebb272b4",
+      "model.npz": "3e031ebc2cfdf13685307028d2ff6a8145014ffa72e1d3554342c5355b710e5e"
+    }
+  },
+  "corners_run_zone": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {},
+    "sha256": {
+      "MODEL_CARD.md": "a2f0da8cbc5a1c6694dc819af64ad7761799c06c0ec72800e5ba6af3b2a71cd0",
+      "SHA256SUMS": "cd560d279bebf5fe801617d13f0c0b986695623c332c94428a01cc83ac459bbd",
+      "metadata.json": "8f82afda8ba28134d370a97296efdf5831e02d6df3a3db739ed65fcf202f9202",
+      "model.npz": "441d27478d0be96ecfca857825fee8e6868b95b30928d6388f07543769f96efe"
+    }
+  },
+  "expected_passing": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {},
+    "sha256": {
+      "MODEL_CARD.md": "63db3fb3ccb937ae5572af802ccdcafc2c88c51c81b14cbe4dfb986dd7a7d6eb",
+      "SHA256SUMS": "abc60ad1cc6e3531994982128c6e31c5fb4a6b5359e19b6048108686f58c676b",
+      "model.json": "07e04a5a192e1349667f7c914e23332eb9d603aad835a38bb6e213b0e956726a"
+    }
+  },
+  "ghost_default": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "artifact_size_lt_15mb": true,
+        "cross_fold_std_lt_05m": true,
+        "overall_mae_lt_2m": true,
+        "per_provider_mae_lt_3m": true
+      },
+      "artifact_size_bytes": 2351081,
+      "carrier_params": {
+        "beta": 0.0,
+        "gamma": 0.25,
+        "tolerance_m": 3.0
+      },
+      "cv_folds": 5,
+      "cv_mae_euclidean_mean": 1.127059374623758,
+      "cv_mae_euclidean_std": 0.03375836915026666,
+      "cv_mae_x_mean": 0.16589887638765838,
+      "cv_mae_x_std": 0.0030001343461871243,
+      "cv_mae_y_mean": 1.0754757258303134,
+      "cv_mae_y_std": 0.03293184892547,
+      "detection_selection_bias": {
+        "ball_to_keeper_dist_detected_mean": 23.268318334326782,
+        "ball_to_keeper_dist_undetected_mean": 47.98931663400538,
+        "keeper_depth_detected_mean": 5.05032336584333,
+        "keeper_depth_undetected_mean": 15.526409788919468,
+        "n_detected": 184277,
+        "n_games_counters_unrecorded": 0,
+        "n_undetected": 735727,
+        "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
+      },
+      "grid_x_max": 30.0,
+      "high_sweeper_stratum_mae_mean": NaN,
+      "hyperparameters": {
+        "max_depth": 8,
+        "n_estimators": 500
+      },
+      "n_games": 179,
+      "n_providers": 3,
+      "n_samples": 1039502,
+      "per_provider_high_sweeper_coverage": {
+        "gradientsports": 0.0,
+        "skillcorner": 0.0,
+        "sportec": 0.0
+      },
+      "per_provider_mae_euclidean": {
+        "gradientsports": 1.0713382813448384,
+        "skillcorner": 1.1625960742606405,
+        "sportec": 1.6751893062581131
+      },
+      "providers": [
+        "gradientsports",
+        "skillcorner",
+        "sportec"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "subsample_fps": 1.0,
+      "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "variant": "default"
+    },
+    "sha256": {
+      "SHA256SUMS": "e391b4856a606e85edafba8b6e19604c33476dd5c1c74f9bb7c27d0896abad36",
+      "metadata.json": "f3896f4fa095a3a718978394c58218a46a5d291975032e469234246c83eb4c07",
+      "metrics.json": "0a7fe7e2e97396834c6f94cdc2cac110b640ca6311114d6a549d8650441ae881",
+      "rfcde_weights.npz": "673621fd8fa356e100e4f8a13d553f9a747569eaf2378b6736bae9c66a6f2868"
+    }
+  },
+  "ghost_full": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "artifact_size_lt_15mb": true,
+        "cross_fold_std_lt_05m": true,
+        "overall_mae_lt_2m": true,
+        "per_provider_mae_lt_3m": true
+      },
+      "artifact_size_bytes": 2351094,
+      "carrier_params": {
+        "beta": 0.0,
+        "gamma": 0.25,
+        "tolerance_m": 3.0
+      },
+      "cv_folds": 5,
+      "cv_mae_euclidean_mean": 1.127059374623758,
+      "cv_mae_euclidean_std": 0.03375836915026666,
+      "cv_mae_x_mean": 0.16589887638765838,
+      "cv_mae_x_std": 0.0030001343461871243,
+      "cv_mae_y_mean": 1.0754757258303134,
+      "cv_mae_y_std": 0.03293184892547,
+      "detection_selection_bias": {
+        "ball_to_keeper_dist_detected_mean": 23.26831833432679,
+        "ball_to_keeper_dist_undetected_mean": 47.98931663400538,
+        "keeper_depth_detected_mean": 5.05032336584333,
+        "keeper_depth_undetected_mean": 15.526409788919468,
+        "n_detected": 184277,
+        "n_games_counters_unrecorded": 0,
+        "n_undetected": 735727,
+        "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
+      },
+      "grid_x_max": 30.0,
+      "high_sweeper_stratum_mae_mean": NaN,
+      "hyperparameters": {
+        "max_depth": 8,
+        "n_estimators": 500
+      },
+      "n_games": 179,
+      "n_providers": 3,
+      "n_samples": 1039502,
+      "per_provider_high_sweeper_coverage": {
+        "gradientsports": 0.0,
+        "skillcorner": 0.0,
+        "sportec": 0.0
+      },
+      "per_provider_mae_euclidean": {
+        "gradientsports": 1.0713382813448384,
+        "skillcorner": 1.1625960742606405,
+        "sportec": 1.6751893062581131
+      },
+      "providers": [
+        "gradientsports",
+        "skillcorner",
+        "sportec"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit 4095251730ce216decf99ec8e47d8e1162a04a1d on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "subsample_fps": 1.0,
+      "training_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "variant": "full"
+    },
+    "sha256": {
+      "SHA256SUMS": "3660bfe324bc81459165e31dfc44050a08906d57c77eaa0b39ad43067afb70d3",
+      "metadata.json": "81f7ce72898f97ca085637fe571a5cb34aeb950dcdaec0a1714c15fc756ec7db",
+      "metrics.json": "84ccb49f434f8e2015bfcfc5cab9aef06cd7e140c7c6d2f6245e03620e178bb4"
+    }
+  },
+  "ghost_position_only": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "artifact_size_lt_15mb": true,
+        "cross_fold_std_lt_05m": true,
+        "overall_mae_lt_2m": true,
+        "per_provider_mae_lt_3m": true
+      },
+      "artifact_size_bytes": 2341647,
+      "carrier_params": {
+        "beta": 0.0,
+        "gamma": 0.25,
+        "tolerance_m": 3.0
+      },
+      "cv_folds": 5,
+      "cv_mae_euclidean_mean": 1.148417041567875,
+      "cv_mae_euclidean_std": 0.03657401809325441,
+      "cv_mae_x_mean": 0.16575005375018742,
+      "cv_mae_x_std": 0.0029015944310148457,
+      "cv_mae_y_mean": 1.0970911630195823,
+      "cv_mae_y_std": 0.03594358547930148,
+      "detection_selection_bias": {
+        "ball_to_keeper_dist_detected_mean": 23.268318334326782,
+        "ball_to_keeper_dist_undetected_mean": 47.98931663400538,
+        "keeper_depth_detected_mean": 5.05032336584333,
+        "keeper_depth_undetected_mean": 15.526409788919468,
+        "n_detected": 184277,
+        "n_games_counters_unrecorded": 0,
+        "n_undetected": 735727,
+        "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
+      },
+      "grid_x_max": 30.0,
+      "high_sweeper_stratum_mae_mean": NaN,
+      "hyperparameters": {
+        "max_depth": 8,
+        "n_estimators": 500
+      },
+      "n_games": 179,
+      "n_providers": 3,
+      "n_samples": 1039502,
+      "per_provider_high_sweeper_coverage": {
+        "gradientsports": 0.0,
+        "skillcorner": 0.0,
+        "sportec": 0.0
+      },
+      "per_provider_mae_euclidean": {
+        "gradientsports": 1.0855152703025628,
+        "skillcorner": 1.2129398071157047,
+        "sportec": 1.7014019939045355
+      },
+      "providers": [
+        "gradientsports",
+        "skillcorner",
+        "sportec"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit b62c1f24a7a9e3361ce416b402ed27da4a59b9e6 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "subsample_fps": 1.0,
+      "training_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+      "variant": "default"
+    },
+    "sha256": {
+      "SHA256SUMS": "e63e666b083604fdcfa53e5f192909d85b68ddaaa28ce67c0ebbd7dd61638c7c",
+      "metadata.json": "95648b3c6bb0d5409a6a9244f714d3d8d1bddf1f927deb78e6fef32cb93472ae",
+      "metrics.json": "360c74ffd9b6fadef93df373d54bd4805e55be12b0ac1e3baa80151451cd8ec9",
+      "rfcde_weights.npz": "b515603f129856219e6fb75517113116ea5cb39fced01438fed62be7d7b4bca7"
+    }
+  },
+  "ghost_sweeper": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "artifact_size_lt_15mb": true,
+        "cross_fold_std_lt_05m": true,
+        "overall_mae_lt_2m": true,
+        "per_provider_mae_lt_3m": true
+      },
+      "artifact_size_bytes": 2352701,
+      "carrier_params": {
+        "beta": 0.0,
+        "gamma": 0.25,
+        "tolerance_m": 3.0
+      },
+      "cv_folds": 5,
+      "cv_mae_euclidean_mean": 1.1349859466408874,
+      "cv_mae_euclidean_std": 0.030531206420955866,
+      "cv_mae_x_mean": 0.17238229651120518,
+      "cv_mae_x_std": 0.004009526377516727,
+      "cv_mae_y_mean": 1.0806150207193608,
+      "cv_mae_y_std": 0.029715316322513747,
+      "detection_selection_bias": {
+        "ball_to_keeper_dist_detected_mean": 23.25203532945763,
+        "ball_to_keeper_dist_undetected_mean": 48.57551089769249,
+        "keeper_depth_detected_mean": 5.120190465896483,
+        "keeper_depth_undetected_mean": 16.316629185469324,
+        "n_detected": 184717,
+        "n_games_counters_unrecorded": 0,
+        "n_undetected": 770416,
+        "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
+      },
+      "grid_x_max": 52.5,
+      "high_sweeper_stratum_mae_mean": 1.9592717039150234,
+      "hyperparameters": {
+        "max_depth": 8,
+        "n_estimators": 500
+      },
+      "n_games": 179,
+      "n_providers": 3,
+      "n_samples": 1048834,
+      "per_provider_high_sweeper_coverage": {
+        "gradientsports": 0.0,
+        "skillcorner": 0.002382022228598342,
+        "sportec": 0.11479325079717535
+      },
+      "per_provider_mae_euclidean": {
+        "gradientsports": 1.070567738542221,
+        "skillcorner": 1.1663732849845705,
+        "sportec": 1.716630358193615
+      },
+      "providers": [
+        "gradientsports",
+        "skillcorner",
+        "sportec"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "subsample_fps": 1.0,
+      "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "variant": "sweeper"
+    },
+    "sha256": {
+      "SHA256SUMS": "3285cee05930db4de00af19ace957073aa70a41780f501ca095f8f8b960d45fa",
+      "metadata.json": "b2276fd42be46f0f79ef535401eda2bb209dac85ee907851608ec4c0729f252f",
+      "metrics.json": "ced14b002030c9b22aede4fc02317c8804d9172350cfc837bede316439a6dab3",
+      "rfcde_weights.npz": "61563b4c40fce25601a76d189606fb2d72de8f75c0c5835dd50b8c58be321971"
+    }
+  },
+  "ghost_sweeper_position_only": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "artifact_size_lt_15mb": true,
+        "cross_fold_std_lt_05m": true,
+        "overall_mae_lt_2m": true,
+        "per_provider_mae_lt_3m": true
+      },
+      "artifact_size_bytes": 2341997,
+      "carrier_params": {
+        "beta": 0.0,
+        "gamma": 0.25,
+        "tolerance_m": 3.0
+      },
+      "cv_folds": 5,
+      "cv_mae_euclidean_mean": 1.1559103664362769,
+      "cv_mae_euclidean_std": 0.032588759672382506,
+      "cv_mae_x_mean": 0.17118348782374415,
+      "cv_mae_x_std": 0.003580777614816289,
+      "cv_mae_y_mean": 1.1021738583149925,
+      "cv_mae_y_std": 0.03185899914207568,
+      "detection_selection_bias": {
+        "ball_to_keeper_dist_detected_mean": 23.25203532945763,
+        "ball_to_keeper_dist_undetected_mean": 48.57551089769249,
+        "keeper_depth_detected_mean": 5.120190465896483,
+        "keeper_depth_undetected_mean": 16.316629185469324,
+        "n_detected": 184717,
+        "n_games_counters_unrecorded": 0,
+        "n_undetected": 770416,
+        "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
+      },
+      "grid_x_max": 52.5,
+      "high_sweeper_stratum_mae_mean": 1.9563532847889138,
+      "hyperparameters": {
+        "max_depth": 8,
+        "n_estimators": 500
+      },
+      "n_games": 179,
+      "n_providers": 3,
+      "n_samples": 1048834,
+      "per_provider_high_sweeper_coverage": {
+        "gradientsports": 0.0,
+        "skillcorner": 0.002382022228598342,
+        "sportec": 0.11479325079717535
+      },
+      "per_provider_mae_euclidean": {
+        "gradientsports": 1.0861450465588884,
+        "skillcorner": 1.2160127849748696,
+        "sportec": 1.7209585652636228
+      },
+      "providers": [
+        "gradientsports",
+        "skillcorner",
+        "sportec"
+      ],
+      "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "subsample_fps": 1.0,
+      "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "variant": "sweeper_position_only"
+    },
+    "sha256": {
+      "SHA256SUMS": "d8d0bbf43438401dc358627850da388d15dbff0b934e2a2b5a0c60de2f1bf4a7",
+      "metadata.json": "25423d06358913101e5f11161c48ad84bc01bbab3a023c2cb2e1fdbf77138786",
+      "metrics.json": "e8fa51acae044f8148ec9c3269bd62abc1e7f59688cb55b188358a21232a0c32",
+      "rfcde_weights.npz": "f1d303461bdd101e72f52085ea9550795ce650d28671c32d30a9e00b2fae7e32"
+    }
+  },
+  "hub_ghost_sweeper": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "artifact_size_lt_15mb": true,
+        "cross_fold_std_lt_05m": true,
+        "overall_mae_lt_2m": true,
+        "per_provider_mae_lt_3m": true
+      },
+      "artifact_size_bytes": 2352701,
+      "carrier_params": {
+        "beta": 0.0,
+        "gamma": 0.25,
+        "tolerance_m": 3.0
+      },
+      "cv_folds": 5,
+      "cv_mae_euclidean_mean": 1.1349859466408874,
+      "cv_mae_euclidean_std": 0.030531206420955866,
+      "cv_mae_x_mean": 0.17238229651120518,
+      "cv_mae_x_std": 0.004009526377516727,
+      "cv_mae_y_mean": 1.0806150207193608,
+      "cv_mae_y_std": 0.029715316322513747,
+      "detection_selection_bias": {
+        "ball_to_keeper_dist_detected_mean": 23.25203532945763,
+        "ball_to_keeper_dist_undetected_mean": 48.57551089769249,
+        "keeper_depth_detected_mean": 5.120190465896483,
+        "keeper_depth_undetected_mean": 16.316629185469324,
+        "n_detected": 184717,
+        "n_games_counters_unrecorded": 0,
+        "n_undetected": 770416,
+        "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
+      },
+      "grid_x_max": 52.5,
+      "high_sweeper_stratum_mae_mean": 1.9592717039150234,
+      "hyperparameters": {
+        "max_depth": 8,
+        "n_estimators": 500
+      },
+      "n_games": 179,
+      "n_providers": 3,
+      "n_samples": 1048834,
+      "per_provider_high_sweeper_coverage": {
+        "gradientsports": 0.0,
+        "skillcorner": 0.002382022228598342,
+        "sportec": 0.11479325079717535
+      },
+      "per_provider_mae_euclidean": {
+        "gradientsports": 1.070567738542221,
+        "skillcorner": 1.1663732849845705,
+        "sportec": 1.716630358193615
+      },
+      "providers": [
+        "gradientsports",
+        "skillcorner",
+        "sportec"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "subsample_fps": 1.0,
+      "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "variant": "sweeper"
+    },
+    "sha256": {
+      "SHA256SUMS": "3285cee05930db4de00af19ace957073aa70a41780f501ca095f8f8b960d45fa",
+      "metadata.json": "b2276fd42be46f0f79ef535401eda2bb209dac85ee907851608ec4c0729f252f",
+      "metrics.json": "ced14b002030c9b22aede4fc02317c8804d9172350cfc837bede316439a6dab3"
+    }
+  },
+  "hub_ghost_sweeper_position_only": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "artifact_size_lt_15mb": true,
+        "cross_fold_std_lt_05m": true,
+        "overall_mae_lt_2m": true,
+        "per_provider_mae_lt_3m": true
+      },
+      "artifact_size_bytes": 2341997,
+      "carrier_params": {
+        "beta": 0.0,
+        "gamma": 0.25,
+        "tolerance_m": 3.0
+      },
+      "cv_folds": 5,
+      "cv_mae_euclidean_mean": 1.1559103664362769,
+      "cv_mae_euclidean_std": 0.032588759672382506,
+      "cv_mae_x_mean": 0.17118348782374415,
+      "cv_mae_x_std": 0.003580777614816289,
+      "cv_mae_y_mean": 1.1021738583149925,
+      "cv_mae_y_std": 0.03185899914207568,
+      "detection_selection_bias": {
+        "ball_to_keeper_dist_detected_mean": 23.25203532945763,
+        "ball_to_keeper_dist_undetected_mean": 48.57551089769249,
+        "keeper_depth_detected_mean": 5.120190465896483,
+        "keeper_depth_undetected_mean": 16.316629185469324,
+        "n_detected": 184717,
+        "n_games_counters_unrecorded": 0,
+        "n_undetected": 770416,
+        "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
+      },
+      "grid_x_max": 52.5,
+      "high_sweeper_stratum_mae_mean": 1.9563532847889138,
+      "hyperparameters": {
+        "max_depth": 8,
+        "n_estimators": 500
+      },
+      "n_games": 179,
+      "n_providers": 3,
+      "n_samples": 1048834,
+      "per_provider_high_sweeper_coverage": {
+        "gradientsports": 0.0,
+        "skillcorner": 0.002382022228598342,
+        "sportec": 0.11479325079717535
+      },
+      "per_provider_mae_euclidean": {
+        "gradientsports": 1.0861450465588884,
+        "skillcorner": 1.2160127849748696,
+        "sportec": 1.7209585652636228
+      },
+      "providers": [
+        "gradientsports",
+        "skillcorner",
+        "sportec"
+      ],
+      "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "subsample_fps": 1.0,
+      "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "variant": "sweeper_position_only"
+    },
+    "sha256": {
+      "SHA256SUMS": "d8d0bbf43438401dc358627850da388d15dbff0b934e2a2b5a0c60de2f1bf4a7",
+      "metadata.json": "25423d06358913101e5f11161c48ad84bc01bbab3a023c2cb2e1fdbf77138786",
+      "metrics.json": "e8fa51acae044f8148ec9c3269bd62abc1e7f59688cb55b188358a21232a0c32"
+    }
+  },
+  "hub_outfield_default": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "coherence": {
+        "min_pairwise_distance_m": 0.18236717039555905,
+        "n_groups": 1042730,
+        "ordering_fraction": 0.9999990409789686
+      },
+      "cv_mae": 6.000659221234316,
+      "cv_mae_by_possession": {
+        "in_possession": 6.968224548654058,
+        "out_of_possession": 5.0330938938145735
+      },
+      "cv_mae_by_provider": {
+        "gradientsports": 6.143317050479726,
+        "skillcorner": 5.9144740093659305,
+        "sportec": 6.333118624361591
+      },
+      "cv_mae_by_slot": {
+        "1": 5.959177357167741,
+        "2": 6.049370463129207,
+        "3": 6.0213919263576114,
+        "4": 5.9726971382827045
+      },
+      "feature_set": "faithful",
+      "n_games": 179,
+      "n_rows": 4170920,
+      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "run_tree_dirty": false,
+      "subsample_fps": 1.0,
+      "training_platform": null,
+      "variant": "default"
+    },
+    "sha256": {
+      "SHA256SUMS": "e7fbb99d3ceb425fdd347a4c7422e42ca6e831d87da2c464cbaad5766b7a7408",
+      "metadata.json": "59bc58308b610c186b4730c0226852e94911ddfeeb7fd3db6089c278e5f7f258",
+      "metrics.json": "78c50b9bd266f0ceb72f70720665dbef6982661fbf29e54305a64234e034f20c"
+    }
+  },
+  "hub_outfield_position_only": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "coherence": {
+        "min_pairwise_distance_m": 0.37111465158185203,
+        "n_groups": 1042730,
+        "ordering_fraction": 1.0
+      },
+      "cv_mae": 6.0672012084891875,
+      "cv_mae_by_possession": {
+        "in_possession": 7.0345455155058065,
+        "out_of_possession": 5.0998569014725685
+      },
+      "cv_mae_by_provider": {
+        "gradientsports": 6.199795601603389,
+        "skillcorner": 5.986299692188448,
+        "sportec": 6.392991280301763
+      },
+      "cv_mae_by_slot": {
+        "1": 6.028530592934045,
+        "2": 6.1119756208617035,
+        "3": 6.086648193143182,
+        "4": 6.041650427017818
+      },
+      "feature_set": "position_only",
+      "n_games": 179,
+      "n_rows": 4170920,
+      "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "run_tree_dirty": false,
+      "subsample_fps": 1.0,
+      "training_platform": "dgx-spark-aarch64",
+      "variant": "position_only"
+    },
+    "sha256": {
+      "SHA256SUMS": "a912205781c9cda786ad6c0b57c168b9865be0ab312ca416cb9348ec99bfbdf8",
+      "metadata.json": "856ce93e18e4cec5f748300ec3ec8712ecc13f38836c4ac4768f2b07db0c4f90",
+      "metrics.json": "e9c1fc71cc663f94aeca6f52ef3f5918e0593767fd610b114a1b4af67f7906eb"
+    }
+  },
+  "hub_xcross_sc_extended": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "brier_lt_base_rate_brier": true,
+        "enough_usable_folds": true,
+        "log_loss_lt_uniform": true,
+        "pr_auc_gt_base_rate": true
+      },
+      "artifact_size_bytes": 1051998,
+      "candidates": {
+        "sc_extended": {
+          "metrics": {
+            "base_rate_brier": 0.04749783997449114,
+            "brier": 0.04362995997071266,
+            "log_loss": 0.16552821695804595,
+            "n_usable_folds": 5,
+            "positive_rate": 0.049997599978056945,
+            "pr_auc": 0.18955706723400065,
+            "pr_auc_std": 0.010542463495062288
+          },
+          "params": {
+            "learning_rate": 0.0728233263660935,
+            "max_depth": 5.475850776451333,
+            "min_child_weight": 18.133423264224906,
+            "n_estimators": 370.38047420313796,
+            "reg_lambda": 2.113448107324796
+          },
+          "providers": [
+            "idsse",
+            "skillcorner"
+          ]
+        }
+      },
+      "corpus_match_ids_sha256": "b6c083f2b8b0575afbe153a48c969ab902e757aee211367a5e61da9f7115130b",
+      "corpus_n_matches": 115,
+      "estimates_are_cv_not_shipped_fit": true,
+      "gk_block_ablation": {
+        "delta_log_loss": -0.0014766812324523981,
+        "delta_pr_auc": 0.008502203345504139,
+        "note": "reported context (marginal predictive value); NOT the tf19_ready gate",
+        "with_gk_log_loss": 0.17250049114227295,
+        "with_gk_pr_auc": 0.20538226125240397,
+        "without_gk_log_loss": 0.17397717237472535,
+        "without_gk_pr_auc": 0.19688005790689983
+      },
+      "gk_substitution_probe": {
+        "gk_dose_ratio_4m_over_2m": 1.8854462849418443,
+        "gk_mean_abs_delta": 0.033390632649996706,
+        "gk_median_abs_delta": 0.011558362108189613,
+        "gk_median_abs_delta_at_2m": 0.008846297860145569,
+        "gk_median_abs_delta_at_4m": 0.01667921943590045,
+        "gk_p90_abs_delta": 0.09644672945141798,
+        "gk_zero_fraction": 0.0,
+        "n_frames_used": 200,
+        "nearest_def_median_abs_delta": 0.00524997990578413,
+        "note": "responsiveness (necessary for TF-19), NOT causal GK primacy (PR-C); nearest-def control is partially self-limiting (floating identity)",
+        "random_band_median_abs_delta": 0.0,
+        "random_band_zero_fraction": 0.7930555555555555,
+        "tf19_probe_abs_floor": 0.01,
+        "tf19_probe_ratio": 2.0,
+        "tf19_ready": true,
+        "tf19_reason": "GK |\u0394| cleared both controls and the absolute floor"
+      },
+      "n_positive": 29165,
+      "n_rows": 583328,
+      "permutation_importance": {
+        "held_out": true,
+        "importances": {
+          "ball_r": 0.03322813766092998,
+          "ball_speed": 0.09767443090524508,
+          "ball_theta": 0.02828159132737822,
+          "box_off_def_ratio": 0.004224164307180437,
+          "dist_endline": 0.03121957698768285,
+          "dist_nearest_def": 0.049629396095716725,
+          "dist_nearest_teammate": 0.050822397084446545,
+          "gk_carrier_side": 0.02057236965060044,
+          "gk_dist_far_post": 0.006135584751245194,
+          "gk_dist_near_post": 0.004344892784704861,
+          "gk_lateral_offset": 0.0026887669728308103,
+          "gk_r": 0.004401592319236528,
+          "gk_theta": 0.006516463638005013,
+          "score_differential": 0.0035619430069584457,
+          "space_controlled": 0.02404185638995777,
+          "ten_minute_warning": 0.0011660384651056212
+        },
+        "n_folds_used": 5,
+        "n_repeats": 10,
+        "note": "CV-held-out, architecture-representative; NOT measured on the production weights' own training data. score_differential importance is qualified by coverage.",
+        "score_differential_coverage": 1.0,
+        "score_differential_importance": 0.0035619430069584457,
+        "scoring": "average_precision"
+      },
+      "probe_gated_on_held_out": false,
+      "probe_sample_in_training_folds": {
+        "gradientsports-10502": false,
+        "gradientsports-10503": false
+      },
+      "probe_sample_matches": [
+        [
+          "gradientsports",
+          "gradientsports-10502"
+        ],
+        [
+          "gradientsports",
+          "gradientsports-10503"
+        ]
+      ],
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit 4095251730ce216decf99ec8e47d8e1162a04a1d on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "score_differential_range_probe": {
+        "abs_ge_12_count": 0,
+        "coverage": 1.0,
+        "max": 5.0,
+        "min": -5.0
+      },
+      "shipped_variant": "sc_extended",
+      "tf19_ready": true
+    },
+    "sha256": {
+      "SHA256SUMS": "2b466fde55076f524d401d5cfe3eb0622bfa5e63f79257277738cc4187b9fa47",
+      "metadata.json": "43b0d4235b0526e71ac36aefe6ab9b3af8727dc932382f2f89c64600f361eb33",
+      "metrics.json": "794529dc4ced083f8164bca4099a8dafd2d878a76adc3967e75ec2e9c1fb2cd4"
+    }
+  },
+  "hub_xcross_sc_extended_position_only": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "brier_lt_base_rate_brier": true,
+        "enough_usable_folds": true,
+        "log_loss_lt_uniform": true,
+        "pr_auc_gt_base_rate": true
+      },
+      "artifact_size_bytes": 1729383,
+      "candidates": {
+        "sc_extended": {
+          "metrics": {
+            "base_rate_brier": 0.04749783997449114,
+            "brier": 0.045371828228235246,
+            "log_loss": 0.17684145867824555,
+            "n_usable_folds": 5,
+            "positive_rate": 0.049997599978056945,
+            "pr_auc": 0.13281335223673293,
+            "pr_auc_std": 0.010584068136579144
+          },
+          "params": {
+            "learning_rate": 0.04940055261648524,
+            "max_depth": 5.926960298757408,
+            "min_child_weight": 16.142689133074022,
+            "n_estimators": 395.4289409686909,
+            "reg_lambda": 4.090574896164053
+          },
+          "providers": [
+            "idsse",
+            "skillcorner"
+          ]
+        }
+      },
+      "corpus_match_ids_sha256": "b6c083f2b8b0575afbe153a48c969ab902e757aee211367a5e61da9f7115130b",
+      "corpus_n_matches": 115,
+      "estimates_are_cv_not_shipped_fit": true,
+      "gk_block_ablation": {
+        "delta_log_loss": -0.0010882049798965343,
+        "delta_pr_auc": 0.0034114675971482766,
+        "note": "reported context (marginal predictive value); NOT the tf19_ready gate",
+        "with_gk_log_loss": 0.18538473546504974,
+        "with_gk_pr_auc": 0.14217926019694493,
+        "without_gk_log_loss": 0.18647294044494628,
+        "without_gk_pr_auc": 0.13876779259979666
+      },
+      "gk_substitution_probe": {
+        "gk_dose_ratio_4m_over_2m": 2.121593830868116,
+        "gk_mean_abs_delta": 0.03642505304884859,
+        "gk_median_abs_delta": 0.01822757162153721,
+        "gk_median_abs_delta_at_2m": 0.014797341078519821,
+        "gk_median_abs_delta_at_4m": 0.031393947545439005,
+        "gk_p90_abs_delta": 0.09273765459656716,
+        "gk_zero_fraction": 0.0008333333333333334,
+        "n_frames_used": 200,
+        "nearest_def_median_abs_delta": 0.007420682348310947,
+        "note": "responsiveness (necessary for TF-19), NOT causal GK primacy (PR-C); nearest-def control is partially self-limiting (floating identity)",
+        "random_band_median_abs_delta": 0.0,
+        "random_band_zero_fraction": 0.7947222222222222,
+        "tf19_probe_abs_floor": 0.01,
+        "tf19_probe_ratio": 2.0,
+        "tf19_ready": true,
+        "tf19_reason": "GK |\u0394| cleared both controls and the absolute floor"
+      },
+      "n_positive": 29165,
+      "n_rows": 583328,
+      "permutation_importance": {
+        "held_out": true,
+        "importances": {
+          "ball_r": 0.029130522915603207,
+          "ball_theta": 0.029866421759009266,
+          "box_off_def_ratio": 0.002177499422979666,
+          "dist_endline": 0.032328116907934454,
+          "dist_nearest_def": 0.03643101966414304,
+          "dist_nearest_teammate": 0.039113479126478,
+          "gk_carrier_side": 0.014047140376318618,
+          "gk_dist_far_post": 0.002870247315053874,
+          "gk_dist_near_post": 0.005102542441176422,
+          "gk_lateral_offset": 0.0008153742411341125,
+          "gk_r": 0.0032978619090910815,
+          "gk_theta": 0.0034971466872003704,
+          "score_differential": 0.004020981847271734,
+          "space_controlled": 0.02389427602300636,
+          "ten_minute_warning": 0.0008487704700555771
+        },
+        "n_folds_used": 5,
+        "n_repeats": 10,
+        "note": "CV-held-out, architecture-representative; NOT measured on the production weights' own training data. score_differential importance is qualified by coverage.",
+        "score_differential_coverage": 1.0,
+        "score_differential_importance": 0.004020981847271734,
+        "scoring": "average_precision"
+      },
+      "probe_gated_on_held_out": false,
+      "probe_sample_in_training_folds": {
+        "gradientsports-10502": false,
+        "gradientsports-10503": false
+      },
+      "probe_sample_matches": [
+        [
+          "gradientsports",
+          "gradientsports-10502"
+        ],
+        [
+          "gradientsports",
+          "gradientsports-10503"
+        ]
+      ],
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit 4095251730ce216decf99ec8e47d8e1162a04a1d on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "score_differential_range_probe": {
+        "abs_ge_12_count": 0,
+        "coverage": 1.0,
+        "max": 5.0,
+        "min": -5.0
+      },
+      "shipped_variant": "sc_extended",
+      "tf19_ready": true
+    },
+    "sha256": {
+      "SHA256SUMS": "d0676d6cf4993b96644bde84417b0b88f026d1e9ee64e14f8f7ffed0555d152f",
+      "metadata.json": "708715cb3810e9a77c9577918c937c9216a17c8acdea397f793702c8a6b0c1d3",
+      "metrics.json": "dce074ac976a794cb7bd416ecf2579df2c32b02164ace3293b445bc2e62c4ac1"
+    }
+  },
+  "hub_xshot_sc_extended": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "brier_lt_base_rate_brier": true,
+        "enough_usable_folds": true,
+        "log_loss_lt_uniform": true,
+        "pr_auc_gt_base_rate": true
+      },
+      "artifact_size_bytes": 1401526,
+      "candidates": {
+        "sc_extended": {
+          "metrics": {
+            "base_rate_brier": 0.013182956756163175,
+            "brier": 0.012324642576277255,
+            "log_loss": 0.05413433164358139,
+            "n_usable_folds": 5,
+            "positive_rate": 0.013361486066056598,
+            "pr_auc": 0.12418024803313799,
+            "pr_auc_std": 0.0033176559335885876
+          },
+          "params": {
+            "learning_rate": 0.04682590864515642,
+            "max_depth": 5.961282620192893,
+            "min_child_weight": 19.571893918406627,
+            "n_estimators": 315.96857308729665,
+            "reg_lambda": 3.511541466546195
+          },
+          "providers": [
+            "idsse",
+            "skillcorner"
+          ]
+        }
+      },
+      "corpus_match_ids_sha256": "b6c083f2b8b0575afbe153a48c969ab902e757aee211367a5e61da9f7115130b",
+      "corpus_n_matches": 115,
+      "estimates_are_cv_not_shipped_fit": true,
+      "n_positive": 12884,
+      "n_rows": 964264,
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit 4095251730ce216decf99ec8e47d8e1162a04a1d on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "shipped_variant": "sc_extended"
+    },
+    "sha256": {
+      "SHA256SUMS": "5e71da1519cfaf00c53873e6fa3f69307dbbc5dc6fa7b58c11e5e0201bf5726d",
+      "metadata.json": "43e12e676b0787093ecb481dc804a8596b40da6c61f339f5e881828daa5453d6",
+      "metrics.json": "b7ad370e07a743c7620b9138a54c4bdb28437f87de9c2c7e027cf5972bbf4b8c"
+    }
+  },
+  "hub_xshot_sc_extended_position_only": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "brier_lt_base_rate_brier": true,
+        "enough_usable_folds": true,
+        "log_loss_lt_uniform": true,
+        "pr_auc_gt_base_rate": true
+      },
+      "artifact_size_bytes": 1706475,
+      "candidates": {
+        "sc_extended": {
+          "metrics": {
+            "base_rate_brier": 0.013182956756163175,
+            "brier": 0.012404374405741691,
+            "log_loss": 0.05553150773048401,
+            "n_usable_folds": 5,
+            "positive_rate": 0.013361486066056598,
+            "pr_auc": 0.11461240813745346,
+            "pr_auc_std": 0.006264190438488677
+          },
+          "params": {
+            "learning_rate": 0.045307673679522174,
+            "max_depth": 5.70638291713359,
+            "min_child_weight": 5.182844454581506,
+            "n_estimators": 326.88626776515673,
+            "reg_lambda": 4.592736779909171
+          },
+          "providers": [
+            "idsse",
+            "skillcorner"
+          ]
+        }
+      },
+      "corpus_match_ids_sha256": "b6c083f2b8b0575afbe153a48c969ab902e757aee211367a5e61da9f7115130b",
+      "corpus_n_matches": 115,
+      "estimates_are_cv_not_shipped_fit": true,
+      "n_positive": 12884,
+      "n_rows": 964264,
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit 4095251730ce216decf99ec8e47d8e1162a04a1d on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "shipped_variant": "sc_extended"
+    },
+    "sha256": {
+      "SHA256SUMS": "cb33bfa1dc93ce3ef6797631df406486d753675ed438a511f6099cb6c1119163",
+      "metadata.json": "af82440b2a168425212a8f4e7b323337d7cce9c420d621744fed15a8816991b6",
+      "metrics.json": "628f1e7378599b980d41315f8337db55b68aafd74b0b6c4911d862e83f68de55"
+    }
+  },
+  "hub_xsuccess": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {},
+    "sha256": {
+      "SHA256SUMS": "a50d9fc1a5620187c530aceb639d75e690e171164d4b93087a159c9005de47d0",
+      "metadata.json": "2d4cf74b538ee879d6f095d6e5036b379b1028edfbee6928884950094fed6028"
+    }
+  },
+  "match_outcome": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {},
+    "sha256": {
+      "SHA256SUMS": "8aa2778ec7073cc355e8713b6dd7515d138266aeaf91672ecd1a230ad4fd6ec9",
+      "model.json": "65f485bb41a33240ce5bbe22245aa20671d5d2dfc6be57f3bfee14850a1fc6dc"
+    }
+  },
+  "outfield_default": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "coherence": {
+        "min_pairwise_distance_m": 0.18236717039555905,
+        "n_groups": 1042730,
+        "ordering_fraction": 0.9999990409789686
+      },
+      "cv_mae": 6.000659221234316,
+      "cv_mae_by_possession": {
+        "in_possession": 6.968224548654058,
+        "out_of_possession": 5.0330938938145735
+      },
+      "cv_mae_by_provider": {
+        "gradientsports": 6.143317050479726,
+        "skillcorner": 5.9144740093659305,
+        "sportec": 6.333118624361591
+      },
+      "cv_mae_by_slot": {
+        "1": 5.959177357167741,
+        "2": 6.049370463129207,
+        "3": 6.0213919263576114,
+        "4": 5.9726971382827045
+      },
+      "feature_set": "faithful",
+      "n_games": 179,
+      "n_rows": 4170920,
+      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "run_tree_dirty": false,
+      "subsample_fps": 1.0,
+      "training_platform": null,
+      "variant": "default"
+    },
+    "sha256": {
+      "SHA256SUMS": "e7fbb99d3ceb425fdd347a4c7422e42ca6e831d87da2c464cbaad5766b7a7408",
+      "metadata.json": "59bc58308b610c186b4730c0226852e94911ddfeeb7fd3db6089c278e5f7f258",
+      "metrics.json": "78c50b9bd266f0ceb72f70720665dbef6982661fbf29e54305a64234e034f20c",
+      "model.npz": "6c95fe347f5f0698e9567139cc742f158742aef971ffce2967954b0f4cf9abe4"
+    }
+  },
+  "outfield_position_only": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "coherence": {
+        "min_pairwise_distance_m": 0.37111465158185203,
+        "n_groups": 1042730,
+        "ordering_fraction": 1.0
+      },
+      "cv_mae": 6.0672012084891875,
+      "cv_mae_by_possession": {
+        "in_possession": 7.0345455155058065,
+        "out_of_possession": 5.0998569014725685
+      },
+      "cv_mae_by_provider": {
+        "gradientsports": 6.199795601603389,
+        "skillcorner": 5.986299692188448,
+        "sportec": 6.392991280301763
+      },
+      "cv_mae_by_slot": {
+        "1": 6.028530592934045,
+        "2": 6.1119756208617035,
+        "3": 6.086648193143182,
+        "4": 6.041650427017818
+      },
+      "feature_set": "position_only",
+      "n_games": 179,
+      "n_rows": 4170920,
+      "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "run_tree_dirty": false,
+      "subsample_fps": 1.0,
+      "training_platform": "dgx-spark-aarch64",
+      "variant": "position_only"
+    },
+    "sha256": {
+      "SHA256SUMS": "a912205781c9cda786ad6c0b57c168b9865be0ab312ca416cb9348ec99bfbdf8",
+      "metadata.json": "856ce93e18e4cec5f748300ec3ec8712ecc13f38836c4ac4768f2b07db0c4f90",
+      "metrics.json": "e9c1fc71cc663f94aeca6f52ef3f5918e0593767fd610b114a1b4af67f7906eb",
+      "model.npz": "eb567913b27f4d4fb9b17a9e596a3808a7d24b03bf8fa41789c290512fd66504"
+    }
+  },
+  "receiver_default": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "candidate_count_distribution": {
+        "mean": 6.363208852005532,
+        "p10": 4.0,
+        "p50": 6.0,
+        "p90": 9.0
+      },
+      "corpus_n_matches": 30,
+      "corpus_visibility": "restricted",
+      "feature_set": "public",
+      "label_coverage": {
+        "n_completed_passes": 16635,
+        "n_kept_passes": 7230
+      },
+      "labeling_strategy": "trajectory",
+      "n_candidate_rows": 46006,
+      "n_matches": 30,
+      "n_passes": 7230,
+      "pooling_gate": {
+        "keep_pool": false,
+        "margin": -0.022084643486216193,
+        "pool_coverage": {
+          "n_completed_passes": 51440,
+          "n_kept_passes": 50719
+        },
+        "pool_provider": "gradientsports",
+        "pooled_top1": 0.4876067689793119,
+        "primary_only_top1": 0.5096914124655281
+      },
+      "provider": "statsbomb",
+      "providers_trained": [
+        "statsbomb"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit b62c1f24a7a9e3361ce416b402ed27da4a59b9e6 on a corpus (statsbomb) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+      "run_tree_dirty": false,
+      "schema": "receiver-rows-2",
+      "top1_by_fold": [
+        0.5231874591770085,
+        0.51004851004851,
+        0.49299719887955185,
+        0.521476510067114,
+        0.5007473841554559
+      ],
+      "top1_cv": 0.5096914124655281,
+      "visible_area_caveat": "SB360 truncates the negative candidate set; see the train-vs-serve shift (M2)."
+    },
+    "sha256": {
+      "MODEL_CARD.md": "9580efdd65f5199d6c1938b432b22f3d762e8a1632cc2bad938470c395c7911a",
+      "SHA256SUMS": "9ba3112ee436ac990382e88953292877a4593cccbdb4db2ab56d55d6706036a2",
+      "metrics.json": "2a56c5b6a39c6697f775b5e221d8a3513e6fef6fe657d93bc65f93ac34c54274",
+      "model.json": "e2dd29415c40c9e896db8f88bd86bbf0cee1a1748a652f83d0938186ed960e8f"
+    }
+  },
+  "retention_default": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "auc": 0.7981415158686122,
+      "ece": 0.030545947004216232,
+      "ece_max": 0.1,
+      "n_games": 64,
+      "n_rows": 3451,
+      "provider": "gradientsports",
+      "reliability_slope": 1.0011414091254551,
+      "slope_tol": 0.25
+    },
+    "sha256": {
+      "MODEL_CARD.md": "0d0a3446b838ed87488d8a4690e714e5c7baf50f3c8806e09f5b2ae525488522",
+      "SHA256SUMS": "42236ef32ea3a232fb39f26a8d4411063df66c9b3cf1507ef4245105af8c0da8",
+      "metrics.json": "bfbcb83da1ad93ca28de5d345502f89972fdc02ced60b851ca64890aa1547e7d",
+      "model.json": "1db36b7e6c0dcb95a5e59c7ca2aefb178e03c035c55e08fbb856e9808524548e"
+    }
+  },
+  "retention_skillcorner": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "auc": 0.6619848427392983,
+      "ece": 0.02859119778855802,
+      "ece_max": 0.1,
+      "n_games": 108,
+      "n_rows": 5477,
+      "provider": "skillcorner",
+      "reliability_slope": 0.9177282714234702,
+      "slope_tol": 0.25
+    },
+    "sha256": {
+      "MODEL_CARD.md": "39b8f5519ec6bb1771d21de2ae497399b01a4ca3255d729430a113da3aca835c",
+      "SHA256SUMS": "a15ffa8589c96b2375d27dc72699164a24008d3f7a5ea34c622f468f6be7f32a",
+      "metrics.json": "fd01bb99ec9bd54ab179c75f68bfdda5f2ad1f949c6ce58f3973f3ebabc5ac7a",
+      "model.json": "a3bfb6d3c78eb8c839b8b1ed21de6b60cac79d661270009c72fa5d8734a49e99"
+    }
+  },
+  "win_probability": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "brier": 0.13852696776122958,
+      "competitions": [
+        [
+          2,
+          27
+        ],
+        [
+          2,
+          44
+        ],
+        [
+          7,
+          27
+        ],
+        [
+          7,
+          108
+        ],
+        [
+          7,
+          235
+        ],
+        [
+          9,
+          27
+        ],
+        [
+          9,
+          281
+        ],
+        [
+          11,
+          1
+        ],
+        [
+          11,
+          2
+        ],
+        [
+          11,
+          4
+        ],
+        [
+          11,
+          21
+        ],
+        [
+          11,
+          22
+        ],
+        [
+          11,
+          23
+        ],
+        [
+          11,
+          24
+        ],
+        [
+          11,
+          25
+        ],
+        [
+          11,
+          26
+        ],
+        [
+          11,
+          27
+        ],
+        [
+          11,
+          37
+        ],
+        [
+          11,
+          38
+        ],
+        [
+          11,
+          39
+        ],
+        [
+          11,
+          40
+        ],
+        [
+          11,
+          41
+        ],
+        [
+          11,
+          42
+        ],
+        [
+          11,
+          90
+        ],
+        [
+          11,
+          278
+        ],
+        [
+          12,
+          27
+        ],
+        [
+          12,
+          86
+        ],
+        [
+          16,
+          1
+        ],
+        [
+          16,
+          2
+        ],
+        [
+          16,
+          4
+        ],
+        [
+          16,
+          21
+        ],
+        [
+          16,
+          22
+        ],
+        [
+          16,
+          23
+        ],
+        [
+          16,
+          24
+        ],
+        [
+          16,
+          25
+        ],
+        [
+          16,
+          26
+        ],
+        [
+          16,
+          27
+        ],
+        [
+          16,
+          37
+        ],
+        [
+          16,
+          39
+        ],
+        [
+          16,
+          41
+        ],
+        [
+          16,
+          44
+        ],
+        [
+          16,
+          71
+        ],
+        [
+          16,
+          76
+        ],
+        [
+          16,
+          276
+        ],
+        [
+          16,
+          277
+        ],
+        [
+          35,
+          75
+        ],
+        [
+          37,
+          4
+        ],
+        [
+          37,
+          42
+        ],
+        [
+          37,
+          90
+        ],
+        [
+          37,
+          281
+        ],
+        [
+          43,
+          3
+        ],
+        [
+          43,
+          51
+        ],
+        [
+          43,
+          54
+        ],
+        [
+          43,
+          55
+        ],
+        [
+          43,
+          106
+        ],
+        [
+          43,
+          269
+        ],
+        [
+          43,
+          270
+        ],
+        [
+          43,
+          272
+        ],
+        [
+          44,
+          107
+        ],
+        [
+          49,
+          3
+        ],
+        [
+          49,
+          107
+        ],
+        [
+          53,
+          106
+        ],
+        [
+          53,
+          315
+        ],
+        [
+          55,
+          43
+        ],
+        [
+          55,
+          282
+        ],
+        [
+          72,
+          30
+        ],
+        [
+          72,
+          107
+        ],
+        [
+          81,
+          48
+        ],
+        [
+          81,
+          275
+        ],
+        [
+          87,
+          84
+        ],
+        [
+          87,
+          268
+        ],
+        [
+          87,
+          279
+        ],
+        [
+          116,
+          68
+        ],
+        [
+          131,
+          281
+        ],
+        [
+          135,
+          281
+        ],
+        [
+          182,
+          281
+        ],
+        [
+          223,
+          282
+        ],
+        [
+          1238,
+          108
+        ],
+        [
+          1267,
+          107
+        ],
+        [
+          1470,
+          274
+        ]
+      ],
+      "corpus_goals_per_match": 2.9575864680636204,
+      "ece": 0.01680112045983158,
+      "expected_goals_tol": 0.5,
+      "generation": "0f876236a812e893",
+      "model_expected_goals": 2.465413775623272,
+      "n_action_rows": 7974436,
+      "n_attempted": 3961,
+      "n_competitions": 80,
+      "n_counters_unrecorded": 0,
+      "n_failed": 0,
+      "n_matches": 3961,
+      "n_oof": 7974436,
+      "reliability_slope": 0.9912837279844693,
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "training_commit": "ae10f8a75c84ef7f8b55297c8ac1d96bbfae8a32"
+    },
+    "sha256": {
+      "MODEL_CARD.md": "d41eee4452fbd00bf4fc703e54f873f4d8cd45fdaaaf5e5b053b4ce6464018dd",
+      "SHA256SUMS": "ccfa71913cfc14b9f1f13bb1b456af454bccd5a6e047d1d4f41598818afce9e3",
+      "metrics.json": "a7f8493f02aaceeec0b236cee25230b42db932c215dfb31ee5d8bd9de60ee44a",
+      "model.json": "7bd1d1fa0ea00fa4dacf26d230ca3b111adf3c69426d9dd255ed8c892e8e9af9"
+    }
+  },
+  "xcross_default": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "brier_lt_base_rate_brier": true,
+        "enough_usable_folds": true,
+        "log_loss_lt_uniform": true,
+        "pr_auc_gt_base_rate": true
+      },
+      "artifact_size_bytes": 186181,
+      "candidates": {
+        "public": {
+          "metrics": {
+            "base_rate_brier": 0.030008727738172862,
+            "brier": 0.0295303862541914,
+            "log_loss": 0.12695114463567733,
+            "n_usable_folds": 5,
+            "positive_rate": 0.03096772791008598,
+            "pr_auc": 0.0872974779264555,
+            "pr_auc_std": 0.022081057079934272
+          },
+          "params": {
+            "learning_rate": 0.040024824991727714,
+            "max_depth": 3.0466648439640007,
+            "min_child_weight": 2.9952852671787142,
+            "n_estimators": 154.28328628761176,
+            "reg_lambda": 3.580151015320821
+          },
+          "providers": [
+            "idsse",
+            "skillcorner"
+          ]
+        }
+      },
+      "corpus_match_ids": [
+        [
+          "idsse",
+          "DFL-MAT-J03WMX"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WN1"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WOH"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WOY"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WPY"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WQQ"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WR9"
+        ],
+        [
+          "skillcorner",
+          "1886347"
+        ],
+        [
+          "skillcorner",
+          "1899585"
+        ],
+        [
+          "skillcorner",
+          "1925299"
+        ],
+        [
+          "skillcorner",
+          "1953632"
+        ],
+        [
+          "skillcorner",
+          "1996435"
+        ],
+        [
+          "skillcorner",
+          "2006229"
+        ],
+        [
+          "skillcorner",
+          "2011166"
+        ],
+        [
+          "skillcorner",
+          "2013725"
+        ],
+        [
+          "skillcorner",
+          "2015213"
+        ],
+        [
+          "skillcorner",
+          "2017461"
+        ]
+      ],
+      "estimates_are_cv_not_shipped_fit": true,
+      "gk_block_ablation": {
+        "delta_log_loss": -0.0002113252878189198,
+        "delta_pr_auc": 0.0022303794318727227,
+        "note": "reported context (marginal predictive value); NOT the tf19_ready gate",
+        "with_gk_log_loss": 0.12695114463567733,
+        "with_gk_pr_auc": 0.0872974779264555,
+        "without_gk_log_loss": 0.12716246992349625,
+        "without_gk_pr_auc": 0.08506709849458277
+      },
+      "gk_substitution_probe": {
+        "gk_dose_ratio_4m_over_2m": 2.0374242198701893,
+        "gk_mean_abs_delta": 0.008421859392644062,
+        "gk_median_abs_delta": 0.0030244968365877867,
+        "gk_median_abs_delta_at_2m": 0.0023102134000509977,
+        "gk_median_abs_delta_at_4m": 0.0047068847343325615,
+        "gk_p90_abs_delta": 0.024499474465847024,
+        "gk_zero_fraction": 0.045,
+        "n_frames_used": 200,
+        "nearest_def_median_abs_delta": 0.001985782291740179,
+        "note": "responsiveness (necessary for TF-19), NOT causal GK primacy (PR-C); nearest-def control is partially self-limiting (floating identity)",
+        "random_band_median_abs_delta": 0.0,
+        "random_band_zero_fraction": 0.8622222222222222,
+        "tf19_probe_abs_floor": 0.01,
+        "tf19_probe_ratio": 2.0,
+        "tf19_ready": false,
+        "tf19_reason": "GK |\u0394| did not clear ratio>=2.0 x control AND abs-floor>=0.01"
+      },
+      "n_positive": 2849,
+      "n_rows": 91999,
+      "permutation_importance": {
+        "held_out": true,
+        "importances": {
+          "ball_r": 0.007225993482528635,
+          "ball_speed": 0.03630967636079597,
+          "ball_theta": 0.0010165187195585223,
+          "box_off_def_ratio": 0.0026523285243376673,
+          "dist_endline": 0.0020485522604122086,
+          "dist_nearest_def": 0.01579871897379592,
+          "dist_nearest_teammate": 0.02696042437166763,
+          "gk_carrier_side": 0.0025984601044850724,
+          "gk_dist_far_post": 0.0035924486376002337,
+          "gk_dist_near_post": 0.002002438404355234,
+          "gk_lateral_offset": 0.0010184689721602746,
+          "gk_r": 0.001249015131150975,
+          "gk_theta": 0.004434508815477798,
+          "score_differential": -0.001973391106160317,
+          "space_controlled": 0.00012839891915057228,
+          "ten_minute_warning": -0.0003225590887135181
+        },
+        "n_folds_used": 5,
+        "n_repeats": 10,
+        "note": "CV-held-out, architecture-representative; NOT measured on the production weights' own training data. score_differential importance is qualified by coverage.",
+        "score_differential_coverage": 1.0,
+        "score_differential_importance": -0.001973391106160317,
+        "scoring": "average_precision"
+      },
+      "probe_gated_on_held_out": false,
+      "probe_sample_in_training_folds": {
+        "10502": false,
+        "10503": false
+      },
+      "probe_sample_matches": [
+        [
+          "gradientsports",
+          "10502"
+        ],
+        [
+          "gradientsports",
+          "10503"
+        ]
+      ],
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ],
+      "reproducibility": "public",
+      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "score_differential_range_probe": {
+        "abs_ge_12_count": 0,
+        "coverage": 1.0,
+        "max": 3.0,
+        "min": -3.0
+      },
+      "shipped_variant": "public",
+      "tf19_ready": false
+    },
+    "sha256": {
+      "SHA256SUMS": "f4d5bd90298e8acca6276c9260df9c6c2fce287055ed8ee70f45f3c877fb73e6",
+      "metadata.json": "7a93753742d3e8bcdd0875828e7497c4a4d4dba1df30c4cb3c4a3ba9dabe6287",
+      "metrics.json": "1d8a1165391eaaee4971bb28343d0759ad8de00dccf1ef5117ce9da7ee347ab3",
+      "model.json": "34a044e308f42eb0074d9512f46ed646b41cc9f0de99b03ea7e1309eaeea1ca4"
+    }
+  },
+  "xcross_position_only": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "brier_lt_base_rate_brier": true,
+        "enough_usable_folds": true,
+        "log_loss_lt_uniform": true,
+        "pr_auc_gt_base_rate": true
+      },
+      "artifact_size_bytes": 197929,
+      "candidates": {
+        "public": {
+          "metrics": {
+            "base_rate_brier": 0.030008727738172862,
+            "brier": 0.029962285235524178,
+            "log_loss": 0.13244572281837463,
+            "n_usable_folds": 5,
+            "positive_rate": 0.03096772791008598,
+            "pr_auc": 0.06069169033301035,
+            "pr_auc_std": 0.01719493468938385
+          },
+          "params": {
+            "learning_rate": 0.027723152335929188,
+            "max_depth": 2.0999607678698733,
+            "min_child_weight": 17.94606222769114,
+            "n_estimators": 257.64674010911756,
+            "reg_lambda": 3.673442441231983
+          },
+          "providers": [
+            "idsse",
+            "skillcorner"
+          ]
+        }
+      },
+      "corpus_match_ids": [
+        [
+          "idsse",
+          "DFL-MAT-J03WMX"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WN1"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WOH"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WOY"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WPY"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WQQ"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WR9"
+        ],
+        [
+          "skillcorner",
+          "1886347"
+        ],
+        [
+          "skillcorner",
+          "1899585"
+        ],
+        [
+          "skillcorner",
+          "1925299"
+        ],
+        [
+          "skillcorner",
+          "1953632"
+        ],
+        [
+          "skillcorner",
+          "1996435"
+        ],
+        [
+          "skillcorner",
+          "2006229"
+        ],
+        [
+          "skillcorner",
+          "2011166"
+        ],
+        [
+          "skillcorner",
+          "2013725"
+        ],
+        [
+          "skillcorner",
+          "2015213"
+        ],
+        [
+          "skillcorner",
+          "2017461"
+        ]
+      ],
+      "estimates_are_cv_not_shipped_fit": true,
+      "gk_block_ablation": {
+        "delta_log_loss": 0.0003157302737236134,
+        "delta_pr_auc": 0.0016272113060743151,
+        "note": "reported context (marginal predictive value); NOT the tf19_ready gate",
+        "with_gk_log_loss": 0.13244572281837463,
+        "with_gk_pr_auc": 0.06069169033301035,
+        "without_gk_log_loss": 0.13212999254465102,
+        "without_gk_pr_auc": 0.05906447902693603
+      },
+      "gk_substitution_probe": {
+        "gk_dose_ratio_4m_over_2m": 3.537671349534259,
+        "gk_mean_abs_delta": 0.00908618203868779,
+        "gk_median_abs_delta": 0.004684541840106249,
+        "gk_median_abs_delta_at_2m": 0.0029117497615516186,
+        "gk_median_abs_delta_at_4m": 0.01030081370845437,
+        "gk_p90_abs_delta": 0.025731599703431147,
+        "gk_zero_fraction": 0.135,
+        "n_frames_used": 200,
+        "nearest_def_median_abs_delta": 0.0021851041819900274,
+        "note": "responsiveness (necessary for TF-19), NOT causal GK primacy (PR-C); nearest-def control is partially self-limiting (floating identity)",
+        "random_band_median_abs_delta": 0.0,
+        "random_band_zero_fraction": 0.8680555555555556,
+        "tf19_probe_abs_floor": 0.01,
+        "tf19_probe_ratio": 2.0,
+        "tf19_ready": false,
+        "tf19_reason": "GK |\u0394| did not clear ratio>=2.0 x control AND abs-floor>=0.01"
+      },
+      "n_positive": 2849,
+      "n_rows": 91999,
+      "permutation_importance": {
+        "held_out": true,
+        "importances": {
+          "ball_r": 0.008396763239156169,
+          "ball_theta": 0.00012171664592784193,
+          "box_off_def_ratio": 0.002589458283273731,
+          "dist_endline": 0.0025924686125389767,
+          "dist_nearest_def": 0.007930951789895283,
+          "dist_nearest_teammate": 0.017402925743249194,
+          "gk_carrier_side": 0.002030686033476943,
+          "gk_dist_far_post": 0.0021968799217887396,
+          "gk_dist_near_post": 0.0005265704632002727,
+          "gk_lateral_offset": 0.0006713637678557666,
+          "gk_r": 0.00024395794648953266,
+          "gk_theta": 0.0027438714596297225,
+          "score_differential": -0.0002369987773276391,
+          "space_controlled": 0.00024625047188351446,
+          "ten_minute_warning": -0.0016628007987898412
+        },
+        "n_folds_used": 5,
+        "n_repeats": 10,
+        "note": "CV-held-out, architecture-representative; NOT measured on the production weights' own training data. score_differential importance is qualified by coverage.",
+        "score_differential_coverage": 1.0,
+        "score_differential_importance": -0.0002369987773276391,
+        "scoring": "average_precision"
+      },
+      "probe_gated_on_held_out": false,
+      "probe_sample_in_training_folds": {
+        "10502": false,
+        "10503": false
+      },
+      "probe_sample_matches": [
+        [
+          "gradientsports",
+          "10502"
+        ],
+        [
+          "gradientsports",
+          "10503"
+        ]
+      ],
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ],
+      "reproducibility": "public",
+      "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "score_differential_range_probe": {
+        "abs_ge_12_count": 0,
+        "coverage": 1.0,
+        "max": 3.0,
+        "min": -3.0
+      },
+      "shipped_variant": "public",
+      "tf19_ready": false
+    },
+    "sha256": {
+      "SHA256SUMS": "329478c2cae38ba5321d8f6683e21ab714d5cd4efba95cf084210d3e198e9a63",
+      "metadata.json": "e4f81337c3fb195231bcd12ef68af1f4867bff3645b90b097348201d1eba8b11",
+      "metrics.json": "6057d62cac882804b075373d9d30add0e46a4471072cc0188c0ee9dbf1d405f3",
+      "model.json": "a1cce22d15f8f25cf0970b77fc846c1aedad4994f2197e32a35349330ad82703"
+    }
+  },
+  "xshot_default": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "brier_lt_base_rate_brier": true,
+        "enough_usable_folds": true,
+        "log_loss_lt_uniform": true,
+        "pr_auc_gt_base_rate": true
+      },
+      "artifact_size_bytes": 322814,
+      "candidates": {
+        "public": {
+          "metrics": {
+            "base_rate_brier": 0.015168847404728032,
+            "brier": 0.01465106662362814,
+            "log_loss": 0.0656601756811142,
+            "n_usable_folds": 5,
+            "positive_rate": 0.015406198352401573,
+            "pr_auc": 0.08194347661467687,
+            "pr_auc_std": 0.018692446459652488
+          },
+          "params": {
+            "learning_rate": 0.021742720847949443,
+            "max_depth": 3.56617910350918,
+            "min_child_weight": 19.455146927198925,
+            "n_estimators": 207.28658266603753,
+            "reg_lambda": 3.9849467204487987
+          },
+          "providers": [
+            "idsse",
+            "skillcorner"
+          ]
+        }
+      },
+      "corpus_match_ids": [
+        [
+          "idsse",
+          "DFL-MAT-J03WMX"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WN1"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WOH"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WOY"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WPY"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WQQ"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WR9"
+        ],
+        [
+          "skillcorner",
+          "1886347"
+        ],
+        [
+          "skillcorner",
+          "1899585"
+        ],
+        [
+          "skillcorner",
+          "1925299"
+        ],
+        [
+          "skillcorner",
+          "1953632"
+        ],
+        [
+          "skillcorner",
+          "1996435"
+        ],
+        [
+          "skillcorner",
+          "2006229"
+        ],
+        [
+          "skillcorner",
+          "2011166"
+        ],
+        [
+          "skillcorner",
+          "2013725"
+        ],
+        [
+          "skillcorner",
+          "2015213"
+        ],
+        [
+          "skillcorner",
+          "2017461"
+        ]
+      ],
+      "estimates_are_cv_not_shipped_fit": true,
+      "n_positive": 2405,
+      "n_rows": 156106,
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ],
+      "reproducibility": "public",
+      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "shipped_variant": "public"
+    },
+    "sha256": {
+      "SHA256SUMS": "2d508202ce92946ab2d7c60948b5bc4f6c6311a2dbc695c8d1cd174c73fe915a",
+      "metadata.json": "119d2a918ed74e8678b331d7eb0bbc86c2fb8303af364e39926f28c330a4def5",
+      "metrics.json": "fbaa153c4f711a5720001f61242b8c3d1115ef5e1d78abf20a38f1dbfdfecb7c",
+      "model.json": "64bf54c4efedb218caab21d613c94ae76d89c433bf4a7fd2025e1ae0bc4bac60"
+    }
+  },
+  "xshot_position_only": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "brier_lt_base_rate_brier": true,
+        "enough_usable_folds": true,
+        "log_loss_lt_uniform": true,
+        "pr_auc_gt_base_rate": true
+      },
+      "artifact_size_bytes": 242797,
+      "candidates": {
+        "public": {
+          "metrics": {
+            "base_rate_brier": 0.015168847404728032,
+            "brier": 0.014732493832707406,
+            "log_loss": 0.06683742105960847,
+            "n_usable_folds": 5,
+            "positive_rate": 0.015406198352401573,
+            "pr_auc": 0.07547108362594587,
+            "pr_auc_std": 0.017431221831010278
+          },
+          "params": {
+            "learning_rate": 0.021567016350550857,
+            "max_depth": 2.6263251775596146,
+            "min_child_weight": 19.790939455552685,
+            "n_estimators": 214.57229803169446,
+            "reg_lambda": 4.060885275895105
+          },
+          "providers": [
+            "idsse",
+            "skillcorner"
+          ]
+        }
+      },
+      "corpus_match_ids": [
+        [
+          "idsse",
+          "DFL-MAT-J03WMX"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WN1"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WOH"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WOY"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WPY"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WQQ"
+        ],
+        [
+          "idsse",
+          "DFL-MAT-J03WR9"
+        ],
+        [
+          "skillcorner",
+          "1886347"
+        ],
+        [
+          "skillcorner",
+          "1899585"
+        ],
+        [
+          "skillcorner",
+          "1925299"
+        ],
+        [
+          "skillcorner",
+          "1953632"
+        ],
+        [
+          "skillcorner",
+          "1996435"
+        ],
+        [
+          "skillcorner",
+          "2006229"
+        ],
+        [
+          "skillcorner",
+          "2011166"
+        ],
+        [
+          "skillcorner",
+          "2013725"
+        ],
+        [
+          "skillcorner",
+          "2015213"
+        ],
+        [
+          "skillcorner",
+          "2017461"
+        ]
+      ],
+      "estimates_are_cv_not_shipped_fit": true,
+      "n_positive": 2405,
+      "n_rows": 156106,
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ],
+      "reproducibility": "public",
+      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "shipped_variant": "public"
+    },
+    "sha256": {
+      "SHA256SUMS": "d26df5634cc10db8aeafdb41c9df401b101263313dcdefa1503e23ae6f881687",
+      "metadata.json": "c1b30e1de9ac4b5585fd49ff99d5c3b0b66ce3c5e3eafa9e473ad35a7ab6e11a",
+      "metrics.json": "5c9dcf3dfd6996369ddc0348e928f7ac46716149d593add86dcd6ee9f3460672",
+      "model.json": "dcc2f07e50fd4755aa2d3fd93f274380616d8fc0f862b377143ed5b788a3ab7a"
+    }
+  },
+  "xsuccess": {
+    "adopted_at": "2026-10-19T02:17:38+00:00",
+    "campaign": "bootstrap (shipped before ADR-128)",
+    "env": {},
+    "metrics_summary": {},
+    "sha256": {
+      "MODEL_CARD.md": "268f16391fca7b188893dd7e8b2c8b85d3349284a27431bbb7cc0645495e455d",
+      "SHA256SUMS": "a50d9fc1a5620187c530aceb639d75e690e171164d4b93087a159c9005de47d0",
+      "metadata.json": "2d4cf74b538ee879d6f095d6e5036b379b1028edfbee6928884950094fed6028",
+      "model.json": "4df8f59457819c7953882a4d071babca2fb4ad2511657ed2a521c52ad355ff4d"
+    }
+  }
+}

@@ -16,6 +16,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from scripts.hf_jobs.manifest import card_sources, strip_markers
+
 #: The COMPLETE set of files a distributed model artifact may contain. Everything else the trainer
 #: leaves in the artifact dir (feature caches, raw-frame shards, probe samples) is training-internal
 #: and MUST NOT be published. `allow_patterns` are matched on the repo-relative path, so these bare
@@ -30,37 +32,21 @@ MODEL_ONLY_ALLOWLIST: tuple[str, ...] = (
     "README.md",
 )
 
-_CARD_DIR = "docs/huggingface/model-cards"
-
 #: Every Hub repo of the org -> the in-repo card its README must equal (combined-cycle spec 9, D9).
 #: The single source for the card-only seam and for validate_hub_variants (whose test asserts these
 #: keys equal its HUB_REGISTRY). A card is never taken from a free path, so it cannot reach the wrong repo.
-CARD_SOURCE: dict[str, str] = {
-    **{
-        f"silly-kicks/{name}": f"{_CARD_DIR}/{name}-model-card.md"
-        for name in (
-            "xshot-occurrence-v1",
-            "xshot-occurrence-position-only-v1",
-            "xcross-attempt-v1",
-            "xcross-attempt-position-only-v1",
-            "ghost-gk-v1",
-            "ghost-gk-sweeper-v1",
-            "ghost-gk-sweeper-position-only-v1",
-            "ghost-outfield-v1",
-            "ghost-outfield-position-only-v1",
-        )
-    },
-    "silly-kicks/xsuccess-v1": "silly_kicks/xsuccess/weights/MODEL_CARD.md",
-}
+#: ADR-128 (spec 5.7): derived from the artifact manifest (each Hub artifact's ``card``).
+CARD_SOURCE: dict[str, str] = card_sources()
 
 
 def card_bytes(model_card: str | Path) -> bytes:
-    """The card exactly as the Hub serves it: LF line endings. A Windows checkout with
-    core.autocrlf=true holds CRLF; every Hub README is LF (measured 2026-10-02)."""
+    """The card exactly as the Hub serves it: LF line endings and no generated-region markers (the
+    markers are repo-only, ADR-128 decision P7). A Windows checkout with core.autocrlf=true holds CRLF;
+    every Hub README is LF (measured 2026-10-02)."""
     card = Path(model_card)
     if not card.is_file():
         raise SystemExit(f"model card {card} does not exist (required for a real publish, uploaded as README.md).")
-    return card.read_bytes().replace(b"\r\n", b"\n")
+    return strip_markers(card.read_bytes().decode("utf-8")).encode("utf-8").replace(b"\r\n", b"\n")
 
 
 def _sha256(data: bytes) -> str:

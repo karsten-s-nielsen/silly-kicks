@@ -12,20 +12,13 @@ import json
 import math
 from pathlib import Path
 
+from scripts.hf_jobs.manifest import hub_registry
+
 ORG = "silly-kicks"
 #: repo -> (silly_kicks.tracking class, role). role: hf_only | mirror (a wheel variant republished) | event_only.
-HUB_REGISTRY: dict[str, tuple[str, str]] = {
-    "silly-kicks/xshot-occurrence-v1": ("XShotOccurrenceModel", "hf_only"),
-    "silly-kicks/xshot-occurrence-position-only-v1": ("XShotOccurrenceModel", "hf_only"),
-    "silly-kicks/xcross-attempt-v1": ("XCrossAttemptModel", "hf_only"),
-    "silly-kicks/xcross-attempt-position-only-v1": ("XCrossAttemptModel", "hf_only"),
-    "silly-kicks/ghost-gk-v1": ("GhostGkModel", "hf_only"),  # the Hub-only `full` variant (spec 0.10)
-    "silly-kicks/ghost-gk-sweeper-v1": ("GhostGkModel", "mirror"),
-    "silly-kicks/ghost-gk-sweeper-position-only-v1": ("GhostGkModel", "mirror"),
-    "silly-kicks/ghost-outfield-v1": ("GhostOutfieldModel", "mirror"),
-    "silly-kicks/ghost-outfield-position-only-v1": ("GhostOutfieldModel", "mirror"),
-    "silly-kicks/xsuccess-v1": ("", "event_only"),
-}
+#: ADR-128 (spec 5.7): derived from the artifact manifest (each Hub artifact's ``hub_class`` / ``hub_role``;
+#: ``silly-kicks/ghost-gk-v1`` is the Hub-only `full` variant, spec 0.10).
+HUB_REGISTRY: dict[str, tuple[str, str]] = hub_registry()
 
 
 def check_population(listed: set[str]) -> None:

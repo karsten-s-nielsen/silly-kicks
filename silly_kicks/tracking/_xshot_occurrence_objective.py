@@ -21,6 +21,7 @@ See NOTICE for full bibliographic citations.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -49,6 +50,69 @@ class _Invariant:
     groups: np.ndarray
 
 
+def cv_fold_plan(y, groups) -> list[tuple[int, np.ndarray, np.ndarray]]:
+    """The seeded StratifiedGroupKFold split `_cv_logloss` uses -- single-sourced so a fold-parallel
+    evaluation (ADR-128 ruling 4) and the serial one walk the SAME folds.
+
+    ``StratifiedGroupKFold.split`` reads ``X`` only for its length, so a zeros column stands in for it.
+    """
+    # game_id dtype is provider-asymmetric (kloppy str vs Gradient Sports int); a mixed cross-provider
+    # groups array breaks np.unique/StratifiedGroupKFold's sort, so groups are normalised to str.
+    groups = np.asarray(groups).astype(str)
+    n_splits = min(5, len(np.unique(groups)))
+    if n_splits < 2:
+        n_splits = 2
+    gkf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    y = np.asarray(y)
+    return [(i, tr, te) for i, (tr, te) in enumerate(gkf.split(np.zeros((len(y), 1)), y, groups))]
+
+
+def eval_fold(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    fold_i: int,
+    tr: np.ndarray,
+    te: np.ndarray,
+    params: dict,
+    *,
+    negative_subsample: float | None = None,
+    subsample_seed: int = 42,
+) -> tuple[float, float | None, float] | None:
+    """One fold of `_cv_logloss`: ``(log_loss, pr_auc | None, brier)``, or None for a skipped fold.
+
+    ``negative_subsample`` thins negatives in the TRAIN fold only (``subsample_seed + fold_i``); the
+    held-out fold ``te`` is never subsampled.
+    """
+    import xgboost as xgb
+
+    y = np.asarray(y)
+    if len(np.unique(y[tr])) < 2:
+        return None
+    Xtr, ytr = X.iloc[tr], y[tr]
+    if negative_subsample:  # TRAIN fold only; eval fold (te) is never subsampled
+        Xtr, ytr, _ = subsample_negatives(Xtr, ytr, ytr, fraction=negative_subsample, seed=subsample_seed + fold_i)
+        if len(np.unique(ytr)) < 2:
+            return None
+    clf = xgb.XGBClassifier(**_pinned_params(params))
+    clf.fit(Xtr.to_numpy(dtype=float), ytr)
+    p = clf.predict_proba(X.iloc[te].to_numpy(dtype=float))[:, 1]
+    pr = float(average_precision_score(y[te], p)) if len(np.unique(y[te])) == 2 else None
+    return (float(log_loss(y[te], p, labels=[0, 1])), pr, float(brier_score_loss(y[te], p)))
+
+
+def combine_folds(results) -> tuple[float, float, float]:
+    """Means over the evaluated folds, in FOLD order (the caller passes them in fold order)."""
+    kept = [r for r in results if r is not None]
+    if not kept:
+        return float("inf"), float("nan"), float("nan")
+    prs = [r[1] for r in kept if r[1] is not None]
+    return (
+        float(np.mean([r[0] for r in kept])),
+        float(np.mean(prs)) if prs else float("nan"),
+        float(np.mean([r[2] for r in kept])),
+    )
+
+
 def _cv_logloss(
     X: pd.DataFrame,
     y: np.ndarray,
@@ -68,38 +132,11 @@ def _cv_logloss(
     (``subsample_seed + fold_index``) so the cache-equivalence gate (evaluate vs evaluate_patch)
     still holds.
     """
-    import xgboost as xgb
-
-    # game_id dtype is provider-asymmetric (kloppy str hashes vs Gradient Sports int); a mixed
-    # cross-provider groups array breaks np.unique/StratifiedGroupKFold's sort. Normalize to str
-    # for grouping (PR-S80: real-multi-provider fix; the model itself never stores game_id).
-    groups = np.asarray(groups).astype(str)
-    n_splits = min(5, len(np.unique(groups)))
-    if n_splits < 2:
-        n_splits = 2
-    gkf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    lls, prs, brs = [], [], []
-    for fold_i, (tr, te) in enumerate(gkf.split(X, y, groups)):
-        if len(np.unique(y[tr])) < 2:
-            continue
-        Xtr, ytr = X.iloc[tr], y[tr]
-        if negative_subsample:  # TRAIN fold only; eval fold (te) is never subsampled
-            Xtr, ytr, _ = subsample_negatives(Xtr, ytr, ytr, fraction=negative_subsample, seed=subsample_seed + fold_i)
-            if len(np.unique(ytr)) < 2:
-                continue
-        clf = xgb.XGBClassifier(**_pinned_params(params))
-        clf.fit(Xtr.to_numpy(dtype=float), ytr)
-        p = clf.predict_proba(X.iloc[te].to_numpy(dtype=float))[:, 1]
-        lls.append(log_loss(y[te], p, labels=[0, 1]))
-        if len(np.unique(y[te])) == 2:
-            prs.append(average_precision_score(y[te], p))
-        brs.append(brier_score_loss(y[te], p))
-    if not lls:
-        return float("inf"), float("nan"), float("nan")
-    return (
-        float(np.mean(lls)),
-        float(np.mean(prs)) if prs else float("nan"),
-        float(np.mean(brs)),
+    return combine_folds(
+        [
+            eval_fold(X, y, i, tr, te, params, negative_subsample=negative_subsample, subsample_seed=subsample_seed)
+            for i, tr, te in cv_fold_plan(y, groups)
+        ]
     )
 
 
@@ -115,9 +152,17 @@ class XShotOccurrenceObjective:
     patch_params = frozenset(_SEARCH_KEYS)
 
     def __init__(
-        self, *, fold: dict[str, list[tuple]], negative_subsample: float | None = None, subsample_seed: int = 42
+        self,
+        *,
+        fold: dict[str, list[tuple]],
+        negative_subsample: float | None = None,
+        subsample_seed: int = 42,
+        fold_map: Callable[[dict], dict[str, tuple | None]] | None = None,
     ) -> None:
         self._fold = fold
+        # ADR-128 ruling 4: ``fold_map(params) -> {int_key(fold_i): eval_fold result}`` evaluates the
+        # trial's folds in parallel (an InnerPool); combined in SORTED key order, so numerics are unchanged.
+        self._fold_map = fold_map
         # TRAIN-fold-only negative subsampling (PR-S80 M3); off by default. Never touches eval folds.
         self._negative_subsample = negative_subsample
         self._subsample_seed = subsample_seed
@@ -151,14 +196,18 @@ class XShotOccurrenceObjective:
         --------
         >>> # obj.evaluate_patch(inv, candidate)["logloss"]
         """
-        ll, pr, br = _cv_logloss(
-            invariant.X,
-            invariant.y,
-            invariant.groups,
-            self._params(candidate),
-            negative_subsample=self._negative_subsample,
-            subsample_seed=self._subsample_seed,
-        )
+        if self._fold_map is not None:
+            res = self._fold_map(self._params(candidate))
+            ll, pr, br = combine_folds([res[k] for k in sorted(res)])
+        else:
+            ll, pr, br = _cv_logloss(
+                invariant.X,
+                invariant.y,
+                invariant.groups,
+                self._params(candidate),
+                negative_subsample=self._negative_subsample,
+                subsample_seed=self._subsample_seed,
+            )
         return {"logloss": ll, "pr_auc": pr, "brier": br}
 
     def evaluate(self, candidate: Candidate) -> Metrics:

@@ -9,13 +9,18 @@ M2 -- the SB360 visible area truncates the NEGATIVE candidate set (the model ran
 teammates in training but ALL teammates at GS serve), so the per-frame candidate-count distribution is
 recorded for the train-vs-serve shift check.
 
-Owner-run, local pining (NOT DGX). `--feature-set owner --provider gradientsports` trains the GS
-velocity variant (Task 6b); the default trains the public SB360 model.
+ADR-128 stage contract (decisions P5, P17): ``extract[match]`` over the staged ``--dataset`` ->
+``pool[match]`` (optional ``--pool-dataset``) -> ``fit`` -> ``deploy[match]`` (owner variant with
+``--public-bundle``, over ``--deployment-dataset``) -> ``assemble`` (the bundle). Every corpus is a STAGED
+neutral dataset; the corpus visibility and the requested corpus size arrive as parameters
+(``--corpus-visibility``, ``--corpus-n-matches``, from ``datasets.toml`` + the staging lock), so the module
+never reaches the pining client (the I1 gate). `--feature-set owner --provider gradientsports` trains the
+GS velocity variant (Task 6b); the default trains the public SB360 model. The DGX runs the same CLI on
+locally materialised staged data (ruling 11).
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import pathlib
 
@@ -23,8 +28,7 @@ import numpy as np
 import pandas as pd
 
 from scripts._cover_shadow_thresholds import MIN_RECEIVER_MARGIN
-from scripts._driver import for_each, reconcile
-from scripts._provenance import git_provenance, require_clean_tree
+from scripts._stages import ItemStage, Param, Pipeline, Stage, main
 from silly_kicks.id_compat import canonical_id, same_id
 from silly_kicks.spadl.config import actiontypes, results
 from silly_kicks.tracking import link_actions_to_frames
@@ -362,285 +366,148 @@ def _candidate_count_distribution(rows: pd.DataFrame) -> dict:
     }
 
 
-def _corpus_source(provider: str, cache_dir, match_ids: dict | None = None):
-    """The trained provider's corpus as ``(refs, load)`` (spec section 4.5): a cheap ref list plus a
-    single-match loader that yields ``(match_id, actions, frames)``. ``statsbomb`` -> SB360 freeze
-    frames (positions-only, public variant); any tracking provider (e.g. ``gradientsports``) -> real
-    tracking frames WITH velocity, which the owner variant requires. Both route through ``load_match``,
-    whose per-provider dispatch builds the right frames."""
-    from scripts._loader_pining import pining_source
-
-    refs, base_load = pining_source([provider], cache_dir=cache_dir, match_ids=match_ids)
-
-    def load(ref):
-        lm = base_load(ref)
-        return (lm.match_id, lm.actions, lm.frames)
-
-    return refs, load
-
-
-def _data_dir_source(data_dir):
-    """ADR-123 dataset-AGNOSTIC corpus as ``(refs, load)``: the STAGED flat per-match frames + ``_actions``
-    (``shards/<gen>/<key>.parquet`` + ``_actions/<key>.parquet``, or flat ``*.parquet`` + ``_actions/``) --
-    the same shape the head-to-head receiver eval reads. ``load`` yields ``(match_id, actions, frames)``,
-    identical to ``_corpus_source``. NO pining, NO manifest, NO ``--providers``: how the dataset was staged
-    (pining on a DGX, statsbombpy, anyone's loader) is off-job and not the in-job code's concern."""
-    import glob
-    from collections import namedtuple
-
-    data_dir = pathlib.Path(data_dir)
-    Ref = namedtuple("Ref", ["match_id", "frames_path", "actions_path"])
-    frame_shards = [pathlib.Path(p) for p in sorted(glob.glob(str(data_dir / "shards" / "*" / "*.parquet")))]
-    if not frame_shards:
-        frame_shards = [pathlib.Path(p) for p in sorted(glob.glob(str(data_dir / "*.parquet")))]
-    adir = data_dir / "_actions"
-    refs = [Ref(match_id=f.stem, frames_path=f, actions_path=adir / f.name) for f in frame_shards]
-
-    def load(ref):
-        frames = pd.read_parquet(ref.frames_path)
-        actions = pd.read_parquet(ref.actions_path) if ref.actions_path.exists() else pd.DataFrame()
-        return (ref.match_id, actions, frames)
-
-    return refs, load
-
-
-def _resolve_deployment(public_bundle, owner_model, provider, cache_dir, shard_root, out_dir, prov_commit) -> dict:
-    """M-A(ii): pool per-match public-vs-owner failed-pass accuracy over the trained provider's corpus and
-    reduce to ONE :func:`deployment_decision`. A SECOND sharded pass (its own generation), resumable."""
-    public_model = ReceiverModel.load(public_bundle)
-    refs, load = _corpus_source(provider, cache_dir)
-    res = for_each(
-        refs,
-        key=lambda ref: ref.match_id,  # pre-migration key was the match_id; _KEY_EXCEPTIONS
-        load=load,
-        work=lambda t: _deployment_counts_for_match(public_model, owner_model, t[1], t[2], match_id=t[0]),
-        shard_root=shard_root,
-        token_inputs={
-            "schema": "receiver-deploy-1",
-            "provider": provider,  # F4: two owner runs with different --provider must not share a generation
-            "columns": _DEPLOY_SHARD_COLUMNS,
-            "commit": prov_commit,
-        },
-        label="deploy",
-    )
-    pooled = reconcile(res.shard_dir, out_dir / "deployment_counts.parquet", tag="deploy")
-    return _pooled_deployment(pooled)
-
-
 def _namespace_game_ids(rows, provider):
     """F3: provider-prefix ``game_id`` so a pooled corpus can never collide ids across providers (which
     would under-count ``n_matches`` and make the post-pool CV provider-blind). The prefix is bijective, so
-    grouping/CV is unchanged for a single provider. Single-sourced so the normal extract path and the
-    ``--owner-rows`` lean path (which reads the RAW-id per-provider parquet) produce the SAME in-memory rows."""
+    grouping/CV is unchanged for a single provider. Single-sourced so the primary and the pool stage
+    produce the SAME in-memory rows."""
     if not len(rows):
         return rows
     return rows.assign(game_id=f"{provider}:" + rows["game_id"].astype(str))
 
 
-def _extract_provider_rows(
-    provider, feature_set, shard_root, cache_dir, out_path, tag, match_ids=None, shard_index=None, data_dir=None
-):
-    """Shard + reconcile one provider's candidate rows with ITS per-provider labeling strategy (Q4), and
-    return ``(rows, coverage_counters)``. Primary and pool providers get DISTINCT generations (the token
-    keys on ``provider``), so they never collide under one ``shard_root``.
+# ---- ADR-128 stage contract -------------------------------------------------------------------------
+#
+# extract[match] (primary dataset) -> pool[match] (optional pool dataset) -> fit (one unit) ->
+# deploy[match] (owner variant with a public bundle only) -> assemble (one unit, the bundle).
+#
+# Decision P5 / P17: every input is a STAGED dataset parameter; corpus visibility and the requested
+# corpus size are explicit parameters from `datasets.toml` + `datasets.lock.json` (the campaign
+# controller passes them), so nothing in this module's import closure reads the pining client (I1).
 
-    ``data_dir`` (ADR-123): read the STAGED flat corpus (``_data_dir_source``) instead of live pining -- the
-    dataset-agnostic in-job path. ``provider`` still selects the per-provider labeling strategy + keys the
-    shard generation. ``shard_index`` ("I/N", ADR-123): extract only this disjoint subset of the match refs
-    to the shared ``shard_root`` and return EMPTY rows (an extract-only fan-out worker -- the reduce
-    reconciles + fits over all the shards). The partition is a disjoint cover of the refs."""
-    strategy = labeling_strategy_for_provider(provider)
-    refs, load = _data_dir_source(data_dir) if data_dir is not None else _corpus_source(provider, cache_dir, match_ids)
-    if shard_index is not None:
-        from scripts._driver import shard_select
-
-        _i, _n = (int(x) for x in shard_index.split("/"))
-        refs = shard_select(refs, _i, _n)
-    res = for_each(
-        refs,
-        key=lambda ref: ref.match_id,  # pre-migration key was the match_id; _KEY_EXCEPTIONS
-        load=load,
-        work=lambda t: extract_candidate_rows(t[1], t[2], feature_set=feature_set, labeling_strategy=strategy),
-        shard_root=shard_root,
-        token_inputs={
-            "schema": _SHARD_SCHEMA_VERSION,
-            "feature_set": feature_set,
-            "provider": provider,
-            "labeling_strategy": strategy,
-            "columns": _emitted_columns(feature_set),
-        },
-        counters=_coverage_counters,
-        label=tag,
-    )
-    if shard_index is not None:
-        # Extract-only fan-out worker: shards are written to the shared shard_root; the reduce reconciles.
-        return pd.DataFrame(), dict(res.counters)
-    # Per-provider parquet keeps RAW ids; the returned in-memory rows -- what the model fits + the manifest
-    # counts -- are provider-namespaced so a pooled corpus stays collision-free (F3).
-    rows = _namespace_game_ids(reconcile(res.shard_dir, out_path, tag=tag), provider)
-    return rows, dict(res.counters)
-
-
-def _corpus_visibility(pairs, visibility: dict) -> str:
-    """ADR-038: visibility from the MANIFEST, never the provider name (the rule this trainer kept at :529
-    after ADR-038 deleted it elsewhere). Fail-closed: empty or any non-public match -> restricted."""
-    from scripts._corpus import requested_is_all_public
-
-    return "public" if requested_is_all_public(list(pairs), visibility) else "restricted"
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Train the public (SB360) / owner (GS) receiver model.")
-    ap.add_argument("--out", type=pathlib.Path, required=True)
-    ap.add_argument("--shard-root", type=pathlib.Path, required=True)
-    ap.add_argument("--feature-set", choices=["public", "owner"], default="public")
-    ap.add_argument("--provider", default="statsbomb")
-    ap.add_argument(
-        "--pool-provider",
-        default=None,
-        help="a SECOND provider to POOL into the public model IF it earns inclusion on the primary held-out "
-        "(Q3) -- e.g. --provider statsbomb --pool-provider gradientsports. The primary is the serve target.",
-    )
-    ap.add_argument("--cache-dir", default=None, help="pining cache dir for a tracking provider (owner variant)")
-    ap.add_argument(
-        "--data-dir",
-        type=pathlib.Path,
-        default=None,
-        help="ADR-123 dataset-AGNOSTIC corpus: read the STAGED flat per-match frames + _actions "
-        "(shards/<gen>/*.parquet + _actions/, the head-to-head eval shape) instead of live pining. NO "
-        "pining/manifest/--providers in-job; --provider still selects the labeling strategy. The HF path.",
-    )
-    ap.add_argument(
-        "--match-ids-json",
-        default=None,
-        help='JSON {"statsbomb": [id, ...]} restricting the PRIMARY provider\'s corpus (e.g. the 30-match '
-        "fallback re-fit, combined-cycle spec 7). Default: the whole manifest.",
-    )
-    ap.add_argument(
-        "--public-bundle",
-        type=pathlib.Path,
-        default=None,
-        help="public bundle dir -> run the M-A(ii) deployment gate (public vs this owner variant) on GS-failed",
-    )
-    ap.add_argument(
-        "--owner-rows",
-        type=pathlib.Path,
-        default=None,
-        help="reuse a pre-extracted candidate_rows.parquet and SKIP the training corpus re-parse (the "
-        "deployment gate still parses the provider once). Lean path for completing the owner M-A resolution "
-        "-- a GS match is ~4M frames / ~74s to parse, so re-parsing it just to skip an existing shard is pure "
-        "waste (ADR-052: for_each resumes work, not item production).",
-    )
-    ap.add_argument("--allow-dirty", action="store_true")
-    ap.add_argument(
-        "--shard-index",
-        default=None,
-        help="I/N (ADR-123): extract only this disjoint subset of the PRIMARY provider's match refs to the "
-        "shared --shard-root and exit before the reconcile/fit (extract fan-out worker). The reduce (no "
-        "--shard-index) resumes every shard and fits. Not supported with --pool-provider.",
-    )
-    ap.add_argument("--min-rows", type=int, default=1)
+_PARAMS = (
+    Param("dataset", str, None, required=True, help="the PRIMARY staged dataset (the serve target)"),
+    Param("feature_set", str, "public", choices=("public", "owner")),
+    Param("provider", str, "statsbomb", help="the primary provider: selects the labeling strategy"),
+    Param("pool_dataset", str, None, help="a SECOND staged dataset to POOL in if it earns inclusion (Q3)"),
+    Param("pool_provider", str, None, help="the pool dataset's provider (its labeling strategy)"),
+    Param("deployment_dataset", str, None, help="owner variant: the dataset the M-A(ii) gate scores"),
+    Param("public_bundle", str, None, help="owner variant: the public bundle dir for the M-A(ii) gate"),
+    Param("match_ids_json", str, None, help="JSON list of PRIMARY unit stems to keep (default: all)"),
+    Param("min_rows", int, 1),
     # A corpus-volume floor so a partial download cannot silently bundle a model. Injectable; RAISE it to
     # the corpus's expected pass volume for a production bundling run (mirrors build_rq_pass_scores).
-    ap.add_argument("--min-passes", type=int, default=200)
-    args = ap.parse_args()
+    Param("min_passes", int, 200),
+    Param("corpus_visibility", str, None, required=True, choices=("public", "restricted")),
+    Param("corpus_n_matches", int, None, required=True, help="the requested corpus size (the staging lock)"),
+)
 
-    prov = git_provenance()
-    require_clean_tree(prov, allow_dirty=args.allow_dirty)
 
-    args.out.mkdir(parents=True, exist_ok=True)
+def _staged_refs(ctx, param: str):
+    """The staged units of the dataset named by ``param`` (none when it is unset)."""
+    from scripts._driver_sources import staged_flat_refs
 
-    # Map/reduce extract fan-out (ADR-123): a --shard-index worker extracts its disjoint ref subset to the
-    # shared --shard-root and exits before the reconcile/fit; the reduce (no --shard-index) assembles + fits.
-    if args.shard_index is not None:
-        if args.pool_provider:
-            raise SystemExit("--shard-index (extract fan-out) does not support --pool-provider; fan the primary")
-        _extract_provider_rows(
-            args.provider,
-            args.feature_set,
-            args.shard_root,
-            args.cache_dir,
-            args.out / "candidate_rows.parquet",
-            "all",
-            match_ids=json.loads(pathlib.Path(args.match_ids_json).read_text(encoding="utf-8"))
-            if args.match_ids_json
-            else None,
-            shard_index=args.shard_index,
-            data_dir=args.data_dir,
+    dataset = ctx.params[param]
+    if not dataset:
+        return []
+    refs = staged_flat_refs(ctx.data_root, dataset)
+    if param == "dataset" and ctx.params["match_ids_json"]:
+        keep = {str(m) for m in json.loads(ctx.params["match_ids_json"])}
+        refs = [r for r in refs if r.stem in keep]
+    return refs
+
+
+def _load_staged(ref, ctx, param: str):
+    """``(match_id, actions, frames)`` of one staged unit -- the legacy ``_data_dir_source`` shape."""
+    from scripts._driver_sources import dataset_dir, read_dataset_parquet
+
+    root = dataset_dir(ctx.data_root, ctx.params[param])
+    frames = read_dataset_parquet(root / ref.files[0])
+    apath = root / ref.files[1]
+    actions = read_dataset_parquet(apath) if apath.exists() else pd.DataFrame()
+    return (ref.stem, actions, frames)
+
+
+def _rows_declare(provider_param: str):
+    def declare(p):
+        provider = p[provider_param]
+        return {
+            "schema": _SHARD_SCHEMA_VERSION,
+            "feature_set": p["feature_set"],
+            "provider": provider,
+            "labeling_strategy": labeling_strategy_for_provider(provider) if provider else None,
+            "columns": _emitted_columns(p["feature_set"]),
+        }
+
+    return declare
+
+
+def _rows_work(provider_param: str):
+    def work(item, ctx):
+        _mid, actions, frames = item
+        strategy = labeling_strategy_for_provider(ctx.params[provider_param])
+        return extract_candidate_rows(
+            actions, frames, feature_set=ctx.params["feature_set"], labeling_strategy=strategy
         )
-        print(f"Shard {args.shard_index}: extraction complete; exiting before reconcile/fit (reduce assembles).")
-        return
 
-    if args.owner_rows is not None:
-        # Lean path: reuse the RAW-id per-provider parquet; only the deployment gate re-parses the provider.
-        # Namespace exactly as _extract_provider_rows would, so this is a faithful drop-in (and composes with
-        # --pool-provider without half-namespacing the corpus).
-        rows = _namespace_game_ids(pd.read_parquet(args.owner_rows), args.provider)
-        coverage = {"note": "rows from --owner-rows; coverage not recomputed"}
-    else:
-        # PRIMARY corpus (the serve target; SB360 -> trajectory labels, a tracking provider -> id labels).
-        rows, coverage = _extract_provider_rows(
-            args.provider,
-            args.feature_set,
-            args.shard_root,
-            args.cache_dir,
-            args.out / "candidate_rows.parquet",
-            "all",
-            match_ids=json.loads(pathlib.Path(args.match_ids_json).read_text(encoding="utf-8"))
-            if args.match_ids_json
-            else None,
-            data_dir=args.data_dir,
-        )
+    return work
+
+
+def _concat_non_empty(results, ctx):
+    """The legacy ``reconcile``: non-empty shards in sorted key order; a column-less frame when none."""
+    from scripts._stages import combine_frames
+
+    return combine_frames([f for f in results.values() if len(f)], ids=("game_id", "player_id", "team_id"))
+
+
+def _fit_work(key, ctx):
+    import tempfile
+
+    from scripts._corpus_identity import reproducibility
+    from scripts._stages import FileSet, item_counters
+
+    p = ctx.params
+    fs, provider = p["feature_set"], p["provider"]
+    rows = _namespace_game_ids(ctx.upstream("extract"), provider)
+    coverage, _missing = item_counters(ctx, "extract")
+    failed = ctx.summary("extract")["n_failed"]
+    if failed:  # a thinned corpus is VISIBLE in metrics.json, never silent (the legacy fit the rest)
+        coverage = {**coverage, "n_failed_matches": failed}
 
     # `reconcile` returns a COLUMN-LESS frame when no shard is non-empty, so guard `both_classes` on
     # `len(rows)` (F2) -- else `rows["label"]` raises KeyError before the vacuity message can fire.
     n_passes = int(rows.groupby(["game_id", "action_id"]).ngroups) if len(rows) else 0
     both_classes = len(rows) > 0 and bool((rows["label"] == 1).any()) and bool((rows["label"] == 0).any())
-    if len(rows) < args.min_rows or n_passes < args.min_passes or not both_classes:
-        raise SystemExit(
+    if len(rows) < p["min_rows"] or n_passes < p["min_passes"] or not both_classes:
+        raise RuntimeError(
             f"vacuous training set: {len(rows)} rows / {n_passes} passes "
-            f"(need >= {args.min_rows} rows, >= {args.min_passes} passes, BOTH classes present)"
+            f"(need >= {p['min_rows']} rows, >= {p['min_passes']} passes, BOTH classes present)"
         )
 
     # Q3: a POOL provider (GS) earns inclusion only if it does NOT regress the PRIMARY held-out top-1.
-    providers, pool_gate, pool_coverage = {args.provider}, None, None
-    if args.pool_provider:
-        pool_rows, pool_coverage = _extract_provider_rows(
-            args.pool_provider,
-            args.feature_set,
-            args.shard_root,
-            args.cache_dir,
-            args.out / "pool_rows.parquet",
-            "pool",
-        )
-        pool_gate = pooling_gate(rows, pool_rows, args.feature_set)
+    providers, pool_gate = {provider}, None
+    if p["pool_dataset"]:
+        pool_rows = _namespace_game_ids(ctx.upstream("pool"), p["pool_provider"])
+        pool_coverage, _ = item_counters(ctx, "pool")
+        pool_gate = pooling_gate(rows, pool_rows, fs)
         # F1: an EMPTY pool ties the gate (margin 0 -> keep_pool True) but contributes nothing; gating on
-        # len(pool_rows) stops a zero-contribution pool from falsely stamping providers_trained/visibility.
+        # len(pool_rows) stops a zero-contribution pool from falsely stamping providers_trained.
         if pool_gate["keep_pool"] and len(pool_rows):
             rows = pd.concat([rows, pool_rows], ignore_index=True)
-            providers.add(args.pool_provider)
+            providers.add(p["pool_provider"])
+        pool_gate = {**pool_gate, "pool_provider": p["pool_provider"], "pool_coverage": pool_coverage}
 
-    names = _feature_names(args.feature_set)
-    model = ReceiverModel(args.feature_set).fit(rows[names], rows["label"])
-    model.shipped_variant = args.feature_set
-    top1, fold_top1 = cv_top1(rows, args.feature_set)
-    model.save(args.out / "model")
-
-    from scripts._corpus_identity import reproducibility
-    from scripts._loader_pining import match_visibility, select_match_ids
-
-    _primary_ids = (
-        json.loads(pathlib.Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
-    )
-    _pairs = list(select_match_ids(providers=[args.provider], match_ids=_primary_ids))
-    if args.pool_provider and args.pool_provider in providers:  # the pool earned inclusion -> its matches count too
-        _pairs += list(select_match_ids(providers=[args.pool_provider]))
-    corpus_label = _corpus_visibility(_pairs, match_visibility(sorted(providers)))
+    names = _feature_names(fs)
+    model = ReceiverModel(fs).fit(rows[names], rows["label"])
+    model.shipped_variant = fs
+    top1, fold_top1 = cv_top1(rows, fs)
+    corpus_label = p["corpus_visibility"]  # decision P5: a parameter, never read in-job
+    prov = ctx.prov
     manifest = {
         "schema": _SHARD_SCHEMA_VERSION,
-        "feature_set": args.feature_set,
-        "provider": args.provider,
-        "labeling_strategy": labeling_strategy_for_provider(args.provider),
+        "feature_set": fs,
+        "provider": provider,
+        "labeling_strategy": labeling_strategy_for_provider(provider),
         "providers_trained": sorted(providers),  # the actual pool the shipped model saw
         "n_matches": int(rows["game_id"].nunique()),
         "n_passes": n_passes,
@@ -651,7 +518,7 @@ def main() -> None:
         "label_coverage": coverage,  # kept vs completed passes -> drop-on-ambiguous thinning is visible
         "visible_area_caveat": "SB360 truncates the negative candidate set; see the train-vs-serve shift (M2).",
         "corpus_visibility": corpus_label,
-        "corpus_n_matches": len(_pairs),
+        "corpus_n_matches": int(p["corpus_n_matches"]),
         **reproducibility(
             "public" if corpus_label == "public" else "restricted", sorted(providers), training_commit=prov["commit"]
         ),
@@ -659,19 +526,150 @@ def main() -> None:
         "run_tree_dirty": prov["dirty"],
     }
     if pool_gate is not None:  # Q3 gate outcome + the pool's own coverage (load-bearing: did GS earn inclusion?)
-        manifest["pooling_gate"] = {**pool_gate, "pool_provider": args.pool_provider, "pool_coverage": pool_coverage}
-    # M-A resolution (owner variant): velocity's contribution on COMPLETED passes (i), and -- when a public
-    # bundle is supplied -- the deployment gate on GS-FAILED (ii). Both stamped into the same provenanced
-    # manifest, so the bundling decision is an artifact, not an unrecorded interactive call (L4a).
-    if args.feature_set == "owner":
-        manifest["velocity_ablation"] = velocity_ablation_completed(rows)  # M-A(i)
-        if args.public_bundle is not None:
-            manifest["deployment"] = _resolve_deployment(  # M-A(ii)
-                args.public_bundle, model, args.provider, args.cache_dir, args.shard_root, args.out, prov["commit"]
-            )
-    (args.out / "metrics.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(manifest, indent=2))
+        manifest["pooling_gate"] = pool_gate
+    if fs == "owner":  # M-A(i): velocity's contribution on COMPLETED passes
+        manifest["velocity_ablation"] = velocity_ablation_completed(rows)
+    with tempfile.TemporaryDirectory() as tmp:
+        model.save(pathlib.Path(tmp) / "model")
+        files = {
+            f"model/{q.name}": q.read_bytes() for q in sorted((pathlib.Path(tmp) / "model").iterdir()) if q.is_file()
+        }
+    files["manifest.json"] = json.dumps(manifest).encode("utf-8")
+    return FileSet(files)
 
+
+def _deploy_refs(ctx):
+    if ctx.params["feature_set"] != "owner" or not ctx.params["public_bundle"]:
+        return []
+    return _staged_refs(ctx, "deployment_dataset")
+
+
+_DEPLOY_MODELS: dict = {}
+
+
+def _deploy_models(ctx):
+    """The public bundle and this run's owner model, loaded ONCE per worker (keyed by the fit token)."""
+    import tempfile
+
+    from scripts._stages import materialize_fileset
+
+    tok = ctx.tokens["fit"]
+    if tok not in _DEPLOY_MODELS:
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="sk-recv-"))
+        materialize_fileset(ctx, "fit", "_output", tmp)
+        _DEPLOY_MODELS.clear()
+        _DEPLOY_MODELS[tok] = (
+            ReceiverModel.load(pathlib.Path(ctx.params["public_bundle"])),
+            ReceiverModel.load(tmp / "model"),
+        )
+    return _DEPLOY_MODELS[tok]
+
+
+def _deploy_work(item, ctx):
+    mid, actions, frames = item
+    public_model, owner_model = _deploy_models(ctx)
+    return _deployment_counts_for_match(public_model, owner_model, actions, frames, match_id=mid)
+
+
+def _deploy_reduce(results, ctx):
+    if not results:
+        return {}
+    return _pooled_deployment(_concat_non_empty(results, ctx))
+
+
+def _assemble_work(key, ctx):
+    from scripts._stages import FileSet
+
+    out = ctx.upstream("fit")
+    manifest = json.loads(out.files["manifest.json"])
+    # M-A(ii): the deployment gate on GS-FAILED, stamped into the same provenanced manifest (L4a).
+    if ctx.params["feature_set"] == "owner" and ctx.params["public_bundle"]:
+        manifest["deployment"] = ctx.upstream("deploy")
+    files = {name.removeprefix("model/"): data for name, data in out.files.items() if name.startswith("model/")}
+    files["metrics.json"] = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
+    print(json.dumps(manifest, indent=2))
+    return FileSet(files)
+
+
+PIPELINE = Pipeline(
+    name="receiver_model",
+    module="scripts.train_receiver_model",
+    params=_PARAMS,
+    stages=(
+        ItemStage(
+            name="extract",
+            refs=lambda ctx: _staged_refs(ctx, "dataset"),
+            key=lambda ref: ref.stem,  # pre-migration key was the shard stem (match_id); _KEY_EXCEPTIONS
+            load=lambda ref, ctx: _load_staged(ref, ctx, "dataset"),
+            work=_rows_work("provider"),
+            counters=_coverage_counters,
+            reduce=_concat_non_empty,
+            params=("feature_set", "provider", "match_ids_json"),
+            declare=_rows_declare("provider"),
+            cross_commit_version="receiver-rows-2",
+            uses_dataset=True,
+            max_failures=None,  # faithful: the legacy for_each recorded a failed match and fitted the rest
+        ),
+        ItemStage(
+            name="pool",
+            refs=lambda ctx: _staged_refs(ctx, "pool_dataset"),
+            key=lambda ref: ref.stem,
+            load=lambda ref, ctx: _load_staged(ref, ctx, "pool_dataset"),
+            work=_rows_work("pool_provider"),
+            counters=_coverage_counters,
+            reduce=_concat_non_empty,
+            params=("feature_set", "pool_dataset", "pool_provider"),
+            declare=_rows_declare("pool_provider"),
+            cross_commit_version="receiver-rows-2",
+            # It reads `--pool-dataset`: that dataset's identity keys the token (it was keyed by the name
+            # only), and a download job fetches its units.
+            uses_dataset=True,
+            dataset_param="pool_dataset",
+            max_failures=None,
+        ),
+        Stage(
+            name="fit",
+            units=lambda ctx: ["only"],
+            work=_fit_work,
+            needs=("extract", "pool"),
+            reduce=lambda r, ctx: r["only"],
+            params=(
+                "feature_set",
+                "provider",
+                "pool_dataset",
+                "pool_provider",
+                "min_rows",
+                "min_passes",
+                "corpus_visibility",
+                "corpus_n_matches",
+            ),
+        ),
+        ItemStage(
+            name="deploy",
+            refs=_deploy_refs,
+            key=lambda ref: ref.stem,  # pre-migration key was the match_id; _KEY_EXCEPTIONS
+            load=lambda ref, ctx: _load_staged(ref, ctx, "deployment_dataset"),
+            work=_deploy_work,
+            needs=("fit",),
+            reduce=_deploy_reduce,
+            params=("feature_set", "public_bundle", "deployment_dataset"),
+            declare=lambda p: {
+                "schema": "receiver-deploy-1",
+                "provider": p["provider"],
+                "columns": _DEPLOY_SHARD_COLUMNS,
+            },
+            max_failures=None,
+        ),
+        Stage(
+            name="assemble",
+            units=lambda ctx: ["only"],
+            work=_assemble_work,
+            needs=("fit", "deploy"),
+            reduce=lambda r, ctx: r["only"],
+        ),
+    ),
+    output="assemble",
+)
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main(PIPELINE))

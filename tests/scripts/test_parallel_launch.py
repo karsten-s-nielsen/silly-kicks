@@ -339,3 +339,39 @@ def test_cli_das_mode_without_a_generation_is_refused(tmp_path):
                 "1",
             ]
         )
+
+
+# ---- container-aware resources (ADR-128: real HF cpu-upgrade, 2026-10-20) ---------------------------
+# Inside the container `os.cpu_count()` and the CPU affinity were 64 and `/proc/meminfo` MemAvailable was
+# 503 GB -- the HOST. The cgroup said 8 CPUs (`cpu.max` 800000 100000) and 32 GB (`memory.max`).
+
+
+def _cgroup(root, **files):
+    root.mkdir(parents=True, exist_ok=True)
+    for name, text in files.items():
+        (root / name.replace("_", ".")).write_text(text, encoding="ascii")
+    return root
+
+
+def test_available_cpus_reads_the_cgroup_quota(tmp_path):
+    cg = _cgroup(tmp_path / "cg", cpu_max="800000 100000")
+    assert pl.available_cpus(cgroup=cg, fallback=64) == 8
+    assert pl.available_cpus(cgroup=_cgroup(tmp_path / "frac", cpu_max="150000 100000"), fallback=64) == 2
+    assert pl.available_cpus(cgroup=_cgroup(tmp_path / "unl", cpu_max="max 100000"), fallback=64) == 64
+    assert pl.available_cpus(cgroup=tmp_path / "none", fallback=64) == 64
+
+
+def test_available_ram_is_the_smaller_of_the_host_and_the_cgroup_headroom(tmp_path):
+    cg = _cgroup(tmp_path / "cg", memory_max="32000000000", memory_current="420462592")
+    assert pl.available_ram_bytes(cgroup=cg, host_available=503_427_024 * 1024) == 32000000000 - 420462592
+    cache = _cgroup(
+        tmp_path / "cache",
+        memory_max="32000000000",
+        memory_current="16000000000",
+        memory_stat="anon 1\ninactive_file 15000000000\n",
+    )
+    # whole-file reads filled 15 GB of reclaimable cache: it does not count against the budget
+    assert pl.available_ram_bytes(cgroup=cache, host_available=10**12) == 32000000000 - 1000000000
+    unl = _cgroup(tmp_path / "unl", memory_max="max", memory_current="1")
+    assert pl.available_ram_bytes(cgroup=unl, host_available=10**9) == 10**9
+    assert pl.available_ram_bytes(cgroup=tmp_path / "none", host_available=10**9) == 10**9

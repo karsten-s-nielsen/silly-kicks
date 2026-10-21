@@ -58,147 +58,69 @@ def test_objective_cache_equivalence():
 # --- Task 11: training CLI ---
 
 
-def _xcross_frame_rows(fid, t, ball_x):
-    """One frame's rows in the WIDE corridor (y=8). Team-1 defends x=0 (GK x=2); team-2 attacks +
-    carries the ball near the byline. ``ball_x`` (= carrier gr_x, goal at 0) drives dist_endline,
-    the learnable signal (near byline -> cross imminent -> positive)."""
-
-    def _r(pid, tid, x, y, *, is_ball=False, is_gk=False):
-        return dict(
-            player_id=pid,
-            team_id=tid,
-            is_ball=is_ball,
-            is_goalkeeper=is_gk,
-            x=x,
-            y=y,
-            frame_id=fid,
-            time_seconds=t,
-        )
-
-    rows = [
-        _r(-1, -1, ball_x, 8.0, is_ball=True),
-        _r(10, 1, 2.0, 34.0, is_gk=True),
-        _r(20, 2, 103.0, 34.0, is_gk=True),
-        _r(21, 2, ball_x + 0.3, 8.0),  # team-2 carrier 0.3 m from the ball -> possession = team 2
-    ]
-    rows += [_r(11 + k, 1, 6.0 + k, 28.0 + 2 * k) for k in range(5)]  # team-1 defenders (box near x=0)
-    rows += [_r(22 + k, 2, 8.0 + k, 30.0 + 2 * k) for k in range(4)]  # team-2 attackers (box)
-    return rows
-
-
-def _finalize_xcross_frames(rows, g):
-    frames = pd.DataFrame(rows)
-    frames["game_id"] = g
-    frames["period_id"] = 1
-    frames["z"] = 0.0
-    frames["frame_rate"] = 10.0
-    frames["ball_state"] = "alive"
-    frames["source_provider"] = "synthetic"
-    frames["vx"] = 0.0
-    frames["vy"] = 0.0
-    return frames
+# ADR-128: the learnable / degenerate synthesis moved to `scripts/_toy_corpora.xcross_game` (one synthesis
+# for the toy corpus and these tests).
 
 
 def _write_synthetic_train_dir(tmp_path, *, n_games=4, learnable=True):
-    """Learnable parquet games (gates PASS when learnable=True): near-byline frames (small
-    dist_endline) precede a cross -> positive; farther wide frames -> negative. learnable=False
-    fixes the carrier position so the model cannot beat the base rate (gates FAIL)."""
+    """A STAGED flat dataset ``<tmp>/data/syn`` (gates PASS when learnable) + the staged per-game probe
+    dataset ``<tmp>/data/probe`` (the held-out TF-19 cohort, provider ``synthetic``); returns the data root."""
     from pathlib import Path
 
-    from silly_kicks.spadl import config as spc
+    from scripts._toy_corpora import build_xcross_corpus, build_xcross_probe_corpus
 
-    data_dir = Path(tmp_path) / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    for g in range(n_games):
-        gdir = data_dir / f"game_{g}"
-        gdir.mkdir()
-        rows, cross_times, fid = [], [], 0
-        for ep in range(20):
-            base = ep * 7.0
-            cross_times.append(base + 0.9)  # one cross covers the 3 near frames (each within 1 s)
-            near_x = 8.0 if learnable else 20.0
-            far_x = 30.0 if learnable else 20.0
-            specs = [
-                (base, near_x),
-                (base + 0.3, near_x),
-                (base + 0.6, near_x),
-                (base + 2.5, far_x),
-                (base + 3.0, far_x),
-                (base + 3.5, far_x),
-            ]
-            for t, ball_x in specs:
-                rows.extend(_xcross_frame_rows(fid, t, ball_x))
-                fid += 1
-        _finalize_xcross_frames(rows, g).to_parquet(gdir / "frames.parquet")
-        pd.DataFrame(
-            {
-                "game_id": [g] * len(cross_times),
-                "period_id": [1] * len(cross_times),
-                "team_id": [2] * len(cross_times),
-                "time_seconds": cross_times,
-                "type_id": [spc.actiontype_id["cross"]] * len(cross_times),
-                "result_id": [spc.result_id["success"]] * len(cross_times),
-            }
-        ).to_parquet(gdir / "actions.parquet")
-    return data_dir
+    data = Path(tmp_path) / "data"
+    build_xcross_corpus(data / "syn", providers=("skillcorner",) * n_games, heavy_episodes=None, learnable=learnable)
+    build_xcross_probe_corpus(data / "probe", provider="synthetic")
+    return data
 
 
-def _write_arms_json(tmp_path, data_dir, *, provider="synthetic"):
-    """ADR-123 Amendment B: the visibility-blind trainer requires ``--arms``. The synthetic frames carry
-    ``source_provider="synthetic"`` (``_finalize_xcross_frames``), so the in-job match key is
-    ``synthetic__<game_dir>``; mark every game ``public`` so the single-arm trainer ships ``public``."""
+def _arms(data_root) -> str:
+    """ADR-123 Amendment B: the visibility-blind trainer requires ``--arms-json``; mark every game ``public``
+    so the single-arm trainer ships ``public``."""
+    from scripts._toy_corpora import xshot_arms
+
+    return xshot_arms(data_root / "syn", paired=False)
+
+
+def _train(tmp_path, data_root, *extra, check=True):
+    """One stage-CLI ``--run-all`` (ADR-128) into ``<tmp>/out``; the store is ``<tmp>/store``. M5: probe capture
+    is provider-CONTROLLED (default = gradientsports, the gated cohort); the synthetic probe's provider is
+    opted in explicitly."""
+    from pathlib import Path
+
+    from tests.scripts._parity import cli
+
+    args = ["--dataset", "syn", "--probe-dataset", "probe", "--arms-json", _arms(data_root), "--horizon-seconds", "1.0"]
+    return cli(
+        "scripts.train_xcross_attempt",
+        Path(tmp_path) / "store",
+        data_root,
+        [*args, "--probe-providers", "synthetic", *extra],
+        "--run-all",
+        "--out",
+        str(Path(tmp_path) / "out"),
+        check=check,
+    )
+
+
+def _probe_meta(tmp_path) -> dict:
+    """The probe stage's output ``meta.json`` (the held-out cohort's provenance)."""
     import json
     from pathlib import Path
 
-    keys = sorted(f"{provider}__{g.name}" for g in Path(data_dir).iterdir() if g.is_dir())
-    arms_path = Path(tmp_path) / "arms.json"
-    arms_path.write_text(json.dumps({"arms": {"public": keys}, "ship_order": ["public"]}), encoding="utf-8")
-    return arms_path
+    (meta,) = [q for q in (Path(tmp_path) / "store" / "xcross_attempt" / "probe").rglob("meta.json")]
+    return json.loads(meta.read_text())
 
 
 @pytest.mark.slow
 def test_train_script_smoke(tmp_path):
     import json
-    import os
-    import subprocess
-    import sys
     from pathlib import Path
 
-    data_dir = _write_synthetic_train_dir(tmp_path)
-    arms_path = _write_arms_json(tmp_path, data_dir)
-    out_dir = Path(tmp_path) / "out"
-    repo_root = Path(__file__).resolve().parents[2]
-    env = dict(os.environ, PYTHONPATH=str(repo_root))
-    result = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "scripts/train_xcross_attempt.py",
-            # ADR-052: the trainer refuses a dirty tree (it writes bundled weights); a test
-            # run is by definition a dev run. The artifact still records run_tree_dirty.
-            "--allow-dirty",
-            "--data-dir",
-            str(data_dir),
-            "--arms",
-            str(arms_path),
-            "--output-dir",
-            str(out_dir),
-            "--n-trials",
-            "3",
-            "--horizon-seconds",
-            "1.0",
-            # M5: probe capture is provider-CONTROLLED (default = gradientsports, the gated
-            # cohort); the synthetic fixture's provider must be opted in explicitly.
-            "--probe-providers",
-            "synthetic",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        cwd=str(repo_root),
-        env=env,
-    )
-    assert result.returncode == 0, result.stderr
-    art = out_dir / "xcross_attempt_v1"
+    data = _write_synthetic_train_dir(tmp_path)
+    _train(tmp_path, data, "--n-trials", "3")
+    art = Path(tmp_path) / "out"
     assert (art / "model.json").exists()
     assert (art / "metadata.json").exists()
     assert (art / "SHA256SUMS").exists()
@@ -219,12 +141,13 @@ def test_train_script_smoke(tmp_path):
     assert "tf19_ready" in metrics
     # the substitution probe actually found eligible wide-area frames (the probe sample was saved + read)
     assert probe["n_frames_used"] >= 1
-    # M5/M6 provenance: the probe sample carries its matches, the capture filter, and the
-    # gate-recorded training-fold membership (single-candidate path: recorded, not refused).
-    pm = json.loads((art / "_probe_sample" / "meta.json").read_text())
+    # M5/M6 provenance: the probe sample carries its matches and the capture filter; the gate records the
+    # training-fold membership of every probe match (a separate probe dataset: held out by construction).
+    pm = _probe_meta(tmp_path)
     assert pm["probe_providers"] == ["synthetic"]
     assert pm["probe_matches"] and all(p == "synthetic" for p, _m in pm["probe_matches"])
-    assert "in_training_folds" in pm and set(pm["in_training_folds"]) == {m for _p, m in pm["probe_matches"]}
+    assert set(metrics["probe_sample_in_training_folds"]) == {m for _p, m in pm["probe_matches"]}
+    assert not any(metrics["probe_sample_in_training_folds"].values())
     assert metrics["probe_sample_matches"] == pm["probe_matches"]
     assert metrics["probe_gated_on_held_out"] is False  # single-candidate: no paired test ran
 
@@ -233,48 +156,15 @@ def test_train_script_smoke(tmp_path):
 def test_train_script_smoke_position_only(tmp_path):
     # `--feature-set position_only` trains a 15-feature model (velocity `ball_speed` dropped) end to
     # end through the trainer harness, the gk-substitution PROBE, and the position_only chirality /
-    # feature-contract guards. Mirrors the faithful smoke above; the synthetic dir carries vx/vy but
-    # position_only simply does not select `ball_speed`. Exercises the trainer subprocess glue (argparse
-    # -> shard token -> combine -> CV -> probe -> fit -> save) that the model round-trips cannot.
+    # feature-contract guards. Mirrors the faithful smoke above; the synthetic frames carry vx/vy but
+    # position_only simply does not select `ball_speed`. Exercises the stage-CLI glue (params -> stage
+    # tokens -> combine -> CV -> probe -> fit -> save) that the model round-trips cannot.
     import json
-    import os
-    import subprocess
-    import sys
     from pathlib import Path
 
-    data_dir = _write_synthetic_train_dir(tmp_path)
-    arms_path = _write_arms_json(tmp_path, data_dir)
-    out_dir = Path(tmp_path) / "out_po"
-    repo_root = Path(__file__).resolve().parents[2]
-    env = dict(os.environ, PYTHONPATH=str(repo_root))
-    result = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "scripts/train_xcross_attempt.py",
-            "--allow-dirty",
-            "--data-dir",
-            str(data_dir),
-            "--arms",
-            str(arms_path),
-            "--output-dir",
-            str(out_dir),
-            "--n-trials",
-            "3",
-            "--horizon-seconds",
-            "1.0",
-            "--probe-providers",
-            "synthetic",
-            "--feature-set",
-            "position_only",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        cwd=str(repo_root),
-        env=env,
-    )
-    assert result.returncode == 0, result.stderr
-    art = out_dir / "xcross_attempt_v1"
+    data = _write_synthetic_train_dir(tmp_path)
+    _train(tmp_path, data, "--n-trials", "3", "--feature-set", "position_only")
+    art = Path(tmp_path) / "out"
     assert (art / "model.json").exists()
     assert (art / "SHA256SUMS").exists()
     meta = json.loads((art / "metadata.json").read_text())
@@ -290,42 +180,15 @@ def test_train_script_smoke_position_only(tmp_path):
 
 @pytest.mark.slow
 def test_train_script_fail_closed_writes_no_artifact(tmp_path):
-    """Fail-closed: a corpus that cannot beat the base rate -> non-zero exit, NO bundled artifact."""
-    import os
-    import subprocess
-    import sys
+    """Fail-closed: a corpus that cannot beat the base rate -> non-zero exit, NO bundled artifact; the legacy
+    ``metrics_FAILED.json`` payload is kept beside the failed ``fit`` unit."""
     from pathlib import Path
 
-    data_dir = _write_synthetic_train_dir(tmp_path, learnable=False)
-    arms_path = _write_arms_json(tmp_path, data_dir)
-    out_dir = Path(tmp_path) / "out"
-    repo_root = Path(__file__).resolve().parents[2]
-    env = dict(os.environ, PYTHONPATH=str(repo_root))
-    result = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "scripts/train_xcross_attempt.py",
-            # ADR-052: the trainer refuses a dirty tree (it writes bundled weights); a test
-            # run is by definition a dev run. The artifact still records run_tree_dirty.
-            "--allow-dirty",
-            "--data-dir",
-            str(data_dir),
-            "--arms",
-            str(arms_path),
-            "--output-dir",
-            str(out_dir),
-            "--n-trials",
-            "3",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        cwd=str(repo_root),
-        env=env,
-    )
+    data = _write_synthetic_train_dir(tmp_path, learnable=False)
+    result = _train(tmp_path, data, "--n-trials", "3", check=False)
     assert result.returncode != 0
-    art = out_dir / "xcross_attempt_v1"
-    assert not (art / "model.json").exists()  # fail-closed: no artifact written
+    assert not (Path(tmp_path) / "out" / "model.json").exists()  # fail-closed: no artifact written
+    assert list((Path(tmp_path) / "store").rglob("only.metrics_FAILED.json")), "the gate failure left no record"
 
 
 # --- Task 12: exports + atomic mirror ---

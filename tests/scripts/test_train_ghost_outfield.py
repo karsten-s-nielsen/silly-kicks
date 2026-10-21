@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -24,8 +23,6 @@ from scripts.train_ghost_outfield import (
     extract_match,
     extraction_inputs,
     feature_set_for_variant,
-    main,
-    parse_args,
 )
 
 # --------------------------------------------------------------------------- #
@@ -33,56 +30,11 @@ from scripts.train_ghost_outfield import (
 # --------------------------------------------------------------------------- #
 
 
-def _base_players():
-    def r(pid, team, x, y, *, gk=False, ball=False, vx=0.2, vy=-0.1):
-        return {
-            "period_id": 1,
-            "team_id": (pd.NA if ball else team),
-            "player_id": (pd.NA if ball else pid),
-            "is_ball": ball,
-            "is_goalkeeper": gk,
-            "x": x,
-            "y": y,
-            "vx": vx,
-            "vy": vy,
-            "team_in_possession": 1,
-        }
-
-    return [
-        r(101, 1, 3.0, 34.0, gk=True),
-        r(102, 1, 20.0, 10.0),
-        r(103, 1, 22.0, 27.0),
-        r(104, 1, 24.0, 44.0),
-        r(105, 1, 26.0, 60.0),
-        r(106, 1, 45.0, 20.0),
-        r(107, 1, 55.0, 40.0),
-        r(201, 2, 102.0, 34.0, gk=True),
-        r(202, 2, 18.0, 30.0),
-        r(203, 2, 30.0, 40.0),
-        r(204, 2, 55.0, 25.0),
-        r(205, 2, 70.0, 50.0),
-        r(206, 2, 85.0, 22.0),
-        r(pd.NA, pd.NA, 55.0, 30.0, ball=True, vx=1.5, vy=0.5),
-    ]
-
-
 def _tiny_frames(game_id: str, provider: str = "toy", n_frames: int = 25) -> pd.DataFrame:
-    base = _base_players()
-    rows = []
-    for k in range(n_frames):
-        dx = 3.0 * np.sin(0.3 * k)
-        dy = 2.0 * np.cos(0.4 * k)
-        for p in base:
-            row = dict(p)
-            row["game_id"] = game_id
-            row["frame_id"] = 1000 + k
-            row["time_seconds"] = 100.0 + 0.5 * k
-            row["source_provider"] = provider  # for the StratifiedGroupKFold(match+provider) CV
-            if not row["is_ball"]:
-                row["x"] = float(min(104.0, max(1.0, row["x"] + dx)))
-                row["y"] = float(min(67.0, max(1.0, row["y"] + dy)))
-            rows.append(row)
-    return pd.DataFrame(rows)
+    """The ghost-outfield frame synthesis -- single-sourced in ``scripts/_toy_corpora.outfield_frames``."""
+    from scripts._toy_corpora import outfield_frames
+
+    return outfield_frames(game_id, provider=provider, n_frames=n_frames)
 
 
 def _write_tiny_corpus(data_dir, n_games: int = 4):
@@ -100,7 +52,10 @@ def _write_tiny_corpus(data_dir, n_games: int = 4):
 
 
 def test_variant_arg_choices_and_feature_set_mapping():
-    a = parse_args(["--data-dir", "x", "--variant", "position_only"])
+    from scripts._stages import build_parser
+    from scripts.train_ghost_outfield import PIPELINE
+
+    a = build_parser(PIPELINE).parse_args(["--dataset", "x", "--variant", "position_only", "--plan", "--store", "s"])
     assert a.variant == "position_only"
     assert feature_set_for_variant("position_only") == "position_only"
     assert feature_set_for_variant("default") == "faithful"
@@ -197,7 +152,9 @@ def test_actions_and_home_resolve_tc3_cache_layout(tmp_path):
     adir.mkdir()
     _tiny_actions(game, scorer_team=1).to_parquet(adir / f"{game}.parquet")
 
-    args = parse_args(["--data-dir", str(data), "--actions-dir", str(adir)])
+    import types
+
+    args = types.SimpleNamespace(data_dir=data, actions_dir=adir)  # the legacy resolver's two inputs
     fp = gdir / "frames.parquet"
     frames = pd.read_parquet(fp)
 
@@ -230,56 +187,29 @@ def test_actions_and_home_resolve_tc3_cache_layout(tmp_path):
     not sklearn_supports_training(),
     reason="bundled-weights fit needs scikit-learn in [1.9, 2)",
 )
-def test_train_ghost_outfield_main_smoke(tmp_path, monkeypatch):
-    # Provenance is mocked dirty so the --allow-dirty stamping assertion is deterministic. The
-    # trainer reads git_provenance() at run time (function-local import from scripts._provenance),
-    # so a clean CI checkout would otherwise stamp run_tree_dirty=False and this test would fail.
-    # We assert the LOGIC -- the allow-dirty path records the dirty fact -- not the ambient tree.
-    import scripts._provenance as _provenance
-
-    monkeypatch.setattr(
-        _provenance,
-        "git_provenance",
-        lambda: {
-            "commit": "testcommit",
-            "tree_state": "dirty",
-            "dirty": True,
-            "dirty_files": ["uncommitted_wip.py"],
-            "platform": "test",
-            "machine": "test",
-        },
-    )
-    data = tmp_path / "data"
-    _write_tiny_corpus(data)
-    out = tmp_path / "out"
-    main(
-        [
-            "--data-dir",
-            str(data),
-            "--output-dir",
-            str(out),
-            "--variant",
-            "default",
-            "--n-estimators",
-            "20",
-            "--max-depth",
-            "3",
-            "--cv-folds",
-            "2",
-            "--allow-dirty",
-        ]
-    )
+def test_train_ghost_outfield_main_smoke(tmp_path):
+    """The whole stage pipeline on a staged flat toy corpus (ADR-128): a loadable bundle whose metrics carry
+    the per-provider and per-possession CV, and the dirty-tree fact of the run's provenance."""
+    from scripts._toy_corpora import build_outfield_corpus
+    from scripts.train_ghost_outfield import PIPELINE
     from silly_kicks.tracking import GhostOutfieldModel
+    from tests.scripts._stage_harness import export, run_in_process
 
-    GhostOutfieldModel.load(out / "default")  # guards pass
-    m = json.loads((out / "default" / "metrics.json").read_text())
+    build_outfield_corpus(tmp_path / "data" / "toyof", n_games=4, heavy_frames=25)
+    args = ["--dataset", "toyof", "--variant", "default", "--n-estimators", "20", "--max-depth", "3", "--cv-folds", "2"]
+    dirty = {"commit": "testcommit", "tree_state": "dirty", "dirty": True, "code_identity": "dirty-test"}
+    ctx = run_in_process(PIPELINE, args, store=tmp_path / "store", data_root=tmp_path / "data", prov=dirty)
+    out = export(ctx, tmp_path / "out")
+    GhostOutfieldModel.load(out)  # guards pass
+    m = json.loads((out / "metrics.json").read_text())
     assert "cv_mae" in m and "coherence" in m
-    # Per-provider MAE (spec §6): both toy providers appear as keys.
-    assert set(m["cv_mae_by_provider"]) == {"provA", "provB"}
+    # Per-provider MAE (spec §6): both toy providers appear as keys (the real tc3 int / str id mix).
+    assert set(m["cv_mae_by_provider"]) == {"gradientsports", "skillcorner"}
     # Possession-conditioned (Option 2): both regimes reported, so the rest-defense (in-possession)
     # MAE is separable from the out-of-possession line.
     assert set(m["cv_mae_by_possession"]) == {"in_possession", "out_of_possession"}
-    assert m["run_tree_dirty"] is True  # provenance mocked dirty; stamping records the fact, not the ambient tree
+    # the run's provenance is dirty: stamping records the fact, never launders it
+    assert m["run_commit"] == "testcommit" and m["run_tree_dirty"] is True
 
 
 def test_publish_verify_only_and_contract_refusal(tmp_path):
@@ -378,3 +308,20 @@ def test_home_team_for_falls_back_when_game_id_absent_from_map(tmp_path):
     frames = _two_team_frames("g7")
     p = tmp_path / "frames.parquet"
     assert _home_team_for(p, frames, {"other_game": "X"}) == "AWAY"
+
+
+def test_the_extract_reduce_stores_a_mixed_provider_corpus(tmp_path):
+    """Real HF (ADR-128): gradientsports ints + idsse `J03WMX` in one `game_id` column failed the parquet
+    write of the reduced stage output. The reduce stores them as the strings the legacy grouped on."""
+    from scripts._stages import LocalStore, read_result, write_result
+    from scripts.train_ghost_outfield import _extract_reduce
+
+    a = pd.DataFrame({"game_id": [10502, 10502], "x": [1.0, 2.0]})
+    b = pd.DataFrame({"game_id": ["J03WMX"], "x": [3.0]})
+    out = _extract_reduce({"a": a, "b": b}, None)
+    store = LocalStore(tmp_path)
+    write_result(store, "s/_output", out)
+    back = read_result(store, "s/_output")
+    assert back["game_id"].tolist() == ["10502", "10502", "J03WMX"] and back["x"].tolist() == [1.0, 2.0, 3.0]
+    same = _extract_reduce({"a": a}, None)
+    assert same["game_id"].tolist() == [10502, 10502]  # one provider type: unchanged

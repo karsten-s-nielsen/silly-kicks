@@ -488,6 +488,18 @@ def bootstrap_icc_ci(y, defender_codes, team_codes, *, n_boot, alpha, rng_seed) 
     }
 
 
+def _replicate_icc(y, defender_codes, team_codes, members, picked) -> float | None:
+    """ONE bootstrap replicate's defender-share ICC from the defender clusters ``picked`` (with
+    replacement), or None for a degenerate resample (skipped, never an abort -- mirror bootstrap_icc_ci).
+    Module-level so a pool child can run it (ADR-128, E14)."""
+    idx = np.concatenate([members[j] for j in picked])
+    try:
+        val = crossed_variance_components(y[idx], defender_codes[idx], team_codes[idx])["icc_defender"]
+    except (np.linalg.LinAlgError, ValueError):
+        return None
+    return float(val) if np.isfinite(val) else None
+
+
 def bootstrap_icc_and_power(
     y,
     defender_codes,
@@ -498,6 +510,7 @@ def bootstrap_icc_and_power(
     effect_size,
     rng_seed,
     progress_every: int = 50,
+    replicate_map=None,
 ) -> dict:
     """CI + power for the defender-share ICC from ONE with-replacement defender-cluster bootstrap pass.
 
@@ -512,6 +525,12 @@ def bootstrap_icc_and_power(
     Returns ``icc`` (point), ``lo``/``hi`` (percentile CI over convergent replicates), ``power`` (the
     fraction of convergent replicates with ``icc >= effect_size``), ``n_boot_effective``,
     ``ci_degenerate``.
+
+    ``replicate_map`` (ADR-128, E14): every replicate's defender picks are drawn FIRST, from the ONE
+    seeded stream, in replicate order (the same draw sequence the loop made); the fits may then run in any
+    order. ``replicate_map((_replicate_icc, {int_key(i): args_i}))`` returns ``{int_key(i): icc_i | None}``
+    and the combination iterates the replicates IN ORDER, so the result is byte-identical to the serial
+    loop (``replicate_map=None``).
 
     BLAS is left MULTI-threaded. Absorption made the sequential REDUCTIONS ``n_team``-sized, but the
     three EMS-trace ``pinv(X'X)`` terms are still O(p^3) at the full-corpus design (``p = 1 + n_def +
@@ -533,20 +552,22 @@ def bootstrap_icc_and_power(
 
     rng = np.random.default_rng(rng_seed)
     n_boot = int(n_boot)
+    # WITH replacement -- the SAME draw sequence both loops used, drawn up front in replicate order.
+    picks = [rng.integers(0, k, size=k) for _ in range(n_boot)] if k else []
     iccs: list[float] = []
-    for i in range(n_boot):
-        if k == 0:
-            break
-        picked = rng.integers(0, k, size=k)  # WITH replacement -- the SAME draw sequence both loops used
-        idx = np.concatenate([members[j] for j in picked])
-        try:
-            val = crossed_variance_components(y[idx], defender_codes[idx], team_codes[idx])["icc_defender"]
-        except (np.linalg.LinAlgError, ValueError):
-            continue  # a degenerate resample is skipped, never aborts the pass (mirror bootstrap_icc_ci)
-        if np.isfinite(val):
-            iccs.append(val)
-        if progress_every and (i + 1) % progress_every == 0:
-            print(f"    bootstrap ICC [{i + 1}/{n_boot}]  convergent={len(iccs)}", flush=True)
+    if replicate_map is None:
+        for i, picked in enumerate(picks):
+            val = _replicate_icc(y, defender_codes, team_codes, members, picked)
+            if val is not None:
+                iccs.append(val)
+            if progress_every and (i + 1) % progress_every == 0:
+                print(f"    bootstrap ICC [{i + 1}/{n_boot}]  convergent={len(iccs)}", flush=True)
+    else:
+        from scripts._stages import int_key
+
+        items = {int_key(i): (y, defender_codes, team_codes, members, picked) for i, picked in enumerate(picks)}
+        res = replicate_map((_replicate_icc, items))
+        iccs = [v for v in (res[int_key(i)] for i in range(len(picks))) if v is not None]
 
     draws = np.asarray(iccs, dtype=float)
     # Power = fraction of CONVERGENT replicates clearing the effect size (denominator excludes

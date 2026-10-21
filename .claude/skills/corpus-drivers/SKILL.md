@@ -13,3 +13,5 @@ resume-before-load, exclusions + conservation + combination (`res.shard_keys`), 
 token, `require_clean_tree` provenance (ADR-037), the `docs/research/<topic>/` memo-landing
 convention, the corpus env vars, and a step list for a new driver. It points at `_driver.py`'s
 docstring and `docs/context/corpus-drivers.md` for field-level detail.
+
+A trained model or a corpus pass is a compute pipeline: follow the `compute-pipelines` skill (ADR-128).

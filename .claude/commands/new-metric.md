@@ -14,4 +14,6 @@ then wire each step the checklist names (package layout; `metric_contracts` regi
 validity gate and its corpus driver, see `docs/howto/construct-validity.md` and
 `docs/howto/corpus-drivers-runbook.md`.
 
+A trained model or a corpus pass is a compute pipeline: follow the `compute-pipelines` skill (ADR-128).
+
 $ARGUMENTS

@@ -1,29 +1,24 @@
 #!/usr/bin/env python
 """Train a ghost-outfield rearguard-positioning model (TF-60 PR5).
 
-Usage::
+Usage (ADR-128 stage contract; the uniform CLI from ``scripts._stages.main``)::
 
-    uv run python scripts/train_ghost_outfield.py \
-        --data-dir /path/to/tc3_cache/ \
-        --variant default \
-        --output-dir models/
+    python -m scripts.train_ghost_outfield --dataset tc3 --variant default \
+        --store <DIR> --data-root <DATA> --run-all --out <BUNDLE_DIR>
 
-Mirrors ``scripts/train_ghost_gk.py`` (``for_each`` corpus sharding + ``require_clean_tree``
-provenance + parameters-only save) for the rest-defense rearguard model. ``--data-dir`` holds
-tracking parquets (``{provider}/{game}/frames.parquet`` or flat ``*.parquet``); each must carry a
-``team_in_possession`` column or a resolvable ball carrier. The shard-generation token includes
-``feature_set`` (the 4.77.1 stale-shard rule: a position_only run drops 4 columns, so its shards are
-NOT interchangeable with a faithful run).
+Pipeline: ``extract[match]`` (an ``ItemStage`` over the staged flat dataset: ``shards/<gen>/`` frames,
+``_actions/`` and ``home_teams.json``) -> ``cv[fold]`` -> ``fit`` -> ``assemble`` (the bundle). Each frames
+parquet must carry a ``team_in_possession`` column or a resolvable ball carrier. The extract token includes
+``feature_set`` (the 4.77.1 stale-shard rule: a position_only run drops 4 columns, so its shards are NOT
+interchangeable with a faithful run).
 
 Requires: silly-kicks[train].
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
-import time
 from pathlib import Path
 from typing import Literal
 
@@ -31,6 +26,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
+
+from scripts._stages import ItemStage, Param, Pipeline, Stage, main
 
 _FeatureSet = Literal["faithful", "position_only"]
 
@@ -140,67 +137,6 @@ def extract_match(
     return feats
 
 
-def parse_args(argv=None):
-    ap = argparse.ArgumentParser(description="Train a ghost-outfield rearguard-positioning model.")
-    ap.add_argument("--data-dir", type=Path, required=True, help="Directory of tracking parquets")
-    ap.add_argument("--output-dir", type=Path, default=Path("models"), help="Where to save the artifact")
-    ap.add_argument("--actions-dir", type=Path, default=None, help="Optional: directory of SPADL actions parquets")
-    ap.add_argument(
-        "--home-teams",
-        type=Path,
-        default=None,
-        help="Optional JSON {game_id: home_team_id} (the materialize home_teams.json). REQUIRED for a "
-        "FLAT for_each generation (no per-match meta.json) to sign score_diff correctly; falls back to "
-        "the meta.json sibling, then the first-team heuristic.",
-    )
-    ap.add_argument(
-        "--variant",
-        choices=["default", "position_only"],
-        default="default",
-        help="Which variant this run produces (default = faithful; position_only drops velocity).",
-    )
-    ap.add_argument("--n-estimators", type=int, default=500)
-    ap.add_argument("--max-depth", type=int, default=8)
-    ap.add_argument("--cv-folds", type=int, default=5)
-    ap.add_argument("--n-rearguard", type=int, default=4)
-    ap.add_argument(
-        "--subsample-fps",
-        type=float,
-        default=1.0,
-        help="Frames/sec to keep per (game, period) for training (default 1.0, mirroring "
-        "train_ghost_gk). Tracking is ~25 fps and consecutive frames are near-duplicates; 1 fps is "
-        "~25x fewer rows with no meaningful signal loss for a mean-positioning model. Pass a large "
-        "value (e.g. 999) to keep all frames.",
-    )
-    ap.add_argument(
-        "--allow-dirty",
-        action="store_true",
-        help="Permit a dev run on a dirty tree; the artifact still records dirty:true (never launders it).",
-    )
-    ap.add_argument("--training-platform", default=None)
-    # Map/reduce fan-out (ADR-123), mirroring train_ghost_gk: extract --shard-index -> --fold -> --assemble.
-    # No --build-cache phase (unlike ghost_gk): this trainer keeps no whole-corpus feature cache; `data` is a
-    # cheap concat of the (resumed) shards, rebuilt identically by the fold workers and the reduce.
-    ap.add_argument(
-        "--shard-index",
-        default=None,
-        help="I/N: extract only this disjoint subset of the discovered parquet files (fan-out worker); "
-        "writes its shards to the shared shard_root and exits before the concat/CV.",
-    )
-    ap.add_argument(
-        "--fold",
-        type=int,
-        default=None,
-        help="Run ONLY CV fold K over the (resumed) shards, write {shard_root}/folds/fold_K.json, then exit.",
-    )
-    ap.add_argument(
-        "--assemble",
-        action="store_true",
-        help="Reduce: concat shards, aggregate folds/fold_*.json, final fit + save + metrics, then exit.",
-    )
-    return ap.parse_args(argv)
-
-
 def _actions_for(frames_path: Path, args) -> pd.DataFrame | None:
     """Locate the SPADL actions parquet mirroring ``frames_path`` under ``--actions-dir`` (or None).
 
@@ -223,9 +159,11 @@ def _actions_for(frames_path: Path, args) -> pd.DataFrame | None:
         candidates.append(args.actions_dir / rel.parent / "actions.parquet")
     # flat frames layout: {game}.parquet -> _actions/{game}.parquet
     candidates.append(args.actions_dir / f"{rel.stem}.parquet")
+    from scripts._driver_sources import read_dataset_parquet
+
     for cand in candidates:
         if cand.exists():
-            return pd.read_parquet(cand)
+            return read_dataset_parquet(cand)
     return None
 
 
@@ -248,38 +186,26 @@ def _home_team_for(frames_path: Path, frames: pd.DataFrame, home_map: dict | Non
                 return hv
     meta = frames_path.parent / "meta.json"
     if meta.exists():
+        from scripts._driver_sources import read_dataset_json
+
         try:
-            return json.loads(meta.read_text())["home_team_id"]
+            return read_dataset_json(meta)["home_team_id"]
         except (KeyError, ValueError, OSError):
             pass
     ids = frames[~frames["is_ball"].astype(bool)]["team_id"].dropna()
     return ids.iloc[0] if len(ids) else None
 
 
-def _cross_validate(data: pd.DataFrame, *, feature_set: _FeatureSet, n_estimators: int, max_depth: int, cv_folds: int):
-    """CV euclidean MAE: overall + per-slot + **per-provider** (spec 6). ``None`` overall when < 2 games.
+def _cv_splits(data: pd.DataFrame, cv_folds: int):
+    """The deterministic CV split list + the provider array. ``(None, _)`` when the corpus has < 2 games
+    (CV infeasible).
 
     Match-stratified: **StratifiedGroupKFold(groups=game_id, y=source_provider)** keeps every game
     intact while balancing the provider mix across folds (mirroring the ghost-GK trainer). Falls back to
     ``GroupKFold`` only if the stratification is infeasible (e.g. a provider with fewer games than
-    folds), warning so the reduction is visible, never silent.
+    folds), warning so the reduction is visible, never silent. Every ``cv`` unit and the reduce compute
+    the same split, so a fanned CV equals a serial one for every (W, N).
     """
-    splits, providers = _cv_splits(data, cv_folds)
-    if splits is None:
-        return None, {}, {}, {}
-    fold_dicts = [
-        _run_one_fold_of(
-            data, providers, tr, te, feature_set=feature_set, n_estimators=n_estimators, max_depth=max_depth
-        )
-        for tr, te in splits
-    ]
-    return _aggregate_folds(fold_dicts)
-
-
-def _cv_splits(data: pd.DataFrame, cv_folds: int):
-    """The deterministic CV split list + the provider array (ADR-123: computed identically by the serial
-    run, the --fold workers and the --assemble reduce, so a fanned CV equals a serial one). ``(None, _)``
-    when the corpus has < 2 games (CV infeasible)."""
     from sklearn.model_selection import GroupKFold, StratifiedGroupKFold
 
     groups = data["game_id"].astype(str).to_numpy()
@@ -308,7 +234,7 @@ def _cv_splits(data: pd.DataFrame, cv_folds: int):
 
 def _run_one_fold_of(data, providers, tr, te, *, feature_set, n_estimators, max_depth) -> dict:
     """One CV fold's euclidean-MAE partials (overall + per-slot/provider/possession), as plain floats so a
-    fanned fold worker can persist them to JSON and the reduce can aggregate byte-identically."""
+    ``cv`` unit can persist them to JSON and the reduce can aggregate byte-identically."""
     from silly_kicks.tracking._ghost_outfield import GhostOutfieldModel
 
     train, test = data.iloc[tr], data.iloc[te]
@@ -350,176 +276,204 @@ def _aggregate_folds(fold_dicts: list[dict]):
     return float(np.mean([fd["fold_euclid"] for fd in fold_dicts])), per_slot, per_provider, per_possession
 
 
-def main(argv=None):
-    args = parse_args(argv)
+# ---- ADR-128 stage contract --------------------------------------------------------------------------
+#
+# extract[match] -> cv[fold] -> fit (one unit) -> assemble (one unit, the bundle). No whole-corpus cache
+# stage (ADR-123 section 1): `data` is a cheap concat of the extract shards, loaded once per worker.
 
-    # Refuse to fit a SHIPPABLE artifact under a scikit-learn outside the supported fit range: HGBR
-    # trees differ across sklearn versions, so bundled weights must be fit on the pinned range
-    # (mirrors train_ghost_gk; the @slow smoke skips where sklearn is out of range).
+_PARAMS = (
+    Param(
+        "dataset",
+        str,
+        None,
+        required=True,
+        help="the staged flat dataset (shards/<gen>/ + _actions/ + home_teams.json)",
+    ),
+    Param(
+        "variant",
+        str,
+        "default",
+        choices=("default", "position_only"),
+        help="default = faithful; position_only drops velocity",
+    ),
+    Param("n_estimators", int, 500),
+    Param("max_depth", int, 8),
+    Param("cv_folds", int, 5),
+    Param("n_rearguard", int, 4),
+    Param(
+        "subsample_fps",
+        float,
+        1.0,
+        help="Frames/sec to keep per (game, period) (default 1.0, mirroring train_ghost_gk); a large value keeps all",
+    ),
+    Param("training_platform", str, None),
+)
+
+
+def _home_map(ctx) -> dict | None:
+    from scripts._driver_sources import home_teams
+
+    return home_teams(ctx.data_root, ctx.params["dataset"]) or None
+
+
+def _extract_refs(ctx):
+    from scripts._driver_sources import staged_flat_refs
+
+    return staged_flat_refs(ctx.data_root, ctx.params["dataset"])
+
+
+def _extract_load(ref, ctx):
+    """``(frames_path, legacy args namespace)``: the legacy ``_work`` reads the frames and resolves the
+    actions / home team through ``_actions_for`` / ``_home_team_for`` unchanged (decision P16)."""
+    import types
+
+    from scripts._driver_sources import dataset_dir
+
+    root = dataset_dir(ctx.data_root, ctx.params["dataset"])
+    frames_path = root / ref.files[0]
+    ns = types.SimpleNamespace(data_dir=frames_path.parent, actions_dir=root / "_actions")
+    return frames_path, ns
+
+
+def _extract_work(item, ctx):
+    from scripts._driver_sources import read_dataset_parquet
+
+    p, ns = item
+    frames = read_dataset_parquet(p)
+    return extract_match(
+        frames,
+        _actions_for(p, ns),
+        feature_set_for_variant(ctx.params["variant"]),
+        n_rearguard=ctx.params["n_rearguard"],
+        home_team_id=_home_team_for(p, frames, _home_map(ctx)),
+        subsample_fps=ctx.params["subsample_fps"],
+    )
+
+
+def _extract_reduce(results, ctx):
+    """The legacy combine: NON-EMPTY shards in sorted key order (``res.shard_keys`` order)."""
+    from scripts._stages import combine_frames
+
+    # a multi-provider corpus mixes int and str ids (gradientsports vs idsse / skillcorner): stored as the
+    # canonical strings the legacy grouped on
+    return combine_frames([f for f in results.values() if len(f)], ids=("game_id", "player_id", "team_id"))
+
+
+_DATA: dict = {}
+
+
+def _data(ctx) -> pd.DataFrame:
+    """The extract output, loaded ONCE per worker (keyed by the extract token)."""
+    tok = ctx.tokens["extract"]
+    if tok not in _DATA:
+        _DATA.clear()
+        _DATA[tok] = ctx.upstream("extract")
+    return _DATA[tok]
+
+
+def _cv_units(ctx) -> list[str]:
+    """``min(cv_folds, n_extracted_units)`` fold keys, from the extract SUMMARY.
+
+    Never from the extract OUTPUT: the controller's ``--plan`` reads a bucket store, and the whole-corpus
+    row table is gigabytes on tc3. The summary bounds the real split count (a game whose extraction is
+    empty yields no group), and a key past the real split returns no fold (see `_cv_work`)."""
+    from scripts._stages import int_key
+
+    n = int(ctx.summary("extract")["n_done"])
+    return [int_key(k) for k in range(min(int(ctx.params["cv_folds"]), n))]
+
+
+def _cv_work(key, ctx) -> dict:
     from scripts._train_guard import require_training_sklearn
 
-    print(f"scikit-learn {require_training_sklearn()} (within the supported fit range for bundled weights)")
-
-    # FIRST, before any parquet is read: this trainer stamps `training_commit` into the SHIPPED
-    # artifact, and a bare HEAD SHA is identical on a dirty tree -- a verifiable-looking false claim.
-    from scripts._provenance import git_provenance, require_clean_tree
-
-    run_prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-
-    fs = feature_set_for_variant(args.variant)
-    training_commit = None if run_prov["commit"] == "unknown" else run_prov["commit"]
-    tree_dirty = bool(run_prov["dirty"])
-    training_platform = args.training_platform
-    print(
-        f"variant={args.variant} (feature_set={fs}); subsample_fps={args.subsample_fps}; "
-        f"training_commit={training_commit} (tree_dirty={tree_dirty})"
+    require_training_sklearn()
+    data = _data(ctx)
+    if not len(data):
+        return {"skipped": "no extracted rows"}
+    splits, providers = _cv_splits(data, ctx.params["cv_folds"])
+    if splits is None or int(key) >= len(splits):
+        return {"skipped": "CV infeasible or past the real split count (an empty game)"}
+    tr, te = splits[int(key)]
+    p = ctx.params
+    return _run_one_fold_of(
+        data,
+        providers,
+        tr,
+        te,
+        feature_set=feature_set_for_variant(p["variant"]),
+        n_estimators=p["n_estimators"],
+        max_depth=p["max_depth"],
     )
 
-    parquets = sorted(args.data_dir.glob("**/frames.parquet")) or sorted(args.data_dir.glob("*.parquet"))
-    if not parquets:
-        print(f"ERROR: No .parquet files found in {args.data_dir}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Discovered {len(parquets)} tracking parquet(s) in {args.data_dir}")
 
-    # Map/reduce extract fan-out (ADR-123): slice to this worker's disjoint file subset (each flat parquet
-    # is one game -> a file-index partition is a disjoint cover). --fold / --assemble run the FULL list.
-    if args.shard_index is not None:
-        from scripts._driver import shard_select
+def _cv_reduce(results, ctx) -> list:
+    """``[cv_mae, per_slot, per_provider, per_possession]`` from the folds in FOLD order (``_aggregate_folds``);
+    the ``None`` tuple when CV is infeasible (< 2 games), exactly as the pre-contract serial CV
+    (``_cross_validate`` at ``cd2ebcb``)."""
+    folds = [results[k] for k in sorted(results) if "skipped" not in results[k]]
+    if not folds:
+        return [None, {}, {}, {}]
+    return list(_aggregate_folds(folds))
 
-        _si, _sn = (int(x) for x in args.shard_index.split("/"))
-        parquets = shard_select(parquets, _si, _sn)
-        print(f"Shard {_si}/{_sn}: extracting {len(parquets)} of the discovered parquet files")
-        if not parquets:
-            print(f"ERROR: shard {args.shard_index} selects no files", file=sys.stderr)
-            sys.exit(1)
 
-    from scripts._driver import for_each, shard_path
+def _fit_work(key, ctx):
+    import tempfile
 
-    home_map = json.loads(args.home_teams.read_text()) if args.home_teams else None
-
-    def _items():
-        yield from parquets
-
-    def _key(p: Path) -> str:
-        # FLAT, injective shard key (no path separators -- for_each writes <gen>/<key>.parquet).
-        # tc3 layout ({..}/{game}/frames.parquet) -> the dir path joined; flat *.parquet -> the stem.
-        rel = p.relative_to(args.data_dir)
-        return "__".join(rel.parts[:-1]) if len(rel.parts) > 1 else rel.stem
-
-    def _work(p: Path):
-        frames = pd.read_parquet(p)
-        return extract_match(
-            frames,
-            _actions_for(p, args),
-            fs,
-            n_rearguard=args.n_rearguard,
-            home_team_id=_home_team_for(p, frames, home_map),
-            subsample_fps=args.subsample_fps,
-        )
-
-    shard_root = args.output_dir / "_shards"
-    t0 = time.time()
-    res = for_each(
-        _items(),
-        key=_key,
-        work=_work,
-        shard_root=shard_root,
-        token_inputs=extraction_inputs(args.variant, args.subsample_fps),
-    )
-    if res.failures:
-        print(f"WARN: {len(res.failures)} match(es) failed during extraction: {res.failures}")
-    # Map/reduce extract fan-out (ADR-123): a --shard-index worker has written its subset's shards to the
-    # shared shard_root; concat + CV + fit belong to --assemble. Exit so N workers compose without racing.
-    if args.shard_index is not None and not args.assemble:
-        print(f"Shard {args.shard_index}: extraction complete ({res.skipped} resumed); exiting before CV.")
-        return
-    # `res.shard_keys`, not `res.keys`: a failed match (this driver WARNs and continues rather than
-    # raising) has no shard, so reading `res.keys` would FileNotFoundError on it (ADR-052 D13 / the
-    # cycle's interp-11 combine contract). Byte-identical to `res.keys` when nothing failed.
-    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys) if len(f)]
-    if not parts:
-        print("ERROR: extractor produced no training rows across the corpus", file=sys.stderr)
-        sys.exit(1)
-    data = pd.concat(parts, ignore_index=True)
-    print(
-        f"Extracted {len(data)} rows across {data['game_id'].astype(str).nunique()} game(s) in {time.time() - t0:.1f}s"
-    )
-
+    from scripts._stages import FileSet
+    from scripts._train_guard import require_training_sklearn
     from silly_kicks.tracking._ghost_outfield import GhostOutfieldModel, ghost_rearguard_coherence
 
-    # Map/reduce CV (ADR-123): --fold K runs one fold from the identically-computed split and persists it;
-    # --assemble aggregates the fanned fold_*.json; a plain serial run uses the inline _cross_validate.
-    fold_dir = shard_root / "folds"
-    if args.fold is not None:
-        splits, providers = _cv_splits(data, args.cv_folds)
-        if splits is None:
-            print("ERROR: CV infeasible (<2 games); --fold needs >=2 games", file=sys.stderr)
-            sys.exit(2)
-        if not (0 <= args.fold < len(splits)):
-            print(f"ERROR: --fold {args.fold} out of range [0,{len(splits)})", file=sys.stderr)
-            sys.exit(2)
-        fold_dir.mkdir(parents=True, exist_ok=True)
-        _tr, _te = splits[args.fold]
-        _d = _run_one_fold_of(
-            data, providers, _tr, _te, feature_set=fs, n_estimators=args.n_estimators, max_depth=args.max_depth
-        )
-        (fold_dir / f"fold_{args.fold}.json").write_text(json.dumps(_d), encoding="utf-8")
-        print(f"Fold {args.fold} done -> {fold_dir / f'fold_{args.fold}.json'}")
-        return
-
-    if args.assemble:
-        splits, _providers = _cv_splits(data, args.cv_folds)
-        if splits is None:
-            cv_mae, cv_mae_by_slot, cv_mae_by_provider, cv_mae_by_possession = None, {}, {}, {}
-        else:
-            _fold_dicts = [
-                json.loads((fold_dir / f"fold_{k}.json").read_text(encoding="utf-8")) for k in range(len(splits))
-            ]
-            cv_mae, cv_mae_by_slot, cv_mae_by_provider, cv_mae_by_possession = _aggregate_folds(_fold_dicts)
-    else:
-        cv_mae, cv_mae_by_slot, cv_mae_by_provider, cv_mae_by_possession = _cross_validate(
-            data, feature_set=fs, n_estimators=args.n_estimators, max_depth=args.max_depth, cv_folds=args.cv_folds
-        )
-    print(f"CV euclidean MAE: {cv_mae}  per-slot: {cv_mae_by_slot}")
-    print(f"  per-provider: {cv_mae_by_provider}  per-possession: {cv_mae_by_possession}")
-
-    # --- Final fit + provenance ---
-    final = GhostOutfieldModel(n_estimators=args.n_estimators, max_depth=args.max_depth, feature_set=fs)._fit_extracted(
+    require_training_sklearn()
+    p = ctx.params
+    data = _data(ctx)
+    if not len(data):
+        raise RuntimeError("extractor produced no training rows across the corpus")
+    fs = feature_set_for_variant(p["variant"])
+    training_commit = None if ctx.prov["commit"] == "unknown" else ctx.prov["commit"]
+    final = GhostOutfieldModel(n_estimators=p["n_estimators"], max_depth=p["max_depth"], feature_set=fs)._fit_extracted(
         data
     )
     final.training_commit = training_commit
-    final.training_platform = training_platform
+    final.training_platform = p["training_platform"]
     final.corpus_provenance = {
         "n_games": int(data["game_id"].astype(str).nunique()),
         "n_rows": len(data),
-        "variant": args.variant,
+        "variant": p["variant"],
     }
-    artifact_dir = args.output_dir / args.variant
-    final.save(artifact_dir)
-    print(f"Model saved to {artifact_dir}")
-
-    # Round-trip verify the serialized parameters (parameters-only artifact).
-    loaded = GhostOutfieldModel.load(artifact_dir)
-    ft, lt = final._tree_nodes, loaded._tree_nodes
-    assert ft is not None and lt is not None  # noqa: S101
-    for a, b in zip(ft, lt, strict=True):
-        np.testing.assert_array_equal(a, b)
-    assert loaded._baseline_x == final._baseline_x  # noqa: S101
-    print("Round-trip verification: PASS")
-
+    with tempfile.TemporaryDirectory() as tmp:
+        artifact_dir = Path(tmp) / p["variant"]
+        final.save(artifact_dir)
+        # Round-trip verify the serialized parameters (parameters-only artifact).
+        loaded = GhostOutfieldModel.load(artifact_dir)
+        ft, lt = final._tree_nodes, loaded._tree_nodes
+        if ft is None or lt is None:
+            raise RuntimeError("round-trip verification: the saved model carries no tree nodes")
+        for a, b in zip(ft, lt, strict=True):
+            np.testing.assert_array_equal(a, b)
+        if loaded._baseline_x != final._baseline_x:
+            raise RuntimeError("round-trip verification: the baseline differs after save/load")
+        files = {q.name: q.read_bytes() for q in sorted(artifact_dir.iterdir()) if q.is_file()}
     # Coherence (reported, not gated -- spec 9): served ghost positions on the training rows.
     served = data[["game_id", "period_id", "frame_id", "team_id", "slot_index"]].copy()
     fpred = final.predict_mean(data)
     served["ghost_gr_x"] = fpred[:, 0]
     served["ghost_gr_y"] = fpred[:, 1]
-    coherence = ghost_rearguard_coherence(served)
-    print(f"Ghost-rearguard coherence: {coherence}")
+    files["coherence.json"] = json.dumps(ghost_rearguard_coherence(served)).encode("utf-8")
+    return FileSet(files)
 
+
+def _assemble_work(key, ctx):
+    from scripts._stages import FileSet
+
+    p = ctx.params
+    data = _data(ctx)
+    cv_mae, cv_mae_by_slot, cv_mae_by_provider, cv_mae_by_possession = ctx.upstream("cv")
+    fit = ctx.upstream("fit")
+    coherence = json.loads(fit.files["coherence.json"])
     metrics = {
-        "variant": args.variant,
-        "feature_set": fs,
-        "subsample_fps": args.subsample_fps,
+        "variant": p["variant"],
+        "feature_set": feature_set_for_variant(p["variant"]),
+        "subsample_fps": p["subsample_fps"],
         "n_games": int(data["game_id"].astype(str).nunique()),
         "n_rows": len(data),
         "cv_mae": cv_mae,
@@ -527,14 +481,62 @@ def main(argv=None):
         "cv_mae_by_provider": cv_mae_by_provider,
         "cv_mae_by_possession": cv_mae_by_possession,
         "coherence": coherence,
-        "run_commit": training_commit,
-        "run_tree_dirty": tree_dirty,
-        "training_platform": training_platform,
+        "run_commit": None if ctx.prov["commit"] == "unknown" else ctx.prov["commit"],
+        "run_tree_dirty": bool(ctx.prov["dirty"]),
+        "training_platform": p["training_platform"],
     }
-    with open(artifact_dir / "metrics.json", "w", newline="\n") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"Metrics written to {artifact_dir / 'metrics.json'}")
+    files = {name: data_ for name, data_ in fit.files.items() if name != "coherence.json"}
+    files["metrics.json"] = json.dumps(metrics, indent=2).encode("utf-8")  # the legacy json.dump bytes
+    return FileSet(files)
 
+
+PIPELINE = Pipeline(
+    name="ghost_outfield",
+    module="scripts.train_ghost_outfield",
+    params=_PARAMS,
+    stages=(
+        ItemStage(
+            name="extract",
+            refs=_extract_refs,
+            key=lambda ref: ref.stem,  # the legacy flat-layout `_key`: the shard stem; _KEY_EXCEPTIONS
+            load=_extract_load,
+            work=_extract_work,
+            reduce=_extract_reduce,
+            # extraction_inputs is the legacy token; n_rearguard is declared too, so a changed rearguard
+            # size can never reuse stale shards.
+            params=("n_rearguard",),
+            declare=lambda p: extraction_inputs(p["variant"], p["subsample_fps"]),
+            cross_commit_version="ghost-outfield-extract-1",
+            uses_dataset=True,
+            max_failures=None,  # legacy WARNs and continues
+        ),
+        Stage(
+            name="cv",
+            units=_cv_units,
+            work=_cv_work,
+            needs=("extract",),
+            reduce=_cv_reduce,
+            params=("variant", "n_estimators", "max_depth", "cv_folds"),
+        ),
+        Stage(
+            name="fit",
+            units=lambda ctx: ["only"],
+            work=_fit_work,
+            needs=("extract",),
+            reduce=lambda r, ctx: r["only"],
+            params=("variant", "n_estimators", "max_depth", "training_platform"),
+        ),
+        Stage(
+            name="assemble",
+            units=lambda ctx: ["only"],
+            work=_assemble_work,
+            needs=("extract", "cv", "fit"),
+            reduce=lambda r, ctx: r["only"],
+            params=("variant", "subsample_fps", "training_platform"),
+        ),
+    ),
+    output="assemble",
+)
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main(PIPELINE))

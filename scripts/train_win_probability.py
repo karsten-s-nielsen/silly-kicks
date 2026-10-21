@@ -15,16 +15,21 @@ the pooled fit, the GroupKFold-by-match out-of-fold calibration, and ``save`` ha
 The strength rating is **leakage-free by DATE** (spec sec. 5.2): ``base_strength(match m, team t)`` = the
 mean xG-supremacy (``xg_for - xg_against``) over team ``t``'s matches STRICTLY EARLIER than ``m``.
 
-``--out`` is a run directory OUTSIDE the repo; copy ``<out>/weights`` into
-``silly_kicks/win_probability/weights/`` for the bundled-weights commit (commit-2).
+ADR-128 stage contract: ``refs`` (the competition set + match references, one unit) ->
+``extract[match]`` (an ``ItemStage``, one shard per open-data match, fetched per unit: resume-before-
+download) -> ``fit`` (one unit: strength, calibration, fit, gates, the bundle FileSet). The uniform CLI
+comes from ``scripts._stages.main``; ``--run-all --out <DIR>`` is the serial parity reference and writes
+the four bundle files into ``<DIR>`` (copy them into ``silly_kicks/win_probability/weights/``; ``adopt``
+does this).
 
-Usage (on the box, scripts/ on sys.path, StatsBomb credentials UNSET so open-data mode is used):
-  python scripts/train_win_probability.py --out <DIR> [--all-competitions | --competition-id N --season-id N]
+Usage (StatsBomb credentials UNSET so open-data mode is used):
+  python -m scripts.train_win_probability --store <DIR> --run-all --out <DIR> [--all-competitions |
+      --competition-id N --season-id N]
 """
 
 from __future__ import annotations
 
-import argparse
+import dataclasses
 import json
 from pathlib import Path
 
@@ -32,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, main
 
 _SHOT_IDS = [spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")]
 _SUCCESS = spadlconfig.result_id["success"]
@@ -242,78 +248,80 @@ Dixon & Robinson (1998); Robberechts, Van Haaren & Davis (2019) -- see NOTICE.
 _DEFAULT_COMPETITION_ID = 43
 _DEFAULT_SEASON_ID = 106
 
+_PARAMS = (
+    Param("dataset", str, "sb_open", help="declared dataset name (scripts/hf_jobs/datasets.toml)"),
+    Param("all_competitions", flag=True, help="full public open-data corpus (every release)"),
+    Param("competition_id", int, None, help="open-data competition (default 43 = World Cup)"),
+    Param("season_id", int, None, help="open-data season (default 106 = 2022)"),
+    Param("max_matches", int, None, help="cap the number of matches"),
+    Param("cache_dir", str, None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"),
+)
 
-def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out", required=True, help="run dir OUTSIDE the repo (shards + weights/ + metrics.json)")
-    ap.add_argument("--competition-id", type=int, default=None, help="open-data competition (default 43 = World Cup)")
-    ap.add_argument("--season-id", type=int, default=None, help="open-data season (default 106 = 2022)")
-    ap.add_argument("--all-competitions", action="store_true", help="full public open-data corpus (every release)")
-    ap.add_argument("--max-matches", type=int, default=None, help="cap the number of matches")
-    ap.add_argument(
-        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
-    )
-    ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact marked dirty)")
-    args = ap.parse_args(argv)
 
-    if args.all_competitions and (args.competition_id is not None or args.season_id is not None):
-        ap.error("--all-competitions is mutually exclusive with --competition-id/--season-id")
-
-    from scripts._provenance import git_provenance, require_clean_tree
-
-    prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
-
+def _competitions(params) -> list[tuple[int, int]]:
     import scripts._sb_open_data as sbod
-    from scripts._driver import for_each
+
+    if params["all_competitions"] and (params["competition_id"] is not None or params["season_id"] is not None):
+        raise ValueError("--all-competitions is mutually exclusive with --competition-id/--season-id")
+    sbod.assert_statsbomb_open_data_mode()
+    if params["all_competitions"]:
+        return [(int(c[0]), int(c[1])) for c in sbod.all_open_competitions()]
+    return [
+        (
+            _DEFAULT_COMPETITION_ID if params["competition_id"] is None else params["competition_id"],
+            _DEFAULT_SEASON_ID if params["season_id"] is None else params["season_id"],
+        )
+    ]
+
+
+def _refs_work(key, ctx) -> dict:
+    """The competition set + every match reference, as one JSON unit (the legacy listing: ``:259-291`` at
+    ``cd2ebcb``)."""
+    import scripts._sb_open_data as sbod
+
+    comps = _competitions(ctx.params)
+    refs = sbod.list_open_data_refs(comps, max_matches=ctx.params["max_matches"])
+    return {"competitions": [list(c) for c in sorted(comps)], "refs": [dataclasses.asdict(r) for r in refs]}
+
+
+def _extract_refs(ctx):
+    from scripts._sb_open_data import OpenDataRef
+
+    return [OpenDataRef(**d) for d in ctx.upstream("refs")["refs"]]
+
+
+def _load_match(ref, ctx):
+    """Resume-before-download: the executor calls this only for a pending unit (ADR-052 D14)."""
+    from scripts._driver_sources import resolve_cache_dir
+    from scripts._sb_open_data import assert_statsbomb_open_data_mode, load_open_data_match
+
+    assert_statsbomb_open_data_mode()  # pins the revision in THIS worker process (decision P6)
+    return load_open_data_match(ref, cache_dir=resolve_cache_dir(ctx.params["cache_dir"])), ref.match_date
+
+
+def _extract_work(item, ctx):
+    lm, match_date = item
+    # The legacy date_map came from the same sb.matches manifest the ref was built from.
+    return match_shard(lm.actions, lm.home_team_id, match_date)
+
+
+def _extract_reduce(results, ctx):
+    from scripts._stages import combine_frames
+
+    frames = list(results.values())  # sorted key order == the legacy sorted shard glob
+    return combine_frames(frames, ids=("game_id",)) if frames else pd.DataFrame(columns=_SHARD_COLUMNS)
+
+
+def _fit_work(key, ctx) -> FileSet:
+    import tempfile
+
     from silly_kicks.win_probability import WinProbabilityModel, WinProbabilityParams
 
-    params = WinProbabilityParams.default()
-    dest = Path(args.out)
-
-    # Match-date map (chronology for the leakage-free strength) + the match iterator, both over the
-    # SAME competition set. sb.matches carries match_date; the loader does not, so fetch it here.
-    from statsbombpy import sb  # type: ignore[import-not-found]
-
-    sbod.assert_statsbomb_open_data_mode()
-    if args.all_competitions:
-        comps = [(int(c[0]), int(c[1])) for c in sbod.all_open_competitions()]
-    else:
-        comps = [
-            (
-                _DEFAULT_COMPETITION_ID if args.competition_id is None else args.competition_id,
-                _DEFAULT_SEASON_ID if args.season_id is None else args.season_id,
-            )
-        ]
-
-    date_map: dict[str, str] = {}
-    for cid, sid in comps:
-        for mid, m in sb.matches(competition_id=cid, season_id=sid, fmt="dict").items():
-            date_map[str(mid)] = str(m.get("match_date", ""))
-
-    refs, load = sbod.open_data_source(comps, max_matches=args.max_matches, cache_dir=args.cache_dir)
-
-    def _work(item):
-        _provider, mid, actions, _frames, home, *_ = item
-        return match_shard(actions, home, date_map.get(str(mid), ""))
-
-    res = for_each(
-        refs,
-        key=lambda ref: ref.key,
-        load=load,
-        work=_work,
-        shard_root=dest / "shards",
-        token_inputs={"model": "WinProbabilityModel", "cols": list(_SHARD_COLUMNS), "competitions": sorted(comps)},
-        label="match",
-    )
-
-    shard_files = sorted(res.shard_dir.glob("*.parquet"))
-    pooled = (
-        pd.concat([pd.read_parquet(s) for s in shard_files], ignore_index=True)
-        if shard_files
-        else pd.DataFrame(columns=_SHARD_COLUMNS)
-    )
+    pooled = ctx.upstream("extract")
     if not len(pooled):
-        raise SystemExit("no action rows collected from the corpus; nothing to fit")
+        raise RuntimeError("no action rows collected from the corpus; nothing to fit")
+    comps = [tuple(c) for c in ctx.upstream("refs")["competitions"]]
+    params = WinProbabilityParams.default()
 
     strength = chronological_strength(pooled)
     pooled = _attach_strength(pooled, strength)
@@ -343,9 +351,17 @@ def main(argv: list[str] | None = None) -> None:
 
     model_expected_goals = expected_total_goals(hz_home, hz_away, n_intervals=n_int, K=params.lattice_pad)
 
-    wdir = dest / "weights"
-    model.save(wdir)
-
+    prov = ctx.prov
+    summary = ctx.summary("extract")
+    # Decision P4 (ADR-128): CORPUS-scoped counters (the values a single fresh serial pass reports), never
+    # pass-scoped ones, so resume history cannot change metrics.json (INV-1). `generation` is the token.
+    pass_fields = {
+        "generation": ctx.tokens["extract"],
+        "n_attempted": summary["n_units"],
+        "n_failed": summary["n_failed"],
+        "n_counters_unrecorded": 0,
+        "n_excluded": summary["n_excluded"],
+    }
     out = {
         **metrics,
         "corpus_goals_per_match": corpus_goals_per_match,
@@ -358,20 +374,58 @@ def main(argv: list[str] | None = None) -> None:
         "training_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
         "run_tree_state": prov.get("tree_state"),
-        **res.manifest(),
+        **pass_fields,
     }
-    # metrics.json ships INSIDE weights/ (so it commits with the bundle and test_bundled's calibration +
-    # expected-goals gates read it from the shipped artifact); a copy in dest/ for the run log.
+    # metrics.json ships INSIDE the bundle (test_bundled's calibration + expected-goals gates read it from
+    # the shipped artifact).
     payload = json.dumps(out, indent=2, default=str)
-    (wdir / "metrics.json").write_text(payload, encoding="utf-8")
-    (dest / "metrics.json").write_text(payload, encoding="utf-8")
-    (wdir / "MODEL_CARD.md").write_text(render_model_card(out), encoding="utf-8")
-    print(json.dumps(out, indent=2, default=str))
-    print(f"bundled weights + MODEL_CARD.md -> {wdir}")
+    with tempfile.TemporaryDirectory() as tmp:
+        wdir = Path(tmp) / "weights"
+        model.save(wdir)
+        files = {p.name: p.read_bytes() for p in sorted(wdir.iterdir()) if p.is_file()}
+    files["metrics.json"] = payload.encode("utf-8")
+    files["MODEL_CARD.md"] = render_model_card(out).encode("utf-8")
+    print(payload)
+    return FileSet(files)
 
+
+PIPELINE = Pipeline(
+    name="win_probability",
+    module="scripts.train_win_probability",
+    params=_PARAMS,
+    stages=(
+        Stage(
+            name="refs",
+            units=lambda ctx: ["only"],
+            work=_refs_work,
+            reduce=lambda r, ctx: r["only"],
+            params=("all_competitions", "competition_id", "season_id", "max_matches"),
+            uses_dataset=True,
+            dataset_files=lambda ctx: (),  # open data over HTTP: no dataset file
+        ),
+        ItemStage(
+            name="extract",
+            refs=_extract_refs,
+            key=lambda ref: ref.key,
+            load=_load_match,
+            work=_extract_work,
+            needs=("refs",),
+            reduce=_extract_reduce,
+            declare=lambda p: {"model": "WinProbabilityModel", "cols": list(_SHARD_COLUMNS)},
+            cross_commit_version="win-probability-shard-1",
+            uses_dataset=True,
+            max_failures=None,  # legacy for_each recorded failures and fit over the rest
+        ),
+        Stage(
+            name="fit",
+            units=lambda ctx: ["only"],
+            work=_fit_work,
+            needs=("refs", "extract"),
+            reduce=lambda r, ctx: r["only"],
+        ),
+    ),
+    output="fit",
+)
 
 if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    main()
+    raise SystemExit(main(PIPELINE))

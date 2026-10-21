@@ -9,6 +9,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -55,34 +57,39 @@ def test_corpus_fingerprint_distinguishes_corpora():
     assert a == c
 
 
-def test_trainers_no_longer_gate_on_a_constant_token():
-    """Asserted on the ASSIGNMENT, not on the string appearing anywhere in the file.
-
-    A bare ``'"schema-v2"' not in src`` also forbids *explaining* the change in a docstring, which
-    is the opposite of what we want: the reason a guard was replaced is exactly the thing worth
-    recording next to it. The defect was the module-level constant being handed to
-    ``cache_is_valid``; that is what this checks.
-    """
+@pytest.mark.parametrize(
+    ("name", "argv"),
+    [
+        ("train_xshot_occurrence", ["--dataset", "d"]),
+        ("train_xcross_attempt", ["--dataset", "d", "--probe-dataset", "p"]),
+    ],
+)
+def test_the_stage_trainers_key_the_extraction_on_the_live_corpus_identity(name, argv):
+    """ADR-128: the whole-corpus feature cache and its fingerprint are gone (they replaced a constant
+    ``"schema-v2"`` token, ADR-050). The CORPUS now keys the extract stage's TOKEN (`uses_dataset`), so a
+    changed corpus is a new generation -- never a constant token, and never a fingerprint of a second copy
+    of the selection rule."""
     import ast
+    import importlib
 
-    for name in ("train_xshot_occurrence", "train_xcross_attempt"):
-        path = REPO / "scripts" / f"{name}.py"
-        src = path.read_text(encoding="utf-8")
-        assigned = {
-            t.id
-            for node in ast.parse(src).body
-            if isinstance(node, ast.Assign)
-            for t in node.targets
-            if isinstance(t, ast.Name)
-        }
-        assert "_CACHE_FINGERPRINT" not in assigned, (
-            f"{name} still defines a module-level constant fingerprint; the cache gate must be a live per-corpus hash"
-        )
-        assert "corpus_fingerprint" in src, f"{name} must build a live fingerprint"
-        assert "select_match_ids" in src, (
-            f"{name} must key the fingerprint on the REQUESTED corpus via the shared selection "
-            f"helper, not on a second copy of the allowlist/cap rule"
-        )
+    from scripts import _stages
+    from tests.scripts._stage_harness import params_from_args
+
+    m = importlib.import_module(f"scripts.{name}")
+    src = (REPO / "scripts" / f"{name}.py").read_text(encoding="utf-8")
+    assigned = {
+        t.id
+        for node in ast.parse(src).body
+        if isinstance(node, ast.Assign)
+        for t in node.targets
+        if isinstance(t, ast.Name)
+    }
+    assert "_CACHE_FINGERPRINT" not in assigned
+    assert m.PIPELINE.stage("extract").uses_dataset
+    params = params_from_args(m.PIPELINE, [*argv, "--arms-json", "{}"])
+    _, a = _stages.compute_tokens(m.PIPELINE, params, "c", {"name": "d", "revision": "r1"})
+    _, b = _stages.compute_tokens(m.PIPELINE, params, "c", {"name": "d", "revision": "r2"})
+    assert a["extract"] != b["extract"], "a changed corpus must be a new extract generation"
 
 
 def test_selection_is_single_sourced_between_fingerprint_and_extraction():
@@ -230,28 +237,39 @@ def test_validate_corpus_visibility_catches_a_mixed_corpus(tmp_path):
 
 
 def test_main_calls_validate_corpus_visibility_before_extraction():
-    """Wiring + ordering: main() must call validate_corpus_visibility, and BEFORE the per-frame
+    """Wiring + ordering: the trainer must call validate_corpus_visibility, and BEFORE the per-frame
     keeper_detection_mask extraction / the model fit -- else 'fires before extraction' is not
-    actually guaranteed by the pre-flight function raising in isolation."""
+    actually guaranteed by the pre-flight function raising in isolation.
+
+    ADR-128: the order is the stage DAG's. The `validate` stage's work calls the pre-flight, and every
+    stage whose work extracts or fits needs `validate` (transitively), so the executor completes
+    `validate` before any of them can start."""
     import ast
 
-    src = (REPO / "scripts" / "train_ghost_gk.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    main = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+    t = _load("train_ghost_gk")
+    tree = ast.parse((REPO / "scripts" / "train_ghost_gk.py").read_text(encoding="utf-8"))
+    funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
 
-    def _call_lines(pred):
-        return [n.lineno for n in ast.walk(main) if isinstance(n, ast.Call) and pred(n)]
+    def _calls(fn, pred):
+        return any(isinstance(n, ast.Call) and pred(n) for n in ast.walk(funcs[fn]))
 
-    vis = _call_lines(lambda n: isinstance(n.func, ast.Name) and n.func.id == "validate_corpus_visibility")
-    assert vis, "main() must call validate_corpus_visibility"
-    later = _call_lines(
-        lambda n: (
-            (isinstance(n.func, ast.Name) and n.func.id == "keeper_detection_mask")
-            or (isinstance(n.func, ast.Attribute) and n.func.attr == "fit")
+    def _is_visibility(n):
+        return isinstance(n.func, ast.Name) and n.func.id == "validate_corpus_visibility"
+
+    def _extracts_or_fits(n):
+        return (isinstance(n.func, ast.Name) and n.func.id == "keeper_detection_mask") or (
+            isinstance(n.func, ast.Attribute) and n.func.attr == "fit"
         )
-    )
-    assert later, "expected keeper_detection_mask / .fit in main()"
-    assert min(vis) < min(later), "validate_corpus_visibility must run BEFORE extraction/fit"
+
+    assert _calls("_validate_work", _is_visibility), "the validate stage must call validate_corpus_visibility"
+
+    def _needs_validate(name):
+        return any(n == "validate" or _needs_validate(n) for n in t.PIPELINE.stage(name).needs)
+
+    later = [st.name for st in t.PIPELINE.stages if _calls(st.work.__name__, _extracts_or_fits)]
+    assert later, "expected keeper_detection_mask / .fit in the stage work functions"
+    assert {"extract", "cv", "fit"} <= set(later)
+    assert all(_needs_validate(n) for n in later), "validate_corpus_visibility must run BEFORE extraction/fit"
 
 
 # ---------------------------------------------------------------------------

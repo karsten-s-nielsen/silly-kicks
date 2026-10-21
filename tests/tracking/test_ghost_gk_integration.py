@@ -116,16 +116,19 @@ def _build_synthetic_parquets(
     tmpdir: Path,
     n_games: int = 3,
 ) -> tuple[Path, Path, Path]:
-    """Build synthetic tracking + actions parquets + home_teams.json.
+    """Build a synthetic STAGED flat dataset ``tmpdir/syn`` (ADR-128): ``shards/<gen>/<provider>__<game>.parquet``
+    tracking frames, an (empty) ``_actions/`` and ``home_teams.json``.
 
     ORIENTED (ADR-028), matching ``_make_ghost_gk_frames``: team "1" keeps its GK at
     x=5 (defends x=0) so it attacks x=105 -> "ltr"; team "2" keeps its GK at x=100 so
     it attacks x=0 -> "rtl". ``home_teams.json`` names "1" as home, so this is the
     canonical home-attacks-right frame convention.
     """
-    tracking_dir = tmpdir / "tracking"
-    actions_dir = tmpdir / "actions"
-    tracking_dir.mkdir()
+    from scripts._toy_corpora import TOY_GENERATION
+
+    tracking_dir = tmpdir / "syn" / "shards" / TOY_GENERATION
+    actions_dir = tmpdir / "syn" / "_actions"
+    tracking_dir.mkdir(parents=True)
     actions_dir.mkdir()
 
     for g in range(n_games):
@@ -225,13 +228,13 @@ def _build_synthetic_parquets(
             )
 
         pd.DataFrame(rows).to_parquet(
-            tracking_dir / f"game_{game_id}.parquet",
+            tracking_dir / f"gradientsports__{game_id}.parquet",
             index=False,
         )
 
     # Home teams JSON
     home_teams = {str(100 + g): "1" for g in range(n_games)}
-    ht_path = tmpdir / "home_teams.json"
+    ht_path = tmpdir / "syn" / "home_teams.json"
     with open(ht_path, "w") as f:
         json.dump(home_teams, f)
 
@@ -375,21 +378,22 @@ class TestTrainScriptSmoke:
     def test_smoke(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir_p = Path(tmpdir)
-            tracking_dir, _, ht_path = _build_synthetic_parquets(
-                tmpdir_p,
-                n_games=3,
-            )
+            _build_synthetic_parquets(tmpdir_p, n_games=3)
 
             output_dir = tmpdir_p / "output"
             result = subprocess.run(  # noqa: S603
                 [
                     sys.executable,
-                    "scripts/train_ghost_gk.py",
-                    "--data-dir",
-                    str(tracking_dir),
-                    "--home-teams",
-                    str(ht_path),
-                    "--output-dir",
+                    "-m",
+                    "scripts.train_ghost_gk",
+                    "--dataset",
+                    "syn",
+                    "--data-root",
+                    str(tmpdir_p),
+                    "--store",
+                    str(tmpdir_p / "store"),
+                    "--run-all",
+                    "--out",
                     str(output_dir),
                     "--n-estimators",
                     "10",
@@ -405,7 +409,7 @@ class TestTrainScriptSmoke:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=240,
                 cwd=str(Path(__file__).resolve().parents[2]),
             )
             print(result.stdout)
@@ -413,8 +417,8 @@ class TestTrainScriptSmoke:
                 print(result.stderr)
             assert result.returncode == 0, f"Script failed:\n{result.stderr}"
 
-            # Check artifacts exist
-            artifact_dir = output_dir / "ghost_gk_v1"
+            # Check artifacts exist (ADR-128: `--run-all --out` writes the bundle files directly)
+            artifact_dir = output_dir
             assert artifact_dir.exists()
             assert (artifact_dir / "metrics.json").exists()
 

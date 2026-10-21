@@ -15,3 +15,5 @@ liveness gate + call-convention registry; the liveness-fixture precondition; the
 
 For the validity gate a metric must pass, see `docs/howto/construct-validity.md`. For the corpus
 driver that validates it on real data, see `docs/howto/corpus-drivers-runbook.md`.
+
+A trained model or a corpus pass is a compute pipeline: follow the `compute-pipelines` skill (ADR-128).
