@@ -28,7 +28,8 @@ import pandas as pd
 from scripts.measure_tf46_census import expected_restart_census, expected_sportec_f4_f7_census
 from silly_kicks.id_compat import canonical_id as _ci
 from silly_kicks.spadl import config as spadlcfg
-from silly_kicks.spadl import skillcorner, sportec
+from silly_kicks.spadl import skillcorner, sportec, statsbomb
+from silly_kicks.spadl._training_exclusion import training_exclusion_mask
 
 
 def _cid(value: object) -> str:
@@ -326,3 +327,76 @@ def test_g7_sportec_f7_converter_matches_pins():
     assert crossed == pen_box_true == _PIN_FREEKICK_CROSSED  # crossed count equals the play_penalty_box true count
     assert short == _PIN_FREEKICK_SHORT
     assert inferred == _PIN_FREEKICK_INFERRED
+
+
+# ---------------------------------------------------------------------------
+# StatsBomb K2 (G8) + shared exclusion helper (G-train) — Commit 4 (spec section 8/11.3)
+# ---------------------------------------------------------------------------
+_STATSBOMB = Path(__file__).parents[1] / "datasets" / "statsbomb"
+
+
+def _k2_synthetic_converted():
+    events = pd.DataFrame(json.loads((_STATSBOMB / "k2_synthetic.json").read_text(encoding="utf-8")))
+    actions, _ = statsbomb.convert_to_actions(events, home_team_id=100, xy_fidelity_version=1, shot_fidelity_version=1)
+    out = actions.copy()
+    out["type_name"] = out["type_id"].map(_ID_TO_NAME)
+    return out.set_index(out["original_event_id"].astype(str))
+
+
+_K2_SETPIECE_IDS = {
+    spadlcfg.actiontype_id[k]
+    for k in ("corner_crossed", "corner_short", "freekick_crossed", "freekick_short", "goalkick", "throw_in")
+}
+
+
+def test_g8_statsbomb_k2_on_committed_fixture():
+    # G8: a set-piece pass with Unknown outcome is kept + typed; a non-set-piece Unknown pass stays
+    # non_action; chain rows follow the section-8.2 convention. Reads the committed synthetic fixture.
+    by = _k2_synthetic_converted()
+    assert by.loc["c1_corner", "type_name"] in ("corner_crossed", "corner_short")
+    assert by.loc["c2_fk", "type_name"] in ("freekick_crossed", "freekick_short")
+    assert by.loc["c3_gk", "type_name"] == "goalkick"
+    assert by.loc["c4_ti", "type_name"] == "throw_in"
+    assert by.loc["c5_corner", "type_name"] in ("corner_crossed", "corner_short")
+    for evid in ("c1_corner", "c2_fk", "c3_gk", "c4_ti", "c5_corner"):
+        assert by.loc[evid, "result_source"] == "inferred", evid
+    assert "e_nonsp" not in by.index  # non-set-piece Unknown stays non_action (dropped)
+    # chain: corner->FK (c1), FK->penalty (c2), goal kick -> Foul Committed (skipped) -> FK through a foul (c3)
+    for evid in ("c1_corner", "c2_fk", "c3_gk"):
+        assert by.loc[evid, "result_id"] == spadlcfg.result_id["success"], evid
+        assert by.loc[evid, "restart_evidence"] == "chain_ambiguous", evid
+
+
+def test_g8_statsbomb_real_open_data_e2e():
+    # Real-open-data e2e (decision A5(1)): match 7584 keeps >= 1 set-piece pass with result_source="inferred"
+    # (the K2 fix; this match has a kept goal kick). load_statsbomb reads the COMMITTED 7584.json (no network,
+    # no statsbombpy), so this is a hard gate -- a converter crash fails it, it is NOT skipped.
+    from tests.invariants._loaders import load_statsbomb
+
+    actions, _ = load_statsbomb(7584)
+    kept = actions[actions["result_source"] == "inferred"]
+    # Pinned on the committed 7584.json (TF46C-IMPL-22/-21/-27): exactly one kept set-piece-Unknown pass -- a
+    # goal kick whose next MEANINGFUL event WITHIN THE HALF (bookkeeping / Foul Committed-Won skipped) is a
+    # same-team free kick, so the §8.2 chain convention fires on real data: success + chain_ambiguous. This
+    # pins the chain actually firing (the whole point of the -21 successor-scan fix), not just >= 1 kept.
+    assert len(kept) == 1
+    kept_row = kept.iloc[0]
+    assert kept_row["type_id"] == spadlcfg.actiontype_id["goalkick"]
+    assert kept_row["result_id"] == spadlcfg.result_id["success"]
+    assert kept_row["restart_evidence"] == "chain_ambiguous"
+    assert kept["type_id"].isin(_K2_SETPIECE_IDS).all()
+    assert int((actions["restart_evidence"] == "chain_ambiguous").sum()) == 1
+
+
+def test_g_train_helper_excludes_the_four_classes():
+    # G-train: the shared helper excludes inferred/stopgap result_source, chain_ambiguous restart_evidence
+    # and any repair_kind row; it keeps native and <NA>. (The xsuccess + expected_passing filters call it --
+    # tests/xsuccess + tests/expected_passing assert the exclusion is effective in a fit.)
+    df = pd.DataFrame(
+        {
+            "result_source": ["inferred", "stopgap", pd.NA, pd.NA, "native"],
+            "restart_evidence": [pd.NA, pd.NA, "chain_ambiguous", pd.NA, pd.NA],
+            "repair_kind": [pd.NA, pd.NA, pd.NA, "own_goal_inverted", pd.NA],
+        }
+    )
+    assert training_exclusion_mask(df).tolist() == [True, True, True, True, False]

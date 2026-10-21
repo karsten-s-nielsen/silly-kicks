@@ -25,6 +25,7 @@ import pandas as pd
 from sklearn.exceptions import NotFittedError
 
 import silly_kicks.spadl.config as spadlconfig
+from silly_kicks.spadl._training_exclusion import training_exclusion_mask
 from silly_kicks.spadl.utils import _sort_actions_chronological_or_action_id, add_possessions
 from silly_kicks.xtgk._moves import _is_turnover
 from silly_kicks.xtgk._possession_value import M, N, PossessionValue, PressureLevel, mirror_zone
@@ -206,7 +207,11 @@ class EmpiricalTurnoverValue:
             else None
         )
         a["_p_level"] = pl.apply(a[pressure_column], zones=zones)
-        a["_turnover"] = _is_turnover(a)
+        # TF-46 Arm 1 (decision B5/E, spec section 11.3, TF46C-IMPL-25): exclude K2 inferred / chain_ambiguous
+        # / repair rows as turnover EXAMPLES, but KEEP them as context -- a repair_kind shot is a real
+        # opponent shot the forward scan credits, and dropping rows would also reshuffle possessions. Tolerant
+        # of a frame without the base signal columns (all-False mask).
+        a["_turnover"] = _is_turnover(a) & (~training_exclusion_mask(a)).to_numpy()
         a["_opp_shot_xg"] = self._opp_first_shot_after_turnover(a, xg_column, window_seconds=self.window_seconds)
         turnovers = a[a["_turnover"]].dropna(subset=["start_x", "start_y"])
         ncell, cf = self.w * self.l, self.coarsen

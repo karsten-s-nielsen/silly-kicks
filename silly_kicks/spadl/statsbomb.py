@@ -281,6 +281,15 @@ def convert_to_actions(
 
     actions["type_id"] = _vectorized_type_id(events)
     actions["result_id"] = _vectorized_result_id(events)
+    # K2 (spec section 8.1/8.2): a set-piece pass with Unknown/Injury-Clearance outcome keeps its set-piece
+    # type (above); infer its result from the next event and stamp result_source / restart_evidence. These
+    # are events-aligned here (pre-drop), so they survive the sort + dribble insertion; _ensure_base_signal_
+    # columns is fill-if-absent and does not clobber them.
+    _k2_result, _k2_result_source, _k2_restart_evidence = _k2_setpiece_unknown_signals(events)
+    _k2_mask = _k2_result.notna()
+    actions.loc[_k2_mask, "result_id"] = _k2_result[_k2_mask].astype("int64").to_numpy()
+    actions["result_source"] = _k2_result_source.to_numpy()
+    actions["restart_evidence"] = _k2_restart_evidence.to_numpy()
     actions["bodypart_id"] = _vectorized_bodypart_id(events)
     actions["shot_blocked"] = _blocked_flag(
         len(actions),
@@ -495,6 +504,9 @@ def _cross_blocked_flag(events: pd.DataFrame) -> "pd.arrays.BooleanArray":
     return _blocked_flag(len(events), applicable=applicable, blocked=blocked)
 
 
+_SETPIECE_PASS_TYPES = ("Free Kick", "Corner", "Goal Kick", "Throw-in")
+
+
 def _vectorized_type_id(events: pd.DataFrame) -> pd.Series:
     """Compute SPADL type_id for all events using vectorized np.select."""
     t = events["type_name"]
@@ -512,11 +524,15 @@ def _vectorized_type_id(events: pd.DataFrame) -> pd.Series:
 
     is_pass = t == "Pass"
     high_or_cross = (pass_height == "High Pass") | (pass_cross == True)  # noqa: E712
+    # K2 (spec section 8.1): a set-piece pass keeps its set-piece type REGARDLESS of outcome, so the
+    # Unknown / Injury-Clearance -> non_action guard applies to NON-set-piece passes only. The set-piece
+    # branches below do not gate on outcome, so a set-piece Unknown pass falls through to its set-piece type.
+    is_setpiece = is_pass & pass_type.isin(_SETPIECE_PASS_TYPES)
 
     # Pass sub-types — order matters (first match wins in np.select)
     conditions = [
-        # Pass with outcome "Injury Clearance" or "Unknown" → non_action
-        is_pass & pass_outcome.isin(["Injury Clearance", "Unknown"]),
+        # NON-set-piece pass with outcome "Injury Clearance" or "Unknown" → non_action (K2: set pieces keep type)
+        is_pass & pass_outcome.isin(["Injury Clearance", "Unknown"]) & ~is_setpiece,
         # Free Kick pass: crossed or short
         is_pass & (pass_type == "Free Kick") & high_or_cross,
         is_pass & (pass_type == "Free Kick") & ~high_or_cross,
@@ -589,6 +605,71 @@ def _vectorized_type_id(events: pd.DataFrame) -> pd.Series:
     ]
 
     return pd.Series(np.select(conditions, choices, default=non_action), index=events.index)
+
+
+# The possession successor of a restart is the next MEANINGFUL event. StatsBomb interleaves bookkeeping and
+# the Foul Committed / Foul Won pair between a restart and the free kick it wins, so the literal next row is
+# NOT the successor and the chain would never fire on real data (TF46C-IMPL-21). These types are skipped when
+# scanning for the successor; everything else (Pass/Shot/Interception/Duel/Clearance/...) is a successor.
+_K2_SUCCESSOR_SKIP_TYPES: frozenset[str] = _EXCLUDED_EVENT_TYPES | frozenset({"Foul Committed", "Foul Won"})
+
+
+def _k2_setpiece_unknown_signals(events: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """K2 (spec section 8.1/8.2): inferred signals for a set-piece pass with an ``Unknown`` /
+    ``Injury Clearance`` outcome (which now keeps its set-piece type, see ``_vectorized_type_id``).
+
+    Its result is inferred from the next MEANINGFUL event (bookkeeping and Foul Committed/Won are skipped --
+    see ``_K2_SUCCESSOR_SKIP_TYPES``) and marked ``result_source="inferred"`` so the shared training-exclusion
+    helper drops it. The chain sub-case (section 8.2 / decision B4) -- that successor is a Free Kick or
+    Penalty by the SAME (restarting) team -- is ``result_id="success"`` (the team kept possession through a
+    foul, not that the delivery reached a target) with ``restart_evidence="chain_ambiguous"``. Otherwise the
+    result is ``success`` when the successor is the same team (possession retained), else ``fail``.
+
+    Returns three events-indexed Series: a ``result_id`` override (``<NA>`` where K2 does not apply), the
+    ``result_source`` column and the ``restart_evidence`` column. StatsBomb events are chronological within a
+    match; a set-piece-Unknown pass with no surviving successor infers ``fail``.
+    """
+    from silly_kicks.id_compat import ids_equal
+
+    t = events["type_name"]
+    pass_type = events["_pass_type"]
+    pass_outcome = events["_pass_outcome"]
+    is_sp_unknown = (
+        (t == "Pass") & pass_type.isin(_SETPIECE_PASS_TYPES) & pass_outcome.isin(["Unknown", "Injury Clearance"])
+    )
+
+    # Next MEANINGFUL event per row: shift within the meaningful subset, then reindex back to the full frame
+    # (a set-piece-Unknown pass is itself meaningful, so it picks up the next meaningful event after it). The
+    # shift is grouped by period_id so the successor never crosses Half End/Start into the next period
+    # (TF46C-IMPL-27); groupby.shift keeps the events.index for the reindex.
+    m = events[~t.isin(_K2_SUCCESSOR_SKIP_TYPES)]
+    g = m.groupby("period_id", sort=False)
+    nxt = pd.DataFrame(
+        {
+            "team": g["team_id"].shift(-1),
+            "type": g["type_name"].shift(-1),
+            "pt": g["_pass_type"].shift(-1),
+            "st": g["_shot_type"].shift(-1),
+        }
+    ).reindex(events.index)
+
+    # ids_equal returns a POSITIONAL fresh-index boolean; re-wrap on events.index (inputs share its order).
+    same_team_next = pd.Series(ids_equal(events["team_id"], nxt["team"]).to_numpy(), index=events.index)
+    next_is_fk_or_pen = (
+        ((nxt["type"] == "Pass") & (nxt["pt"] == "Free Kick")) | ((nxt["type"] == "Shot") & (nxt["st"] == "Penalty"))
+    ).fillna(False)
+    is_chain = is_sp_unknown & same_team_next & next_is_fk_or_pen
+
+    _r = spadlconfig.result_id
+    result_override = pd.Series(pd.NA, index=events.index, dtype="object")
+    result_override[is_sp_unknown & (is_chain | same_team_next)] = _r["success"]
+    result_override[is_sp_unknown & ~is_chain & ~same_team_next] = _r["fail"]
+
+    result_source = pd.Series(pd.NA, index=events.index, dtype="object")
+    result_source[is_sp_unknown] = "inferred"
+    restart_evidence = pd.Series(pd.NA, index=events.index, dtype="object")
+    restart_evidence[is_chain] = "chain_ambiguous"
+    return result_override, result_source, restart_evidence
 
 
 def _vectorized_result_id(events: pd.DataFrame) -> pd.Series:

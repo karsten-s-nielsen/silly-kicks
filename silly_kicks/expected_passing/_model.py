@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
+from silly_kicks.spadl._training_exclusion import training_exclusion_mask
 
 from ._features import FEATURE_NAMES, feature_contract_block, pass_completion_features
 
@@ -131,6 +132,10 @@ class PassCompletionModel:
         from sklearn.linear_model import LogisticRegression  # training-only import
 
         p = actions[actions["type_id"] == _PASS].dropna(subset=["start_x", "start_y", "end_x", "end_y"])
+        # TF-46 Arm 1 (decision B5/E, the G1 GK-completion filter): drop inferred/stopgap results,
+        # chain_ambiguous restarts and repair rows from the completion training set. Tolerant of a frame
+        # without the base signal columns (all-False mask) -- atomic / pre-re-convert frames fit unchanged.
+        p = p[~training_exclusion_mask(p)]
         X = pass_completion_features(
             p["start_x"].to_numpy(),
             p["start_y"].to_numpy(),

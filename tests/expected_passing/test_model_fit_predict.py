@@ -27,6 +27,29 @@ def _passes(n=2000, seed=0):
     )
 
 
+def _coef(m: PassCompletionModel) -> np.ndarray:
+    return np.concatenate([m._coef, [m._intercept]])
+
+
+def test_training_exclusion_drops_marked_rows():
+    # TF-46 Arm 1 (decision B5, the G1 GK-completion filter): inferred/chain_ambiguous/repair rows are
+    # excluded from the completion fit, so a corpus plus marked extra rows trains the SAME coefficients.
+    base = _passes(2000)
+    base["result_source"] = pd.NA
+    marked = _passes(400, seed=99)
+    marked["result_source"] = "inferred"
+    combined = pd.concat([base, marked], ignore_index=True)
+    np.testing.assert_allclose(_coef(PassCompletionModel().fit(base)), _coef(PassCompletionModel().fit(combined)))
+
+
+def test_training_exclusion_tolerates_absent_columns():
+    # A frame WITHOUT the base signal columns fits exactly as one with result_source=<NA> (no raise).
+    base = _passes(1500)
+    with_na = base.copy()
+    with_na["result_source"] = pd.NA
+    np.testing.assert_allclose(_coef(PassCompletionModel().fit(base)), _coef(PassCompletionModel().fit(with_na)))
+
+
 def test_predict_is_monotone_decreasing_in_distance():
     m = PassCompletionModel().fit(_passes())
     short = m.predict_completion(np.array([20.0]), np.array([34.0]), np.array([28.0]), np.array([34.0]))

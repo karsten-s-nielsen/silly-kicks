@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 
 import silly_kicks.spadl.config as cfg
+from silly_kicks.spadl._training_exclusion import training_exclusion_mask
 
 from ._features import FEATURE_NAMES, feature_contract_block, xsuccess_features
 
@@ -165,6 +166,10 @@ class XSuccessModel:
             assert model.is_fitted
         """
         sub = actions[actions["type_id"] != _NON_ACTION]
+        # TF-46 Arm 1 (decision B5/E): drop rows marked for training exclusion -- inferred/stopgap results,
+        # chain_ambiguous restarts, goals-reconciliation repairs. Tolerant: a frame without the base signal
+        # columns yields an all-False mask, so atomic / pre-re-convert frames fit unchanged.
+        sub = sub[~training_exclusion_mask(sub)]
         X = xsuccess_features(sub)
         y = (np.asarray(sub["result_id"]) == _SUCCESS).astype(int)
         tid = np.asarray(sub["type_id"])
