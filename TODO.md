@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.139.0: TF-46 Arm 1 corner offence (Shaw) + section-12 construct validity + sportec corner-crossed (ADR-127).** New `silly_kicks/corners/` corner-offence family (raw primitives, ADR-110): corner identification + windows (TF-79 timing + first-contact winner), (initial × target) GMM run-zone encoding, NMF routine basis, descriptive per-routine chance quality; bundled params-only `RunZoneModel`/`CornerRoutineModel` weights (ADR-011, `training_commit`-stamped) + the section-12 construct-validity memo (`docs/research/corner_routines/`: `n_shots` separates teams net-of-team p=0; `n_goals`/`sum_xg` underpowered; season transfer not established). `sportec`/IDSSE `corner_crossed` now discriminates via DFL `play_height` (ADR-127; value-changing). Detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.139.1: pandas 3.1 compatibility fix.** `add_gradientsports_player_ids` no longer raises on pandas 3.1 (`is_goalkeeper` via `isin([True])`); the release also carries the ADR-128 compute-contract harness (no library behaviour change). Detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

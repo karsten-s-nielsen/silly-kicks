@@ -22,6 +22,8 @@ EXPECTED_SHAS = {
     "andrienko_oval": {
         "8d49f11737ae1874aa3a65bf12c37d76f0f8d977738f2944a8be3244138e5a9c",
         "23a32e695889bfc61cb90328c948b03787ac670748b20b4d7639bc7d59cf3294",
+        # pandas 3.1.0: 3 of 50 values move by the last ULP (max |diff| 1.4e-14 vs pandas 2.3.3).
+        "eec7f03333bb86a0b62548465eadaff244fe44397785aa974a153cc2f27dbe7b",
     },
     "link_zones": {
         "834889e6f2707046f0dcdbaea0805c829137b84d2ad54893a316a99282064ec5",
