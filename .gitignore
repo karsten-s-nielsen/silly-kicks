@@ -22,6 +22,9 @@ venv/
 .coverage
 htmlcov/
 .mypy_cache/
+# CI's on-disk numba kernel cache (NUMBA_CACHE_DIR in .github/workflows/ci.yml). Untracked, it would make
+# the CI tree dirty and change the ADR-128 code identity whenever numba writes a kernel mid-run.
+.numba_cache/
 
 # OS
 .DS_Store
@@ -106,3 +109,4 @@ calibration_runs/
 # player positions and is NEVER committed -- only the aggregate docs/research/ metrics are. A specific
 # filename (not a tracked path), so ignoring it at any depth is safe.
 pass_scores.parquet
+.venv-hfjobs/

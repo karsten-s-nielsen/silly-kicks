@@ -43,8 +43,15 @@ from tests.scripts._script_population import iter_scripts
 #: reuse, Task 8.5). They are `_LOADER_NON_CORPUS` (not a stream loader, not a loading loop -- see the
 #: gate in `_corpus_load_rules`), so they are absent from `corpus_functions()`; but calling one still
 #: means the module pulls a corpus, so detection must count them or a fully-migrated driver drops out of
-#: `_population()` and its adoption stops being checked.
-_SOURCE_FACTORIES = {"pining_source", "open_data_source", "events_only_loader"}
+#: `_population()` and its adoption stops being checked. ADR-128 adds the staged-dataset factories of
+#: `scripts/_driver_sources.py`: a trainer migrated onto the stage contract reads ONLY a staged dataset.
+_SOURCE_FACTORIES = {
+    "pining_source",
+    "open_data_source",
+    "events_only_loader",
+    "staged_flat_refs",
+    "staged_pergame_refs",
+}
 #: Calling any of these means the driver pulls a corpus. Spec section 5.7: the hand-written set is
 #: REPLACED by the population derived from the loader modules (`_corpus_load_rules.corpus_functions`),
 #: so a new corpus loader named by the convention is picked up automatically; the source factories are
@@ -55,6 +62,9 @@ _CORPUS_ARGS = {"--data-dir", "--match-ids-json", "--max-per-provider", "--provi
 #: The public surface of `scripts/_driver.py`. Calling any of them is adoption.
 _DRIVER_API = {
     "for_each",
+    # ADR-128 (decision P12): a migrated driver DECLARES an ItemStage; the executor runs it through
+    # `for_each`, which asserts conservation and injectivity internally -- so declaring one is adoption.
+    "ItemStage",
     "generation_dir",
     "shard_path",
     "join_key",
@@ -86,6 +96,7 @@ _INJECTIVE = "_require_injective"
 #: escape-hatch cases below went red for all four at once. The plan predicted "all pass".
 _SHARD_PRIMITIVES = {
     "for_each",
+    "ItemStage",  # ADR-128: executed through for_each (decision P12)
     "generation_dir",
     "shard_path",
     "write_shard",
@@ -156,7 +167,8 @@ def _adopts(tree: ast.AST) -> bool:
 
 
 def _uses_for_each(tree: ast.AST) -> bool:
-    return "for_each" in _called_names(tree)
+    # An ItemStage is executed by `for_each`, which asserts conservation + injectivity (ADR-128, P12).
+    return bool({"for_each", "ItemStage"} & _called_names(tree))
 
 
 def _population() -> dict[str, ast.AST]:
@@ -278,6 +290,33 @@ def test_detection_catches_a_planted_MIGRATED_driver():
     )
     assert _is_corpus_driver(planted)
     assert _adopts(planted)
+
+
+def test_detection_catches_a_planted_ITEMSTAGE_driver():
+    """ADR-128: a migrated driver declares ItemStage(load=..., key=...) and never calls for_each itself.
+    It must still be in the population (it pulls a corpus) and count as adopted."""
+    tree = _parse(
+        "from scripts._sb_open_data import open_data_source\n"
+        "from scripts._stages import ItemStage\n"
+        "def _refs(ctx):\n    return open_data_source([(43, 106)])[0]\n"
+        "S = ItemStage(name='x', refs=_refs, key=lambda ref: ref.key, load=lambda r, c: r, work=lambda i, c: None)\n"
+    )
+    assert _is_corpus_driver(tree) and _adopts(tree) and _uses_for_each(tree)
+
+
+@pytest.mark.parametrize("factory", ["staged_flat_refs", "staged_pergame_refs"])
+def test_detection_catches_a_planted_STAGED_DATASET_driver(factory):
+    """ADR-128 (decision P17): a migrated trainer reads a STAGED dataset through `_driver_sources`, with no
+    corpus CLI flag and no stream loader left. Without the staged factories in `_SOURCE_FACTORIES` such a
+    driver silently drops out of `_population()` (measured: `train_ghost_gk` did) and its adoption stops
+    being checked."""
+    tree = _parse(
+        f"from scripts._driver_sources import {factory}\n"
+        "from scripts._stages import ItemStage\n"
+        f"def _refs(ctx):\n    return {factory}(ctx.data_root, ctx.params['dataset'])\n"
+        "S = ItemStage(name='x', refs=_refs, key=lambda ref: ref.stem, load=lambda r, c: r, work=lambda i, c: None)\n"
+    )
+    assert _is_corpus_driver(tree) and _adopts(tree) and _uses_for_each(tree)
 
 
 def test_the_accumulation_predicate_sees_more_than_append():
@@ -448,17 +487,6 @@ def test_rule_c_green_plants():
     assert not clr.rule_c_tree("plant", _parse(id_only)), "Rule C flagged an id-only loop over select_match_ids"
 
 
-def test_rule_c_named_green_sites_stay_green():
-    """Sites that iterate ids WITHOUT loading must not be flagged (spec section 5.5). These two are
-    green at 4ac26d0; `_loader_pining_to_cache.main` is flagged until Task 15 moves its load loop."""
-    live = {f"{v.module}.{v.func}" for v in clr.rule_c()}
-    for site in (
-        "train_xcross_attempt._corpus_fingerprint",
-        "train_xshot_occurrence._corpus_fingerprint",
-    ):
-        assert site not in live, f"{site} was wrongly flagged as a loading loop"
-
-
 # --- Step 6: Rule D (unadmitted events-only) + plants -------------------------------------
 
 
@@ -506,7 +534,11 @@ _KEY_EXCEPTIONS: dict[str, str] = {
     # module-level `_source_key` (a MatchRef -> its .key, a tuple -> (provider, match_id)).
     "train_xshot_occurrence": "_source_key",
     "train_xcross_attempt": "_source_key",
-    "train_receiver_model": "ref.match_id",
+    "train_receiver_model": "ref.stem",  # ADR-128: the staged unit stem == the legacy --data-dir match_id
+    "train_ghost_outfield": "ref.stem",  # ADR-128: the legacy flat-layout `_key` (the shard stem)
+    # ADR-128: one game per staged flat file, so the stem; the legacy third key component (`home`) is served
+    # by the dataset identity in the extract token (plan Task 13 M3).
+    "train_ghost_gk": "ref.stem",
     "validate_sb360_licensed_corpus": "_item_key",
     # BOTH sources keyed through a shared module-level `_item_key`: a StatsBomb MatchRef -> its
     # match_id, a Wyscout (match_id, actions) tuple -> its match_id, prefixed by the provider.
@@ -533,7 +565,7 @@ def _for_each_load_key_sources() -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     for mod, tree in clr.all_script_trees().items():
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and clr._call_name(node) == "for_each"):
+            if not (isinstance(node, ast.Call) and clr._call_name(node) in ("for_each", "ItemStage")):
                 continue
             kws = {kw.arg: kw.value for kw in node.keywords}
             if "load" not in kws or kws.get("load") is None:

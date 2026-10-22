@@ -84,7 +84,9 @@ def test_objective_search_excludes_scale_pos_weight_and_uses_stratified_cv():
     from silly_kicks.tracking import _xshot_occurrence_objective as obj_mod
 
     assert "scale_pos_weight" not in obj_mod._SEARCH_KEYS
-    src = inspect.getsource(obj_mod._cv_logloss)
+    # ADR-128 ruling 4: the splitter is single-sourced in `cv_fold_plan`, which `_cv_logloss` composes.
+    assert "cv_fold_plan(" in inspect.getsource(obj_mod._cv_logloss)
+    src = inspect.getsource(obj_mod.cv_fold_plan)
     assert "StratifiedGroupKFold(" in src
     # The plain (non-stratified) splitter must NOT be the one constructed.
     assert "= GroupKFold(" not in src and "=GroupKFold(" not in src
@@ -341,136 +343,34 @@ def test_objective_reports_pr_auc_and_brier():
 # --- Task 12: training CLI ---
 
 
-def _xshot_frame_rows(fid, t, ball_x):
-    """One frame's full-schema rows: ball + team-1 (defends x=0) + team-2 (attacks, carrier
-    near the ball). ``ball_x`` drives the goal distance `r`, the dominant feature."""
-    rows = [
-        dict(
-            player_id=-1, team_id=-1, is_ball=True, is_goalkeeper=False, x=ball_x, y=34.0, frame_id=fid, time_seconds=t
-        ),
-        dict(player_id=10, team_id=1, is_ball=False, is_goalkeeper=True, x=2.0, y=34.0, frame_id=fid, time_seconds=t),
-        dict(player_id=20, team_id=2, is_ball=False, is_goalkeeper=True, x=103.0, y=34.0, frame_id=fid, time_seconds=t),
-        # team-2 carrier 0.3 m from the ball -> possession resolves to team 2.
-        dict(
-            player_id=21,
-            team_id=2,
-            is_ball=False,
-            is_goalkeeper=False,
-            x=ball_x + 0.3,
-            y=34.0,
-            frame_id=fid,
-            time_seconds=t,
-        ),
-    ]
-    for k in range(5):  # team-1 outfield defenders
-        rows.append(
-            dict(
-                player_id=11 + k,
-                team_id=1,
-                is_ball=False,
-                is_goalkeeper=False,
-                x=6.0 + k,
-                y=28.0 + 2 * k,
-                frame_id=fid,
-                time_seconds=t,
-            )
-        )
-    for k in range(4):  # team-2 outfield attackers
-        rows.append(
-            dict(
-                player_id=22 + k,
-                team_id=2,
-                is_ball=False,
-                is_goalkeeper=False,
-                x=ball_x + 2 + k,
-                y=30.0 + 2 * k,
-                frame_id=fid,
-                time_seconds=t,
-            )
-        )
-    return rows
-
-
-def _finalize_train_frames(rows, g):
-    frames = pd.DataFrame(rows)
-    frames["game_id"] = g
-    frames["period_id"] = 1
-    frames["z"] = 0.0
-    frames["frame_rate"] = 10.0
-    frames["ball_state"] = "alive"
-    return frames
+# ADR-128: the learnable / degenerate synthesis moved to `scripts/_toy_corpora.xshot_game` (one synthesis
+# for the toy corpus and these tests).
 
 
 def _write_synthetic_train_dir(tmp_path, *, n_games=4):
-    """Learnable parquet games (gates can PASS): pre-shot frames put the ball NEAR the attacked
-    goal (small `r`) and quiet frames keep it in the attacking third but farther (larger `r`), so
-    `r` cleanly predicts the label. Each game: 6 episodes x (1 positive near + 2 negative far)."""
+    """A learnable STAGED flat dataset ``<tmp>/data/syn`` (gates can PASS); returns the data root."""
     from pathlib import Path
 
-    data_dir = Path(tmp_path) / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    for g in range(n_games):
-        gdir = data_dir / f"game_{g}"
-        gdir.mkdir()
-        rows, shot_times, fid = [], [], 0
-        # Many episodes so positives are plentiful: splits stay feasible even at the HPO's
-        # min_child_weight upper bound (the child-hessian sum must clear it on tiny data).
-        for ep in range(20):
-            base = ep * 7.0
-            shot_times.append(base + 0.9)  # one shot covers the 3 near frames (each within 1 s)
-            specs = [
-                (base, 8.0),  # near goal (r~8) -> positive
-                (base + 0.3, 8.0),
-                (base + 0.6, 8.0),
-                (base + 2.5, 30.0),  # far but in the attacking third (r~30) -> negative
-                (base + 3.0, 30.0),
-                (base + 3.5, 30.0),
-            ]
-            for t, ball_x in specs:
-                rows.extend(_xshot_frame_rows(fid, t, ball_x))
-                fid += 1
-        _finalize_train_frames(rows, g).to_parquet(gdir / "frames.parquet")
-        pd.DataFrame(
-            {
-                "game_id": [g] * len(shot_times),
-                "period_id": [1] * len(shot_times),
-                "team_id": [2] * len(shot_times),
-                "time_seconds": shot_times,
-                "type_id": [_SHOT_TID] * len(shot_times),
-            }
-        ).to_parquet(gdir / "shots.parquet")
-    return data_dir
+    from scripts._toy_corpora import build_xshot_corpus
+
+    build_xshot_corpus(Path(tmp_path) / "data" / "syn", providers=("skillcorner",) * n_games, heavy_episodes=None)
+    return Path(tmp_path) / "data"
 
 
 def _write_degenerate_train_dir(tmp_path, *, n_games=4):
-    """Degenerate parquet games (gates must FAIL): every frame has IDENTICAL features (ball fixed
-    at x=20), so the model cannot beat the base rate -> PR-AUC == base rate, Brier == base-rate
-    Brier -> the strict acceptance gates fail and the trainer must refuse to write an artifact."""
+    """A degenerate STAGED flat dataset (identical features -> the gates must FAIL); returns the data root."""
     from pathlib import Path
 
-    data_dir = Path(tmp_path) / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    for g in range(n_games):
-        gdir = data_dir / f"game_{g}"
-        gdir.mkdir()
-        rows, shot_times, fid = [], [], 0
-        for ep in range(6):
-            base = ep * 6.0
-            shot_times.append(base + 0.3)
-            for t in (base, base + 2.5, base + 3.5):
-                rows.extend(_xshot_frame_rows(fid, t, 20.0))  # constant ball_x -> identical features
-                fid += 1
-        _finalize_train_frames(rows, g).to_parquet(gdir / "frames.parquet")
-        pd.DataFrame(
-            {
-                "game_id": [g] * len(shot_times),
-                "period_id": [1] * len(shot_times),
-                "team_id": [2] * len(shot_times),
-                "time_seconds": shot_times,
-                "type_id": [_SHOT_TID] * len(shot_times),
-            }
-        ).to_parquet(gdir / "shots.parquet")
-    return data_dir
+    from scripts._toy_corpora import build_xshot_corpus
+
+    build_xshot_corpus(
+        Path(tmp_path) / "data" / "syn",
+        providers=("skillcorner",) * n_games,
+        episodes=6,
+        heavy_episodes=None,
+        degenerate=True,
+    )
+    return Path(tmp_path) / "data"
 
 
 def test_tf19_interface_stub():
@@ -594,59 +494,52 @@ def test_xshot_cross_provider():
     assert len(seen) >= 2, f"cross-provider gate needs >=2 evaluable providers, got {seen}"
 
 
-def _write_arms_json(tmp_path, data_dir, *, provider="unknown"):
-    """ADR-123 Amendment B: the visibility-blind trainer requires ``--arms``. The synthetic
-    ``--data-dir`` frames carry no ``source_provider``, so the in-job match key is
-    ``unknown__<game_dir>`` (``_iter_matches_from_dir`` falls back to ``"unknown"``); mark every game
-    ``public`` so the single-arm trainer ships ``public``."""
+def _arms(data_root, *, two_tier=False) -> str:
+    """The launcher's neutral ``--arms-json`` for the staged toy (ADR-123 Amendment B). Default: every game
+    ``public`` (the single-arm trainer ships ``public``). ``two_tier``: half the games ``public``, ALL in
+    ``sc_extended``, NO ``full`` -> not paired, so the BROADEST arm (sc_extended) must ship."""
     import json
+
+    from scripts._toy_corpora import xshot_arms
+
+    if not two_tier:
+        return xshot_arms(data_root / "syn", paired=False)
+    keys = json.loads(xshot_arms(data_root / "syn", paired=False))["arms"]["public"]
+    return json.dumps(
+        {
+            "arms": {"public": keys[: max(1, len(keys) // 2)], "sc_extended": keys},
+            "ship_order": ["public", "sc_extended"],
+        }
+    )
+
+
+def _train(tmp_path, data_root, arms_json, *extra, check=True):
+    """One stage-CLI ``--run-all`` (ADR-128) into ``<tmp>/out``; the store is ``<tmp>/store``."""
     from pathlib import Path
 
-    keys = sorted(f"{provider}__{g.name}" for g in Path(data_dir).iterdir() if g.is_dir())
-    arms_path = Path(tmp_path) / "arms.json"
-    arms_path.write_text(json.dumps({"arms": {"public": keys}, "ship_order": ["public"]}), encoding="utf-8")
-    return arms_path
+    from tests.scripts._parity import cli
+
+    args = ["--dataset", "syn", "--arms-json", arms_json, "--horizon-seconds", "1.0", *extra]
+    return cli(
+        "scripts.train_xshot_occurrence",
+        Path(tmp_path) / "store",
+        data_root,
+        args,
+        "--run-all",
+        "--out",
+        str(Path(tmp_path) / "out"),
+        check=check,
+    )
 
 
 @pytest.mark.slow
 def test_train_script_smoke(tmp_path):
     import json
-    import os
-    import subprocess
-    import sys
     from pathlib import Path
 
-    data_dir = _write_synthetic_train_dir(tmp_path)
-    arms_path = _write_arms_json(tmp_path, data_dir)
-    out_dir = Path(tmp_path) / "out"
-    repo_root = Path(__file__).resolve().parents[2]
-    env = dict(os.environ, PYTHONPATH=str(repo_root))
-    result = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "scripts/train_xshot_occurrence.py",
-            # ADR-052: the trainer refuses a dirty tree (it writes bundled weights); a test
-            # run is by definition a dev run. The artifact still records run_tree_dirty.
-            "--allow-dirty",
-            "--data-dir",
-            str(data_dir),
-            "--arms",
-            str(arms_path),
-            "--output-dir",
-            str(out_dir),
-            "--n-trials",
-            "3",
-            "--horizon-seconds",
-            "1.0",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        cwd=str(repo_root),
-        env=env,
-    )
-    assert result.returncode == 0, result.stderr
-    art = out_dir / "xshot_occurrence_v1"
+    data = _write_synthetic_train_dir(tmp_path)
+    _train(tmp_path, data, _arms(data), "--n-trials", "3")
+    art = Path(tmp_path) / "out"
     assert (art / "model.json").exists()
     assert (art / "metadata.json").exists()
     assert (art / "SHA256SUMS").exists()
@@ -662,44 +555,13 @@ def test_train_script_smoke(tmp_path):
 def test_train_script_smoke_position_only(tmp_path):
     # Task 8: `--feature-set position_only` trains a 26-feature model (velocity `speed` dropped) that
     # saves + loads through the position_only chirality/feature-contract guards. Mirrors the faithful
-    # smoke above; the synthetic dir carries vx/vy but position_only simply does not select `speed`.
+    # smoke above; the synthetic frames carry no speed column a position_only model would select.
     import json
-    import os
-    import subprocess
-    import sys
     from pathlib import Path
 
-    data_dir = _write_synthetic_train_dir(tmp_path)
-    arms_path = _write_arms_json(tmp_path, data_dir)
-    out_dir = Path(tmp_path) / "out_po"
-    repo_root = Path(__file__).resolve().parents[2]
-    env = dict(os.environ, PYTHONPATH=str(repo_root))
-    result = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "scripts/train_xshot_occurrence.py",
-            "--allow-dirty",
-            "--data-dir",
-            str(data_dir),
-            "--arms",
-            str(arms_path),
-            "--output-dir",
-            str(out_dir),
-            "--n-trials",
-            "3",
-            "--horizon-seconds",
-            "1.0",
-            "--feature-set",
-            "position_only",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        cwd=str(repo_root),
-        env=env,
-    )
-    assert result.returncode == 0, result.stderr
-    art = out_dir / "xshot_occurrence_v1"
+    data = _write_synthetic_train_dir(tmp_path)
+    _train(tmp_path, data, _arms(data), "--n-trials", "3", "--feature-set", "position_only")
+    art = Path(tmp_path) / "out"
     meta = json.loads((art / "metadata.json").read_text())
     assert meta["feature_set"] == "position_only"
     assert len(meta["feature_names"]) == 26  # velocity `speed` dropped
@@ -709,101 +571,31 @@ def test_train_script_smoke_position_only(tmp_path):
     XShotOccurrenceModel.load(art)
 
 
-def _write_arms_json_two_tier(tmp_path, data_dir, *, provider="unknown"):
-    """A 2-tier corpus: half the games ``public``, ALL in ``sc_extended``, NO ``full`` -> ``run_paired`` is
-    False, so the non-paired branch must ship the BROADEST arm (sc_extended), never the narrow public arm."""
-    import json
-    from pathlib import Path
-
-    games = sorted(f"{provider}__{g.name}" for g in Path(data_dir).iterdir() if g.is_dir())
-    public = games[: max(1, len(games) // 2)]
-    arms_path = Path(tmp_path) / "arms_2tier.json"
-    arms_path.write_text(
-        json.dumps({"arms": {"public": public, "sc_extended": games}, "ship_order": ["public", "sc_extended"]}),
-        encoding="utf-8",
-    )
-    return arms_path
-
-
 @pytest.mark.slow
 def test_train_script_ships_broadest_arm_when_not_paired(tmp_path):
     """ADR-126 / ADR-038: a 2-tier (public + sc_extended, no full) corpus ships ``sc_extended``, NEVER
     ``public`` -- an owner-tier-trained model must not carry a public label. Regression for the
     ``ship_order[-1]`` fix (the sc_extended re-fit previously mis-shipped the narrow ``public`` arm)."""
     import json
-    import os
-    import subprocess
-    import sys
     from pathlib import Path
 
-    data_dir = _write_synthetic_train_dir(tmp_path)
-    arms_path = _write_arms_json_two_tier(tmp_path, data_dir)
-    out_dir = Path(tmp_path) / "out"
-    repo_root = Path(__file__).resolve().parents[2]
-    env = dict(os.environ, PYTHONPATH=str(repo_root))
-    result = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "scripts/train_xshot_occurrence.py",
-            "--allow-dirty",
-            "--data-dir",
-            str(data_dir),
-            "--arms",
-            str(arms_path),
-            "--output-dir",
-            str(out_dir),
-            "--n-trials",
-            "3",
-            "--horizon-seconds",
-            "1.0",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        cwd=str(repo_root),
-        env=env,
-    )
-    assert result.returncode == 0, result.stderr
-    meta = json.loads((out_dir / "xshot_occurrence_v1" / "metadata.json").read_text())
+    data = _write_synthetic_train_dir(tmp_path)
+    _train(tmp_path, data, _arms(data, two_tier=True), "--n-trials", "3")
+    meta = json.loads((Path(tmp_path) / "out" / "metadata.json").read_text())
     assert meta["shipped_variant"] == "sc_extended", meta.get("shipped_variant")
 
 
 @pytest.mark.slow
 def test_train_script_fail_closed_writes_no_artifact(tmp_path):
-    """N3: a corpus that cannot beat the base rate -> non-zero exit, NO bundled artifact."""
-    import os
-    import subprocess
-    import sys
+    """N3: a corpus that cannot beat the base rate -> non-zero exit, NO bundled artifact; the legacy
+    ``metrics_FAILED.json`` payload is kept beside the failed ``fit`` unit."""
     from pathlib import Path
 
-    data_dir = _write_degenerate_train_dir(tmp_path)
-    arms_path = _write_arms_json(tmp_path, data_dir)
-    out_dir = Path(tmp_path) / "out"
-    repo_root = Path(__file__).resolve().parents[2]
-    result = subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            "scripts/train_xshot_occurrence.py",
-            # ADR-052: the trainer refuses a dirty tree (it writes bundled weights); a test
-            # run is by definition a dev run. The artifact still records run_tree_dirty.
-            "--allow-dirty",
-            "--data-dir",
-            str(data_dir),
-            "--arms",
-            str(arms_path),
-            "--output-dir",
-            str(out_dir),
-            "--n-trials",
-            "2",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        cwd=str(repo_root),
-        env=dict(os.environ, PYTHONPATH=str(repo_root)),
-    )
+    data = _write_degenerate_train_dir(tmp_path)
+    result = _train(tmp_path, data, _arms(data), "--n-trials", "2", check=False)
     assert result.returncode != 0
-    assert not (out_dir / "xshot_occurrence_v1" / "model.json").exists()
+    assert not (Path(tmp_path) / "out" / "model.json").exists()
+    assert list((Path(tmp_path) / "store").rglob("only.metrics_FAILED.json")), "the gate failure left no record"
 
 
 def test_publish_verify_only(tmp_path):

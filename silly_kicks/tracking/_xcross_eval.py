@@ -27,6 +27,69 @@ from silly_kicks.tracking._xcross_attempt import (
 )
 
 
+def _cv_score_plan(y, groups) -> list[tuple[int, np.ndarray, np.ndarray]]:
+    """The gate's fold construction (``random_state=42``), single-sourced so the trainer's ``cv`` stage
+    fold units walk the SAME folds as `_cv_score` (ADR-128). ``StratifiedGroupKFold.split`` reads ``X``
+    only for its length, so a zeros column stands in for it."""
+    from sklearn.model_selection import StratifiedGroupKFold
+
+    y = np.asarray(y, dtype=int)
+    groups = np.asarray(groups).astype(str)
+    n_splits = max(2, min(5, len(np.unique(groups))))
+    skf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=42)  # gate's fold construction
+    return [(i, tr, te) for i, (tr, te) in enumerate(skf.split(np.zeros((len(y), 1)), y, groups))]
+
+
+def _cv_score_fold(
+    X: pd.DataFrame,
+    y,
+    fold_i: int,
+    tr: np.ndarray,
+    te: np.ndarray,
+    params: dict,
+    *,
+    seed: int = 42,
+    negative_subsample: float | None = None,
+) -> tuple[float, float, float | None] | None:
+    """One fold of `_cv_score`: ``(log_loss, brier, pr_auc | None)``, or None for a skipped fold.
+    ``seed`` drives ONLY ``negative_subsample`` (``seed + fold_i``), exactly as `_cv_score` does."""
+    import xgboost as xgb
+    from sklearn.metrics import average_precision_score, brier_score_loss, log_loss
+
+    from silly_kicks.tracking._xshot_occurrence import subsample_negatives
+
+    y = np.asarray(y, dtype=int)
+    if len(np.unique(y[tr])) < 2:
+        return None
+    Xtr, ytr = X.iloc[tr], y[tr]
+    if negative_subsample:  # TRAIN fold only; the eval fold keeps the true balance
+        Xtr, ytr, _ = subsample_negatives(Xtr, ytr, ytr, fraction=negative_subsample, seed=seed + fold_i)
+        if len(np.unique(ytr)) < 2:
+            return None
+    p_ = dict(_pinned_params(params))
+    p_["base_score"] = float(ytr.mean())
+    clf = xgb.XGBClassifier(**p_)
+    clf.fit(Xtr.to_numpy(float), ytr)
+    p = clf.predict_proba(X.iloc[te].to_numpy(float))[:, 1]
+    pr = float(average_precision_score(y[te], p)) if len(np.unique(y[te])) == 2 else None
+    return (float(log_loss(y[te], p, labels=[0, 1])), float(brier_score_loss(y[te], p)), pr)
+
+
+def _cv_score_combine(fold_results) -> dict:
+    """The per-fold means `_cv_score` returns, from the folds in FOLD order."""
+    kept = [r for r in fold_results if r is not None]
+    lls = [r[0] for r in kept]
+    brs = [r[1] for r in kept]
+    prs = [r[2] for r in kept if r[2] is not None]
+    return {
+        "pr_auc": float(np.mean(prs)) if prs else float("nan"),
+        "brier": float(np.mean(brs)) if brs else float("nan"),
+        "log_loss": float(np.mean(lls)) if lls else float("inf"),
+        "pr_auc_std": float(np.std(prs)) if prs else float("nan"),
+        "n_usable_folds": len(lls),
+    }
+
+
 def _cv_score(
     X: pd.DataFrame,
     y,
@@ -41,43 +104,15 @@ def _cv_score(
     splitter is ALWAYS ``random_state=42`` (the gate's fold construction); ``seed`` drives ONLY
     ``negative_subsample`` (``seed + fold_i``), exactly as the trainer's original ``_cv_metrics``
     did. Returns the per-fold means both callers need (the trainer adds positive_rate /
-    base_rate_brier on top).
+    base_rate_brier on top). ADR-128: the composition of `_cv_score_plan` / `_cv_score_fold` /
+    `_cv_score_combine` (exact-equality tested).
     """
-    import xgboost as xgb
-    from sklearn.metrics import average_precision_score, brier_score_loss, log_loss
-    from sklearn.model_selection import StratifiedGroupKFold
-
-    from silly_kicks.tracking._xshot_occurrence import subsample_negatives
-
-    y = np.asarray(y, dtype=int)
-    groups = np.asarray(groups).astype(str)
-    n_splits = max(2, min(5, len(np.unique(groups))))
-    skf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=42)  # gate's fold construction
-    prs, brs, lls = [], [], []
-    for fold_i, (tr, te) in enumerate(skf.split(X, y, groups)):
-        if len(np.unique(y[tr])) < 2:
-            continue
-        Xtr, ytr = X.iloc[tr], y[tr]
-        if negative_subsample:  # TRAIN fold only; the eval fold keeps the true balance
-            Xtr, ytr, _ = subsample_negatives(Xtr, ytr, ytr, fraction=negative_subsample, seed=seed + fold_i)
-            if len(np.unique(ytr)) < 2:
-                continue
-        p_ = dict(_pinned_params(params))
-        p_["base_score"] = float(ytr.mean())
-        clf = xgb.XGBClassifier(**p_)
-        clf.fit(Xtr.to_numpy(float), ytr)
-        p = clf.predict_proba(X.iloc[te].to_numpy(float))[:, 1]
-        lls.append(log_loss(y[te], p, labels=[0, 1]))
-        brs.append(brier_score_loss(y[te], p))
-        if len(np.unique(y[te])) == 2:
-            prs.append(average_precision_score(y[te], p))
-    return {
-        "pr_auc": float(np.mean(prs)) if prs else float("nan"),
-        "brier": float(np.mean(brs)) if brs else float("nan"),
-        "log_loss": float(np.mean(lls)) if lls else float("inf"),
-        "pr_auc_std": float(np.std(prs)) if prs else float("nan"),
-        "n_usable_folds": len(lls),
-    }
+    return _cv_score_combine(
+        [
+            _cv_score_fold(X, y, i, tr, te, params, seed=seed, negative_subsample=negative_subsample)
+            for i, tr, te in _cv_score_plan(y, groups)
+        ]
+    )
 
 
 def gk_block_ablation(

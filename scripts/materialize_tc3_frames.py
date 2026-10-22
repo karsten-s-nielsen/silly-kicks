@@ -169,10 +169,10 @@ def preflight_reference_parity(
 def collect_home_team_map(home_dir: pathlib.Path, keys) -> dict[str, str]:
     """Assemble the trainer's `--home-teams` map from per-item sidecars, or RAISE.
 
-    `train_ghost_gk.py` resolves home teams from a `meta.json` BESIDE each parquet (`:379-387`),
-    which exists in the TC3 tree layout and does NOT exist in a `for_each` generation -- flat
-    shards, no per-match directory. Without a map the trainer's is empty and it `sys.exit(1)`s at
-    `:388`, AFTER the corpus pass has been paid for.
+    `train_ghost_gk.py` reads home teams ONLY from the staged dataset's `home_teams.json` (ADR-128,
+    decision P17: the tc3 `meta.json` discovery is gone), and a `for_each` generation has no per-match
+    directory to hold a `meta.json` anyway. Without a map the trainer's `validate` stage refuses,
+    AFTER the corpus pass has been paid for.
 
     **Completeness is the point, not the file.** A shard whose sidecar is missing -- a generation
     predating the side artifacts, or a kill between the two writes -- would otherwise drop that game
@@ -313,9 +313,9 @@ def main() -> None:
 
     # ADR-052: this walks a corpus and each item costs minutes, so it MUST persist per item.
     # Materializing 179 matches with a naive loop loses everything on a crash at match 150 -- the
-    # exact failure that seam exists to prevent. The shards ARE the deliverable here: a `for_each`
-    # generation directory holds only per-item parquets, and `train_ghost_gk.py:291` falls back to
-    # a flat `*.parquet` glob, so the trainer reads the generation directory directly.
+    # exact failure that seam exists to prevent. The shards ARE the deliverable here: `--out` becomes a
+    # `flat_tc3` staged dataset (`shards/<generation>/` + `_actions/` + `home_teams.json`), the layout the
+    # ADR-128 trainers read with `--dataset`.
     refs, load = pining_source(
         args.providers,
         match_ids=match_ids,
@@ -360,10 +360,9 @@ def main() -> None:
 
     # --- assemble the trainer's home-team map, and REFUSE a partial one -------------------------
     #
-    # `train_ghost_gk.py` resolves home teams from a `meta.json` BESIDE each parquet
-    # (`:379-387`), which exists in the TC3 tree layout and does NOT exist in a `for_each`
-    # generation -- flat shards, no per-match directory. Without this file the trainer's map is
-    # empty and it `sys.exit(1)`s at `:388`, AFTER the corpus pass has been paid for.
+    # `train_ghost_gk.py` reads home teams ONLY from the staged dataset's `home_teams.json` (ADR-128,
+    # decision P17), and a `for_each` generation has no per-match directory to hold a `meta.json`.
+    # Without this file the trainer's `validate` stage refuses, AFTER the corpus pass has been paid for.
     #
     # The completeness check is the point, not the file: a shard whose sidecar is missing (a
     # pre-`-2` generation, or a kill between the two writes) would otherwise silently drop that
@@ -391,8 +390,8 @@ def main() -> None:
     )
     print(f"materialized {len(res.shard_keys)} matches; shards at {res.shard_dir}")
     print(f"home map: {len(home_map)} games -> {args.out / 'home_teams.json'}")
-    print("train_ghost_gk.py needs BOTH: --data-dir <generation> --home-teams <out>/home_teams.json")
-    print(f"and --actions-dir {actions_dir} to reproduce the established pipeline inputs")
+    print(f"{args.out} is a flat_tc3 staged dataset (shards/<generation>/ + _actions/ + home_teams.json):")
+    print("record it in scripts/hf_jobs/datasets.toml, then train with --dataset <name> (ADR-128)")
 
 
 if __name__ == "__main__":

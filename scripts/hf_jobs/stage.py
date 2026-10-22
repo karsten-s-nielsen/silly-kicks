@@ -11,6 +11,11 @@ on DGX or anywhere, is off-HF and the operator's concern):
 
 Materialization itself is the existing driver, run on DGX/local where the data lives; this module stages
 the OUTPUT and records a content manifest so a repeat run is a no-op.
+
+Staging ENDS with ``python -m scripts.hf_jobs datasets record <name>`` (ADR-128): it measures the staged
+dataset and writes its pinned revision, unit list and expected corpus identity into
+``scripts/hf_jobs/datasets.lock.json``. A campaign reads only recorded datasets, and ``adopt`` verifies
+every artifact against that record (INV-9).
 """
 
 from __future__ import annotations

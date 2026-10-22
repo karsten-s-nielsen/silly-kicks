@@ -12,6 +12,8 @@ explicitly, and the dirtiness is recorded either way.
 
 from __future__ import annotations
 
+import hashlib
+import os
 import pathlib
 import platform as _platform
 import subprocess
@@ -219,3 +221,57 @@ def store_path_for(path: str | pathlib.Path, oid: str) -> str:
     nonce = oid.rsplit(_DIRTY_MARK, 1)[1][:12]
     p = pathlib.Path(path)
     return str(p.with_name(f"{p.stem}.dirty-{nonce}{p.suffix}"))
+
+
+#: Set by the HF launcher inside every job (ADR-128). Absent on a laptop or the DGX -> recorded as None.
+IMAGE_ENV = "SILLY_KICKS_IMAGE"
+RUN_KEY_ENV = "SILLY_KICKS_RUN_KEY"
+
+#: The packages whose versions decide trained numbers (INV-6). Missing ones record None.
+_ENV_PACKAGES = ("numpy", "scipy", "pandas", "pyarrow", "scikit-learn", "xgboost", "numba", "ruthless-efficiency")
+
+
+def env_provenance(*, root: pathlib.Path | None = None) -> dict:
+    """The environment identity every stage-contract artifact stamps (ADR-128, INV-6).
+
+    ``git_provenance()`` keeps its signature and keys (57 consumers); this is ADDITIVE. ``root`` is the
+    repo root holding ``uv.lock`` (default: this checkout).
+    """
+    from importlib import metadata
+
+    root = root if root is not None else pathlib.Path(__file__).resolve().parents[1]
+    lock = root / "uv.lock"
+    packages: dict[str, str | None] = {}
+    for name in _ENV_PACKAGES:
+        try:
+            packages[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            packages[name] = None
+    git = git_provenance()
+    return {
+        "image": os.environ.get(IMAGE_ENV),
+        "python": _platform.python_version(),
+        "uv_lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
+        "packages": packages,
+        "platform": git["platform"],
+        "machine": git["machine"],
+        "commit": git["commit"],
+        "tree_state": git["tree_state"],
+        "run_key": os.environ.get(RUN_KEY_ENV),
+    }
+
+
+def code_identity(prov: Mapping[str, object]) -> str:
+    """The code identity a stage token digests (ADR-128, decision P9).
+
+    Clean tree -> the commit. Dirty tree -> ``dirty-<git tree hash>``: a CONTENT hash, so every process
+    that computes it on the same working tree agrees (N simulated jobs on one dev box share stores), and
+    any edit changes it (a stale result is never reused). Unknown provenance -> a fresh random nonce, so
+    nothing ever resumes on code that cannot be described (the D21 fail-closed reading).
+    """
+    state = prov.get("tree_state")
+    if state == "clean":
+        return str(prov["commit"])
+    if state == "dirty":
+        return f"dirty-{git_tree_hash()}"
+    return f"unknown-{uuid.uuid4().hex}"

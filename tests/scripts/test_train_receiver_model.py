@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 
 import numpy as np
 import pandas as pd
@@ -13,37 +12,33 @@ import scripts.train_receiver_model as TRM
 from scripts.train_receiver_model import _R, _T
 
 
-def _install_corpus(monkeypatch, matches, *, visibility="public"):
-    """Wire the refs+load seam (spec section 4.5): list refs per provider, load one match at a time.
-
-    ``matches`` are the old loader tuples ``(provider, mid, actions, frames, home[, visible_area])``.
-    """
-    from _fake_corpus import make_loaded, make_ref
-
-    import scripts._loader_pining as lp
-
-    by_key: dict = {}
-    refs_by_provider: dict = {}
+def _stage(root, name, matches):
+    """Write ``matches`` (the old loader tuples ``(provider, mid, actions, frames, home[, visible_area])``)
+    as ONE staged flat dataset ``root/name`` (``shards/<gen>/<provider>__<mid>.parquet`` + ``_actions/``):
+    the layout every HF receiver job reads (ADR-123 Amendment B, ADR-128 decision P17)."""
+    shards = root / name / "shards" / "g"
+    acts = root / name / "_actions"
+    shards.mkdir(parents=True, exist_ok=True)
+    acts.mkdir(parents=True, exist_ok=True)
     for m in matches:
-        prov, mid, actions, frames, home = m[0], m[1], m[2], m[3], m[4]
-        va = m[5] if len(m) > 5 else None
-        by_key[(str(prov), str(mid))] = make_loaded(
-            prov, mid, actions=actions, frames=frames, home_team_id=home, visible_area=va
-        )
-        refs_by_provider.setdefault(str(prov), []).append(make_ref(prov, mid))
+        prov, mid, actions, frames = m[0], m[1], m[2], m[3]
+        frames.to_parquet(shards / f"{prov}__{mid}.parquet", index=False)
+        actions.to_parquet(acts / f"{prov}__{mid}.parquet", index=False)
+    if not matches:  # an empty dataset still has its one generation directory
+        shards.mkdir(parents=True, exist_ok=True)
+    return root
 
-    def _list(providers=None, **kw):
-        out: list = []
-        for p in providers or list(refs_by_provider):
-            out += refs_by_provider.get(str(p), [])
-        return out
 
-    monkeypatch.setattr(lp, "list_match_refs", _list)
-    monkeypatch.setattr(lp, "load_match", lambda ref, **kw: by_key[(str(ref.provider), str(ref.match_id))])
-    monkeypatch.setattr(lp, "resolve_cache_dir", lambda c=None: c)
-    # main() labels the bundle from the MANIFEST (D7): stub the visibility listing too, so no test that
-    # reaches main() can call the live pining API (B r4, outside its round).
-    monkeypatch.setattr(lp, "match_visibility", lambda providers, **kw: {k: visibility for k in by_key})
+def _run(tmp_path, *args):
+    """Run the receiver pipeline in-process over ``tmp_path/data``; return (ctx, exported metrics)."""
+    from tests.scripts._stage_harness import export, run_in_process
+
+    ctx = run_in_process(TRM.PIPELINE, list(args), store=tmp_path / "store", data_root=tmp_path / "data")
+    out = export(ctx, tmp_path / "out")
+    return ctx, json.loads((out / "metrics.json").read_text())
+
+
+_BASE = ["--min-rows", "1", "--min-passes", "1", "--corpus-visibility", "restricted", "--corpus-n-matches", "2"]
 
 
 _ACT_COLS = [
@@ -64,59 +59,24 @@ _ACT_COLS = [
 
 def _match(game_id: int):
     """3 SB360-style completed passes: the intended receiver sits ON the release->reception ray (so the
-    TRAJECTORY strategy labels it, statsbomb -> trajectory) with off-ray teammates as negatives."""
-    P, S = _T["pass"], _R["success"]
-    acts, frames = [], []
-    aid, t, fid = 1, 10.0, game_id * 1000
-    for k in range(3):
-        receiver = 10 + k  # 10, 11, 12
-        acts.append((aid, game_id, 1, t, 1, 9, P, S, 50, 34, 70, 34))  # pass toward (70,34)
-        acts.append((aid + 1, game_id, 1, t + 0.5, 1, receiver, P, S, 70, 34, 30, 40))  # receiver's touch at (70,34)
-        rows = [
-            (True, pd.NA, pd.NA, False, 50.0, 34.0),
-            (False, 9, 1, False, 50.0, 34.0),  # passer
-            (False, receiver, 1, False, 70.0, 34.0),  # intended receiver -- ON the +x ray (perp 0)
-            (False, 50, 1, False, 55.0, 55.0),  # off-ray teammate
-            (False, 51, 1, False, 55.0, 12.0),  # off-ray teammate
-            (False, 20, 2, False, 60.0, 34.0),
-            (False, 30, 2, True, 100.0, 34.0),
-        ]
-        fr = pd.DataFrame(rows, columns=["is_ball", "player_id", "team_id", "is_goalkeeper", "x", "y"])
-        fr["game_id"], fr["period_id"], fr["time_seconds"], fr["frame_id"] = game_id, 1, t, fid
-        fr["source_provider"] = "statsbomb"
-        frames.append(fr.astype({"player_id": "Int64", "team_id": "Int64"}))
-        aid, t, fid = aid + 2, t + 5.0, fid + 1
-    actions = pd.DataFrame(acts, columns=_ACT_COLS)
-    return ("statsbomb", game_id, actions, pd.concat(frames, ignore_index=True), 1, None)
+    TRAJECTORY strategy labels it, statsbomb -> trajectory) with off-ray teammates as negatives. The
+    synthesis lives in ``scripts/_toy_corpora.receiver_match`` (ADR-128), shared with the toy corpus."""
+    from scripts._toy_corpora import receiver_match
+
+    actions, frames = receiver_match(game_id)
+    return ("statsbomb", game_id, actions, frames, 1, None)
 
 
-def test_main_trains_bundle_with_provenance_and_m2_distribution(tmp_path, monkeypatch):
-    _install_corpus(monkeypatch, [_match(1), _match(2)])
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "train_receiver_model.py",
-            "--out",
-            str(tmp_path / "out"),
-            "--shard-root",
-            str(tmp_path / "sh"),
-            "--allow-dirty",
-            "--min-rows",
-            "1",
-            "--min-passes",
-            "1",
-        ],
-    )
-    TRM.main()
-    man = json.loads((tmp_path / "out" / "metrics.json").read_text())
+def test_main_trains_bundle_with_provenance_and_m2_distribution(tmp_path):
+    _stage(tmp_path / "data", "sb", [_match(1), _match(2)])
+    _ctx, man = _run(tmp_path, "--dataset", "sb", *_BASE)
     assert man["feature_set"] == "public" and man["n_matches"] == 2 and man["n_passes"] == 6
     assert man["run_commit"] and isinstance(man["run_tree_dirty"], bool)
     assert "mean" in man["candidate_count_distribution"]  # M2 shift-measurement
     # the bundle loads back through the full ADR-011 integrity path
     from silly_kicks.tracking._receiver import ReceiverModel
 
-    m = ReceiverModel.load(tmp_path / "out" / "model")
+    m = ReceiverModel.load(tmp_path / "out")
     assert m.feature_set == "public"
 
 
@@ -148,82 +108,44 @@ def _gs_match(game_id: int):
     return ("gradientsports", game_id, pd.DataFrame(acts, columns=_ACT_COLS), pd.concat(frames, ignore_index=True), 1)
 
 
-def test_corpus_source_routes_owner_provider_to_tracking_frames(monkeypatch):
-    """The owner (GS) variant needs REAL tracking frames WITH velocity; the public (statsbomb) variant
-    gets SB360 freeze frames (no velocity). Both route through `load_match`, whose per-provider dispatch
-    builds the right frames -- the seam lists per-provider refs and loads one match at a time."""
-    _install_corpus(monkeypatch, [_gs_match(1), _match(1)])
-
-    gs_refs, gs_load = TRM._corpus_source("gradientsports", None)
-    assert [r.provider for r in gs_refs] == ["gradientsports"]
-    _mid, _actions, gs_frames = gs_load(gs_refs[0])
-    assert gs_frames is not None
-    assert "vx" in gs_frames.columns  # tracking frames carry velocity
-
-    sb_refs, sb_load = TRM._corpus_source("statsbomb", None)
-    assert [r.provider for r in sb_refs] == ["statsbomb"]
-    _mid, _actions, sb_frames = sb_load(sb_refs[0])
-    assert sb_frames is not None
-    assert "vx" not in sb_frames.columns  # SB360 freeze frames are velocity-less
-
-
-def test_owner_run_records_m_a_resolution(tmp_path, monkeypatch):
-    """The owner (GS) variant records the M-A resolution in its provenanced manifest: velocity ablation
-    (i, real) + -- given a public bundle -- the deployment gate (ii). Also pins that owner extraction runs
-    on velocity frames end-to-end."""
-    _install_corpus(monkeypatch, [_gs_match(1), _gs_match(2)])
-    monkeypatch.setattr(
-        TRM, "_resolve_deployment", lambda *a, **k: {"decisive": False, "margin": float("nan"), "n_scored": 0}
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "train_receiver_model.py",
-            "--out",
-            str(tmp_path / "out"),
-            "--shard-root",
-            str(tmp_path / "sh"),
-            "--feature-set",
-            "owner",
-            "--provider",
-            "gradientsports",
-            "--public-bundle",
-            str(tmp_path / "pub"),
-            "--allow-dirty",
-            "--min-rows",
-            "1",
-            "--min-passes",
-            "1",
-        ],
-    )
-    TRM.main()
-    man = json.loads((tmp_path / "out" / "metrics.json").read_text())
-    assert man["feature_set"] == "owner" and man["provider"] == "gradientsports"
-    assert "velocity_ablation" in man and "velocity_delta" in man["velocity_ablation"]  # M-A(i) real
-    assert man["deployment"]["decisive"] is False  # M-A(ii) wiring reached with --public-bundle
-
-
-def test_resolve_deployment_runs_the_real_second_pass(tmp_path, monkeypatch):
-    """Exercise the REAL M-A(ii) plumbing (for_each -> _deployment_counts_for_match -> reconcile -> pool),
-    not the mocked wiring. A completed-only corpus scores nothing on the FAILED subset -> non-decisive,
-    but the second sharded pass runs end-to-end and writes its counts parquet."""
+def _public_bundle(path):
     import numpy as np
 
     from silly_kicks.tracking._receiver import ReceiverModel
 
     X = pd.DataFrame({"ball_dist": [15.0] * 8, "lane_pressure": [0.0, 1.5] * 4, "space": [12.0, 4.0] * 4})
-    y = np.array([1, 0] * 4)
-    pub = ReceiverModel("public").fit(X, y)
-    pub.save(tmp_path / "pub")
-    own = ReceiverModel("public").fit(X, y)  # a positions-only stand-in is enough for the plumbing
-    _install_corpus(monkeypatch, [_gs_match(1)])
-    out = tmp_path / "out"
-    out.mkdir()
-    decision = TRM._resolve_deployment(tmp_path / "pub", own, "gradientsports", None, tmp_path / "sh", out, "abc123")
+    ReceiverModel("public").fit(X, np.array([1, 0] * 4)).save(path)
+    return path
+
+
+def test_owner_run_records_m_a_resolution(tmp_path):
+    """The owner (GS) variant records the M-A resolution in its provenanced manifest: velocity ablation
+    (i, real) + -- given a public bundle and a deployment dataset -- the REAL deployment gate (ii), run as
+    the ``deploy`` stage. Also pins that owner extraction runs on velocity frames end-to-end."""
+    _stage(tmp_path / "data", "gs", [_gs_match(1), _gs_match(2)])
+    pub = _public_bundle(tmp_path / "pub")
+    args = ["--dataset", "gs", "--feature-set", "owner", "--provider", "gradientsports"]
+    args += ["--public-bundle", str(pub), "--deployment-dataset", "gs", *_BASE]
+    _ctx, man = _run(tmp_path, *args)
+    assert man["feature_set"] == "owner" and man["provider"] == "gradientsports"
+    assert "velocity_ablation" in man and "velocity_delta" in man["velocity_ablation"]  # M-A(i) real
+    assert man["deployment"]["decisive"] is False  # M-A(ii): a completed-only corpus scores no failed pass
+
+
+def test_resolve_deployment_runs_the_real_second_pass(tmp_path):
+    """Exercise the REAL M-A(ii) plumbing (deploy[match] -> _deployment_counts_for_match -> pooled), not a
+    mock. A completed-only corpus scores nothing on the FAILED subset -> non-decisive, but the second
+    sharded pass runs end-to-end and persists one shard per match."""
+    _stage(tmp_path / "data", "gs", [_gs_match(1)])
+    pub = _public_bundle(tmp_path / "pub")
+    args = ["--dataset", "gs", "--feature-set", "owner", "--provider", "gradientsports"]
+    args += ["--public-bundle", str(pub), "--deployment-dataset", "gs", *_BASE]
+    ctx, man = _run(tmp_path, *args)
+    decision = man["deployment"]
     assert {"decisive", "margin", "public_top1", "owner_top1", "coverage"} <= set(decision)
     assert decision["decisive"] is False  # completed-only corpus -> nothing scored on the failed subset
-    assert (out / "deployment_counts.parquet").exists()  # the second pass persisted its shards
+    gen = tmp_path / "store" / ctx.generation("deploy")
+    assert list(gen.glob("gradientsports__1.parquet"))  # the second pass persisted its shard
 
 
 def _one_pass_match(*, receiver_in_frame: bool):
@@ -348,33 +270,14 @@ def test_pooling_gate_keeps_agreeing_pool_and_drops_contradictory_pool():
     assert set(drop) >= {"primary_only_top1", "pooled_top1", "margin", "keep_pool"}
 
 
-def test_main_pooled_records_the_gate_and_coverage(tmp_path, monkeypatch):
-    """Q3 end-to-end: --pool-provider extracts the pool (GS/id), runs the earned-inclusion gate, and
+def test_main_pooled_records_the_gate_and_coverage(tmp_path):
+    """Q3 end-to-end: --pool-dataset extracts the pool (GS/id), runs the earned-inclusion gate, and
     RECORDS it + label coverage in the provenanced manifest. The primary (statsbomb/trajectory) is the
     serve target."""
-    _install_corpus(monkeypatch, [_match(1), _match(2), _gs_match(1), _gs_match(2)])
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "train_receiver_model.py",
-            "--out",
-            str(tmp_path / "out"),
-            "--shard-root",
-            str(tmp_path / "sh"),
-            "--provider",
-            "statsbomb",
-            "--pool-provider",
-            "gradientsports",
-            "--allow-dirty",
-            "--min-rows",
-            "1",
-            "--min-passes",
-            "1",
-        ],
-    )
-    TRM.main()
-    man = json.loads((tmp_path / "out" / "metrics.json").read_text())
+    _stage(tmp_path / "data", "sb", [_match(1), _match(2)])
+    _stage(tmp_path / "data", "gs", [_gs_match(1), _gs_match(2)])
+    args = ["--dataset", "sb", "--provider", "statsbomb", "--pool-dataset", "gs", "--pool-provider", "gradientsports"]
+    _ctx, man = _run(tmp_path, *args, *_BASE)
     assert man["pooling_gate"]["pool_provider"] == "gradientsports"
     assert isinstance(man["pooling_gate"]["keep_pool"], bool)
     assert set(man["providers_trained"]) <= {"statsbomb", "gradientsports"}
@@ -414,57 +317,37 @@ def test_trajectory_excludes_actor_candidate_on_identity_less_frame():
     assert "9" not in set(rows2["candidate_id"])
 
 
-def test_empty_pool_does_not_flip_providers_trained(tmp_path, monkeypatch):
+def test_empty_pool_does_not_flip_providers_trained(tmp_path):
     """B-F1: a pool provider that yields nothing ties the gate (margin 0 -> keep_pool True) but contributed
     ZERO rows -- it must NOT be stamped into providers_trained / corpus_visibility."""
-    _install_corpus(monkeypatch, [_match(1), _match(2)])  # statsbomb primary; empty gradientsports pool
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "train_receiver_model.py",
-            "--out",
-            str(tmp_path / "out"),
-            "--shard-root",
-            str(tmp_path / "sh"),
-            "--provider",
-            "statsbomb",
-            "--pool-provider",
-            "gradientsports",
-            "--allow-dirty",
-            "--min-rows",
-            "1",
-            "--min-passes",
-            "1",
-        ],
-    )
-    TRM.main()
-    man = json.loads((tmp_path / "out" / "metrics.json").read_text())
+    _stage(tmp_path / "data", "sb", [_match(1), _match(2)])
+    _stage(tmp_path / "data", "gs", [])  # an EMPTY gradientsports pool dataset
+    args = ["--dataset", "sb", "--provider", "statsbomb", "--pool-dataset", "gs", "--pool-provider", "gradientsports"]
+    _ctx, man = _run(tmp_path, *args, *_BASE)
     assert man["providers_trained"] == ["statsbomb"]  # GS contributed nothing -> not stamped
 
 
-def test_empty_primary_exits_cleanly_not_keyerror(tmp_path, monkeypatch):
-    """B-F2: a primary that produces no candidate rows (reconcile -> a column-less frame) must raise the
-    'vacuous training set' SystemExit, not a KeyError on rows['label']."""
-    monkeypatch.setattr(TRM, "_extract_provider_rows", lambda *a, **k: (pd.DataFrame(), {}))  # column-less empty
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "train_receiver_model.py",
-            "--out",
-            str(tmp_path / "out"),
-            "--shard-root",
-            str(tmp_path / "sh"),
-            "--allow-dirty",
-            "--min-rows",
-            "1",
-            "--min-passes",
-            "1",
-        ],
+def test_empty_primary_exits_cleanly_not_keyerror(tmp_path):
+    """B-F2: a primary that produces no candidate rows (a column-less frame) must fail the fit unit with
+    'vacuous training set', not a KeyError on rows['label']."""
+    from tests.scripts._stage_harness import StageIncompleteError, failure_of, params_from_args
+
+    no_pass = _match(1)
+    no_pass = (*no_pass[:2], no_pass[2].iloc[0:0], *no_pass[3:])  # zero actions -> zero candidate rows
+    _stage(tmp_path / "data", "sb", [no_pass])
+    from scripts._stages import LocalStore, make_context
+
+    with pytest.raises(StageIncompleteError, match="failed"):
+        _run(tmp_path, "--dataset", "sb", *_BASE)
+    ctx = make_context(
+        TRM.PIPELINE,
+        params_from_args(TRM.PIPELINE, ["--dataset", "sb", *_BASE]),
+        {"commit": "t" * 40, "tree_state": "clean", "dirty": False, "code_identity": "t" * 40},
+        store=LocalStore(tmp_path / "store"),
+        data_root=tmp_path / "data",
     )
-    with pytest.raises(SystemExit, match="vacuous training set"):
-        TRM.main()
+    err = failure_of(ctx, "fit")
+    assert "vacuous training set" in err and "KeyError" not in err
 
 
 def _owner_cand_rows():
@@ -503,108 +386,41 @@ def test_namespace_game_ids_bijective_and_empty_safe():
     assert len(TRM._namespace_game_ids(empty, "gradientsports")) == 0  # empty-safe
 
 
-def test_owner_rows_skips_the_training_reparse(tmp_path, monkeypatch):
-    """--owner-rows reads a pre-extracted parquet and SKIPS the training corpus re-parse (a GS match is ~4M
-    frames). Only the deployment gate (mocked here) would touch the provider, so the training loader is
-    never called."""
-    rows_path = tmp_path / "candidate_rows.parquet"
-    _owner_cand_rows().to_parquet(rows_path)
-    called = {"load": False}
-
-    def _boom(*a, **k):
-        called["load"] = True
-        return iter([])
-
-    monkeypatch.setattr("scripts._loader_pining.load_matches", _boom)
-    monkeypatch.setattr("scripts._loader_pining.list_match_refs", lambda **kw: [])
-    monkeypatch.setattr("scripts._loader_pining.match_visibility", lambda providers, **kw: {})
-    monkeypatch.setattr(TRM, "_resolve_deployment", lambda *a, **k: {"decisive": False, "margin": float("nan")})
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "train_receiver_model.py",
-            "--out",
-            str(tmp_path / "out"),
-            "--shard-root",
-            str(tmp_path / "sh"),
-            "--feature-set",
-            "owner",
-            "--provider",
-            "gradientsports",
-            "--owner-rows",
-            str(rows_path),
-            "--public-bundle",
-            str(tmp_path / "pub"),
-            "--allow-dirty",
-            "--min-rows",
-            "1",
-            "--min-passes",
-            "1",
-        ],
-    )
-    TRM.main()
-    man = json.loads((tmp_path / "out" / "metrics.json").read_text())
-    assert "velocity_ablation" in man and "deployment" in man  # M-A resolution completed from the parquet
-    assert called["load"] is False  # the training path did NOT re-parse the corpus
-
-
 def test_help_exits_zero():
+    from scripts._stages import main
+
     with pytest.raises(SystemExit) as exc:
-        old = sys.argv
-        sys.argv = ["train_receiver_model.py", "--help"]
-        try:
-            TRM.main()
-        finally:
-            sys.argv = old
+        main(TRM.PIPELINE, ["--help"])
     assert exc.value.code == 0
 
 
-def test_corpus_visibility_is_keyed_on_the_manifest_not_the_provider_name():
-    """ADR-038: statsbomb is not public BY NAME. The pining statsbomb manifest marks every match private
-    (licensed, ADR-062), so a statsbomb-trained receiver is `restricted` (combined-cycle spec D7)."""
-    from scripts.train_receiver_model import _corpus_visibility
+def test_campaign_passes_the_declared_visibility_not_the_provider_name():
+    """ADR-038 / decision P5: statsbomb is not public BY NAME. The visibility the receiver records comes
+    from the dataset's DECLARATION (datasets.toml: sb360 = restricted), passed by the off-HF controller --
+    never computed in-job and never from the provider name."""
+    import pathlib
 
-    assert _corpus_visibility([("statsbomb", "1"), ("statsbomb", "2")], {("statsbomb", "1"): "private"}) == "restricted"
-    assert _corpus_visibility([("statsbomb", "1")], {("statsbomb", "1"): "public"}) == "public"
-    assert _corpus_visibility([], {}) == "restricted"  # fail-closed
+    from scripts.hf_jobs import campaign as C
+    from scripts.hf_jobs.datasets import declared, locked
 
-
-def test_corpus_source_threads_the_allowlist(monkeypatch):
-    import scripts._loader_pining as lp
-    from scripts.train_receiver_model import _corpus_source
-
-    seen = {}
-
-    def fake_pining_source(providers, **kw):
-        seen.update(kw, providers=providers)
-        return [], (lambda ref: None)
-
-    monkeypatch.setattr(lp, "pining_source", fake_pining_source)
-    _corpus_source("statsbomb", None, match_ids={"statsbomb": ["7"]})
-    assert seen["providers"] == ["statsbomb"] and seen["match_ids"] == {"statsbomb": ["7"]}
+    insts = C.instances(C.load_campaign(pathlib.Path("scripts/hf_jobs/campaigns/cycle1.toml")), "0" * 40)
+    recv = next(i for i in insts if i.job == "receiver_model")
+    args = list(recv.args)
+    assert args[args.index("--corpus-visibility") + 1] == declared()["sb360"].visibility == "restricted"
+    assert args[args.index("--corpus-n-matches") + 1] == str(locked("sb360")["n_units"])
 
 
-@pytest.mark.parametrize(("vis", "want"), [("public", "public"), ("private", "restricted")])
-def test_main_labels_the_bundle_from_the_manifest_visibility(tmp_path, monkeypatch, vis, want):
-    """D7 through main(): the same statsbomb corpus is `public` or `restricted` by its MANIFEST alone."""
-    _install_corpus(monkeypatch, [_match(1), _match(2)], visibility=vis)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "train_receiver_model.py",
-            "--out",
-            str(tmp_path / "out"),
-            "--shard-root",
-            str(tmp_path / "sh"),
-            "--allow-dirty",
-            "--min-rows",
-            "1",
-            "--min-passes",
-            "1",
-        ],
-    )
-    TRM.main()
-    man = json.loads((tmp_path / "out" / "metrics.json").read_text())
+def test_match_ids_json_filters_the_primary_units(tmp_path):
+    """The allowlist (the 30-match fallback re-fit shape) keeps only the named PRIMARY units."""
+    _stage(tmp_path / "data", "sb", [_match(1), _match(2)])
+    _ctx, man = _run(tmp_path, "--dataset", "sb", "--match-ids-json", '["statsbomb__2"]', *_BASE)
+    assert man["n_matches"] == 1 and man["n_passes"] == 3
+
+
+@pytest.mark.parametrize(("vis", "want"), [("public", "public"), ("restricted", "restricted")])
+def test_main_labels_the_bundle_from_the_declared_visibility(tmp_path, vis, want):
+    """D7: the same statsbomb corpus is `public` or `restricted` by its declared visibility alone."""
+    _stage(tmp_path / "data", "sb", [_match(1), _match(2)])
+    args = ["--dataset", "sb", "--min-rows", "1", "--min-passes", "1", "--corpus-visibility", vis]
+    _ctx, man = _run(tmp_path, *args, "--corpus-n-matches", "2")
     assert man["corpus_visibility"] == want and man["corpus_n_matches"] == 2

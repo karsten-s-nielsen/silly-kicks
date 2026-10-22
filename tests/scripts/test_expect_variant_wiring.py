@@ -1,258 +1,110 @@
 """ADR-123 Amendment B: the visibility-gated trainers (xshot/xcross) take the public/owner arm policy
-as the neutral ``--arms`` parameter and record their corpus identity -- ids only when all-public. The
+as the neutral ``--arms-json`` parameter and record their corpus identity -- ids only when all-public. The
 pre-Amendment-B ``--expect-variant`` / ``--providers`` / ``--probe-match-ids-json`` G1 wiring was removed
 with the in-job pining path, so those tests are gone; the retained behaviour (ship-label from the arm,
-reproducibility, corpus identity, prep-only + study fan-out) is exercised here on the ``--arms`` API.
+reproducibility, corpus identity, the study enumeration) is exercised here.
+
+ADR-128: both trainers run on the stage contract, so these cases drive the REAL stages in process on the
+staged toy corpora (`scripts/_toy_corpora`). The 5c fan-out equality and the study-enumeration CLI
+(``--study-list`` / ``--list-studies`` / ``--prep-only``) are gone; their property is the
+``tests/scripts/test_parity_x*.py`` gates (every stage output byte-identical at W2N2).
 """
 
 import json
-import sys
-from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import pytest
 
 pytest.importorskip("xgboost")
 pytest.importorskip("ruthless")
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-
 from scripts import train_xcross_attempt as xc
 from scripts import train_xshot_occurrence as xs
 
-
-def _arms_from(providers: np.ndarray, is_public: np.ndarray) -> dict:
-    """Build the candidate-arm masks a launcher would pass -- the pre-Amendment-B ``_build_candidate_masks``
-    logic, now the TEST's job (the trainer only applies the provided memberships)."""
-    is_sc_private = (providers == "skillcorner") & ~is_public
-    return {"public": is_public, "sc_extended": is_public | is_sc_private, "full": np.ones(len(providers), bool)}
+TRAINERS = pytest.mark.parametrize("trainer", [xs, xc], ids=["xshot", "xcross"])
 
 
-def _single_arm(name: str, n: int) -> dict:
-    return {name: np.ones(n, bool)}
+def _toy(tmp_path, trainer):
+    """The trainer's staged toy dataset(s) under ``<tmp>/data``; returns ``(data_root, base_args)``."""
+    from scripts._toy_corpora import build_xcross_corpus, build_xcross_probe_corpus, build_xshot_corpus
 
-
-def _inputs(
-    root, feature_names, *, shipped: str, public: bool, run_paired: bool, extra_config, arms, n_games=4, rows=60
-):
-    from scripts._study_shared import persist_study_inputs
-
-    rng = np.random.default_rng(3)
-    X = pd.DataFrame(rng.standard_normal((n_games * rows, len(feature_names))), columns=feature_names)
-    y = (X.iloc[:, 0] > 0).to_numpy().astype(int)
-    mids = np.repeat(["1886347", "1899585", "DFL-MAT-J03WMX", "DFL-MAT-J03WN1"][:n_games], rows)
-    persist_study_inputs(
-        root,
-        X=X,
-        y=y,
-        groups=mids.copy(),
-        providers=np.repeat(["skillcorner", "skillcorner", "idsse", "idsse"][:n_games], rows),
-        match_ids=mids,
-        is_public=np.full(n_games * rows, public),
-        config={
-            "n_trials": 1,
-            "negative_subsample": None,
-            "seed": 42,
-            "feature_set": "faithful",
-            "horizon_seconds": 1.0,
-            "study_db_dir": str(root),
-            "artifact_dir": str(root / "art"),
-            "run_paired": run_paired,
-            "run_prov": {"commit": "test", "dirty": False, "tree_state": "clean"},
-            "expect_variant": None,
-            "ship_order": [shipped],  # single-candidate: the shipped label is the arm name from the param
-            "objective_inputs": {"driver": "test_expect_variant_wiring"},
-            **extra_config,
-        },
-        arms=arms,
-    )
-
-
-def _names(trainer):
+    data = tmp_path / "data"
     if trainer is xs:
-        from silly_kicks.tracking._xshot_occurrence import XSHOT_FEATURE_NAMES_FAITHFUL
+        build_xshot_corpus(data / "toy", heavy_episodes=None)
+        return data, ["--dataset", "toy"]
+    build_xcross_corpus(data / "toy", heavy_episodes=None)
+    build_xcross_probe_corpus(data / "probe")
+    return data, ["--dataset", "toy", "--probe-dataset", "probe"]
 
-        return XSHOT_FEATURE_NAMES_FAITHFUL, {}, {}
-    from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL
 
-    return XCROSS_FEATURE_NAMES_FAITHFUL, {"ship_variant": None}, {"run_probe": False}
+def _keys(data) -> list[tuple[str, str]]:
+    """``(source_provider, per-game dir name)`` of every toy unit -- the in-job corpus identity pairs."""
+    from scripts._toy_corpora import TOY_GENERATION
+
+    stems = sorted(q.stem for q in (data / "toy" / "shards" / TOY_GENERATION).glob("*.parquet"))
+    return [(prov, f"{prov}-{game}") for prov, _, game in (st.partition("__") for st in stems)]
+
+
+def _metrics(tmp_path, trainer, data, base, arms_json: str) -> dict:
+    """Run every stage in process and return the bundle's metrics.json."""
+    from tests.scripts._stage_harness import export, run_in_process
+
+    args = [*base, "--arms-json", arms_json, "--n-trials", "2"]
+    ctx = run_in_process(trainer.PIPELINE, args, store=tmp_path / "store", data_root=data)
+    out = export(ctx, tmp_path / "out")
+    return json.loads((out / "metrics.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("trainer", [xs, xc], ids=["xshot", "xcross"])
+@TRAINERS
 def test_public_run_records_ids_and_public_reproducibility(trainer, tmp_path):
-    names, extra, kw = _names(trainer)
-    _inputs(
-        tmp_path,
-        names,
-        shipped="public",
-        public=True,
-        run_paired=False,
-        extra_config=extra,
-        arms=_single_arm("public", 4 * 80),
-        rows=80,
-    )
-    metrics, _model = trainer.assemble_studies(tmp_path, study_shard_dir=tmp_path, **kw)
+    from scripts._toy_corpora import xshot_arms
+
+    data, base = _toy(tmp_path, trainer)
+    metrics = _metrics(tmp_path, trainer, data, base, xshot_arms(data / "toy", paired=False))
     assert metrics["shipped_variant"] == "public"
-    assert metrics["corpus_match_ids"] == [
-        ["idsse", "DFL-MAT-J03WMX"],
-        ["idsse", "DFL-MAT-J03WN1"],
-        ["skillcorner", "1886347"],
-        ["skillcorner", "1899585"],
-    ]
+    assert metrics["corpus_match_ids"] == [list(k) for k in sorted(_keys(data))]
     assert metrics["reproducibility"] == "public"
 
 
 @pytest.mark.slow
 def test_restricted_run_records_a_digest_never_ids(tmp_path):
-    from silly_kicks.tracking._xshot_occurrence import XSHOT_FEATURE_NAMES_FAITHFUL
-
-    _inputs(
-        tmp_path,
-        XSHOT_FEATURE_NAMES_FAITHFUL,
-        shipped="sc_extended",
-        public=False,
-        run_paired=False,
-        extra_config={},
-        arms=_single_arm("sc_extended", 4 * 80),
-        rows=80,
-    )
-    metrics, _model = xs.assemble_studies(tmp_path, study_shard_dir=tmp_path)
+    """A 2-tier payload (half the games public, all in sc_extended, no full): not paired, so the BROADEST arm
+    ships -- sc_extended, restricted -- and metrics.json carries a digest, never a match id."""
+    data, base = _toy(tmp_path, xs)
+    keys = [f"{prov}__{mid}" for prov, mid in sorted(_keys(data))]
+    arms = {"arms": {"public": keys[:4], "sc_extended": keys}, "ship_order": ["public", "sc_extended"]}
+    metrics = _metrics(tmp_path, xs, data, base, json.dumps(arms))
     assert metrics["shipped_variant"] == "sc_extended"
-    assert "corpus_match_ids" not in metrics and metrics["corpus_n_matches"] == 4
+    assert "corpus_match_ids" not in metrics and metrics["corpus_n_matches"] == 8
     assert metrics["reproducibility"] == "restricted"
-    assert "1886347" not in (tmp_path / "art" / "metrics.json").read_text(encoding="utf-8")
+    assert "skillcorner-100" not in (tmp_path / "out" / "metrics.json").read_text(encoding="utf-8")
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize("trainer", [xs, xc], ids=["xshot", "xcross"])
-def test_study_list_fan_out_equals_the_serial_assemble(trainer, tmp_path):
-    """--list-studies + --study-list workers + --assemble == serial assemble, byte-identical booster."""
-    from scripts._study_shared import persist_study_inputs
-    from tests.scripts import test_train_study_parallel_parity as P
-
-    corpus = P._synthetic_paired_corpus_xcross if trainer is xc else P._synthetic_paired_corpus
-    X, y, groups, providers, match_ids, is_public = corpus()
-    arms = _arms_from(providers, is_public)
-
-    def _persist(root):
-        persist_study_inputs(
-            root,
-            X=X,
-            y=y,
-            groups=groups,
-            providers=providers,
-            match_ids=match_ids,
-            is_public=is_public,
-            config={
-                "n_trials": 2,
-                "negative_subsample": None,
-                "seed": 42,
-                "feature_set": "faithful",
-                "horizon_seconds": 1.0,
-                "study_db_dir": str(root),
-                "artifact_dir": str(root / "art"),
-                "run_paired": True,
-                "run_prov": {"commit": "t", "dirty": False, "tree_state": "clean"},
-                "ship_variant": None,
-                "expect_variant": None,
-                "ship_order": ["public", "sc_extended", "full"],
-                "objective_inputs": {"driver": "test_expect_variant_wiring"},
-            },
-            arms=arms,
-        )
-
-    kw = {"run_probe": False} if trainer is xc else {}
-    serial, fan = tmp_path / "serial", tmp_path / "fan"
-    _persist(serial)
-    _persist(fan)
-    _m, model_serial = trainer.assemble_studies(serial, study_shard_dir=serial, **kw)
-    tags = trainer.enumerate_studies(fan)
-    for i, half in enumerate((tags[::2], tags[1::2])):
-        f = tmp_path / f"tags{i}.json"
-        f.write_text(json.dumps(half))
-        trainer.main(["--shard-root", str(fan), "--study-list", str(f)])
-    _m2, model_fan = trainer.assemble_studies(fan, study_shard_dir=fan, **kw)
-    assert model_serial._booster.save_raw("json") == model_fan._booster.save_raw("json")
-
-
-@pytest.mark.parametrize("trainer", [xs, xc], ids=["xshot", "xcross"])
-def test_prep_only_persists_the_inputs_prints_the_studies_and_never_assembles(trainer, tmp_path, monkeypatch, capsys):
-    """The launcher's f1b mode starts from --prep-only; a defect here must fail CI, not the DGX. Extraction
-    is faked with the PAIRED study fixture; the --arms policy + persistence + enumeration are real."""
+@TRAINERS
+def test_prep_persists_the_inputs_and_enumerates_the_studies(trainer, tmp_path):
+    """The ``prep`` stage (the old ``--prep-only``): the --arms policy + persistence + the study enumeration
+    are real; only extract and prep run. A paired payload yields the 3 x k nested tags + the 3 arm studies."""
+    from scripts._stages import ItemStage, LocalStore, make_context, reduce_stage, run_unit, sorted_units
     from scripts._study_shared import load_study_inputs
-    from tests.scripts import test_train_study_parallel_parity as P
+    from scripts._toy_corpora import xshot_arms
+    from tests.scripts._stage_harness import PROV, params_from_args
 
-    X, y, groups, providers, match_ids, is_public = (
-        P._synthetic_paired_corpus_xcross if trainer is xc else P._synthetic_paired_corpus
-    )()
-    # the launcher's --arms payload for this corpus. The fake _extract bypasses repackage, so the in-job
-    # match_key is match_key(source_provider, raw match_id) == "{provider}__{match_id}" here.
-    keys = [f"{p}__{m}" for p, m in zip(providers, match_ids, strict=True)]
-    arms = {
-        "public": sorted({k for k, pub in zip(keys, is_public, strict=True) if pub}),
-        "sc_extended": sorted(
-            {k for k, p, pub in zip(keys, providers, is_public, strict=True) if pub or p == "skillcorner"}
-        ),
-        "full": sorted(set(keys)),
-    }
-    arms_file = tmp_path / "arms.json"
-    arms_file.write_text(json.dumps({"arms": arms, "ship_order": ["public", "sc_extended", "full"]}))
-
-    def fake_extract(source, horizon, **kw):
-        list(source)  # drain the --data-dir generator
-        base = (X, y, groups, providers, match_ids)
-        return (*base, (xc._new_probe_cohort(), xc._new_probe_cohort(), 0)) if trainer is xc else base
-
-    monkeypatch.setattr(trainer, "_extract", fake_extract)
-    monkeypatch.setattr(trainer, "_iter_matches_from_dir", lambda *a, **k: iter([]))
-    monkeypatch.setattr(trainer, "assemble_studies", lambda *a, **k: pytest.fail("--prep-only must not assemble"))
-    data_dir = tmp_path / "corpus"
-    (data_dir / "g0").mkdir(parents=True)  # a non-empty dir so the --data-dir fingerprint has content
-    argv = [
-        "--data-dir",
-        str(data_dir),
-        "--arms",
-        str(arms_file),
-        "--n-trials",
-        "1",
-        "--output-dir",
-        str(tmp_path / "o"),
-        "--allow-dirty",
-        "--prep-only",
-    ]
-    if trainer is xc:
-        probe = tmp_path / "probe"
-        (probe / "g").mkdir(parents=True)
-        argv += ["--probe-data-dir", str(probe)]
-        monkeypatch.setattr(xc, "_write_probe_sample", lambda *a, **k: None)
-    trainer.main(argv)
-    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
-    root = Path(out["study_root"])
-    assert root.name == "studies" and (tmp_path / "o") in root.parents
-    assert out["studies"]  # paired corpus -> a real fan-out list, not the vacuous []
-    assert out["studies"] == trainer.enumerate_studies(root)
-    assert list(load_study_inputs(root).X.columns) == list(X.columns)
-
-
-@pytest.mark.parametrize("trainer", [xs, xc], ids=["xshot", "xcross"])
-def test_list_studies_prints_the_tags(trainer, tmp_path, capsys):
-    from scripts._study_shared import persist_study_inputs
-    from tests.scripts import test_train_study_parallel_parity as P
-
-    corpus = P._synthetic_paired_corpus_xcross if trainer is xc else P._synthetic_paired_corpus
-    X, y, groups, providers, match_ids, is_public = corpus()
-    persist_study_inputs(
-        tmp_path,
-        X=X,
-        y=y,
-        groups=groups,
-        providers=providers,
-        match_ids=match_ids,
-        is_public=is_public,
-        config={"run_paired": True, "n_trials": 1, "negative_subsample": None, "seed": 42},
-        arms=_arms_from(providers, is_public),
-    )
-    trainer.main(["--shard-root", str(tmp_path), "--list-studies"])
-    assert json.loads(capsys.readouterr().out) == trainer.enumerate_studies(tmp_path)
+    data, base = _toy(tmp_path, trainer)
+    args = [*base, "--arms-json", xshot_arms(data / "toy", paired=True), "--n-trials", "1"]
+    params = params_from_args(trainer.PIPELINE, args)
+    ctx = make_context(trainer.PIPELINE, params, PROV, store=LocalStore(tmp_path / "s"), data_root=data)
+    for name in ("extract", "prep"):
+        st = trainer.PIPELINE.stage(name)
+        refs = st.ref_map(ctx) if isinstance(st, ItemStage) else {}
+        for key in sorted_units(ctx, st):
+            run_unit(ctx, st, key, worker="test", ref=refs.get(key))
+        reduce_stage(ctx, name)
+    cfg = ctx.upstream("prep")
+    assert cfg["run_paired"] is True
+    k = 4  # 4 public games -> StratifiedGroupKFold(4) public folds
+    want = [f"{n}_f{f}" for f in range(k) for n in ("full", "public", "sc_extended")]
+    assert cfg["study_tags"] == [*want, "full", "public", "sc_extended"]
+    assert sorted_units(ctx, trainer.PIPELINE.stage("study")) == sorted(cfg["study_tags"])
+    root, inp = trainer._inputs(ctx)
+    assert list(load_study_inputs(root).X.columns) == trainer._feature_names("faithful")
+    assert set(inp.arms) == {"full", "public", "sc_extended"}

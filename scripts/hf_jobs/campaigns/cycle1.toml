@@ -1,0 +1,85 @@
+# ADR-128 Cycle 1 campaign (spec 7.2): every migrated job, both xShot/xCross tiers, the census driver,
+# and the three adapter-launched public trainers. Run with:
+#   .venv-hfjobs/Scripts/python -m scripts.hf_jobs campaign scripts/hf_jobs/campaigns/cycle1.toml <command>
+# The commit is HEAD at preflight (pushed, CI green). Run keys are derived; never hand-picked.
+
+[campaign]
+name = "cycle1"
+bucket = "silly-kicks/hf-refit-scratch"
+target_minutes = 60
+concurrency_cap = 10
+attempts = 3
+
+[[jobs]]
+job = "ghost_gk"
+tier = "owner"
+dataset = "tc3"
+variants = ["default", "position_only", "sweeper", "sweeper_position_only", "full"]
+
+[[jobs]]
+job = "ghost_outfield"
+tier = "owner"
+dataset = "tc3"
+variants = ["default", "position_only"]
+
+[[jobs]]
+job = "xshot_occurrence"
+tier = "public"
+dataset = "xshot17"
+variants = ["default", "position_only"]
+
+[[jobs]]
+job = "xshot_occurrence"
+tier = "sc_extended"
+dataset = "xshot115"
+variants = ["default", "position_only"]
+
+[[jobs]]
+job = "xcross_attempt"
+tier = "public"
+dataset = "xshot17"
+probe_dataset = "xcross_probe"
+variants = ["default", "position_only"]
+
+[[jobs]]
+job = "xcross_attempt"
+tier = "sc_extended"
+dataset = "xshot115"
+probe_dataset = "xcross_probe"
+variants = ["default", "position_only"]
+
+[[jobs]]
+job = "receiver_model"
+tier = "owner"
+dataset = "sb360"
+variants = ["default"]
+
+[[jobs]]
+job = "win_probability"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+
+[[jobs]]
+job = "build_territory_ranking_census"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+
+[[jobs]]
+job = "match_outcome_dependence"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+
+[[jobs]]
+job = "pass_completion"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+
+[[jobs]]
+job = "xsuccess"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]

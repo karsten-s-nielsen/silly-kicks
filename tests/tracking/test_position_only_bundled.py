@@ -32,19 +32,23 @@ import pytest
 import silly_kicks.tracking._ghost_gk as _gg
 import silly_kicks.tracking._xcross_attempt as _xc
 import silly_kicks.tracking._xshot_occurrence as _xs
+from scripts.hf_jobs import manifest as M
 from silly_kicks.tracking.schema import SPEED_SOURCE_UNAVAILABLE
 
 # The pandas-major probe mismatch is expected on one leg and tolerated (see the module docstring).
 pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.UnverifiableFeatureContractWarning")
 
 _WEIGHTS_ROOT = pathlib.Path(_gg.__file__).parent
-_C1 = "0ce2c2187e09212440063f15494915f0f4a5f2ba"  # ADR-067 commit (xshot/xcross position-only training_commit)
-_C2 = "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a"  # ADR-067 native-SkillCorner ghost re-fit (SUPERSEDED by _C3)
-_C3 = "4bda048b898669227a648a5f853c4314f7fdebe3"  # ADR-089 both-axes ghost re-fit (TF-60 Layer-3; all 5 GK variants)
-_C4 = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"  # F1b float32-frame ghost default re-fit (ADR-106)
-_C5 = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"  # combined-cycle C2: xshot/xcross + ghost position_only re-fit at M
-_C6 = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"  # TF-65 velocity-gap ghost default/sweeper re-fit (ADR-120, 4.134.0)
-_C7 = "4095251730ce216decf99ec8e47d8e1162a04a1d"  # ADR-126 (4.138.0): xShot type_id label re-fit
+# ADR-128 (spec 5.7): each bundle's training commit is declared ONCE, in the artifact manifest
+# (docs/artifacts/manifest.toml). History of the commits these tests pinned before (named in prose only):
+#   _C1 = 0ce2c21  ADR-067 commit (xshot/xcross position-only training_commit)
+#   _C2 = a0fc9f9  ADR-067 native-SkillCorner ghost re-fit (SUPERSEDED by _C3)
+#   _C3 = 4bda048  ADR-089 both-axes ghost re-fit (TF-60 Layer-3; all 5 GK variants)
+#   _C4 = 3ca609f  F1b float32-frame ghost default re-fit (ADR-106)
+#   _C5 = b62c1f2  combined-cycle C2: xshot/xcross + ghost position_only re-fit at M
+#   _C6 = a34e992  TF-65 velocity-gap ghost default/sweeper re-fit (ADR-120, 4.134.0)
+#   _C7 = 4095251  ADR-126 (4.138.0): xShot type_id label re-fit
+_MAN = M.load()
 
 
 def _declare_unavailable(frames: pd.DataFrame) -> pd.DataFrame:
@@ -92,7 +96,11 @@ def test_bundled_position_only_carry_training_provenance():
     # (byte-identical to the 3ca609f archive, re-stamped at the run commit). The xShot position_only
     # bundle was re-fit again at _C7 for the ADR-126 type_id label fix (4.138.0; the label fix is
     # independent of velocity, so it is NOT a byte-identical no-op).
-    expected = {"_xshot_weights": _C7, "_xcross_weights": _C5, "_ghost_gk_weights": _C5}
+    expected = {
+        "_xshot_weights": _MAN.artifacts["xshot_position_only"].training_commit,  # _C7
+        "_xcross_weights": _MAN.artifacts["xcross_position_only"].training_commit,  # _C5
+        "_ghost_gk_weights": _MAN.artifacts["ghost_position_only"].training_commit,  # _C5
+    }
     for root, want in expected.items():
         meta = json.loads((_WEIGHTS_ROOT / root / "position_only" / "metadata.json").read_text(encoding="utf-8"))
         assert meta.get("training_commit") == want, f"{root}/position_only training_commit"
@@ -108,7 +116,9 @@ def test_bundled_ghost_default_is_the_tf65_refit():
     m = _gg.GhostGkModel.from_variant("default")
     assert m.feature_set == "faithful"
     meta = json.loads((_WEIGHTS_ROOT / "_ghost_gk_weights" / "default" / "metadata.json").read_text(encoding="utf-8"))
-    assert meta["training_commit"] == _C6
+    ghost_default = _MAN.artifacts["ghost_default"]
+    assert ghost_default.refit_event == "tf65"  # the manifest declares this bundle as the TF-65 re-fit
+    assert meta["training_commit"] == ghost_default.training_commit  # _C6
     assert meta["feature_set"] == "faithful"
     assert len(meta["feature_names"]) == 26
     assert "skillcorner" in meta["corpus_provenance"]["providers"]

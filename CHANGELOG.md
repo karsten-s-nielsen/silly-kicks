@@ -5,6 +5,116 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — compute contract + HF campaigns (ADR-128)
+
+> Harness and tooling only: no library behaviour change and no retrain. No version bump: the published package
+> changes only in three private modules (additive per-fold seams, byte-identical outputs). The Cycle 1 campaign ran
+> on real HF (20 of 21 instances completed their whole DAG); by owner ruling (2026-10-21) its artifacts are not
+> adopted, and the re-fit moves to the campaign-throughput cycle (ADR-129). Spec
+> `docs/superpowers/specs/2026-10-18-compute-contract-hf-campaigns-design.md`; plan
+> `docs/superpowers/plans/2026-10-18-compute-contract-hf-campaigns-plan.md`; outcome in ADR-128 "Cycle 1 outcome".
+>
+> **Known limitations (fixed in ADR-129):** the stage reduce lists its generation once per unit (quadratic over
+> the bucket mount); the controller reads every unit ledger record for its cost history (about 0.5 s each over the
+> bucket API); one stage at a time per instance; no result reuse across commits; no supported resume for a halted
+> stage or for a job that fails before its first unit; every job installs its environment.
+
+### Added
+
+- **Stage/unit contract** (`scripts/_stages.py`): `Pipeline` / `Stage` / `ItemStage`, token-versioned
+  generations, checksum-verified results, `ordered_values`, the uniform stage CLI (`--plan`, `--stages S
+  --shard I/N`, `--shard-keys`, `--run-all --out`, `--workers`, `--inner-workers`), and the executor
+  (`scripts/hf_jobs/executor.py`: W memory-capped workers per job, `InnerPool`, the failure rule). Outputs
+  are byte-identical for every (W, N).
+- **Migrated pipelines** (W1N1-vs-W2N2 parity test each): `train_ghost_gk`, `train_ghost_outfield`,
+  `train_xshot_occurrence`, `train_xcross_attempt`, `train_receiver_model`, `train_win_probability`,
+  `build_territory_ranking_census`. Fold-parallel HPO inside each seeded-TPE trial (`cv_fold_plan` /
+  `eval_fold` / `combine_folds` on the xShot/xCross objectives); `bootstrap_icc_and_power(replicate_map=)`.
+- **HF campaign controller** (`python -m scripts.hf_jobs campaign <file> …`): committed campaign files
+  (`scripts/hf_jobs/campaigns/cycle1.toml`), preflight, profile, planner, typed launcher (one digest-pinned
+  image, `uv sync --frozen`, one flavor constant), stateless launch/resume/status, ledger + committed
+  summary, retrieve/verify/adopt/publish (`--sandbox`), the one-unit adapter for unmigrated trainers.
+  The summary records the measured workers, job startup and irreducible floor per stage; the planner
+  takes its job startup from the committed summaries (300 s before any).
+- **Datasets** declared once (`scripts/hf_jobs/datasets.toml`) and recorded (`datasets.lock.json`: pinned
+  revision, units, expected corpus identity).
+- **Dataset read gate** (`scripts/_dataset_reads.py`): every staged-dataset read is one whole-file read under
+  a job-wide cap over all worker processes, parsed from memory (`_driver_sources.read_dataset_parquet` /
+  `read_dataset_json` / `read_dataset_schema`). A mounted dataset declares `read_concurrency` (4). The
+  read-audit gate (`tests/scripts/test_dataset_read_audit.py`) runs every pipeline's dataset stages and
+  refuses a direct or undeclared read. Measured on real HF (ADR-128): the tc3 mount failed with EIO at 8
+  direct pyarrow readers and read clean at a cap of 4 (360 files in 69 s with 8 workers).
+- **`download` access** fetches exactly what the job's units read (`datasets.fetch_patterns`): every stage
+  of a grouped job, a profile job's sample only (`_stages.profile_sample`), pending units only. A plain
+  dataset `Stage` declares `dataset_files`; `Pipeline.validate` refuses a missing declaration.
+- **Artifact manifest** (`docs/artifacts/manifest.toml` + `observed.json`, `scripts/hf_jobs/manifest.py`):
+  every wheel and Hub artifact's expectations; generated model-card regions with a staleness test.
+- **Artifact identity** (`scripts/hf_jobs/identity.py`, decision P3) and the ADR-126 integrity inputs as
+  xShot/xCross extract counters (`scripts/_integrity_counters.py`).
+- **Born-ready gate** (`tests/scripts/test_compute_contract.py`) and the scaffolder
+  (`python -m scripts.hf_jobs scaffold trainer|driver <name>`).
+- **Docs:** `docs/howto/compute-pipelines.md`; skills `compute-pipelines` and `hf-campaign`; ADR-128.
+
+### Changed
+
+- `scripts/_driver.py` `for_each`: checksum-verified resume for new generations (P13); signature unchanged.
+- The job registry (`scripts/hf_jobs/registry.py`) describes each trainer as a pipeline and its
+  certification (`certification`, `tier_certification`, `cv_metric`); `floor.certify` applies it.
+- The bundled-weights, position-only and model-card tests read the artifact manifest instead of constants
+  (assertions unchanged); `_hub_publish.CARD_SOURCE` and `validate_hub_variants.HUB_REGISTRY` derive from it.
+- Five Hub-only model cards gain a generated `hub_refit` sentence (their Hub READMEs are re-published
+  card-only on an owner go).
+- `docs/howto/hf-jobs-training.md` rewritten for the campaign CLI; `docs/howto/corpus-drivers-runbook.md`
+  points new drivers at the scaffolder. ADR-122 and ADR-123 are superseded in part.
+- The owner-tier `pass_completion` pining cross-check runs from `scripts/_pass_completion_pining.py` (DGX
+  only, same flags), which injects the pining source. `train_pass_completion.py` runs on HF, so it refuses
+  `--source pining` and never imports the pining client: the I1 gate covers it with no exemption.
+- CI: the `slow` job widens from 4 to 6 shards (ADR-023 amendment), and `.test_durations` is regenerated
+  from CI-measured, leg-aware captures (ADR-074). The CI-measured slow tail is 40.7 min; the 28 slow tests
+  that had no entry account for 17.1 min of it.
+
+### Removed
+
+- The legacy `hf`-CLI launch path (`scripts/hf_jobs/launch.py`: `run_pipeline`, `launch_variant_job`,
+  `retrieve_variant`, `StagePhaseError`, …) and every per-trainer phase flag (`--shard-index`, `--fold`,
+  `--study`, `--study-list`, `--list-studies`, `--assemble`, `--prep-only`, `--build-cache`); receiver
+  `--owner-rows`; census `--list-matches` (P17).
+
+### Fixed
+
+- The xcross probe no longer reads a `.cache` dotdir as a game.
+- The campaign controller schedules a resumed stage's pending units (the plan JSON's `pending_units`); it
+  scheduled the first `pending` keys of `units`, which re-launched a job for an already-done unit in a loop.
+- The receiver `pool` stage keys its token on the `--pool-dataset` identity (`uses_dataset`), not only on
+  its name; an unset optional second dataset has no identity (it was a digest of the whole data root).
+- The per-worker memory cap in an HF container bounds RSS (the executor's `rss` watchdog over `/proc`), not
+  address space: `RLIMIT_AS` sized from peak RSS failed every planned unit with `MemoryError` on real HF.
+- Worker sizing reads the cgroup's CPUs and RAM (`_parallel_launch.available_cpus` / `available_ram_bytes`):
+  an HF container reports the host's 64 CPUs and 503 GB.
+- The campaign controller retries a failed unit until it has failed twice; a transient failure was never
+  retried, so a tolerant stage reduced without the unit. Then the stage's `max_failures` decides: within
+  it the stage reduces and names the unit; over it the controller halts the instance and names it.
+- The per-worker cap is each worker's fair share of the usable RAM (never below 1.3 x the measured peak):
+  1.3 x the profile sample's peak killed every heavier unsampled unit on real HF. A unit over even its
+  fair share fails cleanly with a memory reason and runs again alone with the whole box (`--escalate`);
+  until then it is deferred: no stage failure, and the stage does not reduce without it.
+- A stage whose job ended in ERROR is resumed while a retryable failed unit remains, or after an HF job
+  timeout with units pending, until its jobs have ended in ERROR twice in a row; the controller halted it
+  before.
+- A multi-provider corpus mixes int ids (gradientsports) and str ids (idsse, skillcorner) in `game_id`,
+  `player_id` and `team_id`; combined stage outputs failed their parquet write on real HF. Every reduce that
+  concatenates unit frames now goes through ONE combine, `_stages.combine_frames(ids=...)`: a mixed declared
+  id column stores the canonical strings the legacy grouped on (a single-type column is unchanged), and any
+  other mixed column refuses by name (`_stages.assert_storable`, also checked when a result is written).
+- The toy corpora carry each provider's REAL id dtypes (`_toy_corpora.PROVIDER_ID_KIND`), so the parity
+  tests, the read audit and preflight's toy `--run-all` see the real mix. `datasets.lock.json` records each
+  provider's measured id kind (`provider_id_kinds`; `datasets id-kinds <name>`), and a test asserts the toy
+  profile equals it, so the fixtures cannot drift from the staged data.
+- The registry `ghost_gk` `default` build passes `--variant default`; `full` is its own build (P10).
+- The receiver no longer reads pining in-job: its corpus visibility and size are launcher parameters (P5).
+- A pining-trained pass-completion card's reproduce line passes the bare `--providers` list (it passed the
+  `pining:<providers>` corpus label) and names the pining entry.
+
 ## [4.139.0] — 2026-10-18 — TF-46 Arm 1 corner offence (Shaw) + section-12 construct validity + sportec corner-crossed (ADR-127)
 
 ### Added

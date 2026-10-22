@@ -94,6 +94,15 @@ leg's shards made that leg heavier than every other leg by the slow total, so a 
 Decided in `docs/superpowers/specs/2026-09-25-ci-runtime-slow-decouple-design.md` (r2 APPROVE); interacts
 with the duration-sharding of [ADR-074](ADR-074-ci-duration-sharding.md).
 
+## Amendment — 2026-10-19: the slow job widens to 6 shards (ADR-128 parity tests)
+
+The decision stands unchanged. ADR-128 adds W1N1-vs-W2N2 parity tests for every trainer and corpus
+walker; they are `@slow` (each one runs a pipeline twice). The CI-measured slow tail is now 40.7 min
+(272 tests); the 28 slow tests that had no `.test_durations` entry account for 17.1 min of it. At `--splits 4`, a balanced shard takes about 12 min of test run time,
+which makes the slow job the CI long pole. The owner ruled to widen the slow job to `--splits 6`
+(`slow-shard: [1..6]`): the simulated split on the CI-measured `.test_durations` is 4.9–7.9 min per
+shard. The `.test_durations` regeneration that balances it is ADR-074's.
+
 ## Related
 - **Specs:** `docs/superpowers/specs/2026-06-08-ci-slow-test-gating-design.md`;
   `docs/superpowers/specs/2026-09-25-ci-runtime-slow-decouple-design.md` (the delivery amendment above)

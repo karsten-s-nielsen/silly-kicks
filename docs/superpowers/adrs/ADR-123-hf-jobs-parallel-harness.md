@@ -3,9 +3,11 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-10-14 |
-| **Status** | Accepted |
+| **Status** | Accepted — superseded in part by ADR-128 (launch path, per-trainer phase flags) |
 | **Deciders** | Karsten S. Nielsen (owner) |
 | **Extends** | ADR-122 (HF Jobs training harness) |
+
+> **Superseded in part by ADR-128** (compute contract + HF campaigns): the map/reduce phase DAG (`run_pipeline`, `phase_sequence`, `--shard-index`/`--fold`/`--study`/`--assemble`/`--prep-only`/`--build-cache`); Amendment B's visibility-blind rule (I1) stays in force.
 
 > **ADR number — CONTENDED.** `tf-79-ball-contact-detection` also provisionally claims ADR-122/123 (its
 > header). Whichever branch merges second renumbers (ADR file + `AGENTS.md` + C4 pin + memo). Owner owns

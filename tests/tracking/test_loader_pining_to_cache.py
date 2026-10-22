@@ -1,4 +1,4 @@
-"""The pining->cache writer produces a layout train_ghost_gk.py consumes (PR-S81 / NP1)."""
+"""The pining->cache writer produces the tc3 layout (PR-S81 / NP1) that staging consumes (ADR-128)."""
 
 from __future__ import annotations
 

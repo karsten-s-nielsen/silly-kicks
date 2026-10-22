@@ -1,0 +1,1923 @@
+{
+  "sb360": {
+    "generation": "g",
+    "home_teams": false,
+    "identity": {
+      "flat": {
+        "corpus_match_ids_sha256": "32b0991014955d92518d7e3fe7de4bc9b038f0a76aeb734658f87417a75a4d15",
+        "corpus_n_matches": 30
+      },
+      "pergame": {
+        "corpus_match_ids_sha256": "bba4fbd139852d0893aa165991d7d0e913bbb4d7fd141082fb43d0575226d554",
+        "corpus_n_matches": 30
+      }
+    },
+    "kind": "flat_tc3",
+    "n_units": 30,
+    "provider_id_kinds": {
+      "statsbomb": "int"
+    },
+    "public_ids": null,
+    "recorded_at": "2026-10-18T22:00:19+00:00",
+    "repo": "silly-kicks/hf-refit-sb360",
+    "revision": "62d7fcfdd35df87fc4a745b0dcf3eb268d3d1a77",
+    "units": [
+      {
+        "game": "3986784",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986784"
+      },
+      {
+        "game": "3986793",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986793"
+      },
+      {
+        "game": "3986797",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986797"
+      },
+      {
+        "game": "3986808",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986808"
+      },
+      {
+        "game": "3986810",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986810"
+      },
+      {
+        "game": "3986817",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986817"
+      },
+      {
+        "game": "3986830",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986830"
+      },
+      {
+        "game": "3986832",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986832"
+      },
+      {
+        "game": "3986842",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986842"
+      },
+      {
+        "game": "3986848",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986848"
+      },
+      {
+        "game": "3986852",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986852"
+      },
+      {
+        "game": "3986862",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986862"
+      },
+      {
+        "game": "3986868",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__3986868"
+      },
+      {
+        "game": "4034729",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4034729"
+      },
+      {
+        "game": "4047502",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047502"
+      },
+      {
+        "game": "4047505",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047505"
+      },
+      {
+        "game": "4047527",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047527"
+      },
+      {
+        "game": "4047534",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047534"
+      },
+      {
+        "game": "4047542",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047542"
+      },
+      {
+        "game": "4047552",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047552"
+      },
+      {
+        "game": "4047555",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047555"
+      },
+      {
+        "game": "4047569",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047569"
+      },
+      {
+        "game": "4047574",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047574"
+      },
+      {
+        "game": "4047584",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047584"
+      },
+      {
+        "game": "4047596",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047596"
+      },
+      {
+        "game": "4047599",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047599"
+      },
+      {
+        "game": "4047613",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047613"
+      },
+      {
+        "game": "4047620",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047620"
+      },
+      {
+        "game": "4047623",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047623"
+      },
+      {
+        "game": "4047626",
+        "source_provider": "snapshot",
+        "stem": "statsbomb__4047626"
+      }
+    ]
+  },
+  "sb_open": {
+    "kind": "statsbomb_open",
+    "n_units": 3961,
+    "recorded_at": "2026-10-18T22:06:07+00:00",
+    "repo": "statsbomb/open-data",
+    "revision": "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb",
+    "units_sha256": "5c662c4da0f11cb08f467819b55ff105e457913b122ece5535b64a296b8deff7"
+  },
+  "tc3": {
+    "generation": "ac98a040f3c2ec8c",
+    "home_teams": true,
+    "identity": {
+      "flat": {
+        "corpus_match_ids_sha256": "7958d6670b2b34c0799b296106379247a2203c75df5f01b50b0be0ecd4a56d08",
+        "corpus_n_matches": 179
+      },
+      "pergame": {
+        "corpus_match_ids_sha256": "0bc80e2b89c4c136e4065e50cf3e9651f247f8bfb0af178474b99baf387bbbf0",
+        "corpus_n_matches": 179
+      }
+    },
+    "kind": "flat_tc3",
+    "n_units": 179,
+    "provider_id_kinds": {
+      "gradientsports": "int",
+      "idsse": "str",
+      "skillcorner": "str"
+    },
+    "public_ids": null,
+    "recorded_at": "2026-10-18T21:57:13+00:00",
+    "repo": "silly-kicks/hf-refit-tc3",
+    "revision": "2cba9fa9fccb979d600bb432e4d6b90c3d2d0d79",
+    "units": [
+      {
+        "game": "10502",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10502"
+      },
+      {
+        "game": "10503",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10503"
+      },
+      {
+        "game": "10504",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10504"
+      },
+      {
+        "game": "10505",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10505"
+      },
+      {
+        "game": "10506",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10506"
+      },
+      {
+        "game": "10507",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10507"
+      },
+      {
+        "game": "10508",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10508"
+      },
+      {
+        "game": "10509",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10509"
+      },
+      {
+        "game": "10510",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10510"
+      },
+      {
+        "game": "10511",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10511"
+      },
+      {
+        "game": "10512",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10512"
+      },
+      {
+        "game": "10513",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10513"
+      },
+      {
+        "game": "10514",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10514"
+      },
+      {
+        "game": "10515",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10515"
+      },
+      {
+        "game": "10516",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10516"
+      },
+      {
+        "game": "10517",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__10517"
+      },
+      {
+        "game": "3812",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3812"
+      },
+      {
+        "game": "3813",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3813"
+      },
+      {
+        "game": "3814",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3814"
+      },
+      {
+        "game": "3815",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3815"
+      },
+      {
+        "game": "3816",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3816"
+      },
+      {
+        "game": "3817",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3817"
+      },
+      {
+        "game": "3818",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3818"
+      },
+      {
+        "game": "3819",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3819"
+      },
+      {
+        "game": "3820",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3820"
+      },
+      {
+        "game": "3821",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3821"
+      },
+      {
+        "game": "3822",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3822"
+      },
+      {
+        "game": "3823",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3823"
+      },
+      {
+        "game": "3824",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3824"
+      },
+      {
+        "game": "3825",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3825"
+      },
+      {
+        "game": "3826",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3826"
+      },
+      {
+        "game": "3827",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3827"
+      },
+      {
+        "game": "3828",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3828"
+      },
+      {
+        "game": "3829",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3829"
+      },
+      {
+        "game": "3830",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3830"
+      },
+      {
+        "game": "3831",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3831"
+      },
+      {
+        "game": "3832",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3832"
+      },
+      {
+        "game": "3833",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3833"
+      },
+      {
+        "game": "3834",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3834"
+      },
+      {
+        "game": "3835",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3835"
+      },
+      {
+        "game": "3836",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3836"
+      },
+      {
+        "game": "3837",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3837"
+      },
+      {
+        "game": "3838",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3838"
+      },
+      {
+        "game": "3839",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3839"
+      },
+      {
+        "game": "3840",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3840"
+      },
+      {
+        "game": "3841",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3841"
+      },
+      {
+        "game": "3842",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3842"
+      },
+      {
+        "game": "3843",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3843"
+      },
+      {
+        "game": "3844",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3844"
+      },
+      {
+        "game": "3845",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3845"
+      },
+      {
+        "game": "3846",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3846"
+      },
+      {
+        "game": "3847",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3847"
+      },
+      {
+        "game": "3848",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3848"
+      },
+      {
+        "game": "3849",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3849"
+      },
+      {
+        "game": "3850",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3850"
+      },
+      {
+        "game": "3851",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3851"
+      },
+      {
+        "game": "3852",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3852"
+      },
+      {
+        "game": "3853",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3853"
+      },
+      {
+        "game": "3854",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3854"
+      },
+      {
+        "game": "3855",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3855"
+      },
+      {
+        "game": "3856",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3856"
+      },
+      {
+        "game": "3857",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3857"
+      },
+      {
+        "game": "3858",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3858"
+      },
+      {
+        "game": "3859",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports__3859"
+      },
+      {
+        "game": "DFL-MAT-J03WMX",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WMX"
+      },
+      {
+        "game": "DFL-MAT-J03WN1",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WN1"
+      },
+      {
+        "game": "DFL-MAT-J03WOH",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WOH"
+      },
+      {
+        "game": "DFL-MAT-J03WOY",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WOY"
+      },
+      {
+        "game": "DFL-MAT-J03WPY",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WPY"
+      },
+      {
+        "game": "DFL-MAT-J03WQQ",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WQQ"
+      },
+      {
+        "game": "DFL-MAT-J03WR9",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WR9"
+      },
+      {
+        "game": "1021404",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1021404"
+      },
+      {
+        "game": "1036527",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1036527"
+      },
+      {
+        "game": "1048195",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1048195"
+      },
+      {
+        "game": "1064327",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1064327"
+      },
+      {
+        "game": "1096879",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1096879"
+      },
+      {
+        "game": "1103734",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1103734"
+      },
+      {
+        "game": "1114154",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1114154"
+      },
+      {
+        "game": "1121546",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1121546"
+      },
+      {
+        "game": "1129394",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1129394"
+      },
+      {
+        "game": "1137151",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1137151"
+      },
+      {
+        "game": "1146865",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1146865"
+      },
+      {
+        "game": "1184210",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1184210"
+      },
+      {
+        "game": "1193411",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1193411"
+      },
+      {
+        "game": "1204769",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1204769"
+      },
+      {
+        "game": "1227667",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1227667"
+      },
+      {
+        "game": "1234494",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1234494"
+      },
+      {
+        "game": "1242274",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1242274"
+      },
+      {
+        "game": "1281971",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1281971"
+      },
+      {
+        "game": "1287842",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1287842"
+      },
+      {
+        "game": "1301584",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1301584"
+      },
+      {
+        "game": "1307205",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1307205"
+      },
+      {
+        "game": "1314538",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1314538"
+      },
+      {
+        "game": "1320692",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1320692"
+      },
+      {
+        "game": "1340201",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1340201"
+      },
+      {
+        "game": "1365685",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1365685"
+      },
+      {
+        "game": "1374493",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1374493"
+      },
+      {
+        "game": "1380976",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1380976"
+      },
+      {
+        "game": "1385604",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1385604"
+      },
+      {
+        "game": "1392898",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1392898"
+      },
+      {
+        "game": "1397483",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1397483"
+      },
+      {
+        "game": "1404020",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1404020"
+      },
+      {
+        "game": "1414465",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1414465"
+      },
+      {
+        "game": "1422928",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1422928"
+      },
+      {
+        "game": "1429036",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1429036"
+      },
+      {
+        "game": "1434991",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1434991"
+      },
+      {
+        "game": "1443283",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1443283"
+      },
+      {
+        "game": "1463749",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1463749"
+      },
+      {
+        "game": "1481937",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1481937"
+      },
+      {
+        "game": "1486704",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1486704"
+      },
+      {
+        "game": "1492545",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1492545"
+      },
+      {
+        "game": "1498966",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1498966"
+      },
+      {
+        "game": "1506182",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1506182"
+      },
+      {
+        "game": "1512139",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1512139"
+      },
+      {
+        "game": "1517179",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1517179"
+      },
+      {
+        "game": "1524305",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1524305"
+      },
+      {
+        "game": "1528510",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1528510"
+      },
+      {
+        "game": "1534700",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1534700"
+      },
+      {
+        "game": "1543050",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1543050"
+      },
+      {
+        "game": "1552423",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1552423"
+      },
+      {
+        "game": "1562415",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1562415"
+      },
+      {
+        "game": "1654689",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1654689"
+      },
+      {
+        "game": "1669552",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1669552"
+      },
+      {
+        "game": "1677766",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1677766"
+      },
+      {
+        "game": "1683776",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1683776"
+      },
+      {
+        "game": "1712797",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1712797"
+      },
+      {
+        "game": "1720493",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1720493"
+      },
+      {
+        "game": "1730478",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1730478"
+      },
+      {
+        "game": "1738618",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1738618"
+      },
+      {
+        "game": "1751837",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1751837"
+      },
+      {
+        "game": "1759946",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1759946"
+      },
+      {
+        "game": "1766915",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1766915"
+      },
+      {
+        "game": "1800127",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1800127"
+      },
+      {
+        "game": "1807855",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1807855"
+      },
+      {
+        "game": "1816744",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1816744"
+      },
+      {
+        "game": "1839445",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1839445"
+      },
+      {
+        "game": "1846846",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1846846"
+      },
+      {
+        "game": "1876077",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1876077"
+      },
+      {
+        "game": "1882238",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1882238"
+      },
+      {
+        "game": "1886347",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1886347"
+      },
+      {
+        "game": "1889287",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1889287"
+      },
+      {
+        "game": "1895402",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1895402"
+      },
+      {
+        "game": "1899585",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1899585"
+      },
+      {
+        "game": "1900259",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1900259"
+      },
+      {
+        "game": "1906819",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1906819"
+      },
+      {
+        "game": "1913641",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1913641"
+      },
+      {
+        "game": "1925299",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1925299"
+      },
+      {
+        "game": "1927275",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1927275"
+      },
+      {
+        "game": "1948187",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1948187"
+      },
+      {
+        "game": "1953632",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1953632"
+      },
+      {
+        "game": "1974997",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1974997"
+      },
+      {
+        "game": "1980444",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1980444"
+      },
+      {
+        "game": "1985247",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1985247"
+      },
+      {
+        "game": "1992355",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1992355"
+      },
+      {
+        "game": "1996435",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1996435"
+      },
+      {
+        "game": "1997707",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1997707"
+      },
+      {
+        "game": "2002290",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2002290"
+      },
+      {
+        "game": "2002870",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2002870"
+      },
+      {
+        "game": "2003226",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2003226"
+      },
+      {
+        "game": "2003902",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2003902"
+      },
+      {
+        "game": "2004424",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2004424"
+      },
+      {
+        "game": "2005298",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2005298"
+      },
+      {
+        "game": "2005893",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2005893"
+      },
+      {
+        "game": "2006229",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2006229"
+      },
+      {
+        "game": "2006572",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2006572"
+      },
+      {
+        "game": "2007191",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2007191"
+      },
+      {
+        "game": "2007530",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2007530"
+      },
+      {
+        "game": "2008992",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2008992"
+      },
+      {
+        "game": "2010130",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2010130"
+      },
+      {
+        "game": "2010755",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2010755"
+      },
+      {
+        "game": "2011166",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2011166"
+      },
+      {
+        "game": "2011428",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2011428"
+      },
+      {
+        "game": "2011844",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2011844"
+      },
+      {
+        "game": "2012431",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2012431"
+      },
+      {
+        "game": "2012892",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2012892"
+      },
+      {
+        "game": "2013725",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2013725"
+      },
+      {
+        "game": "2014987",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2014987"
+      },
+      {
+        "game": "2015213",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2015213"
+      },
+      {
+        "game": "2017461",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2017461"
+      }
+    ]
+  },
+  "xcross_probe": {
+    "generation": null,
+    "home_teams": null,
+    "identity": {
+      "flat": {
+        "corpus_match_ids_sha256": "4bf9fe9b73c8c867f91f390526b575b5d2c9342929afb342d9d0dcf0254fa2c8",
+        "corpus_n_matches": 2
+      },
+      "pergame": {
+        "corpus_match_ids_sha256": "839ca1da9fca6653bca2e49e37a50b9a01bdbe593a5950b29d8614b5a388ea5c",
+        "corpus_n_matches": 2
+      }
+    },
+    "kind": "pergame",
+    "n_units": 2,
+    "provider_id_kinds": {
+      "gradientsports": "int"
+    },
+    "public_ids": null,
+    "recorded_at": "2026-10-18T22:00:16+00:00",
+    "repo": "silly-kicks/hf-refit-xcross-probe",
+    "revision": "bdb0f64e4d3b244f7337826ddb7af81f989c1a60",
+    "units": [
+      {
+        "game": "gradientsports-10502",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10502"
+      },
+      {
+        "game": "gradientsports-10503",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10503"
+      }
+    ]
+  },
+  "xshot115": {
+    "generation": "ac98a040f3c2ec8c",
+    "home_teams": true,
+    "identity": {
+      "flat": {
+        "corpus_match_ids_sha256": "b2b351d3f7fc51aba28d9ae1b552ec6d4c5f4c60cfd1e03a1493b3e7423ea409",
+        "corpus_n_matches": 115
+      },
+      "pergame": {
+        "corpus_match_ids_sha256": "b6c083f2b8b0575afbe153a48c969ab902e757aee211367a5e61da9f7115130b",
+        "corpus_n_matches": 115
+      }
+    },
+    "kind": "flat_tc3",
+    "n_units": 115,
+    "provider_id_kinds": {
+      "idsse": "str",
+      "skillcorner": "str"
+    },
+    "public_ids": null,
+    "recorded_at": "2026-10-18T21:59:11+00:00",
+    "repo": "silly-kicks/hf-refit-xshot115",
+    "revision": "deb7f148cbc533232f6eb383a64581cda0923e2d",
+    "units": [
+      {
+        "game": "DFL-MAT-J03WMX",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WMX"
+      },
+      {
+        "game": "DFL-MAT-J03WN1",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WN1"
+      },
+      {
+        "game": "DFL-MAT-J03WOH",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WOH"
+      },
+      {
+        "game": "DFL-MAT-J03WOY",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WOY"
+      },
+      {
+        "game": "DFL-MAT-J03WPY",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WPY"
+      },
+      {
+        "game": "DFL-MAT-J03WQQ",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WQQ"
+      },
+      {
+        "game": "DFL-MAT-J03WR9",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WR9"
+      },
+      {
+        "game": "1021404",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1021404"
+      },
+      {
+        "game": "1036527",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1036527"
+      },
+      {
+        "game": "1048195",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1048195"
+      },
+      {
+        "game": "1064327",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1064327"
+      },
+      {
+        "game": "1096879",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1096879"
+      },
+      {
+        "game": "1103734",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1103734"
+      },
+      {
+        "game": "1114154",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1114154"
+      },
+      {
+        "game": "1121546",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1121546"
+      },
+      {
+        "game": "1129394",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1129394"
+      },
+      {
+        "game": "1137151",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1137151"
+      },
+      {
+        "game": "1146865",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1146865"
+      },
+      {
+        "game": "1184210",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1184210"
+      },
+      {
+        "game": "1193411",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1193411"
+      },
+      {
+        "game": "1204769",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1204769"
+      },
+      {
+        "game": "1227667",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1227667"
+      },
+      {
+        "game": "1234494",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1234494"
+      },
+      {
+        "game": "1242274",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1242274"
+      },
+      {
+        "game": "1281971",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1281971"
+      },
+      {
+        "game": "1287842",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1287842"
+      },
+      {
+        "game": "1301584",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1301584"
+      },
+      {
+        "game": "1307205",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1307205"
+      },
+      {
+        "game": "1314538",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1314538"
+      },
+      {
+        "game": "1320692",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1320692"
+      },
+      {
+        "game": "1340201",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1340201"
+      },
+      {
+        "game": "1365685",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1365685"
+      },
+      {
+        "game": "1374493",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1374493"
+      },
+      {
+        "game": "1380976",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1380976"
+      },
+      {
+        "game": "1385604",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1385604"
+      },
+      {
+        "game": "1392898",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1392898"
+      },
+      {
+        "game": "1397483",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1397483"
+      },
+      {
+        "game": "1404020",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1404020"
+      },
+      {
+        "game": "1414465",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1414465"
+      },
+      {
+        "game": "1422928",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1422928"
+      },
+      {
+        "game": "1429036",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1429036"
+      },
+      {
+        "game": "1434991",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1434991"
+      },
+      {
+        "game": "1443283",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1443283"
+      },
+      {
+        "game": "1463749",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1463749"
+      },
+      {
+        "game": "1481937",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1481937"
+      },
+      {
+        "game": "1486704",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1486704"
+      },
+      {
+        "game": "1492545",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1492545"
+      },
+      {
+        "game": "1498966",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1498966"
+      },
+      {
+        "game": "1506182",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1506182"
+      },
+      {
+        "game": "1512139",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1512139"
+      },
+      {
+        "game": "1517179",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1517179"
+      },
+      {
+        "game": "1524305",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1524305"
+      },
+      {
+        "game": "1528510",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1528510"
+      },
+      {
+        "game": "1534700",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1534700"
+      },
+      {
+        "game": "1543050",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1543050"
+      },
+      {
+        "game": "1552423",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1552423"
+      },
+      {
+        "game": "1562415",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1562415"
+      },
+      {
+        "game": "1654689",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1654689"
+      },
+      {
+        "game": "1669552",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1669552"
+      },
+      {
+        "game": "1677766",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1677766"
+      },
+      {
+        "game": "1683776",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1683776"
+      },
+      {
+        "game": "1712797",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1712797"
+      },
+      {
+        "game": "1720493",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1720493"
+      },
+      {
+        "game": "1730478",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1730478"
+      },
+      {
+        "game": "1738618",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1738618"
+      },
+      {
+        "game": "1751837",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1751837"
+      },
+      {
+        "game": "1759946",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1759946"
+      },
+      {
+        "game": "1766915",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1766915"
+      },
+      {
+        "game": "1800127",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1800127"
+      },
+      {
+        "game": "1807855",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1807855"
+      },
+      {
+        "game": "1816744",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1816744"
+      },
+      {
+        "game": "1839445",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1839445"
+      },
+      {
+        "game": "1846846",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1846846"
+      },
+      {
+        "game": "1876077",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1876077"
+      },
+      {
+        "game": "1882238",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1882238"
+      },
+      {
+        "game": "1886347",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1886347"
+      },
+      {
+        "game": "1889287",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1889287"
+      },
+      {
+        "game": "1895402",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1895402"
+      },
+      {
+        "game": "1899585",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1899585"
+      },
+      {
+        "game": "1900259",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1900259"
+      },
+      {
+        "game": "1906819",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1906819"
+      },
+      {
+        "game": "1913641",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1913641"
+      },
+      {
+        "game": "1925299",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1925299"
+      },
+      {
+        "game": "1927275",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1927275"
+      },
+      {
+        "game": "1948187",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1948187"
+      },
+      {
+        "game": "1953632",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1953632"
+      },
+      {
+        "game": "1974997",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1974997"
+      },
+      {
+        "game": "1980444",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1980444"
+      },
+      {
+        "game": "1985247",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1985247"
+      },
+      {
+        "game": "1992355",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1992355"
+      },
+      {
+        "game": "1996435",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1996435"
+      },
+      {
+        "game": "1997707",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1997707"
+      },
+      {
+        "game": "2002290",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2002290"
+      },
+      {
+        "game": "2002870",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2002870"
+      },
+      {
+        "game": "2003226",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2003226"
+      },
+      {
+        "game": "2003902",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2003902"
+      },
+      {
+        "game": "2004424",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2004424"
+      },
+      {
+        "game": "2005298",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2005298"
+      },
+      {
+        "game": "2005893",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2005893"
+      },
+      {
+        "game": "2006229",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2006229"
+      },
+      {
+        "game": "2006572",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2006572"
+      },
+      {
+        "game": "2007191",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2007191"
+      },
+      {
+        "game": "2007530",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2007530"
+      },
+      {
+        "game": "2008992",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2008992"
+      },
+      {
+        "game": "2010130",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2010130"
+      },
+      {
+        "game": "2010755",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2010755"
+      },
+      {
+        "game": "2011166",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2011166"
+      },
+      {
+        "game": "2011428",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2011428"
+      },
+      {
+        "game": "2011844",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2011844"
+      },
+      {
+        "game": "2012431",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2012431"
+      },
+      {
+        "game": "2012892",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2012892"
+      },
+      {
+        "game": "2013725",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2013725"
+      },
+      {
+        "game": "2014987",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2014987"
+      },
+      {
+        "game": "2015213",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2015213"
+      },
+      {
+        "game": "2017461",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2017461"
+      }
+    ]
+  },
+  "xshot17": {
+    "generation": "g",
+    "home_teams": true,
+    "identity": {
+      "flat": {
+        "corpus_match_ids_sha256": "7387888dc51bebbe23d88c957d937f58a3ed2919a5f28f37546bdaaf4862c343",
+        "corpus_n_matches": 17
+      },
+      "pergame": {
+        "corpus_match_ids_sha256": "7f8151127456de5a9152cd8bdbb92b9277159557769d180dcfbd7e74f5d076db",
+        "corpus_n_matches": 17
+      }
+    },
+    "kind": "flat_tc3",
+    "n_units": 17,
+    "provider_id_kinds": {
+      "idsse": "str",
+      "skillcorner": "str"
+    },
+    "public_ids": [
+      [
+        "idsse",
+        "DFL-MAT-J03WMX"
+      ],
+      [
+        "idsse",
+        "DFL-MAT-J03WN1"
+      ],
+      [
+        "idsse",
+        "DFL-MAT-J03WOH"
+      ],
+      [
+        "idsse",
+        "DFL-MAT-J03WOY"
+      ],
+      [
+        "idsse",
+        "DFL-MAT-J03WPY"
+      ],
+      [
+        "idsse",
+        "DFL-MAT-J03WQQ"
+      ],
+      [
+        "idsse",
+        "DFL-MAT-J03WR9"
+      ],
+      [
+        "skillcorner",
+        "1886347"
+      ],
+      [
+        "skillcorner",
+        "1899585"
+      ],
+      [
+        "skillcorner",
+        "1925299"
+      ],
+      [
+        "skillcorner",
+        "1953632"
+      ],
+      [
+        "skillcorner",
+        "1996435"
+      ],
+      [
+        "skillcorner",
+        "2006229"
+      ],
+      [
+        "skillcorner",
+        "2011166"
+      ],
+      [
+        "skillcorner",
+        "2013725"
+      ],
+      [
+        "skillcorner",
+        "2015213"
+      ],
+      [
+        "skillcorner",
+        "2017461"
+      ]
+    ],
+    "recorded_at": "2026-10-18T21:59:00+00:00",
+    "repo": "silly-kicks/hf-refit-xshot17",
+    "revision": "c8ea92a3b7415e46e6d1d467487e59ba6d798a98",
+    "units": [
+      {
+        "game": "DFL-MAT-J03WMX",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WMX"
+      },
+      {
+        "game": "DFL-MAT-J03WN1",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WN1"
+      },
+      {
+        "game": "DFL-MAT-J03WOH",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WOH"
+      },
+      {
+        "game": "DFL-MAT-J03WOY",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WOY"
+      },
+      {
+        "game": "DFL-MAT-J03WPY",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WPY"
+      },
+      {
+        "game": "DFL-MAT-J03WQQ",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WQQ"
+      },
+      {
+        "game": "DFL-MAT-J03WR9",
+        "source_provider": "sportec",
+        "stem": "idsse__DFL-MAT-J03WR9"
+      },
+      {
+        "game": "1886347",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1886347"
+      },
+      {
+        "game": "1899585",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1899585"
+      },
+      {
+        "game": "1925299",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1925299"
+      },
+      {
+        "game": "1953632",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1953632"
+      },
+      {
+        "game": "1996435",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__1996435"
+      },
+      {
+        "game": "2006229",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2006229"
+      },
+      {
+        "game": "2011166",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2011166"
+      },
+      {
+        "game": "2013725",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2013725"
+      },
+      {
+        "game": "2015213",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2015213"
+      },
+      {
+        "game": "2017461",
+        "source_provider": "skillcorner",
+        "stem": "skillcorner__2017461"
+      }
+    ]
+  }
+}

@@ -66,10 +66,10 @@ velocity model.
 
 | Metric | Value |
 |---|---|
-| Held-out CV euclidean MAE | **6.00 m** (per-provider: Gradient Sports 6.14 / SkillCorner 5.91 / Sportec 6.33) |
-| Per-possession CV MAE | in-possession 6.97 m / out-of-possession 5.03 m |
-| Per-slot CV MAE (slots 1&ndash;4) | 5.96 / 6.05 / 6.02 / 5.97 m |
-| Training corpus | 179 games / 4170920 rows |
+| Held-out CV euclidean MAE | <!-- generated:row:cv-mae -->**6.00 m** (per-provider: Gradient Sports 6.14 / SkillCorner 5.91 / Sportec 6.33)<!-- /generated:row:cv-mae --> |
+| Per-possession CV MAE | <!-- generated:row:possession-mae -->in-possession 6.97 m / out-of-possession 5.03 m<!-- /generated:row:possession-mae --> |
+| Per-slot CV MAE (slots 1&ndash;4) | <!-- generated:row:slot-mae -->5.96 / 6.05 / 6.02 / 5.97 m<!-- /generated:row:slot-mae --> |
+| Training corpus | <!-- generated:row:corpus -->179 games / 4170920 rows<!-- /generated:row:corpus --> |
 | Rearguard coherence (slot ordering) | `ordering_fraction = 1.0` (the independently-predicted slots order as a line) |
 | Boosted-reconstruction parity vs sklearn | exact (round-trip verified &mdash; safe to publish) |
 
@@ -115,4 +115,4 @@ citation.
 
 ## TF-65 velocity-gap re-fit (4.134.0)
 
-**TF-65 velocity-gap re-fit (silly-kicks 4.134.0 / ADR-120; `training_commit=a34e992`).** Re-fit on the dense-grid-corrected floor velocities (TF-65 removed fabricated through-gap velocity on broadcast providers — the prior F1b float32 re-fit at 4.128.0 / ADR-106 is superseded); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.
+<!-- generated:refit_head -->**TF-65 velocity-gap re-fit (silly-kicks 4.134.0 / ADR-120; `training_commit=a34e992`).**<!-- /generated:refit_head --> Re-fit on the dense-grid-corrected floor velocities (TF-65 removed fabricated through-gap velocity on broadcast providers — the prior F1b float32 re-fit at 4.128.0 / ADR-106 is superseded); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.

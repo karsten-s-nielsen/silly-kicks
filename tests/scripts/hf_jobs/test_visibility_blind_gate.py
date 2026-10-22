@@ -8,6 +8,8 @@ subpackage hop (HFVB-PLAN-01), so a future indirect leak via any scripts/hf_jobs
 import ast
 from pathlib import Path
 
+import pytest
+
 BANNED = {"match_visibility", "is_public_row", "assert_public_corpus", "artifact_label", "PUBLIC_CORPUS"}
 SCRIPTS = Path("scripts")
 REPO = Path(".")
@@ -63,14 +65,25 @@ def _banned_hits(path: Path) -> set[str]:
     return (names & BANNED) | {b for b in BANNED if b in src}
 
 
-def test_xshot_closure_is_visibility_blind():
-    hits = {p.name: _banned_hits(p) for p in _closure("train_xshot_occurrence") if _banned_hits(p)}
-    assert not hits, f"visibility concept reachable from the HF job: {hits}"
+def _hf_job_entries() -> list[str]:
+    """Every module an HF campaign launches: each registry trainer's pipeline module (or its module, for
+    an adapter-launched trainer: the adapter runs its CLI in-job) and every driver (spec 5.8 item 4)."""
+    from scripts.hf_jobs.registry import DRIVERS, REGISTRY
+
+    mods = {s.pipeline or s.module for s in REGISTRY.values()} | {d.module for d in DRIVERS.values()}
+    return sorted(m.removeprefix("scripts.") for m in mods)
 
 
-def test_xcross_closure_is_visibility_blind():
-    hits = {p.name: _banned_hits(p) for p in _closure("train_xcross_attempt") if _banned_hits(p)}
-    assert not hits, f"visibility concept reachable from the HF job: {hits}"
+@pytest.mark.parametrize("entry", _hf_job_entries())
+def test_every_hf_job_closure_is_visibility_blind(entry):
+    hits = {p.name: _banned_hits(p) for p in _closure(entry) if _banned_hits(p)}
+    assert not hits, f"visibility concept reachable from the HF job {entry}: {hits}"
+
+
+def test_the_population_is_derived_and_non_empty():
+    entries = set(_hf_job_entries())
+    want = {"train_xshot_occurrence", "train_xcross_attempt", "train_ghost_gk", "build_territory_ranking_census"}
+    assert want <= entries
 
 
 def test_gate_traverses_a_subpackage_hop(tmp_path):
@@ -95,3 +108,15 @@ def test_adr052_seam_is_traversed_not_exempted():
     assert {"_driver.py", "_partition.py"} <= names, f"ADR-052 seam not traversed (exemption re-added?): {names}"
     assert not _banned_hits(SCRIPTS / "_partition.py"), "_partition reaches/names a banned visibility symbol"
     assert "_partition_pining.py" not in names, "the pining helper leaked back into the in-job closure"
+
+
+def test_the_pass_completion_pining_cross_check_is_severed_not_exempted():
+    """Severance anti-rot (ADR-123 Amendment B, ADR-128): ``train_pass_completion`` runs on HF via the adapter,
+    so its owner-tier ``--source pining`` cross-check lives in ``_pass_completion_pining``, which injects its
+    source. The HF closure must not reach that module or the pining client. The owner closure DOES reach the
+    pining client, so the cross-check keeps its source and a re-merge into the trainer fails the gate above."""
+    hf = {p.name for p in _closure("train_pass_completion")}
+    assert {"_pass_completion_pining.py", "_loader_pining.py", "_events_admission.py"}.isdisjoint(hf), hf
+    owner = _closure("_pass_completion_pining")
+    assert "_loader_pining.py" in {p.name for p in owner}
+    assert any(_banned_hits(p) for p in owner), "the owner closure no longer reaches a banned symbol (vacuous)"

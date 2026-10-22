@@ -10,41 +10,48 @@ committed BEFORE the owner run (the TF-19 ``NAMED_KEEPER_PRIOR`` idiom), and ``c
 ONLY those constants -- never an inline literal.
 
 The pure core (``tier1_counts`` / ``tier2_icc`` / ``census_gate`` / ``build_ranking``) is unit-tested
-with NO network in ``tests/scripts/test_build_territory_ranking_census.py``; ``main()`` is the I/O:
-clean-tree guard FIRST (ADR-037), fail-closed public-only StatsBomb open data
-(``assert_statsbomb_open_data_mode``), ``for_each``-sharded per-match counterfactual compute (ADR-052)
-with an ``xt`` + ``PassCompletionModel`` fit INLINE on a LEAKAGE-DISJOINT fit split (self-contained --
-no forward dependency on the validator), and an input contract (ADR-056). ``statsbombpy`` is an
-optional ``scripts/`` network dep for the public lineups (defender -> team identity).
+with NO network in ``tests/scripts/test_build_territory_ranking_census.py``; the stage pipeline is the
+I/O (ADR-128): clean-tree guard FIRST (ADR-037, the stage CLI), fail-closed public-only StatsBomb open
+data (``assert_statsbomb_open_data_mode``), per-match counterfactual compute as ``ItemStage`` units
+(ADR-052) with an ``xt`` + ``PassCompletionModel`` fit on a LEAKAGE-DISJOINT fit split (self-contained --
+no forward dependency on the validator), the Tier-2 bootstrap replicates on the InnerPool from ONE seeded
+stream, and an input contract (ADR-056). ``statsbombpy`` is an optional ``scripts/`` network dep for the
+public lineups (defender -> team identity).
 
 HONEST LIMIT (recorded in the artifact): a NEGATIVE verdict is the expected outcome on a single-club /
 national-team corpus, where one player = one team and the defender-vs-team confound is unidentifiable.
 The census exists to make that verdict MEASURED rather than assumed -- and to license the ranking on
 the day a multi-club transfer corpus supplies the cross-team observations it needs.
 
-The census aggregates the ENTIRE shard generation for its ``--out`` directory (a whole-corpus
-census): the corpus selectors (``--competition-id`` / ``--season-id`` / ``--max-matches``) are
-deliberately NOT in the ``for_each`` ``token_inputs``, so the generation is a SUPERSET of any one
-narrowed run (ADR-052 reconcile-superset behavior -- intended). Running a narrowed selector (e.g.
-``--max-matches 10``) and later the full corpus into the SAME ``--out`` therefore combines the
-superset (stale narrow shards + full); an owner wanting a clean census of a narrowed corpus should
-use a FRESH ``--out``.
+The census aggregates exactly THIS run's units (decision P4): the corpus selectors choose the
+``refs`` stage's match list, and every downstream stage reads only those units -- a narrowed run and a
+full run never combine, even in the same store (the ADR-052 reconcile-superset behavior is gone with the
+``--out``-keyed shard directory).
 
-Usage (owner):
-    python scripts/build_territory_ranking_census.py --out docs/research/territory_ranking_census
+Usage (owner; ADR-128 stage contract, the uniform CLI from ``scripts._stages.main``)::
+
+    python -m scripts.build_territory_ranking_census --all-competitions \
+        --store <DIR> --run-all --out docs/research/territory_ranking_census
 """
 
 from __future__ import annotations
 
-import argparse
+import io
 import json
+import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
-from _crossed_icc import bootstrap_icc_and_power  # scripts/ on sys.path (conftest)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # scripts/, so the bare `_crossed_icc` import resolves
+
+from _crossed_icc import bootstrap_icc_and_power  # scripts/ on sys.path (conftest / the line above)
 
 from scripts._input_contract import declare_inputs
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, main
 from silly_kicks.id_compat import canonical_id, canonical_id_series
 from silly_kicks.spadl import SPADL_COLUMNS
 from silly_kicks.territory import (
@@ -161,7 +168,7 @@ def tier1_counts(defender_team_metric: pd.DataFrame, *, min_passes_faced: int) -
     }
 
 
-def tier2_icc(defender_team_metric: pd.DataFrame) -> dict:
+def tier2_icc(defender_team_metric: pd.DataFrame, *, replicate_map=None) -> dict:
     """Tier-2 crossed defender+team ICC on the metric value, with a bootstrap CI + power proxy.
 
     Runs the Task-10 ``bootstrap_icc_and_power`` (one merged CI+power bootstrap) on the metric value keyed
@@ -201,6 +208,7 @@ def tier2_icc(defender_team_metric: pd.DataFrame) -> dict:
         alpha=_ALPHA,
         effect_size=ICC_EFFECT_SIZE,
         rng_seed=_BOOT_SEED,
+        replicate_map=replicate_map,  # ADR-128: replicates on the pool, combined in replicate order (E14)
     )
     return {
         "icc": res["icc"],
@@ -505,184 +513,270 @@ def _prune_actions_slice(actions: pd.DataFrame) -> pd.DataFrame:
     return actions[keep].reset_index(drop=True)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out", default=None, help="output dir (not needed with --list-matches)")
-    # Single-competition selectors default to None sentinels so an EXPLICIT --competition-id/--season-id
-    # (which conflicts with the broad-corpus flags) is distinguishable from the resolved 43/106 default.
-    ap.add_argument("--competition-id", type=int, default=None, help="open-data competition (default 43 = World Cup)")
-    ap.add_argument("--season-id", type=int, default=None, help="open-data season (default 106 = 2022)")
-    ap.add_argument(
-        "--all-competitions",
-        action="store_true",
+# ---- ADR-128 stage contract --------------------------------------------------------------------------
+# A legacy line reference (`:N-M`) points at this file at `cd2ebcb`, the last version before the contract.
+#
+# refs (one unit: the corpus + the leakage-disjoint split) -> fit_prepass[match] -> prefit (one unit: the
+# disjoint xt + completion fit) -> score[match] -> bootstrap (one inner_parallel unit: Tier-1/Tier-2, the
+# replicates on the InnerPool from ONE seeded stream) -> report (one unit: census.json [+ ranking.parquet]).
+
+_PARAMS = (
+    Param("dataset", str, "sb_open", help="declared dataset name (scripts/hf_jobs/datasets.toml)"),
+    Param(
+        "all_competitions",
+        flag=True,
         help="census the FULL public open-data corpus (all_open_competitions()). REQUIRED for a crossed "
         "defender+team ICC ranking -- defenders on >=2 teams only exist ACROSS competitions/seasons, so a "
         "single-competition census can only ever return 'not licensed'. Mutually exclusive with "
         "--competition-id/--season-id.",
-    )
-    ap.add_argument(
-        "--competitions-json",
-        default=None,
-        help="JSON [[competition_id, season_id], ...] narrowing the broad corpus to a chosen list "
-        "(mirrors validate_territory_counterfactual). Mutually exclusive with --competition-id/--season-id.",
-    )
-    ap.add_argument("--max-matches", type=int, default=None)
-    ap.add_argument(
-        "--fit-fraction",
-        type=float,
-        default=0.5,
+    ),
+    Param(
+        "competitions_json",
+        str,
+        None,
+        help="path of a JSON [[competition_id, season_id], ...] narrowing the broad corpus. Mutually exclusive "
+        "with --competition-id/--season-id.",
+    ),
+    Param("competition_id", int, None, help="open-data competition (default 43 = World Cup)"),
+    Param("season_id", int, None, help="open-data season (default 106 = 2022)"),
+    Param("max_matches", int, None),
+    Param(
+        "fit_fraction",
+        float,
+        0.5,
         help="fraction of matches HELD OUT to fit xt/completion (leakage-disjoint); the rest are scored.",
-    )
-    ap.add_argument(
-        "--match-ids-json", default=None, help='JSON ["3857276", ...] pinning WHICH matches (parallel split).'
-    )
-    ap.add_argument(
-        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
-    )
-    ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
-    ap.add_argument("--list-matches", action="store_true", help="print available scored match ids as JSON and exit")
-    args = ap.parse_args()
+    ),
+    Param("match_ids_json", str, None, help='path of a JSON {"statsbomb": ["3857276", ...]} pinning WHICH matches.'),
+    Param("cache_dir", str, None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"),
+)
 
-    broad_corpus = args.all_competitions or args.competitions_json is not None
-    if broad_corpus and (args.competition_id is not None or args.season_id is not None):
-        ap.error(
+
+def _read_json_param(path: str | None) -> Any:
+    return json.loads(Path(path).read_text(encoding="utf-8")) if path else None
+
+
+def _broad(p) -> bool:
+    return bool(p["all_competitions"]) or p["competitions_json"] is not None
+
+
+def _corpus_declare(p) -> dict:
+    """The CONTENT of the two file-valued selectors (a path alone would not key a changed file)."""
+    return {
+        "competitions": _read_json_param(p["competitions_json"]),
+        "match_ids": _read_json_param(p["match_ids_json"]),
+    }
+
+
+def _source_marker(p):
+    """The broad-corpus marker (4.77.1 stale-shard rule): None on the single-competition path, so its
+    historical token inputs are unchanged."""
+    if not _broad(p):
+        return None
+    if not p["competitions_json"]:
+        return "open-data-all"
+    return {"open-data-narrowed": sorted(tuple(c) for c in _read_json_param(p["competitions_json"]))}
+
+
+def _refs_work(key, ctx) -> dict:
+    """The competitions + the sorted-by-match-id leakage-disjoint split (legacy main `:546-595`)."""
+    import dataclasses
+
+    from scripts._sb_open_data import all_open_competitions, assert_statsbomb_open_data_mode, list_open_data_refs
+
+    p = ctx.params
+    if _broad(p) and (p["competition_id"] is not None or p["season_id"] is not None):
+        raise ValueError(
             "--all-competitions / --competitions-json census the whole open-data corpus and cannot be "
             "combined with the single-competition --competition-id / --season-id selectors."
         )
-
-    from scripts._driver import for_each
-    from scripts._provenance import git_provenance, require_clean_tree
-    from scripts._sb_open_data import all_open_competitions, assert_statsbomb_open_data_mode, open_data_source
-
-    if not args.list_matches and not args.out:
-        raise SystemExit("--out is required unless --list-matches is given")
-
-    # Clean-tree guard FIRST, before any corpus work (ADR-037). --list-matches writes no artifact.
-    prov = (
-        {"commit": "n/a", "dirty": False, "tree_state": "clean", "dirty_files": []}
-        if args.list_matches
-        else require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
-    )
     assert_statsbomb_open_data_mode()  # fail-closed: never pull the private API for a public artifact
-
-    match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
-
-    # Resolve the corpus competitions. BROAD mode (--all-competitions / --competitions-json) pools across
-    # every (competition, season) so the ONE leakage-disjoint xt/completion fit below spans the whole
-    # corpus (a crossed defender+team ICC needs defenders on >=2 teams, which only exist ACROSS
-    # competitions). SINGLE mode (the default) keeps the historical WC2022 path, byte-identical.
-    if broad_corpus:
-        competitions = (
-            [tuple(c) for c in json.loads(Path(args.competitions_json).read_text(encoding="utf-8"))]
-            if args.competitions_json
+    if _broad(p):
+        comps = (
+            [tuple(c) for c in _read_json_param(p["competitions_json"])]
+            if p["competitions_json"]
             else all_open_competitions()
         )
     else:
-        competition_id = 43 if args.competition_id is None else args.competition_id
-        season_id = 106 if args.season_id is None else args.season_id
-        competitions = [(competition_id, season_id)]
-
-    refs, load = open_data_source(
-        competitions,
-        match_ids=(match_ids or {}).get("statsbomb"),
-        max_matches=args.max_matches,
-        cache_dir=args.cache_dir,
-    )
-    # Leakage-disjoint split: the first `fit_fraction` of the (sorted-by-id) refs fit xt/completion; the
-    # rest are scored. Deterministic (sorted by match id) so a resume/partition sees the same split.
+        comps = [
+            (
+                43 if p["competition_id"] is None else p["competition_id"],
+                106 if p["season_id"] is None else p["season_id"],
+            )
+        ]
+    match_ids = _read_json_param(p["match_ids_json"])
+    refs = list_open_data_refs(comps, match_ids=(match_ids or {}).get("statsbomb"), max_matches=p["max_matches"])
     refs_sorted = sorted(refs, key=lambda r: str(r.match_id))
-    n_fit = max(1, round(len(refs_sorted) * args.fit_fraction)) if refs_sorted else 0
-    fit_refs, score_refs = refs_sorted[:n_fit], refs_sorted[n_fit:]
+    n_fit = max(1, round(len(refs_sorted) * p["fit_fraction"])) if refs_sorted else 0
+    return {
+        "competitions": [list(c) for c in comps],
+        "fit_refs": [dataclasses.asdict(r) for r in refs_sorted[:n_fit]],
+        "score_refs": [dataclasses.asdict(r) for r in refs_sorted[n_fit:]],
+    }
 
-    if args.list_matches:
-        print(json.dumps([str(r.match_id) for r in score_refs], indent=2))
-        return
 
-    # The broad-corpus marker (4.77.1 stale-shard rule): a broad / narrowed generation must not collide
-    # with the single-competition one. None on the single path -> byte-identical historical token.
-    source_marker = None
-    if broad_corpus:
-        source_marker = (
-            "open-data-all"
-            if not args.competitions_json
-            else {"open-data-narrowed": sorted(tuple(c) for c in competitions)}
-        )
+def _refs_of(ctx, part: str):
+    from scripts._sb_open_data import OpenDataRef
 
-    dest = Path(args.out)
+    return [OpenDataRef(**d) for d in ctx.upstream("refs")[part]]
 
-    # Phase 1 (fit prepass, ADR-052): shard the fit-corpus actions behind for_each's resume check -- a
-    # crash re-downloaded the whole corpus before this -- then fit ONE leakage-disjoint xt + completion
-    # over the pooled fit corpus. Its OWN generation (disjoint schema + the corpus marker).
-    fit_res = for_each(
-        fit_refs,
-        key=lambda ref: ref.key,
-        load=load,
-        work=lambda item: _prune_actions_slice(item[2]),
-        shard_root=dest / "fit_shards",
-        token_inputs={
-            "metric": "territory_ranking_census_fit",
-            "schema": _FIT_SHARD_SCHEMA_VERSION,
-            "fit_fraction": args.fit_fraction,
-            **({"source": source_marker} if source_marker is not None else {}),
-        },
-        label="fit-match",
-    )
-    fit_actions = [pd.read_parquet(s) for s in sorted(fit_res.shard_dir.glob("*.parquet"))]
-    xt, completion_model = _fit_disjoint_models(fit_actions)
 
-    def _work(item) -> pd.DataFrame:
-        return _score_match(item, xt=xt, completion_model=completion_model)
+def _load(ref, ctx):
+    """Resume-before-download: the executor calls this only for a pending unit (ADR-052 D14)."""
+    from scripts._driver_sources import resolve_cache_dir
+    from scripts._sb_open_data import assert_statsbomb_open_data_mode, load_open_data_match
 
-    # The SCORE shard-generation token (the reduce reads these). The single-competition (default) path
-    # keeps its historical token BYTE-IDENTICAL (no `source` key), so its generation directory is
-    # unchanged; a broad / narrowed run adds the corpus marker so its digest cannot collide.
-    token_inputs: dict = {
+    assert_statsbomb_open_data_mode()  # pins the revision in THIS worker process (decision P6)
+    return load_open_data_match(ref, cache_dir=resolve_cache_dir(ctx.params["cache_dir"]))
+
+
+def _fit_declare(p) -> dict:
+    marker = _source_marker(p)
+    return {
+        "metric": "territory_ranking_census_fit",
+        "schema": _FIT_SHARD_SCHEMA_VERSION,
+        "fit_fraction": p["fit_fraction"],
+        **({"source": marker} if marker is not None else {}),
+    }
+
+
+def _score_declare(p) -> dict:
+    marker = _source_marker(p)
+    return {
         "metric": "territory_ranking_census",
         "schema": _SHARD_SCHEMA_VERSION,
         "xt": "leakage_disjoint_fit",
-        "fit_fraction": args.fit_fraction,
+        "fit_fraction": p["fit_fraction"],
+        **({"source": marker} if marker is not None else {}),
     }
-    if source_marker is not None:
-        token_inputs["source"] = source_marker
 
-    # Phase 2 (score): for_each over the score refs, LOADING each match and scoring with the disjoint
-    # models. Keyed by str(match_id) so the single-competition generation's shard filenames are unchanged.
-    res = for_each(
-        score_refs,
-        key=lambda ref: str(ref.match_id),
-        work=_work,
-        load=load,
-        shard_root=dest / "shards",
-        token_inputs=token_inputs,
-        label="match",
-    )
 
-    # Combine the ENTIRE shard generation for this --out dir (a whole-corpus census). The corpus
-    # selectors (--competition-id/--season-id/--max-matches) are deliberately NOT in token_inputs, so
-    # the generation directory is a SUPERSET of any one narrowed run (ADR-052 reconcile-superset
-    # behavior, intended). CONSEQUENCE: a narrowed run (e.g. --max-matches 10) and a later full-corpus
-    # run into the SAME --out combine together (stale narrow shards + full). For a clean census of a
-    # narrowed corpus, use a FRESH --out.
-    shards = [pd.read_parquet(s) for s in sorted(res.shard_dir.glob("*.parquet"))]
-    defender_team_metric = (
-        pd.concat(shards, ignore_index=True) if shards else pd.DataFrame(columns=_EMITTED_SHARD_COLUMNS)
-    )
+def _done_results(ctx, stage: str) -> list[pd.DataFrame]:
+    """An ItemStage's unit results in sorted key order (the legacy sorted shard glob), done units only."""
+    from scripts._stages import read_result, sorted_units, unit_states
 
-    # Tier-1 -> gate -> (iff Tier-1 clears) Tier-2 -> gate.
+    st = ctx.pipeline.stage(stage)
+    gen = ctx.generation(stage)
+    states = unit_states(ctx, st, sorted_units(ctx, st), verify=False)
+    return [read_result(ctx.store, f"{gen}/{k}") for k, v in states.items() if v == "done"]
+
+
+def _prefit_work(key, ctx) -> dict:
+    """ONE leakage-disjoint xt + completion fit over the pooled fit corpus (legacy `:630-631`)."""
+    xt, completion_model = _fit_disjoint_models(_done_results(ctx, "fit_prepass"))
+    return {"xt": xt.to_dict(), "completion": completion_model.to_dict()}
+
+
+_MODELS: dict = {}
+
+
+def _models(ctx):
+    """The prefit xt + completion model, rebuilt ONCE per worker (keyed by the prefit token)."""
+    from silly_kicks.expected_passing import PassCompletionModel
+    from silly_kicks.xthreat import ExpectedThreat
+
+    tok = ctx.tokens["prefit"]
+    if tok not in _MODELS:
+        d = ctx.upstream("prefit")
+        _MODELS.clear()
+        _MODELS[tok] = (ExpectedThreat.from_dict(d["xt"]), PassCompletionModel.from_dict(d["completion"]))
+    return _MODELS[tok]
+
+
+def _score_work(item, ctx) -> pd.DataFrame:
+    xt, completion_model = _models(ctx)
+    return _score_match(item, xt=xt, completion_model=completion_model)
+
+
+#: One entry per pool child (a child serves one bootstrap): the arrays every replicate reads.
+_BOOT_ARRAYS: dict = {}
+
+
+def _bootstrap_chunk(arrays_path: str, picks: list) -> list:
+    """A chunk of bootstrap replicates in a pool child: the arrays load ONCE per child from the unit-local
+    files (never pickled per replicate), and each replicate is `_crossed_icc._replicate_icc` exactly."""
+    from _crossed_icc import _replicate_icc
+
+    if arrays_path not in _BOOT_ARRAYS:
+        base = Path(arrays_path)
+        y = np.load(base / "y.npy")
+        codes = json.loads((base / "codes.json").read_text(encoding="utf-8"))
+        d = np.array(codes["defender"], dtype=object)
+        t = np.array(codes["team"], dtype=object)
+        members = [np.flatnonzero(d == u) for u in np.unique(d)]  # the bootstrap's own construction
+        _BOOT_ARRAYS.clear()
+        _BOOT_ARRAYS[arrays_path] = (y, d, t, members)
+    y, d, t, members = _BOOT_ARRAYS[arrays_path]
+    return [_replicate_icc(y, d, t, members, np.asarray(picked)) for picked in picks]
+
+
+#: Replicates per pool task (400 replicates -> 8 tasks: the stage's inner width).
+_BOOT_CHUNK = 50
+
+
+def _replicate_map(pool, work: Path):
+    """A `bootstrap_icc_and_power` replicate_map over ``pool``: chunks of `_BOOT_CHUNK` replicates, the arrays
+    persisted ONCE to ``work``; results returned per replicate key (combined by the caller IN ORDER)."""
+    from scripts._stages import int_key
+
+    def rmap(task):
+        _fn, items = task
+        keys = sorted(items)
+        if not keys:
+            return {}
+        y, d, t, _members, _picked = items[keys[0]]
+        work.mkdir(parents=True, exist_ok=True)
+        np.save(work / "y.npy", np.asarray(y, dtype=float))
+        (work / "codes.json").write_text(json.dumps({"defender": d.tolist(), "team": t.tolist()}), encoding="utf-8")
+        chunks = {
+            int_key(c): (str(work), [items[k][4].tolist() for k in keys[c * _BOOT_CHUNK : (c + 1) * _BOOT_CHUNK]])
+            for c in range((len(keys) + _BOOT_CHUNK - 1) // _BOOT_CHUNK)
+        }
+        out = pool.map_keyed(_bootstrap_chunk, chunks)
+        flat = [v for c in sorted(out) for v in out[c]]
+        return dict(zip(keys, flat, strict=True))
+
+    return rmap
+
+
+def _defender_team_metric(ctx) -> pd.DataFrame:
+    """Every scored match's shard, concatenated in sorted key order (legacy `:666-669`). Rebuilt where it
+    is needed rather than persisted: a re-serialised concat could coerce a mixed-type id column."""
+    parts = _done_results(ctx, "score")
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=_EMITTED_SHARD_COLUMNS)
+
+
+def _bootstrap_work(key, ctx) -> dict:
+    """Tier-1 -> gate -> (iff Tier-1 clears) Tier-2 (legacy `:670-675`), the Tier-2 replicates on the pool."""
+    import tempfile
+
+    defender_team_metric = _defender_team_metric(ctx)
     tier1 = tier1_counts(defender_team_metric, min_passes_faced=MIN_PASSES_FACED)
     tier2: dict | None = None
     if tier1["n_multi_team_defenders"] >= MIN_MULTI_TEAM_DEFENDERS and not defender_team_metric.empty:
-        tier2 = tier2_icc(defender_team_metric)
-    census = {"tier1": tier1, "tier2": tier2}
-    verdict = census_gate(census)
+        with tempfile.TemporaryDirectory() as tmp:
+            pool = ctx.pool
+            rmap = _replicate_map(pool, Path(tmp) / "boot") if pool is not None and pool.workers > 1 else None
+            tier2 = tier2_icc(defender_team_metric, replicate_map=rmap)
+    return {"tier1": tier1, "tier2": tier2}
 
+
+def _report_work(key, ctx):
+    """The verdict, the ranking and census.json (legacy `:677-713`); decision P4: the corpus-scoped score
+    counters, never the pass-scoped `res.manifest()`."""
+    from scripts._provenance import git_provenance  # noqa: F401 -- the provenance gate's source check (ADR-037)
+
+    census = ctx.upstream("bootstrap")
+    defender_team_metric = _defender_team_metric(ctx)
+    verdict = census_gate(census)
     ranking = build_ranking(
         defender_team_metric, licensed=verdict["ranking_licensed"], min_passes_faced=MIN_PASSES_FACED
     )
-
+    refs = ctx.upstream("refs")
+    summary = ctx.summary("score")
+    prov = ctx.prov
     out = {
-        "n_fit_matches": len(fit_refs),
-        "n_scored_matches": len(score_refs),
+        "n_fit_matches": len(refs["fit_refs"]),
+        "n_scored_matches": len(refs["score_refs"]),
         "census": census,
         "verdict": verdict,
         "ranking_licensed": verdict["ranking_licensed"],
@@ -700,21 +794,101 @@ def main() -> None:
             "licensed. The census measures this rather than assuming it; a multi-club transfer corpus is "
             "what supplies the cross-team observations a ranking needs."
         ),
-        **res.manifest(),
+        # Decision P4 (ADR-128): CORPUS-scoped counters (the values a single fresh serial pass reports).
+        "generation": ctx.tokens["score"],
+        "n_attempted": summary["n_units"],
+        "n_failed": summary["n_failed"],
+        "n_counters_unrecorded": 0,
+        "n_excluded": summary["n_excluded"],
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
         "run_tree_state": prov.get("tree_state"),
         "input_contract": input_contract(),
     }
-    dest.mkdir(parents=True, exist_ok=True)
-    (dest / "census.json").write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
+    files = {"census.json": json.dumps(out, indent=2, default=str).encode("utf-8")}
     if ranking is not None and not ranking.empty:
-        ranking.to_parquet(dest / "ranking.parquet", index=False)
+        buf = io.BytesIO()
+        ranking.to_parquet(buf, index=False)
+        files["ranking.parquet"] = buf.getvalue()
     print(json.dumps({k: v for k, v in out.items() if k != "input_contract"}, indent=2, default=str))
+    return FileSet(files)
 
+
+_CORPUS_PARAMS = (
+    "all_competitions",
+    "competitions_json",
+    "competition_id",
+    "season_id",
+    "max_matches",
+    "fit_fraction",
+    "match_ids_json",
+)
+
+PIPELINE = Pipeline(
+    name="territory_ranking_census",
+    module="scripts.build_territory_ranking_census",
+    params=_PARAMS,
+    stages=(
+        Stage(
+            name="refs",
+            units=lambda ctx: ["only"],
+            work=_refs_work,
+            reduce=lambda r, ctx: r["only"],
+            params=_CORPUS_PARAMS,
+            declare=_corpus_declare,
+            uses_dataset=True,
+            dataset_files=lambda ctx: (),  # open data over HTTP: no dataset file
+        ),
+        ItemStage(
+            name="fit_prepass",
+            refs=lambda ctx: _refs_of(ctx, "fit_refs"),
+            key=lambda ref: ref.key,
+            load=_load,
+            work=lambda item, ctx: _prune_actions_slice(item[2]),
+            needs=("refs",),
+            declare=_fit_declare,
+            cross_commit_version="census-fit-1",
+            uses_dataset=True,
+            max_failures=None,  # the legacy for_each recorded failures and fit over the rest
+        ),
+        Stage(
+            name="prefit",
+            units=lambda ctx: ["only"],
+            work=_prefit_work,
+            needs=("fit_prepass",),
+            reduce=lambda r, ctx: r["only"],
+        ),
+        ItemStage(
+            name="score",
+            refs=lambda ctx: _refs_of(ctx, "score_refs"),
+            key=lambda ref: str(ref.match_id),  # the legacy key: the score shard filenames are unchanged
+            load=_load,
+            work=_score_work,
+            needs=("refs", "prefit"),
+            declare=_score_declare,
+            cross_commit_version="census-score-1",
+            uses_dataset=True,
+            max_failures=None,  # the legacy for_each recorded failures and censused the rest
+        ),
+        Stage(
+            name="bootstrap",
+            units=lambda ctx: ["only"],
+            work=_bootstrap_work,
+            needs=("score",),
+            reduce=lambda r, ctx: r["only"],
+            inner_parallel=True,
+            inner_width=8,
+        ),
+        Stage(
+            name="report",
+            units=lambda ctx: ["only"],
+            work=_report_work,
+            needs=("refs", "score", "bootstrap"),
+            reduce=lambda r, ctx: r["only"],
+        ),
+    ),
+    output="report",
+)
 
 if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    main()
+    raise SystemExit(main(PIPELINE))
