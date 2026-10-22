@@ -88,8 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`add_gradientsports_player_ids` raised `TypeError: boolean value of NA is ambiguous` on pandas 3.1.**
   From pandas 3.1 a `.map` over a string key returns `bool[pyarrow]` and a roster miss stays `<NA>` through
   `== True`, so the `is_goalkeeper` cast failed. The column now uses `isin([True])`, which never yields NA;
-  the output is identical on pandas 2 and 3. The Andrienko pressure snapshot accepts the pandas 3.1 ULP-level
-  hash variant (3 of 50 values, max |diff| 1.4e-14).
+  the output is identical on pandas 2 and 3.
+- The pressure snapshot test (`tests/tracking/test_pressure_snapshot.py`) rounds values to 1e-9 before hashing
+  and pins one hash per method. The raw-bytes hash moved with the runner CPU and numpy/pandas micro-versions
+  (last-ULP jitter), so it needed a growing set of accepted hashes and still flaked on `main`.
 - The xcross probe no longer reads a `.cache` dotdir as a game.
 - The campaign controller schedules a resumed stage's pending units (the plan JSON's `pending_units`); it
   scheduled the first `pending` keys of `units`, which re-launched a job for an already-done unit in a loop.
