@@ -370,6 +370,49 @@ def _apply_card_pairs(actions: pd.DataFrame, events: pd.DataFrame) -> pd.DataFra
     return actions
 
 
+def _metrica_own_goal_rows(events: pd.DataFrame, preserve_native: list[str] | None) -> pd.DataFrame:
+    """Build ADR-018 own-goal rows for ``BALL OUT`` events whose subtype ends in ``GOAL`` (decision D2).
+
+    Metrica codes an own goal as a ``BALL OUT`` with a ``...-GOAL`` subtype (e.g. ``WOODWORK-GOAL``), which
+    the ``BALL OUT`` exclusion otherwise drops. Each becomes a ``bad_touch`` with ``result_id="owngoal"``
+    for the own-goal scorer's team (the SkillCorner own-goal pattern), keeping the event's player, team and
+    source-orientation coordinates. Returns an empty frame when none exist.
+    """
+    typ = events["type"].fillna("").astype(str).str.upper()
+    sub = events["subtype"].fillna("").astype(str).str.upper() if "subtype" in events.columns else None
+    if sub is None:
+        return pd.DataFrame()
+    mask = (typ == "BALL OUT") & sub.str.endswith("GOAL")
+    src = events[mask.to_numpy()]
+    if src.empty:
+        return pd.DataFrame()
+    n = len(src)
+    out = pd.DataFrame(
+        {
+            "game_id": src["match_id"].astype("object"),
+            "original_event_id": src["event_id"].astype("object"),
+            "period_id": src["period"].astype(np.int64),
+            "time_seconds": src["start_time_s"].astype(np.float64),
+            "team_id": src["team"].astype("object"),
+            "player_id": src["player"].astype("object"),
+            "start_x": src["start_x"].astype(np.float64),
+            "start_y": src["start_y"].astype(np.float64),
+            "end_x": src["end_x"].astype(np.float64),
+            "end_y": src["end_y"].astype(np.float64),
+            "type_id": np.full(n, spadlconfig.actiontype_id["bad_touch"], dtype=np.int64),
+            "result_id": np.full(n, spadlconfig.result_id["owngoal"], dtype=np.int64),
+            # Metrica codes no body part on a BALL OUT; "other" (not a guessed "foot") is the honest value.
+            "bodypart_id": np.full(n, spadlconfig.bodypart_id["other"], dtype=np.int64),
+            "shot_blocked": _blocked_flag(n),
+            "cross_blocked": _blocked_flag(n),
+        }
+    )
+    if preserve_native:
+        for col in preserve_native:
+            out[col] = src[col].to_numpy() if col in src.columns else np.nan
+    return out
+
+
 def _build_raw_actions(
     events: pd.DataFrame,
     preserve_native: list[str] | None,
@@ -582,6 +625,14 @@ def _build_raw_actions(
         )
     else:
         actions = actions.drop(columns=["_row_order"])
+
+    # TF-46 Arm 1 Part 2 decision D2: a BALL OUT row whose subtype ends in GOAL is a dropped own goal.
+    # Map it to an ADR-018 bad_touch / owngoal row (the SkillCorner own-goal pattern) so the conceding
+    # team's goal is counted. BALL OUT stays excluded for every non-GOAL subtype. The chronological sort
+    # in convert_to_actions places the appended row by its time.
+    own_goals = _metrica_own_goal_rows(events, preserve_native)
+    if len(own_goals) > 0:
+        actions = pd.concat([actions, own_goals], ignore_index=True, sort=False)
 
     actions = actions[actions["type_id"] != spadlconfig.actiontype_id["non_action"]].reset_index(drop=True)
 

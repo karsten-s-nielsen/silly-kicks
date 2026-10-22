@@ -201,6 +201,7 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "result_source": "invariant",  # native/inferred/stopgap (moved from provider-variant; now base)
     "restart_evidence": "invariant",  # tagged/untagged/chain/chain_ambiguous/tag_only
     "type_source": "invariant",  # native/inferred/default/tracking
+    "repair_kind": "invariant",  # skillcorner + sportec reconciliation / penalty-outcome provenance; base (D1)
     # --- add_names() output. add_names attaches these routinely, and a DECLARED column is
     #     the only one whose kind is guaranteed right, so they belong here. ---
     "type_name": "invariant",
@@ -209,8 +210,9 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     # --- provider-variant columns, union over the *_SPADL_COLUMNS dicts ---
     "action_provenance": "invariant",  # kloppy family (skillcorner, sportec)
     "is_synthetic": "invariant",  # gradientsports (ADR-018 synthesized rows)
-    "repair_kind": "invariant",  # skillcorner goals-reconciliation provenance (TF-46 Arm 1)
     "ball_claim_type": "invariant",  # sportec F4 DFL BallClaiming claim_type token (TF-46 Arm 1)
+    "penalty_result_method": "invariant",  # sportec §25 DFL Penalty result-method token (TF-46 Arm 1 Part 2)
+    "shot_woodwork_type": "invariant",  # sportec §25 woodwork-deflection token (TF-46 Arm 1 Part 2)
     "tackle_winner_player_id": "invariant",  # sportec (ADR-001 qualifier-derived)
     "tackle_winner_team_id": "invariant",
     "tackle_loser_player_id": "invariant",
@@ -218,10 +220,12 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
 }
 """Transform kind per SPADL action column.
 
-38 columns: the 19 canonical (incl. the 2 TF-51-prereq block-detection columns and the 3 TF-46 Arm 1
-base signal columns result_source / restart_evidence / type_source), the 3 ``add_names`` outputs, the 8
-provider-variant columns (union over ``*_SPADL_COLUMNS``; result_source moved to canonical, repair_kind +
-sportec ball_claim_type added), and the 8 ADR-025 enrichment columns. Completeness is a CI
+40 columns: the 20 canonical (incl. the 2 TF-51-prereq block-detection columns and the 4 TF-46 Arm 1
+base signal columns result_source / restart_evidence / type_source / repair_kind, repair_kind promoted to
+base by decision D1), the 3 ``add_names`` outputs, the 9 provider-variant columns (union over
+``*_SPADL_COLUMNS``; result_source + repair_kind moved to canonical, sportec ball_claim_type + the §25
+sportec penalty_result_method / shot_woodwork_type added), and the 8
+ADR-025 enrichment columns. Completeness is a CI
 contract (tests/test_reflection.py), NOT a runtime one -- ``preserve_native``
 (``spadl/utils.py:1651``) lets a caller attach arbitrarily-named provider fields, so the SPADL
 column universe is unbounded by construction and no registry can enumerate it at runtime.

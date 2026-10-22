@@ -34,7 +34,28 @@ SPADL_COLUMNS: dict[str, str] = {
     "result_source": "object",  # native / inferred / stopgap; <NA> = tier not classified
     "restart_evidence": "object",  # tagged / untagged / chain / chain_ambiguous / tag_only; <NA> otherwise
     "type_source": "object",  # native / inferred / default / tracking; <NA> where no subtype judgement
+    # repair_kind is a base signal column (TF-46 Arm 1 Part 2 decision D1): two emitters (SkillCorner
+    # goals-reconciliation, Sportec §25 penalties) and shared readers (training_exclusion_mask,
+    # xtgk markov / turnover) meet the Part-1 decision-D base-promotion rule. <NA> where not carried.
+    "repair_kind": "object",  # a goals-reconciliation / penalty-outcome provenance class; <NA> on a clean row
 }
+
+#: The closed vocabulary of ``repair_kind`` (TF-46 Arm 1 Part 2 decision D1). Every emitted value is in
+#: this set (asserted by ``tests/spadl/test_schema.py``). SkillCorner goals-reconciliation (Part 1) emits
+#: the first group; Sportec §25 penalties emit the last two.
+REPAIR_KIND_VALUES: frozenset[str] = frozenset(
+    {
+        "normal",
+        "scored_tag",
+        "own_goal_inverted",
+        "own_goal_surplus",
+        "own_goal_unsignalled",
+        "reading_i",
+        "missing_goal",
+        "penalty_outcome_unresolved",
+        "penalty_score_inconsistent",
+    }
+)
 
 SPADL_NAME_COLUMNS: dict[str, str] = {
     "type_name": "object",
@@ -66,9 +87,16 @@ SPORTEC_SPADL_COLUMNS: dict[str, str] = {
     "tackle_loser_team_id": "object",
     "action_provenance": "object",
     "ball_claim_type": "object",
+    # TF-46 Arm 1 Part 2 §25 (penalty mapping / BallDeflection routing). repair_kind is NOT here — it is a
+    # base SPADL_COLUMNS signal column (decision D1), inherited through KLOPPY_SPADL_COLUMNS.
+    "penalty_result_method": "object",  # shot_outcome / score_reconciliation / kickoff_order /
+    #                                     continued_play / score_elimination / unresolved; <NA> off penalty rows
+    "shot_woodwork_type": "object",  # post_left / post_right / crossbar; <NA> off woodwork-deflected shots
 }
-"""Sportec SPADL output schema: KLOPPY_SPADL_COLUMNS + 6 sportec-specific
-qualifier passthrough / provenance columns.
+"""Sportec SPADL output schema: KLOPPY_SPADL_COLUMNS + 8 sportec-specific
+qualifier passthrough / provenance columns (the TF-46 Arm 1 Part 2 §25 additions
+``penalty_result_method`` and ``shot_woodwork_type`` join the earlier six; ``repair_kind`` is a base
+SPADL_COLUMNS signal column, decision D1, not sportec-specific).
 
 The 4 tackle columns surface the DFL ``tackle_winner`` / ``tackle_winner_team`` /
 ``tackle_loser`` / ``tackle_loser_team`` qualifier values verbatim. NaN on rows
@@ -121,13 +149,14 @@ is a follow-up TODO."""
 SKILLCORNER_SPADL_COLUMNS: dict[str, str] = {
     **KLOPPY_SPADL_COLUMNS,
     "action_provenance": "object",
-    # result_source now comes from base SPADL_COLUMNS (ADR-046 / decision D); not re-declared here.
-    "repair_kind": "object",  # SkillCorner goals-reconciliation provenance (owngoal/missing_goal/...)
+    # result_source AND repair_kind now come from base SPADL_COLUMNS (ADR-046 / decision D / D1); not
+    # re-declared here.
 }
 """SkillCorner SPADL output schema: KLOPPY_SPADL_COLUMNS (object-dtype IDs) +
-``action_provenance`` (``"native"`` or ``"derived"``) + ``repair_kind`` (goals-reconciliation
+``action_provenance`` (``"native"`` or ``"derived"``). ``repair_kind`` (goals-reconciliation
 provenance: ``owngoal`` / ``missing_goal`` / ``own_goal_unsignalled`` / ...; ``<NA>`` on un-repaired
-rows). ``result_source`` (``"native"`` / ``"inferred"`` / ``"stopgap"``: the completion-label tier
+rows) is now a base ``SPADL_COLUMNS`` column (decision D1), not re-declared here.
+``result_source`` (``"native"`` / ``"inferred"`` / ``"stopgap"``: the completion-label tier
 behind ``result_id``; native = SkillCorner ``pass_outcome``, inferred = ``received==True``, stopgap =
 ``same_team_next`` residual; D-S8/G1: only ``native`` trains the GK-completion model) now comes from
 base ``SPADL_COLUMNS`` (ADR-046 / TF-46 Arm 1 decision D), not re-declared here. Derived actions include
@@ -235,3 +264,12 @@ class SportecConversionReport(ConversionReport):
     keeper_pick_ups_added: int = 0
     ball_claim_unattached: int = 0
     freekick_inferred_count: int = 0
+    # TF-46 Arm 1 Part 2 §25: DFL Penalty result-method census and dropped-retake count, plus the
+    # BallDeflection routing census (woodwork_paired / deflection_referee / deflection_unpaired).
+    penalty_result_method_counts: dict[str, int] = dataclasses.field(default_factory=dict)
+    penalty_retakes: int = 0
+    deflection_counts: dict[str, int] = dataclasses.field(default_factory=dict)
+    own_goal_attribution_conflicts: int = 0
+    # C-16: teams whose opponent was unresolvable during penalty reconciliation (0 on a well-formed two-team
+    # feed). A visibility counter for a degenerate frame where steps 3/3m emit no opponent-dependent result.
+    penalty_opponent_unresolved: int = 0

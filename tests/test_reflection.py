@@ -214,7 +214,7 @@ def test_meta_every_known_spadl_column_declares_a_kind():
 
     provider_variants = set().union(*(set(getattr(S, n)) for n in dir(S) if n.endswith("_SPADL_COLUMNS")))
     known = (
-        provider_variants  # 19 canonical (incl. 2 block + 3 TF-46 signal) + 8 provider-specific
+        provider_variants  # 20 canonical (incl. 2 block + 4 TF-46 signal incl. repair_kind) + 9 provider-specific
         | set(S.SPADL_NAME_COLUMNS)  # type_name / result_name / bodypart_name
         | {  # ADR-025 restart-coordinate enrichment
             "enriched_start_x",
@@ -232,7 +232,7 @@ def test_meta_every_known_spadl_column_declares_a_kind():
         f"columns without a declared reflection kind: {missing}. Under on_unknown='raise' "
         f"these RAISE in production, they do not pass through."
     )
-    assert len(known) == 38, f"expected the measured 38-column surface, got {len(known)}"
+    assert len(known) == 40, f"expected the measured 40-column surface, got {len(known)}"
 
 
 def test_meta_every_known_atomic_spadl_column_declares_a_kind():

@@ -38,6 +38,7 @@ def _make_valid_spadl_df(n: int = 3) -> pd.DataFrame:
             "result_source": pd.array([pd.NA] * n, dtype="object"),
             "restart_evidence": pd.array([pd.NA] * n, dtype="object"),
             "type_source": pd.array([pd.NA] * n, dtype="object"),
+            "repair_kind": pd.array([pd.NA] * n, dtype="object"),  # base signal column (TF-46 Part 2, D1)
         }
     )
 

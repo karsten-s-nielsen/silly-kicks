@@ -13,23 +13,44 @@ from silly_kicks.spadl.schema import (
 
 
 def test_spadl_columns_count():
-    # 16 + 3 TF-46-Arm1 base signal columns (result_source / restart_evidence / type_source; ADR-046
-    # pattern: cross-provider signal read by a shared consumer -> base nullable, <NA> where not carried).
-    assert len(SPADL_COLUMNS) == 19
+    # 16 + 4 TF-46-Arm1 base signal columns (result_source / restart_evidence / type_source / repair_kind;
+    # ADR-046 pattern: a cross-provider signal read by a shared consumer -> base nullable, <NA> where not
+    # carried. repair_kind promoted to base by TF-46 Arm 1 Part 2 decision D1).
+    assert len(SPADL_COLUMNS) == 20
 
 
 def test_spadl_base_signal_columns_present():
-    for col in ("result_source", "restart_evidence", "type_source"):
+    for col in ("result_source", "restart_evidence", "type_source", "repair_kind"):
         assert SPADL_COLUMNS[col] == "object"
 
 
 def test_skillcorner_schema_repair_kind_and_base_result_source():
     from silly_kicks.spadl.schema import SKILLCORNER_SPADL_COLUMNS
 
-    # repair_kind is SkillCorner-specific (goals reconciliation); result_source now comes from base,
-    # same dtype (Hyrum) -- not re-declared on the SkillCorner literal.
+    # repair_kind and result_source now come from base SPADL_COLUMNS (decision D / D1), same dtype
+    # (Hyrum) -- not re-declared on the SkillCorner literal, but present on the output via inheritance.
     assert SKILLCORNER_SPADL_COLUMNS["repair_kind"] == "object"
     assert SKILLCORNER_SPADL_COLUMNS["result_source"] == "object"
+
+
+def test_repair_kind_vocabulary_literal():
+    # Anti-drift: the closed repair_kind vocabulary (decision D1). A NEW emitted class must be added here
+    # AND pass the emitted-subset gate in tests/spadl/test_tf46_part2_guards.py.
+    from silly_kicks.spadl.schema import REPAIR_KIND_VALUES
+
+    assert REPAIR_KIND_VALUES == frozenset(
+        {
+            "normal",
+            "scored_tag",
+            "own_goal_inverted",
+            "own_goal_surplus",
+            "own_goal_unsignalled",
+            "reading_i",
+            "missing_goal",
+            "penalty_outcome_unresolved",
+            "penalty_score_inconsistent",
+        }
+    )
 
 
 def test_sportec_schema_action_provenance_and_ball_claim_type():

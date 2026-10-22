@@ -52,6 +52,11 @@ def test_rt_only_output_value_identical_to_3_30_golden(case):
     # both post-date the 3.30 golden and are additive (they declare row provenance / a DFL claim qualifier
     # and change no existing value), so they are carved out exactly like the base signal columns above.
     current = current.drop(columns=["action_provenance", "ball_claim_type"], errors="ignore")
+    # TF-46 Arm 1 Part 2 ADDED penalty_result_method + shot_woodwork_type to SPORTEC_SPADL_COLUMNS (§25 DFL
+    # Penalty mapping / BallDeflection routing) and promoted repair_kind to BASE SPADL_COLUMNS (decision D1).
+    # All post-date the 3.30 golden and are additive (penalty result-method / woodwork token / reconciliation
+    # provenance, changing no existing value), so they are carved out exactly like the base signal columns above.
+    current = current.drop(columns=["penalty_result_method", "shot_woodwork_type", "repair_kind"], errors="ignore")
     # ADR-103 (4.125.0) DROPPED the all-null `confidence` frame column; it is present in the 3.30
     # golden and gone from current output. Removing a column that was uniformly null is not a value
     # change, so it is carved out of the invariance claim (mirrors the additive carve-out above).

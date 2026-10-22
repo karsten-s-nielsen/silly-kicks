@@ -1668,7 +1668,7 @@ def _assert_chronological_action_id(actions: pd.DataFrame) -> None:
 #: TF-46 Arm 1 base signal columns (ADR-046 / decision D). On base ``SPADL_COLUMNS``; every converter
 #: emits them. The shared training-exclusion helper reads ``result_source`` + ``restart_evidence``; the
 #: corner layer reads ``type_source``.
-_BASE_SIGNAL_COLUMNS: tuple[str, ...] = ("result_source", "restart_evidence", "type_source")
+_BASE_SIGNAL_COLUMNS: tuple[str, ...] = ("result_source", "restart_evidence", "type_source", "repair_kind")
 
 
 def _ensure_base_signal_columns(df: pd.DataFrame) -> pd.DataFrame:

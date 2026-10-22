@@ -250,12 +250,12 @@ def _actions_frame() -> pd.DataFrame:
     out = pd.DataFrame(rows)
     from silly_kicks.spadl.schema import SPADL_COLUMNS
 
-    # Base signal columns (result_source / restart_evidence / type_source) are emitted by every
-    # converter via _ensure_base_signal_columns; this fixture builds actions by hand, so fill
-    # exactly those three with NA. Any OTHER missing SPADL column must still raise in the astype
-    # loop below -- that is the drift canary -- so the fill is scoped to the three, never to every
-    # absent column.
-    for col in ("result_source", "restart_evidence", "type_source"):
+    # Base signal columns (result_source / restart_evidence / type_source / repair_kind) are emitted by
+    # every converter via _ensure_base_signal_columns; this fixture builds actions by hand, so fill
+    # exactly those with NA. repair_kind joined the base block in TF-46 Arm 1 Part 2 (decision D1). Any
+    # OTHER missing SPADL column must still raise in the astype loop below -- that is the drift canary --
+    # so the fill is scoped to these, never to every absent column.
+    for col in ("result_source", "restart_evidence", "type_source", "repair_kind"):
         if col not in out.columns:
             out[col] = pd.NA
     for col, dtype in SPADL_COLUMNS.items():

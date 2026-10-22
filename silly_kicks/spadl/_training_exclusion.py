@@ -2,7 +2,8 @@
 
 One helper decides whether a SPADL action row must be excluded from the GK-completion training set (G1),
 the xsuccess training set, and delivery / completion metrics. It reads the base signal columns
-``result_source`` and ``restart_evidence`` and the SkillCorner-specific ``repair_kind``.
+``result_source``, ``restart_evidence`` and ``repair_kind`` (``repair_kind`` was promoted to base
+``SPADL_COLUMNS`` in TF-46 Arm 1 Part 2, decision D1).
 
 The helper **tolerates** a missing column: absence contributes an all-False sub-mask, never a raise
 (decision E). The anti-silent-leak guarantee is structural and lives at the producer -- ``_finalize_output``

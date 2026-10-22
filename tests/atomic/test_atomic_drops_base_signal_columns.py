@@ -1,4 +1,4 @@
-"""Atomic SPADL drops the three TF-46 Arm 1 base signal columns (as ADR-046 drops the block columns).
+"""Atomic SPADL drops the four TF-46 Arm 1 base signal columns (as ADR-046 drops the block columns).
 
 ``ATOMIC_SPADL_COLUMNS`` is an independent dict (it does not spread ``SPADL_COLUMNS``) and
 ``convert_to_atomic`` projects to it via ``_finalize_output``, so the base signal columns are dropped.
@@ -10,7 +10,7 @@ from silly_kicks.atomic.spadl.base import convert_to_atomic
 from silly_kicks.atomic.spadl.schema import ATOMIC_SPADL_COLUMNS
 from silly_kicks.spadl import config as spadlcfg
 
-_SIGNAL = ("result_source", "restart_evidence", "type_source")
+_SIGNAL = ("result_source", "restart_evidence", "type_source", "repair_kind")
 
 
 def _spadl_df(n: int = 3) -> pd.DataFrame:
@@ -35,6 +35,9 @@ def _spadl_df(n: int = 3) -> pd.DataFrame:
             "result_source": pd.array(["native", "inferred", pd.NA][:n], dtype="object"),
             "restart_evidence": pd.array([pd.NA] * n, dtype="object"),
             "type_source": pd.array([pd.NA] * n, dtype="object"),
+            # non-NA repair_kind so test_convert_to_atomic_drops_base_signal_columns proves the DROP, not
+            # just an all-NA no-op (TF-46 Arm 1 Part 2 decision D1: repair_kind is a base signal column).
+            "repair_kind": pd.array(["missing_goal", pd.NA, pd.NA][:n], dtype="object"),
         }
     )
 
