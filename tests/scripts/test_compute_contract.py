@@ -23,6 +23,11 @@ _NOT_A_PIPELINE: dict[str, str] = {
         "the pining CACHE WARMER: it downloads raw artifacts into a local cache and computes nothing a stage "
         "could own; it runs only where the pining token lives (DGX), never on HF."
     ),
+    "regen_tf46_fixtures": (
+        "the TF-46 fixture REGENERATOR: it sources committed test fixtures from the pining mock-provider API "
+        "and writes them with SHA256SUMS; it runs only where the pining token lives (DGX), never in CI or on "
+        "HF, and computes no trained or staged artifact a stage could own."
+    ),
     "materialize_tc3_frames": (
         "the DGX STAGING tool: it materialises the neutral flat corpus that `datasets record` then measures; "
         "it is the input side of every staged dataset, not a compute pipeline."

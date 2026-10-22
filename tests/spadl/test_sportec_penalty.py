@@ -830,7 +830,11 @@ def test_opp_unresolvable_no_final_score_penalty_goes_to_step4():
     pens = actions[actions["type_id"] == SHOT_PENALTY].sort_values("time_seconds")
     assert list(pens["penalty_result_method"]) == ["unresolved", "continued_play"]
     assert list(pens["result_source"]) == ["inferred", "native"]
-    assert list(pens["repair_kind"]) == ["penalty_outcome_unresolved", None]
+    # pen1 carries the step-4 repair tag; pen2 (continued_play native) is a clean row with repair_kind
+    # missing. repair_kind is object dtype, so the missing value is None or NaN by pandas version -- assert
+    # NA-robustly, not against a single sentinel identity.
+    assert pens["repair_kind"].iloc[0] == "penalty_outcome_unresolved"
+    assert pd.isna(pens["repair_kind"].iloc[1])
 
 
 def test_period_without_kickoff_emits_no_native_step3_result():

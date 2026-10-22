@@ -278,6 +278,12 @@ def _game_actions(game: str, *, n_frames: int, home: int, away: int) -> pd.DataF
                 "bodypart_id": 0,
                 "shot_blocked": pd.NA,
                 "cross_blocked": pd.NA,
+                # TF-46 Arm 1 base signal columns (ADR-046 base-nullable): <NA> on a toy frame that carries
+                # no provider signal. Present so the SPADL_COLUMNS dtype cast below finds every key.
+                "result_source": pd.NA,
+                "restart_evidence": pd.NA,
+                "type_source": pd.NA,
+                "repair_kind": pd.NA,
             }
         )
     # The toy frames key games by string id; the actions keep the SAME key (game_id is not cast).
