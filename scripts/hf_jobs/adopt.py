@@ -182,7 +182,13 @@ def expectation_violations(a: mf.Artifact, fresh: pathlib.Path, record: Mapping[
 
     bad: list[str] = []
     corpus = "digest" if a.corpus == "public_ids" else a.corpus
-    bad += mf.violations(dataclasses.replace(a, training_commit=commit, corpus=corpus), read=_dir_reader(fresh))
+    # A commit-free output (ADR-128 Task 16) carries no training_commit until `adopt.stamp_provenance` stamps
+    # it; the manifest commit check then lands in `adopt` (manifest.py). So drop the commit_field check here for
+    # a commit-free fresh (else mf.violations wrongly reports "training_commit missing" for every artifact, B#30).
+    expect_a = dataclasses.replace(a, training_commit=commit, corpus=corpus)
+    if not _has_training_commit(fresh):
+        expect_a = dataclasses.replace(expect_a, commit_field=None)
+    bad += mf.violations(expect_a, read=_dir_reader(fresh))
     if a.dataset is not None and a.dataset in _declared():
         pinned = locked(a.dataset)["revision"]
         read = {
@@ -354,15 +360,134 @@ def _certify(
     return {"ok": ok, **detail}
 
 
+def _attestation_pass(c: Campaign, commit: str, *, api: Any, with_replica: int, now: str) -> dict:
+    """Main-vs-replica byte compare per stage (S5.10, INV-1): a byte-identical generation gets an attestation
+    written to the MAIN store (``attest_rel``), so a later clean HEAD may reuse it without re-materializing.
+    Returns ``{main instance id: {stage: {"identical", "diffs"}}}``."""
+    from scripts.hf_jobs import launch as launcher
+    from scripts.hf_jobs.campaign import _job_phase_records, instances, read_plan
+    from scripts.hf_jobs.store import BucketStore
+
+    # This campaign+commit's job labels per run key: the shared content-addressed main store also holds OTHER
+    # campaigns' jobs, so the attestation env must come only from THIS campaign's jobs (B#45-B).
+    labels_by_rk: dict[str, set[str]] = {}
+    for j in launcher.jobs_for(api, campaign=c.name, commit=commit):
+        lab = dict(getattr(j, "labels", None) or {})
+        labels_by_rk.setdefault(lab.get("run_key", ""), set()).add(launcher.label_of(lab))
+
+    def _scoped(store: Any, run_key: str) -> dict:
+        want = labels_by_rk.get(run_key, set())
+        return {k: v for k, v in _job_phase_records(store).items() if v.get("label") in want}
+
+    main_by_key = {(i.job, i.tier, i.variant): i for i in instances(c, commit)}
+    out: dict[str, Any] = {}
+    for ri in instances(c, commit, replica=with_replica):
+        mi = main_by_key[(ri.job, ri.tier, ri.variant)]
+        main_store = BucketStore(c.bucket, mi.run_key, api=api)
+        rep_store = BucketStore(c.bucket, ri.run_key, api=api)
+        main_phases = _scoped(main_store, mi.run_key)
+        rep_phases = _scoped(rep_store, ri.run_key)
+        row: dict[str, Any] = {}
+        for st in read_plan(mi, bucket=c.bucket)["stages"]:
+            gen, stage, token = st["generation"], st["name"], st["token"]
+            # A compare happens only when BOTH sides materialized the generation. An attested stage is SKIPPED
+            # in the replica (reduced), so its replica generation is empty -- that is a correct reuse, NOT a
+            # determinism mismatch, and must not count as a failed comparison (B#35a). An empty MAIN generation
+            # never ran, so never attest it (B#38). Only a both-materialized stage yields a comparison bool.
+            if not _gen_tree(main_store, gen):
+                row[stage] = {"materialized": False, "reason": "main generation is empty"}
+                continue
+            if not _gen_tree(rep_store, gen):
+                row[stage] = {"materialized": False, "reason": "replica skipped (attested reuse)"}
+                continue
+            diffs = generation_diff(main_store, rep_store, gen)
+            row[stage] = {"materialized": True, "identical": not diffs, "diffs": diffs}
+            if not diffs:
+                m_env, r_env = _job_env(main_phases), _job_env(rep_phases)
+                m_state, r_state = m_env.get("tree_state"), r_env.get("tree_state")
+                # A missing tree_state means the env is empty: `phases._env` swallowed `env_provenance` (no repo
+                # or lock readable), so the provenance is UNKNOWN. The repo rule treats unknown provenance as
+                # untrustworthy, NEVER as clean (_provenance.py:91-93; B#32). Refuse the attestation: no reuse
+                # token on undescribable code, else `stamp_provenance` later stamps run_tree_dirty=False on a
+                # committed artifact (a false clean claim). The determinism compare still counts (the bytes were
+                # identical); only reuse is withheld. A recorded "dirty" IS kept (its token never matches a clean
+                # HEAD, so it is never reused cross-commit).
+                if not m_state or not r_state:
+                    row[stage]["attested"] = False
+                    row[stage]["reason"] = "unknown provenance (no tree_state)"
+                    continue
+                rec = {
+                    "commit": commit,
+                    "stage": stage,
+                    "token": token,
+                    "main": {"env": m_env, "tree_state": m_state},
+                    "replica": {"env": r_env, "tree_state": r_state},
+                    "job_ids": {"main": sorted(main_phases), "replica": sorted(rep_phases)},
+                    "time": now,
+                }
+                main_store.upload_bytes(
+                    attest_rel(stage, token, commit), (json.dumps(rec, sort_keys=True) + "\n").encode("utf-8")
+                )
+                row[stage]["attested"] = True
+        out[mi.id] = row
+    return out
+
+
+def _canary_pass(c: Campaign, commit: str, *, api: Any) -> tuple[dict, list[str]]:
+    """Compare every unit the canary re-ran to the main store byte for byte (S5.10): a mismatch QUARANTINES the
+    main generation (unsound reuse) and adds an ``unsound_reuse`` finding. Returns ``({instance: {stage: ...}},
+    findings)``."""
+    from scripts.hf_jobs.campaign import canary_verdict, instances, read_plan, run_key
+    from scripts.hf_jobs.store import BucketStore
+
+    out: dict[str, Any] = {}
+    findings: list[str] = []
+    for mi in instances(c, commit):
+        main_store = BucketStore(c.bucket, mi.run_key, api=api)
+        canary_store = BucketStore(c.bucket, run_key(c, commit, mi.job, mi.tier, canary=True), api=api)
+        plan = read_plan(mi, bucket=c.bucket)
+        row: dict[str, Any] = {}
+        for st in plan["stages"]:
+            gen, stage, token = st["generation"], st["name"], st["token"]
+            produced = sorted(_gen_tree(canary_store, gen))
+            if not produced:
+                continue
+            bad: list[str] = []
+            for n in produced:
+                ok = canary_verdict(
+                    main_bytes=main_store.read_bytes(f"{gen}/{n}") or b"",
+                    canary_bytes=canary_store.read_bytes(f"{gen}/{n}") or b"",
+                    quarantine=lambda s=stage, t=token, ms=main_store, pl=plan: ms.quarantine_generation(
+                        pl["pipeline"], s, t, {"reason": "canary mismatch", "commit": commit}
+                    ),
+                )
+                if not ok:
+                    bad.append(f"{gen}/{n}")
+                    break
+            row[stage] = {"units": produced, "ok": not bad}
+            if bad:
+                findings.append(f"unsound_reuse: {mi.id}/{stage} canary differs from main at {bad[0]}")
+        if row:
+            out[mi.id] = row
+    return out, findings
+
+
 def verify(
     c: Campaign,
     commit: str,
     *,
     staging: pathlib.Path,
     replica: int | None = None,
+    api: Any = None,
+    with_replica: int | None = None,
+    canary: bool = False,
+    now: str | None = None,
     run: Callable[..., Any] = subprocess.run,
 ) -> dict:
-    """Steps 2-4 for every retrieved instance; writes ``<staging>/verify.json``. ``ok`` per instance."""
+    """Steps 2-4 for every retrieved instance; writes ``<staging>/verify.json``. ``ok`` per instance. With
+    ``with_replica=N`` (needs ``api``) it also writes a per-stage attestation for every byte-identical
+    main/replica generation (S5.10), and with ``canary`` it compares the canary units to main and quarantines
+    an unsound reuse."""
     from scripts.hf_jobs.registry import DriverSpec, spec_for
 
     staging = _outside_repo(staging)
@@ -402,10 +527,174 @@ def verify(
             oks.append(not row["artifacts"][a.id]["violations"])
         row["ok"] = all(oks)
         report["instances"][inst.id] = row
+    now = now or datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+    if with_replica is not None:
+        report["attestations"] = _attestation_pass(c, commit, api=api, with_replica=with_replica, now=now)
+    if canary:
+        report["canary"], report["findings"] = _canary_pass(c, commit, api=api)
+    if with_replica is not None or canary:
+        _merge_comparisons(c, commit, _comparison_map(report, with_replica), api=api)
     (staging / "verify.json").write_text(
         json.dumps(report, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8"
     )
     return report
+
+
+def _comparison_map(report: Mapping[str, Any], with_replica: int | None) -> dict[str, bool]:
+    """This verify call's byte-compares, scoped to (campaign, commit), for the S7.2 determinism bar (B#35): a
+    main-vs-replica compare (identical True / diffs False) and a canary compare (ok). `cmd_summary` reads these
+    instead of counting attestation FILES in the shared store (which span every campaign and omit a mismatch,
+    since a failed compare writes no attestation).
+
+    A stage is counted ONLY when it materialized BOTH sides: an attested-reuse skip or an empty generation is
+    NOT a comparison (B#35a/B#47). A replica compare carries its replica number in the key (B#48): a matching
+    ``--with-replica 2`` must never overwrite a ``--with-replica 1`` mismatch when `_merge_comparisons` merges."""
+    comps: dict[str, bool] = {}
+    for inst_id, row in report.get("attestations", {}).items():
+        for stage, v in row.items():
+            if v.get("materialized"):
+                comps[f"replica|{with_replica}|{inst_id}|{stage}"] = bool(v.get("identical"))
+    for inst_id, row in report.get("canary", {}).items():
+        for stage, v in row.items():
+            comps[f"canary|{inst_id}|{stage}"] = bool(v.get("ok"))
+    return comps
+
+
+def comparisons_rel(campaign: str, commit: str) -> str:
+    """Where `verify` records this campaign's byte-compare results for the S7.2 determinism bar (B#35)."""
+    return f"_campaign/{campaign}/{commit[:7]}/comparisons.json"
+
+
+def _read_comparisons_map(c: Campaign, commit: str, *, api: Any) -> dict[str, bool]:
+    from scripts.hf_jobs.store import BucketStore
+
+    raw = BucketStore(c.bucket, "", api=api).read_bytes(comparisons_rel(c.name, commit))
+    return dict(json.loads(raw)) if raw else {}
+
+
+def _merge_comparisons(c: Campaign, commit: str, comps: dict[str, bool], *, api: Any) -> None:
+    """MERGE this verify call's byte-compares into the campaign's record, keyed by ``kind|instance|stage`` so a
+    later ``verify --canary`` never clobbers an earlier ``verify --with-replica`` mismatch (B#35b)."""
+    from scripts.hf_jobs.store import BucketStore
+
+    merged = {**_read_comparisons_map(c, commit, api=api), **comps}
+    BucketStore(c.bucket, "", api=api).upload_bytes(
+        comparisons_rel(c.name, commit), (json.dumps(merged, sort_keys=True) + "\n").encode("utf-8")
+    )
+
+
+def read_comparisons(c: Campaign, commit: str, *, api: Any) -> list[bool]:
+    """The campaign-scoped byte-compare results `verify` recorded, accumulated across verify calls (B#35);
+    empty when none were run."""
+    return list(_read_comparisons_map(c, commit, api=api).values())
+
+
+# ---- attestation + adoption rules (S5.10) ----------------------------------------------------------
+
+
+def attest_rel(stage: str, token: str, commit: str) -> str:
+    """The attestation path for a stage generation: ``_attest/{stage}/{token}/{commit}.json`` (S5.10)."""
+    return f"_attest/{stage}/{token}/{commit}.json"
+
+
+def attestations(store: Any, stage: str, token: str) -> list[dict]:
+    """Every attestation recorded for ``(stage, token)`` in ``store`` (written by `verify`, `attest_rel`)."""
+    prefix = f"_attest/{stage}/{token}"
+    out: list[dict] = []
+    for name in sorted(store.names(prefix)):
+        raw = store.read_bytes(f"{prefix}/{name}")
+        if raw:
+            out.append(json.loads(raw))
+    return out
+
+
+def is_ancestor(commit: str, head: str, *, run: Callable[..., Any] = subprocess.run) -> bool:
+    """True when ``commit`` is an ancestor of ``head`` (controller-side git; S5.10 adoption)."""
+    p = run(["git", "merge-base", "--is-ancestor", commit, head], cwd=REPO_ROOT, capture_output=True, check=False)
+    return p.returncode == 0
+
+
+def oldest_ancestor_attester(commits: Iterable[str], *, order: Sequence[str]) -> str | None:
+    """The OLDEST attesting commit on HEAD's history: the attester that comes LAST in HEAD's topo order
+    (``git rev-list --topo-order HEAD``, newest first). None when no commit is in ``order``."""
+    idx = {c: i for i, c in enumerate(order)}
+    present = [c for c in commits if c in idx]
+    return max(present, key=lambda c: idx[c]) if present else None
+
+
+#: Run history, never a result: excluded from the main-vs-replica byte compare (r1 B CCTP-PLAN-14).
+_ATTEST_EXCLUDE_SUFFIXES: tuple[str, ...] = (".ledger.json", ".failed.json")
+_ATTEST_EXCLUDE_NAMES: frozenset[str] = frozenset({"_profile.json"})
+
+
+def _attest_excluded(rel: str) -> bool:
+    """True for a generation file that carries run history, not a result (S5.10): the ledger/failed sidecars,
+    the profile, and anything under the ``.corrupt/`` tree. ``rel`` is relative to the generation dir."""
+    parts = rel.split("/")
+    if ".corrupt" in parts:
+        return True
+    return parts[-1] in _ATTEST_EXCLUDE_NAMES or rel.endswith(_ATTEST_EXCLUDE_SUFFIXES)
+
+
+def _gen_tree(store: Any, gen: str) -> set[str]:
+    """Every file under ``gen/`` relative to it (recursive via ``list_tree`` when the store has it, else the
+    non-recursive ``names``), minus the run-history files the attestation never compares."""
+    lister = getattr(store, "list_tree", None)
+    names = lister(gen) if lister is not None else store.names(gen)
+    return {n for n in names if not _attest_excluded(n)}
+
+
+def generation_diff(main: Any, replica: Any, gen: str) -> list[str]:
+    """The byte-level differences of generation ``gen`` between two stores (S5.10); empty == byte-identical over
+    every result, sidecar, FileSet member, ``*.excluded.json``, ``*.counters.json``, ``_summary.json``,
+    ``_inputs.json`` and the output. One diff string per differing path."""
+    mnames, rnames = _gen_tree(main, gen), _gen_tree(replica, gen)
+    diffs = [f"{gen}/{n}: in main only" for n in sorted(mnames - rnames)]
+    diffs += [f"{gen}/{n}: in replica only" for n in sorted(rnames - mnames)]
+    for n in sorted(mnames & rnames):
+        if main.read_bytes(f"{gen}/{n}") != replica.read_bytes(f"{gen}/{n}"):
+            diffs.append(f"{gen}/{n}: bytes differ")
+    return diffs
+
+
+def _job_env(phase_records: Mapping[str, Mapping]) -> dict:
+    """The environment the run's jobs recorded (S5.10: `phases.publish_first_unit` writes ``env``). Every job of
+    one run shares the environment (same image/commit/platform), so the first record carrying an ``env`` is it;
+    ``{}`` when none does. Not keyed by stage -- the in-job label is ``job.variant.stage.shard.action``, which
+    `parse_stage_label` cannot read, so a stage filter here silently returned ``{}`` for every real label."""
+    for _label, rec in sorted(phase_records.items()):
+        if rec.get("env"):
+            return dict(rec["env"])
+    return {}
+
+
+def adoption_refusals(
+    *,
+    head_tokens: Mapping[str, str],
+    adopted: Mapping[str, str],
+    attestations: Mapping[str, Sequence[str]],
+    quarantined: set[str],
+    canary_ok: Mapping[str, bool],
+    is_ancestor: Callable[[str], bool],
+) -> list[str]:
+    """Every reason an adopted generation must NOT land at a clean HEAD (S5.10), from both sides: its token must
+    equal HEAD's token for the stage; some attesting commit must be an ANCESTOR of HEAD; the token must not be
+    quarantined; and its canary must have passed. One string per failing (stage, rule)."""
+    out: list[str] = []
+    for stage, token in sorted(adopted.items()):
+        if token != head_tokens.get(stage):
+            out.append(f"{stage}: adopted token {token!r} != HEAD token {head_tokens.get(stage)!r}")
+            continue
+        atts = attestations.get(stage, [])
+        if not atts:
+            out.append(f"{stage}: no attestation for token {token!r}")
+        elif not any(is_ancestor(c) for c in atts):
+            out.append(f"{stage}: no attesting commit is an ancestor of HEAD (token {token!r})")
+        if token in quarantined:
+            out.append(f"{stage}: token {token!r} is quarantined (unsound reuse)")
+        if not canary_ok.get(stage, False):
+            out.append(f"{stage}: canary did not pass for token {token!r}")
+    return out
 
 
 # ---- adopt -----------------------------------------------------------------------------------------
@@ -489,18 +778,25 @@ def _copy_tree(src: pathlib.Path, dest: pathlib.Path, root: pathlib.Path) -> lis
     return written
 
 
-def _observed_entry(d: pathlib.Path, c_name: str, commit: str, now: str) -> dict:
+def _observed_entry(d: pathlib.Path, c_name: str, commit: str, now: str, *, head: str | None = None) -> dict:
+    """The observed fields of an adopted artifact (INV-9). ``commit`` is the artifact's training commit (the
+    attester). On a REUSE adoption (``head`` differs from it) the ADR-129 provenance -- ``adopted_at_commit``
+    (the clean HEAD) and ``attested_by`` -- is recorded here, never in the human manifest."""
     from scripts.hf_jobs.identity import artifact_identity
 
     metrics = _read_json(d / "metrics.json") if (d / "metrics.json").is_file() else {}
     meta = _read_json(d / "metadata.json") if (d / "metadata.json").is_file() else {}
-    return {
+    entry = {
         "sha256": artifact_identity(d)["files"],
         "metrics_summary": metrics,
         "env": metrics.get("env") or meta.get("env") or {},
         "campaign": f"{c_name}@{commit[:7]}",
         "adopted_at": now,
     }
+    if head is not None and head != commit:
+        entry["adopted_at_commit"] = head
+        entry["attested_by"] = commit
+    return entry
 
 
 def _write_text_keep_eol(path: pathlib.Path, text: str) -> bool:
@@ -544,11 +840,149 @@ def _local_gate(run: Callable[..., Any], root: pathlib.Path) -> dict:
     return out
 
 
+def stamp_provenance(
+    directory: str | pathlib.Path,
+    *,
+    attestation: Mapping[str, Any],
+    params: Mapping[str, Any],
+    generation: str | None = None,
+) -> None:
+    """S5.10: stamp the adopting commit's provenance onto a COMMIT-FREE artifact and rewrite SHA256SUMS. The
+    adopting commit is ``attestation["commit"]``; the tree state and platform come from the attesting MAIN job's
+    recorded provenance (``attestation["main"]``). ``reproducibility_note`` is rebuilt from the artifact's own
+    ``reproducibility`` label and ``providers`` (both commit-free). SHA256SUMS is written LAST (identity.write_sums)."""
+    from scripts._corpus_identity import reproducibility
+    from scripts._provenance import resolve_training_platform
+    from scripts.hf_jobs import identity
+
+    d = pathlib.Path(directory)
+    commit = str(attestation["commit"])
+    main = attestation.get("main", {})
+    tree_state = main.get("tree_state")
+    env = main.get("env") or {}
+    stamp: dict[str, Any] = {
+        "training_commit": commit,
+        "run_commit": commit,
+        "run_tree_state": tree_state,
+        "run_tree_dirty": tree_state != "clean",
+        "training_platform": resolve_training_platform(
+            params.get("training_platform"), {"platform": env.get("platform")}
+        ),
+    }
+    if generation is not None:
+        stamp["generation"] = generation
+    for name in identity.NORMALIZED:
+        p = d / name
+        if not p.is_file():
+            continue
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        # Reproduce the trainer's caveat (ADR-067 M4): the stored ``reproducibility`` class decides public vs
+        # restricted; the note's variant label is the real ``shipped_variant``, not the class, so a restricted
+        # bundle keeps "(variant 'sc_extended')" rather than degrading to "(variant 'restricted')" (B#37).
+        cls = doc.get("reproducibility")
+        if cls == "public":
+            note: dict = {"reproducibility": "public"}
+        elif cls == "restricted":
+            shipped = doc.get("shipped_variant") or "restricted"
+            if shipped == "public":  # a restricted class never carries a public shipped label; guard the discriminator
+                shipped = "restricted"
+            note = reproducibility(str(shipped), doc.get("providers", []), training_commit=commit)
+        else:
+            note = {}
+        doc.update({**stamp, **note})
+        p.write_text(json.dumps(doc, sort_keys=True, indent=2, default=str) + "\n", encoding="utf-8")
+    identity.write_sums(d)
+
+
+def _topo_order(head: str, run: Callable[..., Any]) -> list[str]:
+    """HEAD's history newest first (``git rev-list --topo-order``), for `oldest_ancestor_attester`."""
+    p = run(["git", "rev-list", "--topo-order", head], cwd=REPO_ROOT, capture_output=True, text=True, check=False)
+    out: list[str] = str(p.stdout or "").split()
+    return out
+
+
+def _has_training_commit(fresh: pathlib.Path) -> bool:
+    """True when the retrieved artifact already carries ``training_commit`` (a pre-ADR-129 output); a
+    commit-free output (Task 16) does not, and `adopt` stamps it from its attestation."""
+    for name in ("metadata.json", "metrics.json"):
+        p = fresh / name
+        if p.is_file() and "training_commit" in _read_json(p):
+            return True
+    return False
+
+
+def _assert_adoptable(
+    c: Campaign, commit: str, head: str, rep: Mapping[str, Any], *, api: Any, run: Callable[..., Any]
+) -> None:
+    """Refuse an adoption that ADR-129 S5.10 does not permit. With no ``api`` (the pure-diff unit tests) it
+    keeps the ADR-037 rule that HEAD IS the campaign commit. With ``api`` it recomputes each stage's token at
+    HEAD (`read_plan`) and runs `adoption_refusals`: every adopted generation's token == HEAD's token, an
+    attestation on HEAD or an ancestor, its canary passed (or HEAD attested it this campaign), not quarantined."""
+    if api is None:
+        if head != commit:
+            raise AdoptionRefusedError(f"HEAD {head} is not the campaign commit {commit} (ADR-037)")
+        return
+    from scripts.hf_jobs.campaign import instances, read_plan
+    from scripts.hf_jobs.store import BucketStore
+
+    head_tokens: dict[str, str] = {}
+    atts: dict[str, list[str]] = {}
+    canary_ok: dict[str, bool] = {}
+    quarantined: set[str] = set()
+    canary_rep = rep.get("canary", {})
+    for inst in instances(c, commit):
+        store = BucketStore(c.bucket, inst.run_key, api=api)
+        for st in read_plan(inst, bucket=c.bucket)["stages"]:
+            stage, token = st["name"], st["token"]
+            key = f"{inst.id}|{stage}"  # compound: two instances can share a stage NAME (CCTP-IMPL-31)
+            head_tokens[key] = token
+            commits = [a.get("commit", "") for a in attestations(store, stage, token)]
+            atts[key] = commits
+            attested_here = head in commits  # verify wrote an attestation at HEAD this campaign (INV-1)
+            canary_ok[key] = attested_here or bool(canary_rep.get(inst.id, {}).get(stage, {}).get("ok"))
+            if store.list_tree(f"_quarantine/{stage}/{token}"):  # recursive: quarantine writes {utc}/ subdirs
+                quarantined.add(token)
+    refusals = adoption_refusals(
+        head_tokens=head_tokens,
+        adopted=dict(head_tokens),
+        attestations=atts,
+        quarantined=quarantined,
+        canary_ok=canary_ok,
+        is_ancestor=lambda a: is_ancestor(a, head, run=run),
+    )
+    if refusals:
+        raise AdoptionRefusedError(f"adoption refused (ADR-129 S5.10): {refusals}")
+
+
+def _stamp_fresh(
+    c: Campaign, commit: str, head: str, inst_id: str, fresh: pathlib.Path, *, api: Any, run: Callable[..., Any]
+) -> str:
+    """Stamp a COMMIT-FREE retrieved artifact (Task 16) with the provenance of the OLDEST ancestor attester of
+    its output generation (S5.10) and return that attester commit (the artifact's ``training_commit``)."""
+    from scripts.hf_jobs.campaign import instances, read_plan
+    from scripts.hf_jobs.store import BucketStore
+
+    inst = {i.id: i for i in instances(c, commit)}[inst_id]
+    store = BucketStore(c.bucket, inst.run_key, api=api)
+    plan = read_plan(inst, bucket=c.bucket)
+    out = next(s for s in plan["stages"] if s["name"] == plan["output"])
+    by_commit = {a.get("commit", ""): a for a in attestations(store, out["name"], out["token"])}
+    order = _topo_order(head, run)
+    attester = oldest_ancestor_attester([a for a in by_commit if is_ancestor(a, head, run=run)], order=order)
+    if attester is None:
+        raise AdoptionRefusedError(f"{inst_id}: no ancestor attestation for {out['name']}/{out['token']}")
+    stamp_provenance(
+        fresh, attestation=by_commit[attester], params={"training_platform": None}, generation=out["token"]
+    )
+    return attester
+
+
 def adopt(
     c: Campaign,
     commit: str,
     *,
     staging: pathlib.Path,
+    api: Any = None,
     now: str | None = None,
     run: Callable[..., Any] = subprocess.run,
     git: Callable[[], Mapping[str, Any]] | None = None,
@@ -556,8 +990,10 @@ def adopt(
     gate: bool = True,
 ) -> dict:
     """Spec 5.7 steps 5-10 over a verified staging dir; never commits. Refuses (writing nothing) on a dirty
-    tree, a HEAD other than the campaign commit, a ``verify.json`` of another commit, or any instance that
-    did not verify. Idempotent: a second run over the same staging dir writes nothing."""
+    tree, a ``verify.json`` of another commit, any instance that did not verify, or an adoption the ADR-129
+    gate (`_assert_adoptable`) rejects. With ``api`` it reuses an attested generation at a later clean HEAD and
+    stamps each commit-free output; without it the ADR-037 rule (HEAD IS the campaign commit) stands.
+    Idempotent: a second run over the same staging dir writes nothing."""
     from scripts._provenance import git_provenance, require_clean_tree
 
     root = pathlib.Path(root).resolve()
@@ -567,14 +1003,14 @@ def adopt(
         require_clean_tree(prov, allow_dirty=False)
     except SystemExit as exc:
         raise AdoptionRefusedError(f"adopt needs a clean tree (ADR-037): {exc}") from exc
-    if prov.get("commit") != commit:
-        raise AdoptionRefusedError(f"HEAD {prov.get('commit')} is not the campaign commit {commit} (ADR-037)")
+    head = str(prov.get("commit"))
     rep = _read_json(staging / "verify.json")
     if rep.get("commit") != commit:
         raise AdoptionRefusedError(f"verify.json is for commit {rep.get('commit')}, not {commit}")
     bad = sorted(k for k, v in rep["instances"].items() if not v.get("ok"))
     if bad:
         raise AdoptionRefusedError(f"instances that did not verify: {bad}")
+    _assert_adoptable(c, commit, head, rep, api=api, run=run)
     manifest_path = root / "docs" / "artifacts" / "manifest.toml"
     observed_path = root / "docs" / "artifacts" / "observed.json"
     man = mf.load(manifest_path)
@@ -596,14 +1032,19 @@ def adopt(
                     raise AdoptionRefusedError(f"{inst_id}: names {len(names)} registered drivers")
                 written += _copy_tree(fresh, root / drivers[names[0]], root)
             continue
+        # A commit-free output (Task 16) is stamped from its OLDEST ancestor attestation (S5.10); its stamped
+        # commit becomes the artifact's training_commit. A pre-ADR-129 output keeps the campaign commit.
+        attester = commit
+        if api is not None and not _has_training_commit(fresh):
+            attester = _stamp_fresh(c, commit, head, inst_id, fresh, api=api, run=run)
         for aid in sorted(row.get("artifacts", {})):
             a = man.artifacts[aid]
             if a.kind == "wheel":
                 written += _bundle(a, fresh, root)
-                observed[aid] = _observed_entry(root / a.path, c.name, commit, now)
+                observed[aid] = _observed_entry(root / a.path, c.name, attester, now, head=head)
             else:
-                observed[aid] = _observed_entry(fresh, c.name, commit, now)
-            manifest_text = _set_manifest_commit(manifest_text, aid, commit)
+                observed[aid] = _observed_entry(fresh, c.name, attester, now, head=head)
+            manifest_text = _set_manifest_commit(manifest_text, aid, attester)
             adopted.append(aid)
     if _write_text_keep_eol(manifest_path, manifest_text):
         written.append(manifest_path.relative_to(root).as_posix())

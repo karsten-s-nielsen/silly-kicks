@@ -303,9 +303,25 @@ deletion); the throughput cycle reads their unit ledgers once to seed its cost h
 remote branch on 2026-10-21). By owner ruling (2026-10-21) it is named **Cycle 1b**, so section 11's roadmap keeps
 its numbers: Cycle 2 stays the three public trainers on real pipelines, and Cycle 3+ the corpus-driver burn-down.
 
+## Amendment — Cycle 1b (ADR-129)
+
+ADR-129 amends two decisions of this ADR:
+
+- **P9 (closure identity).** The content-addressed main store (`{job}-{tier}`) names a generation by its token,
+  so per-stage closure identity (`closures.lock.json`) replaces the campaign commit and the
+  `cross_commit_version` as the reuse key.
+- **P18 (same-commit replica).** A determinism attestation (a byte-identical main-vs-replica generation recorded
+  in the main store) replaces re-running the full same-commit replica on every campaign; an attested generation
+  is reused at a later clean HEAD behind a one-unit canary.
+
+The controller gains attestation, canary, quarantine and content-addressed reuse (`campaign`/`adopt`/`store`); the
+remaining Cycle 1 limitations above (quadratic reduce, per-unit ledger reads, one stage at a time, no reuse, no
+halt/pre-first-unit resume, per-job install) are the ADR-129 scope. See
+`docs/superpowers/adrs/ADR-129-content-addressed-reuse-attestation.md`.
+
 ## Related
 
 - **Specs:** `docs/superpowers/specs/2026-10-18-compute-contract-hf-campaigns-design.md`
 - **Plans:** `docs/superpowers/plans/2026-10-18-compute-contract-hf-campaigns-plan.md`
 - **ADRs:** supersedes in part ADR-122 and ADR-123 (the launch path and the per-trainer phase flags);
-  builds on ADR-037, ADR-052, ADR-056, ADR-088, ADR-123 Amendment B, ADR-126.
+  builds on ADR-037, ADR-052, ADR-056, ADR-088, ADR-123 Amendment B, ADR-126; amended by ADR-129.

@@ -546,6 +546,14 @@ evidence for why the re-run was necessary.
   empty, since 4.66.0 touched only `causal/matching.py`. The flag fires correctly and was left
   firing rather than silenced by a cosmetic rebuild.
 
+## Amendment — ADR-129 (2026-10-22)
+
+The clean-tree / `run_tree_dirty` discipline this ADR established for artifact-writing drivers is satisfied by
+ADR-129 adoption: `adopt` reuses an attested generation by TOKEN EQUALITY at a clean HEAD (`adoption_refusals`),
+and stamps `run_tree_dirty` from the attesting job's provenance. Token equality at a clean HEAD is the clean-tree
+split — the adopting checkout need not be the campaign commit. See
+`docs/superpowers/adrs/ADR-129-content-addressed-reuse-attestation.md`.
+
 ## References
 
 Spec: `docs/superpowers/specs/2026-07-12-tf19-gkdv-regate-and-v1-design.md`. Le et al.

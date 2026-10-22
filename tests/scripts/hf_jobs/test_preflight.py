@@ -104,3 +104,28 @@ def test_ref_check_requires_head_pushed_and_green():
         return type("R", (), {"returncode": 0, "stdout": out.get(key, ""), "stderr": ""})()
 
     assert P.check_ref(SHA, run=run).ok
+
+
+def test_check_concurrency_warns_above_the_measured_peak(tmp_path):
+    import json
+
+    from scripts.hf_jobs import preflight
+
+    (tmp_path / "cycle1.json").write_text(json.dumps({"max_concurrent": 18}))
+    hi = preflight.check_concurrency(20, tmp_path.glob("*.json"), api=object())
+    assert hi.ok and hi.flags and "18" in hi.detail  # a warning, never a refusal (R3)
+    lo = preflight.check_concurrency(10, tmp_path.glob("*.json"), api=object())
+    assert lo.ok and not lo.flags
+    none = preflight.check_concurrency(20, [], api=object())
+    assert none.ok and "no committed concurrency measurement" in none.detail
+
+
+def test_peak_concurrency_counts_overlapping_windows():
+    from scripts.hf_jobs.preflight import peak_concurrency
+
+    jobs = [
+        {"started_at": "2026-10-21T10:00:00+00:00", "finished_at": "2026-10-21T10:30:00+00:00"},
+        {"started_at": "2026-10-21T10:10:00+00:00", "finished_at": "2026-10-21T10:40:00+00:00"},
+        {"started_at": "2026-10-21T10:50:00+00:00", "finished_at": "2026-10-21T11:00:00+00:00"},
+    ]
+    assert peak_concurrency(jobs) == 2

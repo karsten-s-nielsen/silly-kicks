@@ -117,3 +117,34 @@ def test_median_startup_is_read_from_the_committed_summaries(tmp_path):
     (tmp_path / "b.json").write_text(json.dumps({"stages": [{"startup_s": 40.0}, {"startup_s": 220.0}]}))
     assert median_startup_s(tmp_path.glob("*.json")) == 100.0
     assert median_startup_s([]) is None
+
+
+def test_two_actions_with_the_same_n_and_a_retry_never_share_a_file(tmp_path):
+    from scripts._stages import LocalStore
+    from scripts.hf_jobs import ledger, phases
+
+    st = LocalStore(tmp_path)
+    labels = ["g.default.extract.0of3.20261021T143000Z_aaaaaaaa", "g.default.extract.0of3.20261021T150000Z_bbbbbbbb"]
+    for label, attempt, key in (
+        (labels[0], "20261021T143001Z_0001", "u1"),
+        (labels[0], "20261021T143500Z_0002", "u2"),
+        (labels[1], "20261021T150001Z_0003", "u3"),
+    ):
+        rel = phases.cost_rel("g", "extract", "tok", label, attempt)
+        row = {key: {"outcome": "done", "wall_s": 1.0, "started_ns": 1, "finished_ns": 2}}
+        st.write_bytes(rel, json.dumps(row).encode())
+    got = ledger.cost_aggregates(st, "g", "extract", "tok")
+    assert sorted(got) == ["u1", "u2", "u3"]
+    assert len(list((tmp_path / "_ledger/g/extract/tok/_costs").iterdir())) == 3
+
+
+def test_job_startups_reads_an_old_job_record_without_an_action_label():
+    import datetime
+
+    from scripts.hf_jobs import ledger
+
+    iso = lambda t: datetime.datetime.fromtimestamp(t, tz=datetime.timezone.utc).isoformat()  # noqa: E731
+    labels = {"job": "g", "variant": "v", "stage": "cv", "shard": "0of1"}
+    job = {"labels": labels, "started_at": iso(100), "finished_at": iso(900)}
+    rec = {"job_label": "g.v.cv.0of1", "started_ns": int(160e9)}
+    assert ledger.job_startups([job], [rec]) == [60.0]

@@ -43,3 +43,7 @@ silly_kicks/win_probability/weights/SHA256SUMS binary
 # the digest was computed on a CRLF working copy and ubuntu read LF. Same reason as the three
 # model-artifact pins above; recorded because this is now the fourth time.
 tests/datasets/statsbomb/three-sixty/*.json binary
+
+# ADR-129 image inputs: pin LF so the derived image tag matches on a Windows checkout and the LF CI/GHCR build.
+uv.lock text eol=lf
+scripts/hf_jobs/image/Dockerfile text eol=lf

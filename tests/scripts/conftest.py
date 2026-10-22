@@ -5,6 +5,7 @@ pyproject sets ``pythonpath = [".", "tests"]``; the script modules (``_corpus``,
 the global config is untouched.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,16 @@ import pytest
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _enable_stage_checks():
+    """ADR-129 S5.9: the toy / parity runs under this directory exercise the fail-closed runtime checks, so a
+    missing ``data_files`` or a stage-module leak fails in CI. Only an executor subprocess running a COMPLIANT
+    pipeline (in the closure lock) installs them; a toy/ad-hoc pipeline absent from the lock is skipped."""
+    os.environ.setdefault("SILLY_KICKS_STAGE_CHECKS", "1")
+    yield
+
 
 _GK = 22  # goalkick type_id
 

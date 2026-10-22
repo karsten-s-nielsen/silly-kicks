@@ -1,0 +1,10 @@
+{
+  "tag": "env-5364e6941120",
+  "inputs_sha256": "5364e6941120fb5c46cda984a0e3e2343f2f31e29035987aaf4a66687680e3cd",
+  "registry_ref": "ghcr.io/karsten-s-nielsen/silly-kicks-job",
+  "digest": null,
+  "built_at": null,
+  "startup_s": null,
+  "startup_samples": null,
+  "startup_jobs": null
+}

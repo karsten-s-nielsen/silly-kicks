@@ -79,6 +79,28 @@ def _inner_init(cap_bytes: int | None, backend: str) -> None:  # pragma: no cove
         resource.setrlimit(resource.RLIMIT_AS, (int(cap_bytes), int(cap_bytes)))  # type: ignore[attr-defined]
 
 
+def _inner_init_checked(cap_bytes, backend, stage_checks) -> None:  # pragma: no cover - runs in pool children
+    """The ADR-129 spawn initializer: install the parent stage's runtime checks (fail closed, S5.9) FIRST, then
+    the existing memory-cap init. The child inherits ``HF_HUB_OFFLINE=1`` from the worker's environment."""
+    from scripts.hf_jobs.stage_checks import install_stage_checks
+
+    key, entry = stage_checks
+    install_stage_checks(key, root=REPO_ROOT, entry=entry)
+    _inner_init(cap_bytes, backend)
+
+
+def _inner_task_checked(fn, stage_key, args):  # pragma: no cover - runs in pool children
+    """Run an inner task, then assert the child loaded no repo module outside the closure (CCTP-IMPL-16). An
+    ``exec_module`` load raises no ``import`` audit event, so this after-task module check -- run IN THE CHILD,
+    where the parent's `sys.modules` check cannot reach -- is the gate. An ordinary ``import`` of a non-closure
+    module is already refused by the child's installed audit hook, before the task returns."""
+    out = fn(*args)
+    from scripts.hf_jobs.stage_checks import check_modules
+
+    check_modules(stage_key)
+    return out
+
+
 class InnerPool:
     """The pool an ``inner_parallel`` unit maps its inner keys over (spec 5.2: no pool inside a pool).
 
@@ -88,31 +110,49 @@ class InnerPool:
     ``fn`` must be a module-level function (pickled by reference).
     """
 
-    def __init__(self, workers: int, *, cap_bytes: int | None = None, backend: str = "none") -> None:
+    def __init__(self, workers: int, *, cap_bytes: int | None = None, backend: str = "none", stage_checks=None) -> None:
         self.workers = max(1, int(workers))
         self._cap, self._backend = cap_bytes, backend
+        self._stage_checks = stage_checks  # (stage_key, lock entry) -> the children install the ADR-129 checks
         self._ex: concurrent.futures.ProcessPoolExecutor | None = None
         self._log: list[str] = []
 
     def _executor(self) -> concurrent.futures.ProcessPoolExecutor:
         if self._ex is None:
-            self._ex = concurrent.futures.ProcessPoolExecutor(
-                max_workers=self.workers,
-                mp_context=multiprocessing.get_context("spawn"),
-                initializer=_inner_init,
-                initargs=(self._cap, self._backend),
-            )
+            spawn = multiprocessing.get_context("spawn")
+            if self._stage_checks is not None:
+                self._ex = concurrent.futures.ProcessPoolExecutor(
+                    max_workers=self.workers,
+                    mp_context=spawn,
+                    initializer=_inner_init_checked,
+                    initargs=(self._cap, self._backend, self._stage_checks),
+                )
+            else:
+                self._ex = concurrent.futures.ProcessPoolExecutor(
+                    max_workers=self.workers,
+                    mp_context=spawn,
+                    initializer=_inner_init,
+                    initargs=(self._cap, self._backend),
+                )
         return self._ex
 
     def map_keyed(self, fn: Callable[..., Any], items: Mapping[str, tuple]) -> dict[str, Any]:
         out: dict[str, Any] = {}
         if self.workers == 1:
+            # The inner tasks run in THIS process (the unit worker); the worker's after-unit `check_modules`
+            # (run_unit `post_work`) covers them, so no per-task wrapper is needed (CCTP-IMPL-16).
             for k in sorted(items):
                 out[k] = fn(*items[k])
                 self._log.append(k)
             return out
         ex = self._executor()
-        futures = {ex.submit(fn, *args): k for k, args in items.items()}
+        if self._stage_checks is not None:
+            # Each child runs `check_modules` after its task: an `exec_module` load in a CHILD is invisible to
+            # the parent worker's module check, so the gate must run where the load happened (CCTP-IMPL-16).
+            key = self._stage_checks[0]
+            futures = {ex.submit(_inner_task_checked, fn, key, args): k for k, args in items.items()}
+        else:
+            futures = {ex.submit(fn, *args): k for k, args in items.items()}
         for fut in concurrent.futures.as_completed(futures):
             k = futures[fut]
             out[k] = fut.result()
@@ -271,7 +311,9 @@ class LocalExecutor:
         try:
             (tmp / "ctx.json").write_text(context_to_json(ctx), encoding="utf-8")
             cmd = [sys.executable, "-m", "scripts.hf_jobs.executor", *args, "--ctx", str(tmp / "ctx.json")]
-            rc = subprocess.run(cmd, env=deterministic_env(), cwd=REPO_ROOT, check=False).returncode  # noqa: S603
+            # HF_HUB_OFFLINE=1 (ADR-129): a stage process must not reach the Hub; declared hub_files are prefetched.
+            env = {**deterministic_env(), "HF_HUB_OFFLINE": "1"}
+            rc = subprocess.run(cmd, env=env, cwd=REPO_ROOT, check=False).returncode  # noqa: S603
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         if rc != 0:
@@ -296,7 +338,7 @@ class LocalExecutor:
                 raise ValueError(
                     f"{ctx.pipeline.name}/{name}: --shard-keys lists keys that are not units: {unknown[:5]}"
                 )
-            mine = sorted(set(keys))
+            mine = list(dict.fromkeys(keys))  # keep the planner's LPT order (longest first); dedup, no sort (S5.4)
         else:
             mine = shard_select(units, shard[0], shard[1])
         if not self.cfg.escalate:  # a deferred memory unit runs only in its escalation job (W=1, whole box)
@@ -312,12 +354,13 @@ class LocalExecutor:
 
         states = unit_states(ctx, st, keys, verify=True)  # INV-3: a resume re-hashes before it skips
         pending = [k for k in keys if states[k] in ("pending", "failed")]
-        relaunched, order, w = 0, (), 0
+        relaunched, order, w, rows = 0, (), 0, []
         if pending:
             w = 1 if st.inner_parallel else max(1, min(workers, len(pending)))
             if self.cfg.peak_rss_bytes and not st.inner_parallel:
                 w = min(w, size_workers(self.cfg.peak_rss_bytes, self._ram(), self._cpus(), self.cfg.headroom_bytes))
-            relaunched, order = self._dispatch(ctx, st, pending, w, inner if st.inner_parallel else 1)
+            relaunched, order, rows = self._dispatch(ctx, st, pending, w, inner if st.inner_parallel else 1)
+        self._write_cost_aggregate(ctx, st, order, rows)
         final = unit_states(ctx, st, keys, verify=False)
         deferred = deferred_memory_units(ctx, st, keys)  # waiting for escalation: not a stage failure yet
         n_failed = sum(v == "failed" and k not in deferred for k, v in final.items())
@@ -338,6 +381,22 @@ class LocalExecutor:
             )
         return report
 
+    def _write_cost_aggregate(self, ctx, st, order, rows: list[dict]) -> None:
+        """ONE per-job cost aggregate for this job's units of this stage (S5.11): unit key -> cost fields, so
+        `live_history` reads one file per job, not every unit record. A no-op outside a job (no identity) or
+        when this job ran no unit of the stage (a resume whose units were all already done)."""
+        from scripts._stages import _canon_json
+        from scripts.hf_jobs import phases
+
+        ident = phases.identity()
+        if ident is None or not order:
+            return
+        fields = ("outcome", "wall_s", "peak_rss_bytes", "started_ns", "finished_ns", "worker", "inner_workers")
+        agg = {r["key"]: {k: r.get(k) for k in fields} for r in rows}
+        ctx.store.write_bytes(
+            phases.cost_rel(ctx.pipeline.name, st.name, ctx.tokens[st.name], *ident), _canon_json(agg)
+        )
+
     def _check_failure_rule(self, st, outdir: pathlib.Path, procs) -> None:
         rows = _read_outcomes(outdir)
         failed = [r for r in rows if r["outcome"] == "failed"]
@@ -350,7 +409,9 @@ class LocalExecutor:
             _terminate(procs)
             raise StageFailedError(f"{st.name}: the first {st.abort_first_k} completed units all failed (systematic)")
 
-    def _dispatch(self, ctx, st, pending: list[str], workers: int, inner: int) -> tuple[int, tuple[str, ...]]:
+    def _dispatch(
+        self, ctx, st, pending: list[str], workers: int, inner: int
+    ) -> tuple[int, tuple[str, ...], list[dict]]:
         from scripts._mem_cap import detect_backend, kill_tree, preflight, wrap
         from scripts._parallel_launch import should_launch
         from scripts._stages import context_to_json, unit_states
@@ -368,7 +429,8 @@ class LocalExecutor:
             cap = self.cfg.cap_bytes
             if cap:
                 preflight(backend, cap_bytes=cap)
-            env = deterministic_env()
+            # HF_HUB_OFFLINE=1 (ADR-129): every worker starts offline; declared hub_files are prefetched.
+            env = {**deterministic_env(), "HF_HUB_OFFLINE": "1"}
 
             def launch(wid: str) -> None:
                 argv = [
@@ -452,8 +514,9 @@ class LocalExecutor:
                     else:
                         slots.clear()
             self._check_failure_rule(st, outdir, {})
-            order = tuple(r["key"] for r in _read_outcomes(outdir))
-            return relaunched, order
+            rows = _read_outcomes(outdir)  # read before the finally removes the temp dir (S5.11 aggregate)
+            order = tuple(r["key"] for r in rows)
+            return relaunched, order, rows
         finally:
             _terminate(procs)
             shutil.rmtree(tmp, ignore_errors=True)
@@ -556,33 +619,74 @@ def worker_main(argv: list[str]) -> int:
     ap.add_argument("--mem-backend", default="none")
     ap.add_argument("--cap-bytes", type=int, default=None)
     a = ap.parse_args(argv)
-    from scripts._stages import ItemStage, context_from_json, run_unit
+    from scripts._stages import ItemStage, run_unit, stage_context_from_json
 
-    ctx = context_from_json(pathlib.Path(a.ctx).read_text(encoding="utf-8"))
-    st = ctx.pipeline.stage(a.stage)
+    ctx, st = stage_context_from_json(pathlib.Path(a.ctx).read_text(encoding="utf-8"), a.stage)
+    stage_key = f"{ctx.pipeline.name}/{st.name}"
+    checks = _install_checks_if_active(ctx, stage_key)  # (key, entry) when the ADR-129 checks are active, else None
     pending = json.loads(pathlib.Path(a.pending).read_text(encoding="utf-8"))
     refs = st.ref_map(ctx) if isinstance(st, ItemStage) else {}
-    pool = InnerPool(a.inner_workers, cap_bytes=a.cap_bytes, backend=a.mem_backend) if st.inner_parallel else None
+    pool = (
+        InnerPool(a.inner_workers, cap_bytes=a.cap_bytes, backend=a.mem_backend, stage_checks=checks)
+        if st.inner_parallel
+        else None
+    )
     outdir = pathlib.Path(a.outcomes)
     log = outdir / f"{a.worker_id}.jsonl"
     claims = pathlib.Path(a.claims)
     decided: dict = {}
+    post_work = None
+    if checks is not None:
+        from scripts.hf_jobs.stage_checks import check_modules
+
+        post_work = lambda: check_modules(stage_key)  # noqa: E731 -- gates the write (CCTP-IMPL-16)
     try:
         for key in pending:
             if _worker_should_stop(st, outdir, decided):
                 break
             if not _claim(claims, key, a.worker_id):
                 continue
-            outcome = run_unit(ctx, st, key, worker=a.worker_id, pool=pool, ref=refs.get(key))
+            outcome, record = run_unit(
+                ctx, st, key, worker=a.worker_id, pool=pool, ref=refs.get(key), post_work=post_work
+            )
             if outcome == "failed":
                 (outdir / _FAILED_DIR).mkdir(exist_ok=True)
                 (outdir / _FAILED_DIR / key).touch()
-            with open(log, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"key": key, "outcome": outcome, "finished_ns": time.time_ns()}) + "\n")
+            with open(log, "a", encoding="utf-8") as fh:  # the full ledger record -> the per-job cost aggregate (S5.11)
+                fh.write(json.dumps(record) + "\n")
     finally:
         if pool is not None:
             pool.shutdown()
+    _debug_modules()
     return 0
+
+
+def _install_checks_if_active(ctx, stage_key: str) -> tuple[str, dict] | None:
+    """Install the ADR-129 runtime checks (S5.9) when the tree is clean, in an HF job, or the CI toy flag
+    ``SILLY_KICKS_STAGE_CHECKS=1`` is set. Returns ``(stage_key, lock entry)`` for the inner pool, or None (a
+    toy/test pipeline absent from the lock is not compliant: no closure to enforce)."""
+    active = (
+        ctx.prov.get("tree_state") == "clean"
+        or bool(os.environ.get("SILLY_KICKS_IN_HF_JOB"))
+        or os.environ.get("SILLY_KICKS_STAGE_CHECKS") == "1"
+    )
+    if not active:
+        return None
+    from scripts.hf_jobs.closures import load_lock
+    from scripts.hf_jobs.stage_checks import install_stage_checks
+
+    if ctx.data_root is not None:
+        os.environ["SILLY_KICKS_DATA_ROOT"] = str(ctx.data_root)  # the audit hook treats it as a dataset root
+    entry = load_lock().get(stage_key)
+    if entry is None:
+        return None
+    install_stage_checks(stage_key, root=REPO_ROOT, entry=entry)
+    return (stage_key, entry)
+
+
+def _debug_modules() -> None:
+    if os.environ.get("SILLY_KICKS_DEBUG_MODULES"):
+        print("MODULES: " + " ".join(sorted(sys.modules)))
 
 
 def reduce_main(argv: list[str]) -> int:
@@ -590,14 +694,19 @@ def reduce_main(argv: list[str]) -> int:
     ap.add_argument("--ctx", required=True)
     ap.add_argument("--stage", required=True)
     a = ap.parse_args(argv)
-    from scripts._stages import StageIncompleteError, context_from_json, reduce_stage
+    from scripts._stages import StageIncompleteError, reduce_stage, stage_context_from_json
 
-    ctx = context_from_json(pathlib.Path(a.ctx).read_text(encoding="utf-8"))
+    ctx, _st = stage_context_from_json(pathlib.Path(a.ctx).read_text(encoding="utf-8"), a.stage)
+    _install_checks_if_active(ctx, f"{ctx.pipeline.name}/{a.stage}")
+    from scripts.hf_jobs.phases import publish_reduce
+
+    publish_reduce(ctx.store)  # a separate reduce job marks itself, so its ERROR is not read as infra (IMPL-11)
     try:
         reduce_stage(ctx, a.stage)
     except StageIncompleteError as exc:
         print(f"STAGE FAILED: {exc}", file=sys.stderr)
         return 3
+    _debug_modules()
     return 0
 
 

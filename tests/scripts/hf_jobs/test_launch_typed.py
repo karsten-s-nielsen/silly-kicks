@@ -37,7 +37,6 @@ def _spec(**kw):
         timeout_s=3600,
         attempts=3,
         datasets=(L.DatasetMount("tc3", "silly-kicks/hf-refit-tc3", "rev1", "mount", 4),),
-        extras=(),
     )
     base.update(kw)
     return L.JobSpec(**base)
@@ -137,11 +136,13 @@ def test_job_command_checks_out_the_exact_commit_and_syncs_frozen():
     script = cmd[2]
     assert f"git fetch -q --depth 1 origin {SHA}" in script
     assert f'test "$(git rev-parse HEAD)" = "{SHA}"' in script
-    assert "--require-hashes" in script and L.UV_REQUIREMENT in script
-    assert "uv sync --frozen" in script and "--group hfjobs" in script and "--extra train" in script
+    # ADR-129 S5.12: the prebuilt environment is CHECKED, never installed.
+    assert "pip install" not in script and "--require-hashes" not in script
+    assert "uv sync --frozen --check" in script and "--group hfjobs" in script and "--extra train" in script
+    assert "phases mark after_env_check" in script
     run = script.splitlines()[-1]
     argv = shlex.split(run)
-    assert argv[:3] == [".venv/bin/python", "-m", "scripts.train_ghost_gk"]
+    assert argv[:3] == ["/env/.venv/bin/python", "-m", "scripts.train_ghost_gk"]
     assert argv[argv.index("--stages") + 1] == "extract" and argv[argv.index("--shard") + 1] == "1/4"
     assert argv[argv.index("--store") + 1] == "/scratch/cycle1-4444444-ghost_gk-owner"
     assert argv[argv.index("--data-root") + 1] == "/data"
@@ -226,7 +227,6 @@ def test_the_job_script_is_valid_bash():
             L.DatasetMount("probe", "silly-kicks/hf-refit-probe", "rev2", "download"),
             L.DatasetMount("sb_open", "statsbomb/open-data", "4b73468", "open"),
         ),
-        extras=("xgboost",),
     )
     r = subprocess.run([bash, "-n", "-c", L.job_command(s)[2]], capture_output=True, text=True)  # noqa: S603
     assert r.returncode == 0, r.stderr
@@ -237,3 +237,30 @@ def test_an_lpt_part_runs_its_keys_without_a_round_robin_shard():
     argv = shlex.split(L.job_command(s)[2].splitlines()[-1])
     assert argv[argv.index("--shard-keys") + 1].endswith("1of4.json") and "--shard" not in argv
     assert L.labels_for(s)["shard"] == "1of4"
+
+
+def test_label_of_appends_the_action_and_tolerates_an_old_record():
+    from scripts.hf_jobs.launch import label_of, parse_stage_label
+
+    old = {"job": "g", "variant": "default", "stage": "cv", "shard": "0of5"}
+    assert label_of(old) == "g.default.cv.0of5"  # every Cycle 1 job record (spec r10, B R9-01)
+    assert label_of({**old, "action": "20261021T143000Z_1a2b3c4d"}) == "g.default.cv.0of5.20261021T143000Z_1a2b3c4d"
+    assert parse_stage_label("cache-cv") == (("cache", "cv"), None)
+    assert parse_stage_label("cache-cv__20261021T143000Z_1a2b3c4d") == (("cache", "cv"), "20261021T143000Z_1a2b3c4d")
+
+
+def test_the_job_command_exports_a_fresh_attempt_id_and_marks_phases():
+    from scripts.hf_jobs import launch
+
+    cmd = launch.job_command(_spec())[2]
+    assert "SILLY_KICKS_ATTEMPT_ID" in cmd and "date -u +%Y%m%dT%H%M%SZ" in cmd
+    for phase in ("script_start", "after_fetch"):  # `after_env_check` arrives with the image check (Task 18)
+        assert f"phases mark {phase}" in cmd
+
+
+def test_every_job_sets_the_store_read_cap():
+    from scripts._dataset_reads import STORE_READ_CAP_ENV
+    from scripts.hf_jobs import datasets, launch
+
+    env = launch.job_env(_spec())  # the file's existing JobSpec helper
+    assert env[STORE_READ_CAP_ENV] == str(datasets.store_settings().read_concurrency)

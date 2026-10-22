@@ -61,6 +61,11 @@ class Artifact:
     mirror_of: str | None = None
     hub_class: str | None = None
     hub_role: str | None = None
+    #: ADR-129 adoption provenance (written to ``observed.json`` by `adopt`, never to the human manifest; the
+    #: fields exist on the dataclass so a future manifest may carry them). ``adopted_at_commit`` is the clean
+    #: HEAD the reuse landed at; ``attested_by`` is the oldest ancestor commit that attested the generation.
+    adopted_at_commit: str | None = None
+    attested_by: str | None = None
     expect: Mapping[str, Any] = dataclasses.field(default_factory=dict)
 
     @property

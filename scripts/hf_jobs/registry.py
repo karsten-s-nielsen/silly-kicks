@@ -39,7 +39,9 @@ class VariantBuild:
 class TrainerSpec:
     name: str  # "win_probability"
     module: str  # "scripts.train_win_probability" (run via python -m; NEVER the file path)
-    extras: tuple[str, ...]  # extra pip args beyond ".[train]" (e.g. ("statsbombpy",))
+    extras: tuple[str, ...]  # a trainer's declared extra need (e.g. ("statsbombpy",)); the ADR-129 image holds it
+    # via `--group hfjobs` (image.GROUP_PROVIDED), NOT `--extra` -- uv rejects an undefined extra. Metadata +
+    # the image-coverage invariant (test_image_lock); no longer a JobSpec field.
     base_args: tuple[str, ...]  # trainer args shared across every variant
     builds: tuple[VariantBuild, ...]  # one per committed variant (>=1)
     primary_metric: str  # the metric the head-to-head scorer EMITS for both models

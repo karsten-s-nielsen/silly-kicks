@@ -47,8 +47,18 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             positioning = container "silly_kicks.positioning" "TF-56 prescriptive positioning optimiser: SA solver (optimise_positions) for the best REACHABLE shape + measured positioning_gap = threat(actual) - threat(optimum). compute_*; xt injected." "Python" "Library"
             coordination = container "silly_kicks.coordination" "TF-58 team-coordination dynamics: relative phase, cross-correlation, vector coding, spectral, cluster phase, relative stretch between the two teams; per-segment surrogate baselines. ADR-110." "Python" "Library"
 
-            stageContract = container "scripts/_stages + hf_jobs.executor" "ADR-128 stage/unit contract: PIPELINE DAGs of keyed single-threaded units, checksum-verified resume, W capped workers per job, byte-identical for any (W, N)." "Python" "Library"
-            campaignCtl = container "scripts/hf_jobs campaign" "Stateless campaign controller: preflight, profile, planner, typed launcher, ledger, adopt, publish; drives HF Jobs from committed campaign files; artifact manifest." "Python" "Library"
+            stageContract = container "scripts/_stages + hf_jobs.executor" "ADR-128/129 stage/unit contract: PIPELINE DAGs of keyed single-threaded units, checksum-verified resume, byte-identical for any (W,N); commit-free outputs stamped at adopt; closure identity." "Python" "Library"
+            campaignCtl = container "scripts/hf_jobs campaign" "Stateless campaign controller (ADR-128/129): content-addressed stores, planner, typed launcher, determinism attestation + canary reuse, adopt/publish; drives HF Jobs from committed campaign files." "Python" "Library" {
+                controller = component "campaign" "Stateless controller: next_actions scheduler, content-addressed run keys, attested-stage skip + canary scheduling, predictions/bars." "campaign.py"
+                launcher = component "launch" "Typed run_job launcher: job_command checks the prebuilt image (no install), read-through canary args, labels, volumes." "launch.py"
+                store = component "store" "Read-only bucket store (BucketStore) + CanaryReadThroughStore + quarantine_generation; the controller's only writes (record prefixes)." "store.py"
+                image = component "image" "Prebuilt job image: derived tag from uv.lock + Dockerfile + base digest, image.lock.json, CHECK_COMMAND, registry/startup probes." "image.py"
+                adoptMod = component "adopt" "retrieve / verify (main-vs-replica attestation, canary compare, quarantine) / adopt (token-equality reuse at a clean HEAD, provenance stamping) / publish." "adopt.py"
+                preflightMod = component "preflight" "Six no-spend checks (ref, uv-lock, API, datasets, plans, concurrency) + check_image (tag, startup_s, GHCR resolve, attestation)." "preflight.py"
+                planner = component "planner" "LPT unit planning, ideal_stage_wall, plan_reduce, irreducible floor; the scheduler's cost model." "planner.py"
+                ledger = component "ledger" "Unit/reduce cost aggregates, job startups, summarize (with S7.2 bars), committed-history load." "ledger.py"
+                closures = component "closures" "Per-stage closure identity (closures.lock.json): the content-addressed reuse key replacing the campaign commit." "closures.py"
+            }
             // Phase-2 agent-support server (shipped). Opt-in [mcp] extra; the core lib never imports it.
             mcp = container "silly_kicks.mcp" "Read-only tripwire MCP server (FastMCP, stdio): check_orientation / diagnose_provider / validate_construct_validity — binds pure read-only seams / committed memos, never run()/main()." "Python (optional [mcp] extra)" "Library"
         }
@@ -194,6 +204,11 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         }
 
         container sillyKicks "Containers" {
+            include *
+            autoLayout
+        }
+
+        component campaignCtl "Component_campaignCtl" {
             include *
             autoLayout
         }

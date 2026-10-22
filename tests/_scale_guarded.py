@@ -85,6 +85,11 @@ SCALE_GUARDED: dict[str, str] = {
     # growth fixture is a zigzag whose candidate count scales with the frame count, so a per-candidate
     # `frames[frames.frame_id==fid]` rescan would be O(candidates*frames) == quadratic; group_rows keeps it linear.
     "silly_kicks.tracking._ball_contact.detect_ball_contacts": "test_detect_ball_contacts_is_subquadratic",
+    # ADR-128 Cycle 1b (S5.1, INV-11): reduce_stage lists each generation ONCE and reads each result file
+    # ONCE (names + read_bytes), so its store-access count is linear in the unit count; the growth fixture
+    # scales the unit dimension so the Cycle 1 per-unit re-listing (O(units^2)) would be caught. This entry
+    # is NOT a group_rows caller (the registry is a SUPERSET of that set); its guard counts store calls.
+    "scripts._stages.reduce_stage": "test_reduce_stage_store_access_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.

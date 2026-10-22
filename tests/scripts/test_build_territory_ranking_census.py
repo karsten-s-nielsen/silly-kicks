@@ -469,9 +469,9 @@ def _install_broad_corpus_stubs(monkeypatch, *, competitions, matches_per_compet
     """Stub the open-data listing + loading, the fit and the scoring; return the listed competitions.
 
     The refs stage lists through `list_open_data_refs` and each match loads through `load_open_data_match`
-    (both looked up at call time, so the module stubs reach the stage functions)."""
-    import build_territory_ranking_census as census
-
+    (both looked up at call time, so the module stubs reach the stage functions). The fit/score closures
+    live in ``scripts._census_stages`` (ADR-129), so the fit/model/score stubs patch THAT module."""
+    import scripts._census_stages as cstages
     import scripts._sb_open_data as sbmod
     from scripts._sb_open_data import OpenDataRef
 
@@ -490,8 +490,8 @@ def _install_broad_corpus_stubs(monkeypatch, *, competitions, matches_per_compet
         sbmod, "load_open_data_match", lambda ref, cache_dir=None: _fake_match("statsbomb", ref.match_id)
     )
     # Fit is stubbed (a real xt fit needs full SPADL columns); this test pins the CORPUS WIRING.
-    monkeypatch.setattr(census, "_fit_disjoint_models", lambda fit_actions: (_FakeModel(), _FakeModel()))
-    monkeypatch.setattr(census, "_models", lambda ctx: ("XT", "CM"))
+    monkeypatch.setattr(cstages, "_fit_disjoint_models", lambda fit_actions: (_FakeModel(), _FakeModel()))
+    monkeypatch.setattr(cstages, "_models", lambda ctx: ("XT", "CM"))
 
     # Score each match into a tiny per-(defender, game, team) shard so the reduce has data to pool.
     def _fake_score(item, *, xt, completion_model):
@@ -506,7 +506,7 @@ def _install_broad_corpus_stubs(monkeypatch, *, competitions, matches_per_compet
             }
         )
 
-    monkeypatch.setattr(census, "_score_match", _fake_score)
+    monkeypatch.setattr(cstages, "_score_match", _fake_score)
     return listed
 
 

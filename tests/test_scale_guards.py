@@ -1250,3 +1250,74 @@ def test_cluster_surrogate_never_rescores_the_period_per_draw():
     assert few[0] == many[0] == 4  # 1 period x 2 teams x 2 axes -- not windows x draws
     assert many[1] > 0  # non-vacuity: the batched null actually ran
     assert few[1] == many[1]  # one kernel call per scored (window, team, axis), independent of the draw count
+
+
+# ============================ store-access growth adopters ============================
+import tempfile  # noqa: E402
+
+from scripts import _stages as _reduce_s  # noqa: E402
+
+
+class _EntryCountingStore(_reduce_s.LocalStore):
+    """Counts ENTRIES SCANNED, not calls (CCTP-IMPL-06): ``names`` adds the size of its listing, so a
+    per-unit re-listing of a size-n generation is O(n^2), which the call-count form could not see."""
+
+    n: dict  # declared for pyright (set via object.__setattr__ on the frozen base)
+
+    def __init__(self, root):
+        super().__init__(root)
+        object.__setattr__(self, "n", {"scanned": 0})
+
+    def names(self, rel_dir):
+        out = super().names(rel_dir)
+        self.n["scanned"] += len(out)  # the Cycle 1 defect listed ~n entries once PER unit
+        return out
+
+    def read_bytes(self, rel):
+        self.n["scanned"] += 1
+        return super().read_bytes(rel)
+
+
+def _reduce_toy(n, root):
+    st = _reduce_s.Stage(
+        name="a",
+        units=lambda c, _n=n: [_reduce_s.int_key(i) for i in range(_n)],
+        work=lambda k, ctx: pd.DataFrame({"game_id": [int(k)], "x": [float(k)]}),
+        reduce=lambda results, ctx: _reduce_s.combine_frames(list(results.values()), ids=("game_id",)),
+    )
+    pipe = _reduce_s.Pipeline(name="t", module="tests.scripts._toy_pipeline", stages=(st,))
+    store = _EntryCountingStore(root)
+    prov = {"commit": "c" * 40, "tree_state": "clean", "code_identity": "c" * 40}
+    ctx = _reduce_s.make_context(pipe, {}, prov, store=store, data_root=None)
+    for k in _reduce_s.sorted_units(ctx, st):
+        _reduce_s.run_unit(ctx, st, k, worker="w0")
+    store.n["scanned"] = 0
+    return ctx, store
+
+
+def test_reduce_stage_store_access_is_subquadratic():
+    # INV-11 (S5.1): a reduce lists each generation ONCE, so the entries it scans are linear in the unit
+    # count. The companion below proves the counter is NOT vacuous (it goes super-linear on a re-listing).
+    def measure(n: int) -> int:
+        with tempfile.TemporaryDirectory() as root:  # no mkdtemp leak (CCTP-IMPL-12)
+            ctx, store = _reduce_toy(n, root)
+            _reduce_s.reduce_stage(ctx, "a")
+            return store.n["scanned"]
+
+    assert_subquadratic_growth(measure, sizes=(50, 100, 200), label="reduce_stage")
+
+
+def test_a_per_unit_relisting_reduce_is_superlinear():
+    # Non-vacuity (CCTP-IMPL-06): the Cycle 1 pattern -- list the generation once PER unit -- scans O(n^2)
+    # entries, so the same guard FAILS on it. If this did not raise, the guard would be meaningless.
+    def measure(n: int) -> int:
+        with tempfile.TemporaryDirectory() as root:
+            ctx, store = _reduce_toy(n, root)
+            gen = ctx.generation("a")
+            for k in _reduce_s.sorted_units(ctx, ctx.pipeline.stage("a")):
+                store.names(gen)  # the defect: one full listing per unit
+                store.read_bytes(f"{gen}/{k}.parquet")
+            return store.n["scanned"]
+
+    with pytest.raises(AssertionError, match="super-linear"):
+        assert_subquadratic_growth(measure, sizes=(50, 100, 200), label="relisting")

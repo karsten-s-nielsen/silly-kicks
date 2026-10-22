@@ -32,10 +32,60 @@ NORMALIZED: tuple[str, ...] = ("metadata.json", "metrics.json")
 #: its payload lines only (the lines naming a `NORMALIZED` file are dropped); the payload files themselves
 #: are still compared byte for byte.
 SUMS = "SHA256SUMS"
+#: The provenance keys a COMMIT-FREE stage output must not carry (S5.10): every `PROVENANCE_KEYS` entry except
+#: ``generation``, which is a content-addressed token (not run-dependent) and stays in the output.
+RUN_DEPENDENT: tuple[str, ...] = tuple(k for k in PROVENANCE_KEYS if k != "generation")
 
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _strip_keys(doc: Any, keys: Sequence[str]) -> Any:
+    if isinstance(doc, Mapping):
+        return {k: _strip_keys(v, keys) for k, v in doc.items() if k not in keys}
+    if isinstance(doc, list):
+        return [_strip_keys(v, keys) for v in doc]
+    return doc
+
+
+def commit_free(files: Mapping[str, bytes]) -> dict[str, bytes]:
+    """A stage output's file set made COMMIT-FREE (S5.10): ``SHA256SUMS`` dropped and every `RUN_DEPENDENT`
+    provenance key removed from the `NORMALIZED` JSON files; ``generation`` is kept. The JSON is re-encoded
+    canonically (sorted keys, indent 2) so the output is deterministic (INV-1) whatever the writer's order.
+    ``adopt.stamp_provenance`` re-adds the provenance keys and writes `SUMS`. Idempotent."""
+    out: dict[str, bytes] = {}
+    for name, data in files.items():
+        if name == SUMS:
+            continue
+        if name in NORMALIZED:
+            doc = _strip_keys(json.loads(data.decode("utf-8")), RUN_DEPENDENT)
+            data = (json.dumps(doc, sort_keys=True, indent=2, allow_nan=True, default=str) + "\n").encode("utf-8")
+        out[name] = data
+    return out
+
+
+def write_sums(directory: str | Path) -> None:
+    """Write `SUMS` over every top-level file of ``directory`` (except `SUMS` itself): ``<sha256>  <name>``
+    lines, name-sorted, LF. The ONE SHA256SUMS writer (trainers via ``adopt`` and `adopt.stamp_provenance`)."""
+    d = Path(directory)
+    lines = [f"{_sha256(p.read_bytes())}  {p.name}" for p in sorted(d.iterdir()) if p.is_file() and p.name != SUMS]
+    (d / SUMS).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def verify_sums(directory: str | Path) -> bool:
+    """True when `SUMS` lists EXACTLY the directory's other top-level files and every listed sha256 matches."""
+    d = Path(directory)
+    sums = d / SUMS
+    if not sums.is_file():
+        return False
+    listed: dict[str, str] = {}
+    for line in sums.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            listed[parts[-1].lstrip("*")] = parts[0]
+    present = {p.name for p in d.iterdir() if p.is_file() and p.name != SUMS}
+    return set(listed) == present and all(_sha256((d / name).read_bytes()) == sha for name, sha in listed.items())
 
 
 def normalized_sums(data: bytes) -> bytes:

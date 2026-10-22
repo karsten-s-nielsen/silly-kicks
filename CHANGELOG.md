@@ -19,6 +19,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > bucket API); one stage at a time per instance; no result reuse across commits; no supported resume for a halted
 > stage or for a job that fails before its first unit; every job installs its environment.
 
+### Added (Cycle 1b, ADR-129)
+
+> Harness and tooling only: no library behaviour change and no retrain; no version bump. Spec
+> `docs/superpowers/specs/2026-10-21-campaign-throughput-design.md`; plan
+> `docs/superpowers/plans/2026-10-21-campaign-throughput-plan.md`.
+
+- **Content-addressed main store** (`campaign.run_key` → `{job}-{tier}`): a generation is named by its token, so
+  equal tokens share one generation across commits and campaigns; a replica (`-r<N>`) and a canary (`-canary`)
+  stay fresh. Per-stage closure identity (`closures.lock.json`) replaces the campaign commit and the
+  `cross_commit_version`.
+- **Determinism attestation** (`adopt.verify(with_replica=)`): a byte-identical main-vs-replica generation
+  (`generation_diff`, run-history excluded) writes `_attest/{stage}/{token}/{commit}.json` to the main store.
+- **Content-addressed reuse + canary** (`adopt.adopt(api=)`, `adoption_refusals`, `campaign._schedule_canary`,
+  `CanaryReadThroughStore`): an attested generation is reused at a later clean HEAD whose stage token still
+  equals it; a one-unit canary re-runs over the reused upstream and a byte mismatch quarantines it
+  (`BucketStore.quarantine_generation`) and records an `unsound_reuse` finding. Commit-free outputs are stamped
+  at adopt from the oldest ancestor attestation.
+- **Prebuilt job image** (`scripts/hf_jobs/image.py`, `image.lock.json`, `image/Dockerfile`,
+  `.github/workflows/job-image.yml`): the locked third-party environment is built ONCE to GHCR (owner-gated,
+  SHA-pinned workflow) and each job CHECKS it (`uv sync --frozen --check`) instead of installing it; the derived
+  tag is line-ending-normalized so it matches on a Windows checkout and the LF CI build. `preflight.check_image`
+  gates the tag, `startup_s`, GHCR resolve and build provenance.
+- **Linear reduce and cost history**, commit-free stage outputs, and S7.2 acceptance bars
+  (`campaign.compute_bars`, `BAR_THRESHOLDS`) written into the campaign summary.
+
 ### Added
 
 - **Stage/unit contract** (`scripts/_stages.py`): `Pipeline` / `Stage` / `ItemStage`, token-versioned

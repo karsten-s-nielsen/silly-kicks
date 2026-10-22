@@ -31,6 +31,34 @@ def unit_records(store, generation: str) -> list[dict]:
     return out
 
 
+def cost_aggregates(store, pipeline: str, stage: str, token: str) -> dict[str, dict]:
+    """Every job's per-stage cost aggregate merged by unit key (S5.11): one listing of ``_costs/``, one read
+    per file. For a unit in several files (a retry, a same-``n`` second grant) keep the row that finished
+    last. ``live_history`` reads these instead of every unit record."""
+    base = f"_ledger/{pipeline}/{stage}/{token}/_costs"
+    out: dict[str, dict] = {}
+    for name in sorted(store.names(base)):
+        raw = store.read_bytes(f"{base}/{name}")
+        if not raw:
+            continue
+        for key, row in json.loads(raw).items():
+            prev = out.get(key)
+            if prev is None or (row.get("finished_ns") or 0) >= (prev.get("finished_ns") or 0):
+                out[key] = row
+    return out
+
+
+def reduce_records(store, pipeline: str, stage: str, token: str) -> list[dict]:
+    """Every reduce ledger record of the stage (S5.2): one listing of ``_reduce/``, one read per file."""
+    base = f"_ledger/{pipeline}/{stage}/{token}/_reduce"
+    out: list[dict] = []
+    for name in sorted(store.names(base)):
+        raw = store.read_bytes(f"{base}/{name}")
+        if raw:
+            out.append(json.loads(raw))
+    return out
+
+
 def unit_cost(records: Iterable[Mapping]) -> UnitCost | None:
     done = [r for r in records if r.get("outcome") == "done" and r.get("wall_s") is not None]
     if not done:
@@ -54,13 +82,27 @@ def _iso(dt) -> str | None:
     return None if dt is None else dt.isoformat()
 
 
+def job_role(run_key: str) -> str:
+    """The store addressing role from a run key (ADR-129 S5.9): ``-canary`` -> canary, ``-r<N>`` -> replica,
+    else main. The S7.2 cost/determinism bars read this to exclude replica/canary jobs from the main-run total."""
+    import re
+
+    if run_key.endswith("-canary"):
+        return "canary"
+    if re.search(r"-r\d+$", run_key):
+        return "replica"
+    return "main"
+
+
 def job_record(info) -> dict:
     started, finished = getattr(info, "started_at", None), getattr(info, "finished_at", None)
     wall = (finished - started).total_seconds() if (started and finished) else None
     status = getattr(info, "status", None)
+    labels = dict(info.labels or {})
     return {
         "id": info.id,
-        "labels": dict(info.labels or {}),
+        "labels": labels,
+        "role": job_role(labels.get("run_key", "")),
         "stage": getattr(status, "stage", None),
         "message": getattr(status, "message", None),
         "created_at": _iso(getattr(info, "created_at", None)),
@@ -133,9 +175,16 @@ def median_startup_s(paths: Iterable[pathlib.Path]) -> float | None:
 
 
 def summarize(
-    *, campaign: str, campaign_sha256: str, prov: Mapping, stages: list[dict], jobs: list[dict], artifacts: list[dict]
+    *,
+    campaign: str,
+    campaign_sha256: str,
+    prov: Mapping,
+    stages: list[dict],
+    jobs: list[dict],
+    artifacts: list[dict],
+    bars: Mapping | None = None,
 ) -> dict:
-    return {
+    out = {
         "run_commit": prov["commit"],
         "run_tree_dirty": bool(prov.get("dirty", True)),
         "campaign": campaign,
@@ -145,6 +194,9 @@ def summarize(
         "jobs": jobs,
         "artifacts": artifacts,
     }
+    if bars is not None:
+        out["bars"] = dict(bars)  # S7.2 acceptance bars (Cycle 1b)
+    return out
 
 
 def write_summary(path, summary: Mapping) -> None:

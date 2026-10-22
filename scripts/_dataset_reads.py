@@ -32,6 +32,9 @@ from typing import IO
 
 #: In-job: the most concurrent whole-file reads from dataset mounts, across every worker of the job.
 READ_CAP_ENV = "SILLY_KICKS_DATASET_READ_CAP"
+#: In-job: the most concurrent reads from the bucket STORE mount, a gate SEPARATE from the dataset gate
+#: (ADR-128 Cycle 1b, S5.1). `launch.job_env` sets it in every job to `datasets.store_settings().read_concurrency`.
+STORE_READ_CAP_ENV = "SILLY_KICKS_STORE_READ_CAP"
 #: Where the slot lock files live (default: a fixed directory under the system temp directory).
 READ_GATE_DIR_ENV = "SILLY_KICKS_DATASET_READ_GATE_DIR"
 _POLL_S = 0.05
@@ -65,18 +68,30 @@ else:
         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
-def read_cap() -> int | None:
-    """The job's read cap, or None (no gate). A value that is not a positive integer is an error."""
-    raw = os.environ.get(READ_CAP_ENV, "").strip()
+def _cap(env: str, raw: str) -> int | None:
+    """The positive-integer cap parsed from ``raw`` (the value of ``env``), or None (no gate). A non-positive or
+    non-integer value is an error. The env READ happens at the caller with a literal/constant key, so the
+    ADR-129 env gate (``env_contract.env_reads``) can resolve it (S5.9); this helper only validates the value."""
+    raw = raw.strip()
     if not raw:
         return None
     try:
         cap = int(raw)
     except ValueError:
-        raise ValueError(f"{READ_CAP_ENV} must be a positive integer, got {raw!r}") from None
+        raise ValueError(f"{env} must be a positive integer, got {raw!r}") from None
     if cap < 1:
-        raise ValueError(f"{READ_CAP_ENV} must be a positive integer, got {raw!r}")
+        raise ValueError(f"{env} must be a positive integer, got {raw!r}")
     return cap
+
+
+def read_cap() -> int | None:
+    """The job's dataset-mount read cap, or None (no gate)."""
+    return _cap(READ_CAP_ENV, os.environ.get(READ_CAP_ENV, ""))
+
+
+def store_read_cap() -> int | None:
+    """The job's bucket-store read cap, or None (no gate)."""
+    return _cap(STORE_READ_CAP_ENV, os.environ.get(STORE_READ_CAP_ENV, ""))
 
 
 def _gate_dir() -> pathlib.Path:
@@ -87,41 +102,53 @@ def _gate_dir() -> pathlib.Path:
 def _acquire(gate: pathlib.Path, cap: int) -> IO[bytes]:
     while True:
         for i in range(cap):
-            fh = open(gate / f"slot-{i}.lock", "a+b")  # held open until `read_slot` releases the lock
+            fh = open(gate / f"slot-{i}.lock", "a+b")  # held open until the slot releases the lock
             if _try_lock(fh):
                 return fh
             fh.close()
         time.sleep(_POLL_S)
 
 
-_HELD = threading.local()
+#: One re-entrancy counter per gate name, so a held STORE slot never blocks a DATASET read and vice versa.
+_HELD = {"dataset": threading.local(), "store": threading.local()}
 
 
 @contextlib.contextmanager
-def read_slot() -> Iterator[None]:
-    """Hold one of the job's read slots for the body (a no-op when no cap is set). Every read of a
-    dataset-mount file runs inside one: a whole-file read (`read_bytes`) or a parquet footer read.
-    Re-entrant per thread: a read inside a held slot reuses it (a second slot would deadlock at cap 1)."""
-    cap = read_cap()
-    if cap is None or getattr(_HELD, "depth", 0):
-        _HELD.depth = getattr(_HELD, "depth", 0) + 1
+def _slot(kind: str, cap: int | None) -> Iterator[None]:
+    """Hold one of gate ``kind``'s slots for the body (a no-op when ``cap`` is None). Re-entrant per thread:
+    a read inside a held slot of the SAME gate reuses it (a second slot would deadlock at cap 1); a read of
+    the OTHER gate takes its own slot."""
+    held = _HELD[kind]
+    if cap is None or getattr(held, "depth", 0):
+        held.depth = getattr(held, "depth", 0) + 1
         try:
             yield
         finally:
-            _HELD.depth -= 1
+            held.depth -= 1
         return
-    gate = _gate_dir()
+    gate = _gate_dir() / kind
     gate.mkdir(parents=True, exist_ok=True)
-    held = _acquire(gate, cap)
-    _HELD.depth = 1
+    fh = _acquire(gate, cap)
+    held.depth = 1
     try:
         yield
     finally:
-        _HELD.depth = 0
+        held.depth = 0
         try:
-            _unlock(held)
+            _unlock(fh)
         finally:
-            held.close()
+            fh.close()
+
+
+def read_slot():
+    """One dataset-mount read slot (a no-op when no cap is set). Every read of a dataset-mount file runs
+    inside one: a whole-file read (`read_bytes`) or a parquet footer read."""
+    return _slot("dataset", read_cap())
+
+
+def store_read_slot():
+    """One store (bucket mount) read slot, a gate SEPARATE from the dataset gate (S5.1)."""
+    return _slot("store", store_read_cap())
 
 
 def read_bytes(path: str | os.PathLike) -> bytes:

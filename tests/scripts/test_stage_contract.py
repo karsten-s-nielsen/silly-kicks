@@ -60,10 +60,102 @@ def test_tokens_change_with_params_upstream_and_code_but_not_with_unrelated_para
     assert t1["a"] != t3["a"]
 
 
-def test_cross_commit_version_replaces_the_code_identity():
-    st = s.Stage(name="a", units=lambda c: ["x"], work=lambda k, c: 1, cross_commit_version="extract-v1")
-    p = _p(stages=(st,))
-    assert s.compute_tokens(p, {"x": 1}, "c1", None)[1] == s.compute_tokens(p, {"x": 1}, "c2", None)[1]
+def test_a_clean_tree_token_follows_the_closure_not_the_commit(tmp_path, monkeypatch):
+    """S5.9: the code field digests the stage's closure files; a commit that changes no closure file keeps it."""
+    from scripts.hf_jobs import closures
+
+    p = _p()
+    lock = {"t/a": {"modules": ["m/a.py"], "data": []}, "t/b": {"modules": ["m/b.py"], "data": []}}
+    (tmp_path / "m").mkdir()
+    (tmp_path / "m/a.py").write_text("A = 1\n")
+    (tmp_path / "m/b.py").write_text("B = 1\n")
+    (tmp_path / "uv.lock").write_text("lock\n")
+    monkeypatch.setattr(closures, "load_lock", lambda: lock)
+    ids = lambda: {  # noqa: E731
+        st.name: s.stage_code_identity(p, st, root=tmp_path, env_values={}, image="img@sha256:1", python="3.12.14")
+        for st in p.stages
+    }
+    before = ids()
+    (tmp_path / "m/b.py").write_text("B = 2\n")
+    # a real commit changes the file's mtime; bump it so `_closure_file_bytes` (cached by path+mtime+size) rereads
+    # -- a same-size rewrite within one filesystem tick would otherwise keep the cached bytes (test flake only).
+    import os
+
+    bumped = (tmp_path / "m/b.py").stat().st_mtime + 10
+    os.utime(tmp_path / "m/b.py", (bumped, bumped))
+    after = ids()
+    assert before["a"] == after["a"] and before["b"] != after["b"]
+    assert (
+        s.stage_code_identity(
+            p,
+            p.stage("a"),
+            root=tmp_path,
+            env_values={"SILLY_KICKS_DAS_FORCE_NUMPY": "1"},
+            image="img@sha256:1",
+            python="3.12.14",
+        )
+        != before["a"]
+    )
+
+
+def test_a_stage_absent_from_the_lock_keeps_the_commit_identity(tmp_path, monkeypatch):
+    from scripts.hf_jobs import closures
+
+    monkeypatch.setattr(closures, "load_lock", lambda: {})
+    ctx = _ctx(tmp_path)  # clean prov, pipeline "t" is in no lock
+    assert {ctx.token_inputs[n]["code"] for n in ("a", "b")} == {"c" * 40}
+    monkeypatch.setenv("SILLY_KICKS_IN_HF_JOB", "1")
+    monkeypatch.setattr(s, "_is_compliant", lambda name: True)
+    with pytest.raises(closures.ClosureViolationError, match="lock"):
+        _ctx(tmp_path / "job")
+
+
+def test_a_dirty_tree_keys_every_stage_on_the_tree_hash(tmp_path):
+    prov = {"commit": "c" * 40, "tree_state": "dirty", "code_identity": "dirty-abc"}
+    ctx = s.make_context(_p(), {"x": 1}, prov, store=s.LocalStore(tmp_path), data_root=None)
+    assert {ctx.token_inputs[n]["code"] for n in ("a", "b")} == {"dirty-abc"}
+
+
+def test_the_clean_tree_token_excludes_open_data_revision_but_keys_a_switch(monkeypatch):
+    """CCTP-IMPL-15/26: the clean-tree token is IDENTICAL on the local controller and the HF job -- it excludes
+    OPEN_DATA_REVISION (keyed via the dataset identity, so the controller/job divergence is gone) and uses the
+    fixed image Python -- yet a true output switch (GHOST_FORCE_NUMPY, ghost-KDE 1e-9 per ADR-076) keys it."""
+    import importlib
+
+    pipe = importlib.import_module("scripts.train_ghost_gk").PIPELINE
+    prov = {"commit": "c" * 40, "tree_state": "clean", "code_identity": "c" * 40}
+    monkeypatch.delenv("SILLY_KICKS_OPEN_DATA_REVISION", raising=False)
+    monkeypatch.delenv("SILLY_KICKS_GHOST_FORCE_NUMPY", raising=False)
+    base = s._clean_tree_stage_codes(pipe, prov)
+    assert base, "ghost_gk must be in the closure lock"
+    monkeypatch.setenv("SILLY_KICKS_OPEN_DATA_REVISION", "rev-x")
+    assert s._clean_tree_stage_codes(pipe, prov) == base  # excluded -> controller == job
+    monkeypatch.setenv("SILLY_KICKS_GHOST_FORCE_NUMPY", "1")
+    assert s._clean_tree_stage_codes(pipe, prov) != base  # a true output switch keys the token
+
+
+def test_the_controller_plan_token_equals_the_job_token_despite_a_shell_switch(monkeypatch):
+    """CCTP-IMPL-26: an output switch in the operator's shell must NOT move the controller's `--plan` token away
+    from the job's. `controller_plan_env` strips the switch, so the clean-tree token stays identical -- the
+    content-addressed generation matches between the controller and the job whatever the shell holds."""
+    import importlib
+    import os
+
+    from scripts.hf_jobs import env_contract as ec
+
+    pipe = importlib.import_module("scripts.train_ghost_gk").PIPELINE
+    prov = {"commit": "c" * 40, "tree_state": "clean", "code_identity": "c" * 40}
+    for name in ec.OUTPUT:
+        monkeypatch.delenv(name, raising=False)
+    base = dict(os.environ)  # a clean environment with no output switch (as `launch.job_env` gives the job)
+    job = s._clean_tree_stage_codes(pipe, prov)
+    assert job, "ghost_gk must be in the closure lock"
+    # the switch is load-bearing: set in the token-computing environment it MOVES the token
+    monkeypatch.setattr(os, "environ", {**base, "SILLY_KICKS_ASSERT_INVARIANTS": "1"})
+    assert s._clean_tree_stage_codes(pipe, prov) != job
+    # controller_plan_env strips it, so the controller's --plan token equals the job's
+    monkeypatch.setattr(os, "environ", ec.controller_plan_env({**base, "SILLY_KICKS_ASSERT_INVARIANTS": "1"}))
+    assert s._clean_tree_stage_codes(pipe, prov) == job
 
 
 def test_dataset_identity_enters_only_dataset_stages():
@@ -187,8 +279,8 @@ def test_a_failed_unit_is_recorded_not_raised_and_blocks_a_zero_tolerance_reduce
 
     st = s.Stage(name="a", units=lambda c: ["0000", "0001"], work=work)
     ctx = _ctx(tmp_path, _p(stages=(st,)))
-    assert s.run_unit(ctx, st, "0000", worker="w0") == "done"
-    assert s.run_unit(ctx, st, "0001", worker="w0") == "failed"
+    assert s.run_unit(ctx, st, "0000", worker="w0")[0] == "done"
+    assert s.run_unit(ctx, st, "0001", worker="w0")[0] == "failed"
     assert "bad item" in (tmp_path / ctx.generation("a") / "0001.failed.json").read_text()
     with pytest.raises(s.StageIncompleteError, match="failed"):
         s.reduce_stage(ctx, "a")
