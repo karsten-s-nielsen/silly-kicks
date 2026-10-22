@@ -360,9 +360,10 @@ def add_gradientsports_player_ids(
     # with NA team or NA jersey (ball rows) yields an NA key -> map miss -> pd.NA.
     frame_key = out["team_id"].astype("string").str.cat(out["jersey_number"].astype("string").str.strip(), sep="|")
     out["player_id"] = frame_key.map(pid_map).astype("Int64")
-    # `== True` maps True->True, False->False, NaN(miss)->False in one bool Series (no fillna
-    # object-downcast). E712 noqa matches the codebase idiom (e.g. tracking/_das.py).
-    out["is_goalkeeper"] = (frame_key.map(gk_map) == True).astype("bool")  # noqa: E712
+    # `isin([True])` maps True->True, False->False, miss->False in one plain bool Series. Not
+    # `== True`: from pandas 3.1 a string-key `.map` returns `bool[pyarrow]` and a miss stays
+    # <NA> through `==`, so `.astype("bool")` raises. `isin` never yields NA (pandas 2 and 3).
+    out["is_goalkeeper"] = frame_key.map(gk_map).isin([True]).astype("bool")
 
     matched = is_player & out["player_id"].notna()
     n_player = int(is_player.sum())
