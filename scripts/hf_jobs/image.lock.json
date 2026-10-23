@@ -2,9 +2,21 @@
   "tag": "env-5364e6941120",
   "inputs_sha256": "5364e6941120fb5c46cda984a0e3e2343f2f31e29035987aaf4a66687680e3cd",
   "registry_ref": "ghcr.io/karsten-s-nielsen/silly-kicks-job",
-  "digest": null,
-  "built_at": null,
-  "startup_s": null,
-  "startup_samples": null,
-  "startup_jobs": null
+  "digest": "sha256:3047962ff6fa40dce4a9645472bc521526ba67bae3e7000ac8fe85c6e12e39fb",
+  "built_at": "2026-10-23T01:36:54Z",
+  "startup_s": 8.297231197357178,
+  "startup_samples": [
+    8.283759593963623,
+    8.294364213943481,
+    8.297231197357178,
+    8.613734006881714,
+    8.616760492324829
+  ],
+  "startup_jobs": [
+    "6adabf30925af0e27d4f99cb",
+    "6adabf5a925af0e27d4f99da",
+    "6adabf83925af0e27d4f99f0",
+    "6adabfac925af0e27d4f9a09",
+    "6adabfd6925af0e27d4f9a16"
+  ]
 }

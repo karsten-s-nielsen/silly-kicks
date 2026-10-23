@@ -60,7 +60,11 @@ def test_launch_uses_the_typed_api_with_the_one_flavor_and_image():
     assert L.launch(_spec(), api=api, token="hf_x") == "job123"
     kw = api.calls[0]
     assert kw["flavor"] == "cpu-upgrade" == L.FLAVOR
-    assert kw["image"] == L.IMAGE and "@sha256:" in L.IMAGE
+    # The launched image is the lock-derived ref (`image.image_ref()`): the digest-pinned prebuilt image once
+    # `image.lock.json` records a digest, the base image before; either way digest-pinned.
+    from scripts.hf_jobs import image
+
+    assert kw["image"] == image.image_ref() and "@sha256:" in kw["image"]
     assert kw["secrets"] == {"HF_TOKEN": "hf_x"}
     assert kw["timeout"] == 3600 and kw["attempts"] == 3
     assert kw["labels"] == {
@@ -117,7 +121,9 @@ def test_no_other_flavor_is_reachable():
 def test_job_env_is_deterministic_and_carries_identity():
     env = L.job_env(_spec())
     assert env["PYTHONHASHSEED"] == "0" and env["NUMBA_NUM_THREADS"] == "1"
-    assert env["SILLY_KICKS_IMAGE"] == L.IMAGE
+    from scripts.hf_jobs import image
+
+    assert env["SILLY_KICKS_IMAGE"] == image.image_ref()
     assert env["SILLY_KICKS_RUN_KEY"] == "cycle1-4444444-ghost_gk-owner"
     assert env["SILLY_KICKS_JOB_LABEL"] == "ghost_gk.default.extract.1of4"
     assert env["SILLY_KICKS_IN_HF_JOB"] == "1"

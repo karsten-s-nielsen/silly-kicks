@@ -199,7 +199,9 @@ def plan_stage(
         workers = max(1, _workers(cost.peak_rss_bytes, c))
         cap = max(floor_cap, c.usable_bytes // workers)
         inner = 1
-        costs = {k: (per_unit[k] if per_unit else cost.p50_s) + c.unit_overhead_s for k in keys}
+        # A unit the history never measured (a profile samples 16) costs the stage p50: the one rule for every
+        # caller (the launch path pre-filled it; `remaining_critical_path` did not -> KeyError, cycle1b run 1).
+        costs = {k: (per_unit.get(k, cost.p50_s) if per_unit else cost.p50_s) + c.unit_overhead_s for k in keys}
 
         def job_wall(part: Sequence[str]) -> float:  # owner ruling 12: LPT on the job's W workers, in waves
             return c.startup_s + max(job_makespan([costs[k] for k in part], workers) / eff, cost.p95_s)

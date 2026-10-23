@@ -235,3 +235,20 @@ def test_the_incremental_fill_is_fast_at_scale():
     t0 = time.monotonic()
     p = P.plan_stage("x", list(per), cost, inner_parallel=False, per_unit=per, c=c)
     assert time.monotonic() - t0 < 1.0 and p.remainder  # the fill path ran (remainder non-empty)
+
+
+def test_a_unit_missing_from_the_per_unit_history_is_costed_at_the_p50():
+    """cycle1b run 1 (2026-10-23): the profile measured 16 of a stage's units, and `plan_stage` indexed
+    `per_unit[k]` for every key -> KeyError on the first unmeasured unit. A missing unit costs the stage p50."""
+    cost = UnitCost(100, 120, 140, 1 * GiB, 16)
+    c = Constraints(startup_s=0, concurrency_cap=4)
+    keys = [f"u{i:02d}" for i in range(40)]
+    partial = {k: 250.0 for k in keys[:16]}
+    full = {**partial, **{k: cost.p50_s for k in keys[16:]}}
+    got = plan_stage("x", keys, cost, inner_parallel=False, per_unit=partial, c=c)
+    want = plan_stage("x", keys, cost, inner_parallel=False, per_unit=full, c=c)
+    assert (got.n_jobs, got.predicted_job_wall_s, got.partition) == (
+        want.n_jobs,
+        want.predicted_job_wall_s,
+        want.partition,
+    )

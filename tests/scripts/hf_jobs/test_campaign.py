@@ -1010,3 +1010,11 @@ def test_the_cost_bar_excludes_the_named_profile_and_cycle1_jobs():
     base = C.compute_bars(**_bar_inputs())["cost"]["value"]
     excluded = C.compute_bars(**{**_bar_inputs(), "cost_exclude_ids": {"j1"}})["cost"]["value"]
     assert excluded < base  # dropping the 1000 s unit job lowers the main-run job-hours
+
+
+def test_remaining_critical_path_tolerates_a_partial_per_unit_history():
+    # cycle1b run 1 crash (KeyError 'skillcorner__skillcorner-1036527'): the history measured a subset of the
+    # stage's units, and this path passed the raw map to plan_stage. It must cost the rest at the p50.
+    p = _plan([_st("b", n=40)])
+    hist = {"b": {"cost": UnitCost(60, 70, 80, 2**30, 16), "efficiency": 1.0, "per_unit": {"0": 90.0, "1": 90.0}}}
+    assert C.remaining_critical_path(p, hist, Constraints(startup_s=0, concurrency_cap=4)) > 0
