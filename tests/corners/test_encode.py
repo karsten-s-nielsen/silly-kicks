@@ -7,6 +7,7 @@ import pandas as pd
 
 from silly_kicks.corners._encode import _run_column_names, compute_corner_run_encoding
 from silly_kicks.corners._zones import RunZoneModel
+from tests.corners._frame_helpers import with_keepers
 
 
 def _model() -> RunZoneModel:
@@ -55,7 +56,7 @@ def _frames():
 
     init_frame = block(1, 98.0, [(90.0, 25.0), (90.0, 43.0)])
     target_frame = block(2, 101.5, [(100.0, 28.0), (100.0, 40.0)])
-    return pd.concat([init_frame, target_frame], ignore_index=True)
+    return with_keepers(pd.concat([init_frame, target_frame], ignore_index=True))
 
 
 def test_direct_corner_encodes_short_is_nan():
@@ -124,6 +125,7 @@ def test_sb360_corner_sources_init_from_kick_frame():
         [block(1, 100.0, [(90.0, 25.0), (90.0, 43.0)]), block(2, 101.5, [(100.0, 28.0), (100.0, 40.0)])],
         ignore_index=True,
     )
+    frames = with_keepers(frames)
     out = compute_corner_run_encoding(corners, frames, model=model)
     run_cols = _run_column_names(model)
     assert out.iloc[0][run_cols].to_numpy(dtype=float).sum() > 0  # encoded via the kick freeze frame

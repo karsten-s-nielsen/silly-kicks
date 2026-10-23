@@ -313,6 +313,16 @@ DRIVERS: dict[str, DriverSpec] = {
         "rebaseline",
         "docs/research/territory_ranking_census",
     ),
+    # TF-46 Arm 1 Part 2 pre-flight corpus walkers (spec section 16.2; ADR-128 born-ready, owner ruling 2026-10-22)
+    "tf46p2_truth": DriverSpec("tf46p2_truth", "scripts.tf46p2_truth", "rebaseline", "docs/research/tf46_part2"),
+    "tf46p2_kick_cells": DriverSpec(
+        "tf46p2_kick_cells", "scripts.tf46p2_kick_cells", "rebaseline", "docs/research/tf46_part2"
+    ),
+    "tf46p2_subtype_merge": DriverSpec(
+        "tf46p2_subtype_merge", "scripts.tf46p2_subtype_merge", "rebaseline", "docs/research/tf46_part2"
+    ),
+    "tf46p2_penalty": DriverSpec("tf46p2_penalty", "scripts.tf46p2_penalty", "rebaseline", "docs/research/tf46_part2"),
+    "tf46p2_origin": DriverSpec("tf46p2_origin", "scripts.tf46p2_origin", "rebaseline", "docs/research/tf46_part2"),
     # --- scaffold: drivers above ---
 }
 

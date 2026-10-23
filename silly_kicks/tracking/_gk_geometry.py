@@ -10,12 +10,18 @@ by ``spadl.add_restart_coordinates``. See NOTICE.
 from __future__ import annotations
 
 import warnings
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
 from silly_kicks.id_compat import ids_match
 from silly_kicks.spadl import config as spadlconfig
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from silly_kicks.tracking._restart_validation import DataProfile
 
 _GOALKICK = spadlconfig.actiontype_id["goalkick"]
 _GOAL_AREA_DEPTH = 16.5  # m from own goal line; tracking-GK beyond this is "off position" (measured 48%)
@@ -343,6 +349,8 @@ def resolve_restart_geometry(
     links: pd.DataFrame | None = None,
     impute_types: tuple[int, ...] | None = None,
     distrust_native_origin: bool = False,
+    data_profile: DataProfile | None = None,
+    gate_table: Mapping | None = None,
 ) -> pd.DataFrame:
     """General restart-coordinate enrichment. Returns an index-aligned frame with
     enriched_start_x/_y/enriched_end_x/_y + start_coord_source/start_coord_confidence +
@@ -404,6 +412,24 @@ def resolve_restart_geometry(
     osrc = np.where(np.isfinite(sx) & np.isfinite(sy), "native", "unresolved").astype(object)
     oconf = np.where(osrc == "native", 1.0, 0.0).astype(float)
 
+    # Origin provenance columns (ADR-025); set only by the section-10.1 gated tiers below, else <NA>.
+    oevid = np.full(n, None, dtype=object)
+    ogver = np.full(n, None, dtype=object)
+    ocell = np.full(n, None, dtype=object)
+    # --- section 10.1 gated origin tiers (TF-46 Arm 1 Part 2). Written to enriched coords ONLY (the canonical
+    # start is never written, ADR-025), each behind its own gate cell (restart type x origin tier, spec 15.2):
+    #   1. stationary_window -- the resolver rest-window median (CL-11 kick_rest_x/_y, action frame);
+    #   2. t_kick_ball       -- the ball at the kick contact frame where no rest window exists (throw-ins, and
+    #                           SkillCorner free kicks via the section 6.3 launch contact): needs a gated t_kick;
+    #   3. tracking_gk       -- goal kicks: the detected restarting keeper, searched inside the section 6.1
+    #                           bracket (not +/- 1 s around the placeholder time), nearest t_kick.
+    # The gate table is EMPTY in commit 2, so no tier ships and the ungated tiers below are unchanged. ---
+    gated = np.zeros(n, dtype=bool)
+    if data_profile is not None:
+        gated = _gated_origin_tiers(
+            actions, frames, tid, data_profile, gate_table, ox, oy, osrc, oconf, oevid, ogver, ocell
+        )
+
     # --- Broadcast distrust (CR 2026-06-30; scope narrowed to GOAL-KICKS ONLY in 4.37.0 after real-data
     # validation). A goal-kick's native origin is the broadcast ball-detection ~14-20 m DOWNFIELD, not
     # the keeper -> distrust + resolve via the detection ladder: detected keeper (re-projected to
@@ -425,7 +451,7 @@ def resolve_restart_geometry(
             if frames is not None
             else np.full((n, 2), np.nan)
         )
-        for i in np.where(is_gk)[0]:
+        for i in np.where(is_gk & ~gated)[0]:  # a gated origin tier is never overwritten (spec 10.1)
             if not derived[i] and np.isfinite(gk_det[i, 0]):
                 ox[i], oy[i] = gk_det[i]
                 osrc[i], oconf[i] = "tracking_gk", _CONF_TRACKING_GK
@@ -436,6 +462,7 @@ def resolve_restart_geometry(
                 osrc[i], oconf[i] = "restart_prior", _PRIOR_CONF[_GOALKICK]
         # lock goal-kicks out of the native-first ORIGIN cascade (destination still uses ``eligible``).
         origin_eligible = eligible & ~is_gk
+    origin_eligible = origin_eligible & ~gated
 
     need = (osrc == "unresolved") & origin_eligible
     # tier 2a: goalkick in-area tracking-GK (goalkick ONLY; no tracking_ball for goalkick). Derived rows
@@ -479,6 +506,7 @@ def resolve_restart_geometry(
 
     out["enriched_start_x"], out["enriched_start_y"] = ox, oy
     out["start_coord_source"], out["start_coord_confidence"] = osrc, oconf
+    out["origin_evidence"], out["origin_gate_version"], out["origin_cell_resolution"] = oevid, ogver, ocell
 
     # ---------- destination ----------
     dx, dy = ex.copy(), ey.copy()
@@ -507,6 +535,161 @@ def resolve_restart_geometry(
     return out  # NO tripwire here -- applied at the add_restart_coordinates edge
 
 
+def _origin_base(t: int) -> str | None:
+    """The restart base of an action type (the origin gate restart_type)."""
+    nm = spadlconfig.actiontypes[t] if t < len(spadlconfig.actiontypes) else ""
+    if nm.startswith("corner"):
+        return "corner"
+    if nm.startswith("freekick"):
+        return "free_kick"
+    if nm == "goalkick":
+        return "goal_kick"
+    if nm == "throw_in":
+        return "throw_in"
+    return None
+
+
+def _ball_xy_at(ball_by_period: dict, period: int, t: float) -> tuple[float, float] | None:
+    """The ball (x, y) at the frame nearest ``t`` in ``period`` (frame convention); ``None`` when untracked.
+    ``ball_by_period[p] = (sorted ball rows, time array)`` is built ONCE (ADR-068): a ``searchsorted``."""
+    hit = ball_by_period.get(period)
+    if hit is None or not np.isfinite(t):
+        return None
+    rows, times = hit
+    if not len(times):
+        return None
+    j = int(np.searchsorted(times, t))
+    cands = [k for k in (j - 1, j) if 0 <= k < len(times)]
+    k = min(cands, key=lambda c: abs(times[c] - t))
+    if abs(times[k] - t) > 0.2:  # no ball frame within 0.2 s of the kick: untracked at the kick
+        return None
+    x, y = float(rows["x"].iloc[k]), float(rows["y"].iloc[k])
+    return (x, y) if np.isfinite(x) and np.isfinite(y) else None
+
+
+def _keeper_xy_in_bracket(gk_by_period: dict, period: int, team, lo: float, hi: float, t_anchor: float):
+    """The restarting team DETECTED keeper (x, y) inside the bracket ``[lo, hi]``, nearest ``t_anchor`` (ties
+    at-or-before); ``None`` when no detection. Frame convention."""
+    from silly_kicks.id_compat import ids_match
+
+    hit = gk_by_period.get(period)
+    if hit is None or not (np.isfinite(lo) and np.isfinite(hi)):
+        return None
+    rows, times = hit
+    a = int(np.searchsorted(times, lo, side="left"))
+    b = int(np.searchsorted(times, hi, side="right"))
+    cand = rows.iloc[a:b]
+    if cand.empty:
+        return None
+    cand = cand[ids_match(cand["team_id"], team).to_numpy()]
+    if cand.empty:
+        return None
+    anchor = t_anchor if np.isfinite(t_anchor) else hi
+    dt = cand["time_seconds"].to_numpy(float) - anchor
+    k = int(np.lexsort((dt > 0, np.abs(dt)))[0])
+    return float(cand["x"].iloc[k]), float(cand["y"].iloc[k])
+
+
+def _gated_origin_tiers(actions, frames, tid, data_profile, gate_table, ox, oy, osrc, oconf, oevid, ogver, ocell):
+    """Apply the section 10.1 gated origin tiers IN PLACE on the origin arrays; returns the gated-row mask.
+
+    Each candidate is computed first, then its OWN cell ``(profile, restart_type, "origin", tier)`` is looked
+    up; a withheld cell leaves the row to the ungated tiers. Frame-sampled positions are re-projected to the
+    action frame through ADR-028 ``acting_team_attacks_rtl``; an unresolved direction skips the row."""
+    from silly_kicks.tracking._restart_validation import GATE_TABLE_VERSION as _GVER
+    from silly_kicks.tracking._restart_validation import gate as _gate
+
+    from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH
+
+    n = len(actions)
+    gated = np.zeros(n, dtype=bool)
+
+    def col(name):
+        return actions[name].to_numpy(float) if name in actions.columns else np.full(n, np.nan)
+
+    krx, kry = col("kick_rest_x"), col("kick_rest_y")
+    tkick, blo, bhi = col("t_kick"), col("kick_bracket_lo"), col("kick_bracket_hi")
+    ball_by_period: dict = {}
+    gk_by_period: dict = {}
+    flip = None
+    if frames is not None and len(frames):
+        is_ball = _truthy_bool(frames["is_ball"])
+        for per, g in frames[is_ball].groupby("period_id"):
+            g = g.sort_values("time_seconds").reset_index(drop=True)
+            ball_by_period[int(per)] = (g, g["time_seconds"].to_numpy(float))
+        if "is_goalkeeper" in frames.columns:  # no keeper flag -> no tracking_gk tier (fails closed)
+            gk_mask = frames["is_goalkeeper"].astype(bool).to_numpy() & ~is_ball
+            if "visibility" in frames.columns:
+                gk_mask = gk_mask & _truthy_bool(frames["visibility"])
+            for per, g in frames[gk_mask].groupby("period_id"):
+                g = g.sort_values("time_seconds").reset_index(drop=True)
+                gk_by_period[int(per)] = (g, g["time_seconds"].to_numpy(float))
+        flip = _resolve_flip(actions, frames, None) if "team_attacking_direction" in frames.columns else None
+    periods = actions["period_id"].to_numpy() if "period_id" in actions.columns else np.zeros(n)
+    teams = actions["team_id"].to_numpy() if "team_id" in actions.columns else np.full(n, None)
+
+    for i in range(n):
+        base = _origin_base(int(tid[i]))
+        if base is None:
+            continue
+        tier, xy = None, None
+        if np.isfinite(krx[i]) and np.isfinite(kry[i]):
+            tier, xy = "stationary_window", (float(krx[i]), float(kry[i]))  # already action frame (CL-11)
+        elif flip is not None and not pd.isna(flip[i]):
+            raw = None
+            if base in ("throw_in", "free_kick") and np.isfinite(tkick[i]):
+                raw, tier = _ball_xy_at(ball_by_period, int(periods[i]), float(tkick[i])), "t_kick_ball"
+            elif base == "goal_kick":
+                raw = _keeper_xy_in_bracket(
+                    gk_by_period, int(periods[i]), teams[i], float(blo[i]), float(bhi[i]), float(tkick[i])
+                )
+                tier = "tracking_gk"
+            if raw is not None:
+                xy = (FIELD_LENGTH - raw[0], FIELD_WIDTH - raw[1]) if flip[i] else raw
+                if tier == "tracking_gk" and xy[0] > _GOAL_AREA_DEPTH:
+                    xy = None  # off-position keeper -> not a goal-kick origin
+        if tier is None or xy is None:
+            continue
+        entry = _gate(data_profile, base, "origin", tier, table=gate_table)
+        if entry is None:
+            continue
+        ox[i], oy[i] = xy
+        osrc[i], oconf[i] = tier, 1.0
+        oevid[i], ogver[i], ocell[i] = entry.tier, _GVER, entry.cell_resolution
+        gated[i] = True
+    return gated
+
+
+def gated_origin(
+    actions: pd.DataFrame, frames: pd.DataFrame | None, data_profile, gate_table: Mapping | None = None
+) -> pd.DataFrame:
+    """The section 10.1 GATED origin tiers alone, index-aligned with ``actions``: ``enriched_start_x/_y``,
+    ``start_coord_source`` and ``origin_evidence`` (``<NA>`` where no gated tier ships). The single
+    implementation ``resolve_restart_geometry`` uses; ``refine_restart_types`` calls it for the section 11.4
+    merge tracking rule, which runs BEFORE ``add_restart_coordinates`` in the restart pipeline.
+
+    Examples
+    --------
+    Read the gated origin of resolved restarts (rows without a gated tier stay ``<NA>``)::
+
+        kicks = resolve_kicks(actions, frames, provider="idsse", goal_map=goal_map, data_profile=profile)
+        origin = gated_origin(kicks, frames, profile)
+        shipped = origin[origin["origin_evidence"].notna()]
+    """
+    n = len(actions)
+    ox, oy = np.full(n, np.nan), np.full(n, np.nan)
+    osrc = np.full(n, None, dtype=object)
+    oconf = np.zeros(n)
+    oevid, ogver, ocell = (np.full(n, None, dtype=object) for _ in range(3))
+    if n and data_profile is not None:
+        tid = actions["type_id"].to_numpy()
+        _gated_origin_tiers(actions, frames, tid, data_profile, gate_table, ox, oy, osrc, oconf, oevid, ogver, ocell)
+    return pd.DataFrame(
+        {"enriched_start_x": ox, "enriched_start_y": oy, "start_coord_source": osrc, "origin_evidence": oevid},
+        index=actions.index,
+    )
+
+
 def _tripwire_key(t: int) -> str | None:
     if t == _GOALKICK:
         return "goalkick"
@@ -532,6 +715,11 @@ def apply_restart_tripwire(out: pd.DataFrame) -> int:
     sy = out["enriched_start_y"].to_numpy().copy()
     ssrc = out["start_coord_source"].to_numpy().astype(object).copy()
     sconf = out["start_coord_confidence"].to_numpy().astype(float).copy()
+    has_origin_cols = {"origin_evidence", "origin_gate_version", "origin_cell_resolution"} <= set(out.columns)
+    if has_origin_cols:
+        oevid = out["origin_evidence"].to_numpy().astype(object).copy()
+        ogver = out["origin_gate_version"].to_numpy().astype(object).copy()
+        ocell = out["origin_cell_resolution"].to_numpy().astype(object).copy()
     reverts = 0
     for i in range(len(out)):
         key = _tripwire_key(int(tid[i]))
@@ -554,6 +742,11 @@ def apply_restart_tripwire(out: pd.DataFrame) -> int:
         sx[i] = sy[i] = np.nan
         ssrc[i], sconf[i] = "tripwire_reverted", 0.0
         reverts += 1
+        if has_origin_cols:
+            # A reverted GATED origin ships nothing, so its gate provenance must not claim one (TF-46 Part 2).
+            oevid[i] = ogver[i] = ocell[i] = None
     out["enriched_start_x"], out["enriched_start_y"] = sx, sy
     out["start_coord_source"], out["start_coord_confidence"] = ssrc, sconf
+    if has_origin_cols:
+        out["origin_evidence"], out["origin_gate_version"], out["origin_cell_resolution"] = oevid, ogver, ocell
     return reverts

@@ -1051,6 +1051,332 @@ def scaffold_flat_toy(dataset: str) -> Callable[[pathlib.Path], pathlib.Path]:
 
 
 #: Module -> the CLI arguments its toy `--run-all` needs (Tasks 10-16 add one entry each).
+# ---------------------------------------------------------------------------------------------------------
+# TF-46 Arm 1 Part 2 pre-flight toy: a flat dataset staged with the Part 2 extras (_native / _footprint /
+# _profile; scripts._driver_sources.PART2_EXTRA_FILES). Synthetic restart scenes with real kinematics (a ball
+# rest, a launch, a first touch), so every restart port runs end to end on it.
+# ---------------------------------------------------------------------------------------------------------
+
+#: (seconds, restart type name, ball rest xy, launch velocity xy m/s, taker id, receiver id) per scene. The home
+#: team ("p1") attacks +x in period 1; its keeper defends x = 0, the away keeper x = 105.
+_PART2_SCENES = (
+    (100.0, "corner_crossed", (104.5, 0.6), (-12.0, 12.0), "p7", "p9"),
+    (200.0, "freekick_short", (70.0, 30.0), (12.0, 2.0), "p7", "p8"),
+    (300.0, "goalkick", (5.5, 34.0), (14.0, 0.0), "p10", "p8"),
+    (400.0, "throw_in", (50.0, 0.3), (0.0, 9.0), "p7", "p8"),
+    (500.0, "shot_penalty", (94.0, 34.0), (20.0, 1.0), "p9", None),
+)
+_PART2_FPS = 25.0
+#: The time offset between repeated scene sets (the scenes span 97..505 s; 5 copies end before 2700 s).
+_PART2_REPEAT_S = 500.0
+
+
+def _part2_scene_rows(game: str, provider: str, t0: float, name: str, rest, vel, taker, receiver) -> list[dict]:
+    """One restart scene: 1.2 s of ball rest, the launch, a first touch at the receiver (velocity break) and the
+    roster around it; 25 fps over [t0 - 3, t0 + 5]."""
+    dt = 1.0 / _PART2_FPS
+    t_kick = t0 + 0.0
+    roster = {
+        "p10": ("p1", True, (3.0, 34.0)),
+        "a10": ("a2", True, (103.0, 34.0)),
+        "p7": ("p1", False, (rest[0] - 0.4, rest[1])),
+        "p8": ("p1", False, (rest[0] + vel[0] * 0.8, rest[1] + vel[1] * 0.8)),
+        "p9": ("p1", False, (96.0, 33.0)),
+        "a4": ("a2", False, (92.0, 36.0)),
+    }
+    if name == "goalkick":
+        roster["p10"] = ("p1", True, (rest[0] - 0.5, rest[1]))
+    if name == "shot_penalty":
+        roster["p9"] = ("p1", False, (rest[0] - 0.5, rest[1]))
+        roster["p7"] = ("p1", False, (80.0, 20.0))
+        roster["a4"] = ("a2", False, (80.0, 50.0))
+        roster["a10"] = ("a2", True, (104.4, 34.0))
+    rx = roster[receiver][2] if receiver else None
+    rows = []
+    n = round(8.0 / dt)
+    for k in range(n):
+        t = t0 - 3.0 + k * dt
+        fid = round(t * _PART2_FPS)
+        if t < t_kick:
+            bx, by = rest
+        else:
+            s = t - t_kick
+            if rx is not None and s > 0.8:  # the first touch: the ball turns toward the goal at the receiver
+                bx, by = rx[0] + 8.0 * (s - 0.8), rx[1] + 0.5 * (s - 0.8)
+            else:
+                bx, by = rest[0] + vel[0] * s, rest[1] + vel[1] * s
+        rows.append(
+            {
+                "game_id": game,
+                "period_id": 1,
+                "frame_id": fid,
+                "time_seconds": round(t, 4),
+                "player_id": None,
+                "team_id": None,
+                "is_ball": True,
+                "is_goalkeeper": False,
+                "x": float(bx),
+                "y": float(by),
+                "z": 0.1,
+                "visibility": True,
+                "team_attacking_direction": None,
+            }
+        )
+        for pid, (team, gk, (px, py)) in roster.items():
+            rows.append(
+                {
+                    "game_id": game,
+                    "period_id": 1,
+                    "frame_id": fid,
+                    "time_seconds": round(t, 4),
+                    "player_id": pid,
+                    "team_id": team,
+                    "is_ball": False,
+                    "is_goalkeeper": gk,
+                    "x": float(px),
+                    "y": float(py),
+                    "z": 0.0,
+                    "visibility": True,
+                    "team_attacking_direction": "ltr" if team == "p1" else "rtl",
+                }
+            )
+    return rows
+
+
+def part2_toy_match(game: str, provider: str, *, repeats: int = 1) -> dict:
+    """One toy match of ``provider`` (frames, actions, native events, footprint, profile record). ``repeats``
+    plays the scene set that many times, each copy ``_PART2_REPEAT_S`` later (inside one 45-minute period)."""
+    frows, arows, nrows = [], [], []
+    aid = 0
+    scenes = [
+        (t0 + k * _PART2_REPEAT_S, name, rest, vel, taker, receiver)
+        for k in range(repeats)
+        for t0, name, rest, vel, taker, receiver in _PART2_SCENES
+    ]
+    for t0, name, rest, vel, taker, receiver in scenes:
+        frows.extend(_part2_scene_rows(game, provider, t0, name, rest, vel, taker, receiver))
+        arows.append(
+            {
+                "game_id": game,
+                "original_event_id": f"e{aid}",
+                "action_id": aid,
+                "period_id": 1,
+                "time_seconds": t0,
+                "team_id": "p1",
+                "player_id": taker,
+                "start_x": rest[0],
+                "start_y": rest[1],
+                "end_x": rest[0] + vel[0] * 0.8,
+                "end_y": rest[1] + vel[1] * 0.8,
+                "type_id": spadlconfig_actiontype(name),
+                "result_id": 0 if name == "shot_penalty" else 1,
+                "bodypart_id": 0,
+                "type_source": "native",
+                "action_provenance": "native",
+                "result_source": "native",
+            }
+        )
+        nrows.append(
+            {
+                "event_type": _DFL_TYPE[name],
+                "period": 1,
+                "player_id": taker,
+                "team_id_native": "p1",
+                "team": "home",
+                "timestamp_seconds": t0,
+                "tackle_winner": None,
+                "tackle_winner_team": None,
+                "gameEventId": f"e{aid}",
+                "possessionEventType": "CR" if "crossed" in name else "PA",
+                "x": rest[0],
+                "y": rest[1],
+                "x_source_position": rest[0] - 3.0,
+                "y_source_position": rest[1],
+                "setpieceType": _PFF_SETPIECE[name],
+            }
+        )
+        aid += 1
+        if receiver:
+            arows.append(
+                {
+                    "game_id": game,
+                    "original_event_id": f"e{aid}",
+                    "action_id": aid,
+                    "period_id": 1,
+                    "time_seconds": t0 + 0.8,
+                    "team_id": "p1",
+                    "player_id": receiver,
+                    "start_x": rest[0] + vel[0] * 0.8,
+                    "start_y": rest[1] + vel[1] * 0.8,
+                    "end_x": 100.0,
+                    "end_y": 34.0,
+                    "type_id": spadlconfig_actiontype("pass"),
+                    "result_id": 1,
+                    "bodypart_id": 0,
+                    "type_source": "native",
+                    "action_provenance": "native",
+                    "result_source": "native",
+                }
+            )
+            nrows.append(
+                {
+                    "event_type": "Play",
+                    "period": 1,
+                    "player_id": receiver,
+                    "team_id_native": "p1",
+                    "team": "home",
+                    "timestamp_seconds": t0 + 0.8,
+                    "tackle_winner": None,
+                    "tackle_winner_team": None,
+                    "gameEventId": f"e{aid}",
+                    "possessionEventType": "PA",
+                }
+            )
+            aid += 1
+        else:  # the penalty: saved by the away keeper
+            arows.append(
+                {
+                    "game_id": game,
+                    "original_event_id": f"e{aid}",
+                    "action_id": aid,
+                    "period_id": 1,
+                    "time_seconds": t0 + 0.4,
+                    "team_id": "a2",
+                    "player_id": "a10",
+                    "start_x": 104.0,
+                    "start_y": 34.0,
+                    "end_x": 104.0,
+                    "end_y": 34.0,
+                    "type_id": spadlconfig_actiontype("keeper_save"),
+                    "result_id": 1,
+                    "bodypart_id": 0,
+                    "type_source": "native",
+                    "action_provenance": "native",
+                    "result_source": "native",
+                }
+            )
+            aid += 1
+    frames = pd.DataFrame(frows)
+    frames["frame_rate"] = _PART2_FPS
+    frames["source_provider"] = provider
+    frames["speed"] = np.nan
+    frames["speed_source"] = None
+    frames["ball_state"] = "alive"
+    frames["confidence"] = None
+    frames["is_goalkeeper_source"] = "native"
+    frames["z_source"] = "estimated" if provider == "skillcorner" else "measured"
+    actions = pd.DataFrame(arows)
+    native = pd.DataFrame(nrows) if provider != "skillcorner" else pd.DataFrame()
+    if provider == "skillcorner":
+        fids = frames[frames["is_ball"]][["frame_id", "x", "y"]]
+        footprint = pd.DataFrame(
+            {
+                "game_id": game,
+                "period_id": 1,
+                "frame_id": fids["frame_id"].to_numpy(),
+                "cam_tl_x": fids["x"].to_numpy() - 30.0,
+                "cam_tl_y": fids["y"].to_numpy() + 30.0,
+                "cam_tr_x": fids["x"].to_numpy() + 30.0,
+                "cam_tr_y": fids["y"].to_numpy() + 30.0,
+                "cam_br_x": fids["x"].to_numpy() + 30.0,
+                "cam_br_y": fids["y"].to_numpy() - 30.0,
+                "cam_bl_x": fids["x"].to_numpy() - 30.0,
+                "cam_bl_y": fids["y"].to_numpy() - 30.0,
+            }
+        )
+    else:
+        footprint = pd.DataFrame()
+    profile = {
+        "provider": provider,
+        "tracking_release": "toy",
+        "gi_release": "toy" if provider == "skillcorner" else None,
+        "competition_season": "toy",
+        "pitch_length": 105.0,
+        "pitch_width": 68.0,
+        "is_opendata": False,
+    }
+    if provider == "skillcorner":
+        # The staged SkillCorner contract (spec section 26.8): the provider period range (here the frames' own range;
+        # the toy has no empty frames), the GI period-label repair census, and period_source on the actions.
+        profile["provider_period_frame_ranges"] = {
+            str(p): [int(g["frame_id"].min()), int(g["frame_id"].max())] for p, g in frames.groupby("period_id")
+        }
+        profile["gi_period_repair"] = {
+            "status": "not_evaluable",
+            "relabelled": {"player_possession": 0, "passing_option": 0, "off_ball_run": 0},
+            "shape": None,
+            "obe_period_conflict": 0,
+            "period_start_mismatch": False,
+        }
+        actions["period_source"] = "native"
+    return {"frames": frames, "actions": actions, "native": native, "footprint": footprint, "profile": profile}
+
+
+_PFF_SETPIECE = {
+    "corner_crossed": "C",
+    "freekick_short": "F",
+    "goalkick": "G",
+    "throw_in": "T",
+    "shot_penalty": "P",
+}
+
+_DFL_TYPE = {
+    "corner_crossed": "CornerKick",
+    "freekick_short": "FreeKick",
+    "goalkick": "GoalKick",
+    "throw_in": "ThrowIn",
+    "shot_penalty": "Penalty",
+}
+
+
+def spadlconfig_actiontype(name: str) -> int:
+    from silly_kicks.spadl import config as spadlconfig
+
+    return int(spadlconfig.actiontype_id[name])
+
+
+#: The toy Part-2 corpus: (provider, game) units. The heavy unit is the FIRST (most scenes are equal size, so
+#: completion order differs by the worker interleave alone).
+PART2_TOY_UNITS: tuple[tuple[str, str], ...] = (
+    ("sportec", "301"),
+    ("sportec", "302"),
+    ("gradientsports", "401"),
+    ("skillcorner", "501"),
+    ("skillcorner", "502"),
+)
+
+#: The HEAVY unit: it sorts FIRST among the staged stems and plays the scene set ``PART2_HEAVY_REPEATS`` times, so
+#: at W >= 2 it finishes last in its job (the ADR-128 parity non-vacuity, ``completion_out_of_order``).
+PART2_HEAVY_UNIT = ("gradientsports", "401")
+PART2_HEAVY_REPEATS = 5
+
+
+def build_part2_corpus(root: str | pathlib.Path, *, dataset: str = "toytf46") -> pathlib.Path:
+    """Write the toy TF-46 Part 2 staged dataset under ``root/dataset`` (frames shards, ``_actions``, ``_native``,
+    ``_footprint``, ``_profile``, ``home_teams.json``); returns ``root``. Ids in each provider's staged kind."""
+    base = pathlib.Path(root) / dataset
+    shards = base / "shards" / TOY_GENERATION
+    for d in (shards, base / "_actions", base / "_native", base / "_footprint", base / "_profile"):
+        d.mkdir(parents=True, exist_ok=True)
+    home: dict[str, object] = {}
+    for provider, game in PART2_TOY_UNITS:
+        kind = PROVIDER_ID_KIND[provider]
+        stem = f"{provider}__{game}"
+        m = part2_toy_match(game, provider, repeats=PART2_HEAVY_REPEATS if (provider, game) == PART2_HEAVY_UNIT else 1)
+        staged_frames(m["frames"], kind).to_parquet(shards / f"{stem}.parquet", index=False)
+        staged_actions(m["actions"], kind).to_parquet(base / "_actions" / f"{stem}.parquet", index=False)
+        m["native"].to_parquet(base / "_native" / f"{stem}.parquet", index=False)
+        m["footprint"].to_parquet(base / "_footprint" / f"{stem}.parquet", index=False)
+        (base / "_profile" / f"{stem}.json").write_text(json.dumps(m["profile"], sort_keys=True), encoding="utf-8")
+        home[game] = staged_home("p1", kind)
+    (base / "home_teams.json").write_text(json.dumps(home, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return pathlib.Path(root)
+
+
+def _part2_toy(root: pathlib.Path) -> pathlib.Path:
+    return build_part2_corpus(root)
+
+
 TOY_PARAMS: dict[str, tuple[str, ...]] = {
     "scripts.train_win_probability": ("--competition-id", "43", "--season-id", "106"),
     "scripts.train_receiver_model": (
@@ -1120,6 +1446,11 @@ TOY_PARAMS: dict[str, tuple[str, ...]] = {
         "--fit-fraction",
         "0.4",
     ),
+    "scripts.tf46p2_truth": ("--dataset", "toytf46"),
+    "scripts.tf46p2_kick_cells": ("--dataset", "toytf46"),
+    "scripts.tf46p2_subtype_merge": ("--dataset", "toytf46"),
+    "scripts.tf46p2_penalty": ("--dataset", "toytf46"),
+    "scripts.tf46p2_origin": ("--dataset", "toytf46"),
     # --- scaffold: toys above ---
 }
 
@@ -1132,6 +1463,11 @@ TOY_BUILDERS: dict[str, Callable[[pathlib.Path], pathlib.Path]] = {
     "scripts.train_xshot_occurrence": _xshot_toy,
     "scripts.train_xcross_attempt": _xcross_toy,
     "scripts.build_territory_ranking_census": _census_toy,
+    "scripts.tf46p2_truth": _part2_toy,
+    "scripts.tf46p2_kick_cells": _part2_toy,
+    "scripts.tf46p2_subtype_merge": _part2_toy,
+    "scripts.tf46p2_penalty": _part2_toy,
+    "scripts.tf46p2_origin": _part2_toy,
     # --- scaffold: toy builders above ---
 }
 

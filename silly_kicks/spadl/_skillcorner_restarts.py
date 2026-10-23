@@ -57,6 +57,16 @@ DERIVED_COLUMNS = (
     "restart_evidence",
     "type_source",
     "repair_kind",
+    # TF-46 Arm 1 Part 2 GI facts (spec section 17.1 / 17.2). The bracket ids are set on every derived row;
+    # the possession facts come from the marker/tag possession the row derives from.
+    "gi_marker_possession_frame_end",
+    "gi_next_possession_frame_start",
+    "gi_attacking_side",
+    "gi_possession_frame_start",
+    "gi_possession_frame_end",
+    "gi_event_id",
+    # TF-46 Arm 1 Part 2 spec section 26.5: the period source of the possession the row's period comes from.
+    "period_source",
 )
 
 
@@ -146,6 +156,26 @@ def derive_restarts(pp: pd.DataFrame, opponent: str | None, match_metadata: dict
     sx = pp["start_x"].to_numpy(dtype="float64")
     sy = pp["start_y"].to_numpy(dtype="float64")
     event_id = pp["event_id"].astype("object").tolist()
+
+    # GI facts (spec section 17.2, CL-1 / CL-13). Optional on the input: a bronze without the GI frame
+    # columns leaves every derived row's GI column <NA> (backward compatible).
+    frame_start = pp["frame_start"].tolist() if "frame_start" in pp.columns else [pd.NA] * n
+    frame_end = pp["frame_end"].tolist() if "frame_end" in pp.columns else [pd.NA] * n
+    attacking_side = pp["attacking_side"].tolist() if "attacking_side" in pp.columns else [pd.NA] * n
+    # The period-label repair's provenance (spec section 26.5): absent on the input = every label native.
+    period_source = pp["period_source"].tolist() if "period_source" in pp.columns else ["native"] * n
+
+    def _gi_int(value) -> object:
+        """A frame id as a nullable int, or ``pd.NA`` for a missing / NaN value."""
+        if value is None or value is pd.NA or (isinstance(value, float) and np.isnan(value)):
+            return pd.NA
+        return int(value)
+
+    def _gi_obj(value: object) -> object:
+        """An object GI fact, or ``pd.NA`` for a missing / NaN value."""
+        if value is None or value is pd.NA or (isinstance(value, float) and np.isnan(value)):
+            return pd.NA
+        return value
 
     # A possession's gi_before restart (base, side), and the team the restart is awarded to.
     tag_base: list[str | None] = []
@@ -285,6 +315,16 @@ def derive_restarts(pp: pd.DataFrame, opponent: str | None, match_metadata: dict
                 "restart_evidence": evidence,
                 "type_source": type_source,
                 "repair_kind": pd.NA,
+                # GI facts: the bracket ids (marker possession i's frame_end, next possession's frame_start)
+                # and the possession i facts for the per-match pairing (spec section 17.1 / 17.2).
+                "gi_marker_possession_frame_end": _gi_int(frame_end[i]),
+                # <NA> on a chain row: no resolved possession lies between (CL-13, spec section 17.2).
+                "gi_next_possession_frame_start": (_gi_int(frame_start[nxt]) if (has_next and not chained) else pd.NA),
+                "gi_attacking_side": _gi_obj(attacking_side[i]),
+                "gi_possession_frame_start": _gi_int(frame_start[i]),
+                "gi_possession_frame_end": _gi_int(frame_end[i]),
+                "gi_event_id": event_id[i],
+                "period_source": period_source[i],  # period_id is period[i], so its source is possession i's
                 "_next_team": next_team,  # scratch, dropped before return (drives reflection)
                 "_restarter": restarter,
             }

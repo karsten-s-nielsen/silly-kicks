@@ -26,8 +26,12 @@ def _entries() -> list[tuple[str, str]]:
 
 def test_manifest_covers_both_providers():
     rels = [r for r, _ in _entries()]
-    assert len(rels) == 54  # 20 skillcorner x 2 + 7 idsse x 2 + nothing else
-    assert sum(r.startswith("skillcorner/opendata/") for r in rels) == 40
+    # 20 skillcorner x 2 + the 1886347 tracking bronze slim (R.2 2026-10-23) + 7 idsse x 2 + nothing else
+    assert len(rels) == 55
+    assert sum(r.startswith("skillcorner/opendata/") for r in rels) == 41
+    assert [r for r in rels if r.endswith("_tracking_bronze_slim.parquet")] == [
+        "skillcorner/opendata/1886347_tracking_bronze_slim.parquet"
+    ]
     assert sum(r.startswith("idsse/") for r in rels) == 14
 
 
@@ -37,3 +41,38 @@ def test_fixture_sha256_matches_manifest(entry):
     path = _DATASETS / rel
     assert path.exists(), f"missing fixture {rel}"
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, f"sha256 drift in {rel}"
+
+
+def test_opendata_gi_frame_facts_present_b08():
+    # TF-46 Arm 1 Part 2 Task 2.3 Step 3 (CL-1 evidence, B-08): every regenerated opendata fixture carries the GI
+    # possession frame ids and attacking side, non-null on EVERY player_possession row (else OD-2).
+    import pandas as pd
+
+    files = sorted((_DATASETS / "skillcorner" / "opendata").glob("*_events_slim.csv"))
+    assert len(files) == 20
+    for f in files:
+        ev = pd.read_csv(f, low_memory=False)
+        pp = ev[ev["event_type"] == "player_possession"]
+        assert len(pp) > 0, f.name
+        for col in ("frame_start", "frame_end", "attacking_side"):
+            assert col in ev.columns and pp[col].notna().all(), (f.name, col)
+        assert set(pp["attacking_side"].unique()) <= {"left_to_right", "right_to_left"}, f.name
+
+
+def test_regen_parquet_comparison_is_by_content_not_bytes(tmp_path):
+    # The owner-gated regen e2e compares parquet by CONTENT (owner ruling 2026-10-25, option A): the writer version
+    # in the file changes the bytes, not the data. Both sides: equal content in different bytes passes; a changed
+    # value or a changed type fails. (The e2e module itself is deselected in CI, so its helper is pinned here.)
+    import pandas as pd
+
+    from tests.datasets.test_tf46_regen_e2e import _parquet_content_mismatch
+
+    frame = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    frame.to_parquet(tmp_path / "base.parquet", index=False, compression="snappy")
+    frame.to_parquet(tmp_path / "same.parquet", index=False, compression="gzip")  # other bytes, same content
+    assert (tmp_path / "base.parquet").read_bytes() != (tmp_path / "same.parquet").read_bytes()
+    assert _parquet_content_mismatch(tmp_path / "same.parquet", tmp_path / "base.parquet") is None
+    frame.assign(a=[1, 2, 4]).to_parquet(tmp_path / "value.parquet", index=False)
+    assert "values differ" in str(_parquet_content_mismatch(tmp_path / "value.parquet", tmp_path / "base.parquet"))
+    frame.assign(a=[1.0, 2.0, 3.0]).to_parquet(tmp_path / "dtype.parquet", index=False)
+    assert _parquet_content_mismatch(tmp_path / "dtype.parquet", tmp_path / "base.parquet") == "arrow schema differs"

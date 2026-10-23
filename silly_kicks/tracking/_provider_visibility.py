@@ -49,6 +49,20 @@ def dead_ball_observed(provider: str) -> bool:
     return provider in _DEAD_BALL_OBSERVED_PROVIDERS
 
 
+def classified_provider(provider) -> str | None:
+    """``provider`` when it is classified (detection-aware or fully observed), else ``None`` -- for a caller that
+    must DECLARE how a frame's visibility reads but may hold an unclassified source (e.g. SB360 freeze frames):
+    ``None`` makes the visibility-based outputs fail closed instead of raising.
+
+    Examples
+    --------
+    >>> classified_provider("idsse"), classified_provider("statsbomb")
+    ('idsse', None)
+    """
+    p = None if provider is None else str(provider)
+    return p if p in _DETECTION_AWARE_PROVIDERS | _FULLY_OBSERVED_PROVIDERS else None
+
+
 def validate_provider(provider: str) -> None:
     """Raise unless ``provider`` is classified as detection-aware or fully observed.
 

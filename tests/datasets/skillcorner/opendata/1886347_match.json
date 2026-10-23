@@ -10,6 +10,24 @@
   },
   "home_team_score": 2,
   "id": 1886347,
+  "match_periods": [
+    {
+      "duration_frames": 27780,
+      "duration_minutes": 46.3,
+      "end_frame": 27790,
+      "name": "period_1",
+      "period": 1,
+      "start_frame": 10
+    },
+    {
+      "duration_frames": 31260,
+      "duration_minutes": 52.1,
+      "end_frame": 59060,
+      "name": "period_2",
+      "period": 2,
+      "start_frame": 27800
+    }
+  ],
   "pitch_length": 104,
   "pitch_width": 68,
   "players": [

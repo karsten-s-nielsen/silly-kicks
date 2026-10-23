@@ -20,6 +20,7 @@ from silly_kicks.corners import (
     add_corner_windows,
     compute_corner_run_encoding,
 )
+from tests.corners._frame_helpers import with_keepers
 
 _CORNER_CROSSED = 5
 
@@ -77,7 +78,7 @@ def _frames_with_ball_row() -> pd.DataFrame:
     df = pd.DataFrame(rows)
     df["player_id"] = df["player_id"].astype("object")
     df["team_id"] = df["team_id"].astype("object")
-    return df
+    return with_keepers(df)
 
 
 def test_add_corner_windows_tolerates_ball_row_na_player_id():
@@ -104,9 +105,11 @@ def test_add_corner_windows_tolerates_ball_row_na_player_id():
             "contact_source": pd.Series(["velocity_break"], dtype="object"),
         }
     )
-    out = add_corner_windows(corners, frames, contacts)  # must NOT raise
+    from ._gate_helpers import passing
+
+    out = add_corner_windows(corners, frames, contacts, **passing())  # must NOT raise
     assert len(out) == 1
-    assert out["winner_team_id"].iloc[0] == "tA"  # resolved past the ball row
+    assert out["winner_team_id"].iloc[0] == "tA"  # resolved past the ball row (gate injected for the live path)
 
 
 def test_run_encoding_tolerates_ball_row_na_team_id():

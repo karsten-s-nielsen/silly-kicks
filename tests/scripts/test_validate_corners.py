@@ -104,25 +104,82 @@ def test_dominant_routine_handles_all_nan_rows():
     assert dominant_routine(coeffs).tolist() == [1, -1, 0]
 
 
-def test_gi_possession_times_rebases_absolute_to_period_relative():
-    # GI minute_start/second_start is a MATCH-ABSOLUTE clock (period 2 continues past 45:00); it must be
-    # rebased to period-relative to compare with the SPADL period-relative t_kick (ADR-017).
-    from scripts.validate_corners import gi_first_possession, gi_possession_times
+def test_f6_float_gi_join_helpers_are_gone():
+    # F6 (spec 14.3): the exact-float / whole-second-pad GI join is REMOVED; GI times ride the restart rows.
+    import scripts.validate_corners as vc
 
-    gi = pd.DataFrame(
+    assert not hasattr(vc, "gi_first_possession") and not hasattr(vc, "gi_possession_times")
+
+
+def test_f6_resolve_corners_for_match_carries_first_possession_on_the_restart_row():
+    # F6: resolve_kicks runs first, so first_possession_time / _status come WITH the corner row (restart
+    # identity). A native corner -> status native_anchor, time NaN; a native match is never "gi_unpaired".
+    from scripts._driver_sources import LoadedMatch
+    from scripts.validate_corners import resolve_corners_for_match
+    from silly_kicks.spadl import config as spadlconfig
+
+    actions = pd.DataFrame(
         {
-            "event_type": ["player_possession"] * 5 + ["passing_option"],
-            "period": [1, 1, 2, 2, 2, 2],
-            "minute_start": [0, 10, 45, 50, 47, 44],  # P2 is absolute (45:.. 50:.. 47:..); last is a non-pp decoy
-            "second_start": [1, 0, 1, 0, 0, 0],
+            "game_id": ["g1", "g1"],
+            "original_event_id": ["e0", "e1"],
+            "action_id": [0, 1],
+            "period_id": [1, 1],
+            "time_seconds": [100.0, 102.0],
+            "team_id": ["tA", "tA"],
+            "player_id": ["pa", "pb"],
+            "start_x": [104.5, 95.0],
+            "start_y": [0.5, 30.0],
+            "end_x": [95.0, 100.0],
+            "end_y": [30.0, 34.0],
+            "type_id": [spadlconfig.actiontype_id["corner_crossed"], spadlconfig.actiontype_id["shot"]],
+            "result_id": [spadlconfig.result_id["success"], spadlconfig.result_id["fail"]],
+            "bodypart_id": [0, 0],
         }
     )
-    pt = gi_possession_times(gi)
-    assert set(pt["period"].unique().tolist()) == {1, 2}
-    assert len(pt) == 5  # the period-2 passing_option (44:00, earlier) is excluded, so it never sets the base
-    # period 2 pp abs 2701/3000/2820 -> min 2701 -> rel 0/299/119; first at/after t_kick=100 -> 119
-    assert gi_first_possession(pt, 2, 100.0) == pytest.approx(119.0)
-    assert np.isnan(gi_first_possession(pt, 1, 700.0))  # period 1 max rel is 599 -> none after 700 -> NaN
+    rows = []
+    for i in range(40):
+        t = 98.0 + 0.1 * i
+        for pid, team, gk, x, y in (
+            ("pa", "tA", False, 104.0, 1.0),
+            ("pb", "tA", False, 95.0, 30.0),
+            ("ka", "tA", True, 2.0, 34.0),
+            ("kb", "tB", True, 103.0, 34.0),
+        ):
+            rows.append(
+                {
+                    "game_id": "g1",
+                    "frame_id": 1000 + i,
+                    "period_id": 1,
+                    "time_seconds": t,
+                    "team_id": team,
+                    "player_id": pid,
+                    "x": x,
+                    "y": y,
+                    "is_ball": False,
+                    "is_goalkeeper": gk,
+                }
+            )
+        rows.append(
+            {
+                "game_id": "g1",
+                "frame_id": 1000 + i,
+                "period_id": 1,
+                "time_seconds": t,
+                "team_id": None,
+                "player_id": None,
+                "x": 104.5,
+                "y": 0.5,
+                "is_ball": True,
+                "is_goalkeeper": False,
+            }
+        )
+    frames = pd.DataFrame(rows)
+    item = LoadedMatch("sportec", "g1", actions, frames, "tA", None, None)
+    windowed, goal_map, _contacts, gi_unpaired = resolve_corners_for_match(item)
+    assert {"first_possession_time", "first_possession_status"} <= set(windowed.columns)
+    assert len(windowed) == 1 and windowed.iloc[0]["first_possession_status"] == "native_anchor"
+    assert np.isnan(windowed.iloc[0]["first_possession_time"]) and gi_unpaired is False
+    assert goal_map.attacked_goal("g1", 1, "tA") == 105.0
 
 
 def test_derive_season_july_split():
@@ -196,6 +253,42 @@ def test_convergent_timing_correlated_with_offset():
     assert res["offset_mean_s"] == pytest.approx(0.3)
 
 
+def test_convergent_timing_kick_relative_per_provider_and_event_coded_native_leg():
+    # F5 (spec section 14.2): per-provider Spearman on kick-relative onsets; a NATIVE provider's contact leg
+    # uses only winner_source == "event_coded" rows.
+    from scripts.validate_corners import convergent_timing_kick_relative
+
+    rng = np.random.default_rng(1)
+    tk = rng.uniform(100.0, 200.0, size=20)
+    c_lag = rng.uniform(0.2, 0.8, size=20)  # varying contact onset (kick-relative) so rho is defined
+    sc = pd.DataFrame(
+        {
+            "provider": ["skillcorner"] * 20,
+            "t_kick": tk,
+            "first_contact_time": tk + c_lag,
+            "first_possession_time": tk + c_lag + 0.4,  # possession tracks contact -> high rho
+            "winner_source": ["tracking_inferred"] * 20,
+        }
+    )
+    # native: 6 event_coded rows (used, varying onsets) + 6 tracking_inferred rows with a BROKEN contact leg.
+    tkn = rng.uniform(100.0, 200.0, size=12)
+    nlag = rng.uniform(0.2, 0.8, size=6)
+    native = pd.DataFrame(
+        {
+            "provider": ["sportec"] * 12,
+            "t_kick": tkn,
+            "first_contact_time": np.concatenate([tkn[:6] + nlag, tkn[6:] * 0.0 + 999.0]),
+            "first_possession_time": np.concatenate([tkn[:6] + nlag + 0.3, tkn[6:] + 0.8]),
+            "winner_source": ["event_coded"] * 6 + ["tracking_inferred"] * 6,
+        }
+    )
+    out = convergent_timing_kick_relative(pd.concat([sc, native], ignore_index=True))
+    assert set(out) == {"skillcorner", "sportec"}
+    assert out["skillcorner"]["n"] == 20
+    assert out["sportec"]["n"] == 6  # only the event_coded native rows survive
+    assert out["sportec"]["rho"] > 0.9  # the surviving native leg agrees once the broken rows are gone
+
+
 def test_reduce_samples_net_of_team_and_transfer_when_columns_present():
     # With the confound columns present, reduce adds net_of_team (team/opponent/routine legs) + transfer.
     from scripts.validate_corners import reduce_samples
@@ -220,8 +313,8 @@ def test_reduce_samples_net_of_team_and_transfer_when_columns_present():
     assert "transfer" in out and "sum_xg" in out["transfer"]
 
 
-def test_reduce_counts_gi_fetch_failures():
-    # TF46-IMPL-06: a FETCH/PARSE failure is counted per match (distinct from honest GI absence).
+def test_reduce_counts_gi_unpaired_matches():
+    # F6 / TF46-IMPL-06: a dark GI timing leg is attributed to a measured UNPAIRED match, counted per match.
     from scripts.validate_corners import reduce_samples
 
     samples = pd.DataFrame(
@@ -229,13 +322,13 @@ def test_reduce_counts_gi_fetch_failures():
             "team_id": ["A", "A", "B", "B"],
             "provider": "skillcorner",
             "game_id": ["g1", "g1", "g2", "g2"],
-            "gi_fetch_failed": [True, True, False, False],
+            "gi_unpaired": [True, True, False, False],
             "n_goals": [0, 1, 0, 1],
             "n_shots": [2, 3, 1, 2],
         }
     )
     out = reduce_samples(samples)
-    assert out["n_matches_gi_fetch_failed"] == 1  # g1 failed, g2 fetched cleanly
+    assert out["n_matches_gi_unpaired"] == 1  # g1 unpaired, g2 paired
 
 
 def test_reduce_samples_omits_net_of_team_without_confound_columns():

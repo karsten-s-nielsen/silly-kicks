@@ -30,7 +30,7 @@ from silly_kicks.tracking._ball_carrier import (
     derive_team_in_possession,
     infer_ball_carrier,
 )
-from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
+from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels, occurrence_labels_and_censor
 from silly_kicks.tracking._velocity_availability import (
     variant_key_for_velocity as _variant_key_for_velocity,
 )
@@ -291,6 +291,11 @@ def extract_xshot_features(
 #: ``build_xshot_labels`` so it can be the default ``shot_types`` argument.
 _DEFAULT_SHOT_TYPES = ("shot", "shot_penalty", "shot_freekick")
 
+#: Provenance dimensions this trainer READS (TF-46 Arm 1 Part 2, spec section 18.2.1). xShot labels FRAMES by
+#: a same-team shot in [t, t+horizon]; an unvalidated-time shot censors its window (no type gating -- every
+#: shot type_id is a shot regardless of subtype).
+TRAINING_READS = frozenset({"time"})
+
 
 def build_xshot_labels(
     frames_index: pd.DataFrame,
@@ -298,7 +303,8 @@ def build_xshot_labels(
     *,
     horizon_seconds: float = 1.0,
     shot_types: tuple[str, ...] = _DEFAULT_SHOT_TYPES,
-) -> pd.Series:
+    return_censor: bool = False,
+) -> pd.Series | tuple[pd.Series, np.ndarray]:
     """Per-row xS label: 1 iff a same-team shot occurs in [t, t+horizon] same period.
 
     Compares the shot action's own ``time_seconds`` directly against each frame
@@ -335,7 +341,16 @@ def build_xshot_labels(
     # Filter to shot type_ids FIRST (ADR-126), then the shared occurrence helper (M-3). frames
     # carry the possessing team as `team_in_possession`; shots carry the acting team as `team_id`.
     type_ids = {_spc.actiontype_id[t] for t in shot_types}
-    shots_f = shots[shots["type_id"].isin(type_ids)][["game_id", "period_id", "team_id", "time_seconds"]]
+    shots_t = shots[shots["type_id"].isin(type_ids)]
+    if return_censor:
+        # TF-46 Arm 1 Part 2 (spec section 18.2.1): a shot with an unvalidated TIME (a derived missing_goal
+        # shot without a gated t_kick) is NOT dropped -- it censors its episode window. A gated derived shot
+        # labels at its t_kick. xShot reads TIME only (every shot type_id is a shot regardless of subtype).
+        y, censor = occurrence_labels_and_censor(
+            frames_index, shots_t, horizon=horizon_seconds, frame_team_col="team_in_possession", reads_type=False
+        )
+        return pd.Series(y, index=frames_index.index), censor
+    shots_f = shots_t[["game_id", "period_id", "team_id", "time_seconds"]]
     y = _build_occurrence_labels(frames_index, shots_f, horizon=horizon_seconds, frame_team_col="team_in_possession")
     return pd.Series(y, index=frames_index.index)
 
@@ -933,10 +948,25 @@ def prepare_xshot_training_data(
     fidx = pd.DataFrame(labels_idx)
 
     # ADR-126: the shot-type filter lives in build_xshot_labels (by type_id); pass the raw table.
-    labels = build_xshot_labels(fidx, shots, horizon_seconds=horizon_seconds, shot_types=types).to_numpy()
+    # TF-46 Arm 1 Part 2 (spec section 18.2.1): CENSOR frames whose shot anchor has an unvalidated time (a
+    # derived missing_goal shot without a gated t_kick) rather than dropping the shot (which would make the
+    # pre-shot frames false negatives). Byte-identical for a native provider (empty censor mask).
+    labels_s, censor = build_xshot_labels(
+        fidx, shots, horizon_seconds=horizon_seconds, shot_types=types, return_censor=True
+    )
+    labels = labels_s.to_numpy()
+    keys = pd.DataFrame(key_rows, columns=["game_id", "period_id", "frame_id"])
+    n_censored = int(censor.sum())
+    if censor.any():
+        keep = ~censor
+        features = features[keep].reset_index(drop=True)
+        labels = labels[keep]
+        fidx = fidx[keep].reset_index(drop=True)
+        keys = keys[keep].reset_index(drop=True)
+    features.attrs["n_provenance_censored"] = n_censored  # read at the call site (spec section 18.2.1)
     groups = fidx["game_id"].to_numpy()
     if return_keys:
-        return features, labels, groups, pd.DataFrame(key_rows, columns=["game_id", "period_id", "frame_id"])
+        return features, labels, groups, keys
     return features, labels, groups
 
 

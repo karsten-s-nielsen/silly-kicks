@@ -151,6 +151,18 @@ SKILLCORNER_SPADL_COLUMNS: dict[str, str] = {
     "action_provenance": "object",
     # result_source AND repair_kind now come from base SPADL_COLUMNS (ADR-046 / decision D / D1); not
     # re-declared here.
+    # TF-46 Arm 1 Part 2 GI facts (spec section 17.2, CL-1 / CL-13 / B-11). The bracket ids are on derived
+    # restart rows only; the possession facts are on every row backed by a GI possession (native and derived).
+    # <NA> whenever the input lacks the GI frame columns.
+    "gi_marker_possession_frame_end": "Int64",  # derived rows: the marker possession frame_end (bracket lo)
+    "gi_next_possession_frame_start": "Int64",  # derived rows: the next possession frame_start (bracket hi)
+    "gi_attacking_side": "object",  # every GI-possession row: the possession attacking_side (CL-1 direction)
+    "gi_possession_frame_start": "Int64",  # every GI-possession row: pairing input (CL-13, spec section 6.1)
+    "gi_possession_frame_end": "Int64",
+    "gi_event_id": "object",  # the GI possession event_id; the pairing de-duplicates by it (C-PLAN-17)
+    # TF-46 Arm 1 Part 2 spec section 26 (DL ruling 2026-10-25): where period_id and the time come from -- "native" =
+    # the GI label, "frame" = the GI frame through the period-label repair. Never <NA>.
+    "period_source": "object",
 }
 """SkillCorner SPADL output schema: KLOPPY_SPADL_COLUMNS (object-dtype IDs) +
 ``action_provenance`` (``"native"`` or ``"derived"``). ``repair_kind`` (goals-reconciliation
@@ -161,7 +173,10 @@ behind ``result_id``; native = SkillCorner ``pass_outcome``, inferred = ``receiv
 ``same_team_next`` residual; D-S8/G1: only ``native`` trains the GK-completion model) now comes from
 base ``SPADL_COLUMNS`` (ADR-046 / TF-46 Arm 1 decision D), not re-declared here. Derived actions include
 ``start_type``-based interceptions/recoveries, OBE-enriched tackles, keeper saves, and synthetic
-dribbles. See the TF-46 Arm 1 corrections spec."""
+dribbles. ``period_source`` (``"native"`` / ``"frame"``; never ``<NA>``) records whether ``period_id`` and the time
+are the GI label or come from the GI frame through the period-label repair (TF-46 Arm 1 Part 2 spec section 26); a
+derived row takes the value of the possession its period comes from, a synthetic dribble that of the action it
+precedes. See the TF-46 Arm 1 corrections spec."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -231,6 +246,14 @@ class SkillCornerConversionReport(ConversionReport):
     goals_coverage_gap: bool = False
     repeated_restart_count: int = 0
     kickoff_unresolved: int = 0
+    # The GI period-label repair (TF-46 Arm 1 Part 2 spec section 26.5): the match status (clean / repaired /
+    # skipped_g1..g4 / not_evaluable), the repaired events per frame-clock type, the repair shape (boundary_block /
+    # interior / None), the on_ball_engagement rows withheld for a period conflict, and the match_periods diagnostic.
+    period_repair_status: str = "not_evaluable"
+    period_relabelled: dict[str, int] = dataclasses.field(default_factory=dict)
+    period_repair_shape: str | None = None
+    obe_period_conflict: int = 0
+    period_start_mismatch: bool = False
 
 
 @dataclasses.dataclass(frozen=True)

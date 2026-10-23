@@ -216,6 +216,7 @@ def reconcile_goals(actions: pd.DataFrame, pp: pd.DataFrame, match_metadata: dic
                 "original_event_id": event_id[poss_i],
                 "action_id": 0,
                 "period_id": int(pp["period_id"].iloc[poss_i]),
+                "period_source": _period_source(pp, poss_i),
                 "time_seconds": _own_goal_time(poss_i),
                 "team_id": conceding_team,
                 "player_id": og_player if og_player is not None else pd.NA,
@@ -461,6 +462,12 @@ def _last_shot_in_episode(pp_player, end_type, episode, scorer) -> int | None:
     return last
 
 
+def _period_source(pp: pd.DataFrame, poss_i: int) -> str:
+    """The period source of possession ``poss_i`` (TF-46 Part 2 spec section 26.5): a row whose period comes from
+    that possession carries it. ``"native"`` when the possession frame has no ``period_source`` column."""
+    return str(pp["period_source"].iloc[poss_i]) if "period_source" in pp.columns else "native"
+
+
 def _derived_shot_row(match_metadata, pp, poss_i, team_t, scorer, penalty) -> dict:
     """A derived scoring shot for a ``missing_goal`` with no native shot (spec section 6.3)."""
     tid = spadlconfig.actiontype_id["shot_penalty"] if penalty else spadlconfig.actiontype_id["shot"]
@@ -470,6 +477,7 @@ def _derived_shot_row(match_metadata, pp, poss_i, team_t, scorer, penalty) -> di
         "original_event_id": pp["event_id"].astype("object").iloc[poss_i],
         "action_id": 0,
         "period_id": int(pp["period_id"].iloc[poss_i]),
+        "period_source": _period_source(pp, poss_i),
         "time_seconds": float(pp["time_seconds"].iloc[poss_i]),
         "team_id": team_t,
         "player_id": scorer if scorer is not None else pd.NA,

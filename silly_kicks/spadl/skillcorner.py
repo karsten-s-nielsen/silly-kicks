@@ -28,6 +28,8 @@ from ..id_compat import canonical_id
 from . import config as spadlconfig
 from ._skillcorner_goals import reconcile_goals
 from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves
+from ._skillcorner_periods import _PERIOD_START_SECONDS, _parse_time_start, repair_gi_periods
+from ._skillcorner_periods import GiPeriodRepairWarning as GiPeriodRepairWarning  # public re-export (spec section 26)
 from ._skillcorner_restarts import derive_restarts
 from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr
@@ -81,35 +83,9 @@ def _transform_coords(
     return x_out.clip(lower=0.0, upper=105.0), y_out.clip(lower=0.0, upper=68.0)
 
 
-# SkillCorner's `time_start` is the CONTINUOUS broadcast clock (the 2nd half shows 45:00+,
-# extra time 90:00+/105:00+), so each period's nominal start offset must be subtracted to get
-# the period-relative seconds the tracking-frame contract requires (ADR-017). The offsets are
-# the regulation period boundaries (45/90/105/120 min), matching the Gradient Sports adapter.
-_PERIOD_START_SECONDS = {1: 0.0, 2: 45 * 60.0, 3: 90 * 60.0, 4: 105 * 60.0, 5: 120 * 60.0}
-
-
-def _parse_time_start(time_start: pd.Series) -> pd.Series:
-    """Parse ``MM:SS.d`` time strings to float seconds (CONTINUOUS match clock).
-
-    NOTE: SkillCorner's ``time_start`` is the continuous broadcast clock (2nd-half values are
-    45:00+), so this returns seconds since MATCH start, NOT since period start. Callers must
-    re-base to period-relative via :func:`_to_period_relative` to satisfy the period-relative
-    frame contract (ADR-017).
-
-    Parameters
-    ----------
-    time_start : pd.Series
-        String series in ``"MM:SS.d"`` format (e.g. ``"12:34.5"``).
-
-    Returns
-    -------
-    pd.Series
-        Float64 seconds since match start (continuous broadcast clock).
-    """
-    parts = time_start.str.split(":", expand=True)
-    minutes = parts[0].astype("float64")
-    seconds = parts[1].astype("float64")
-    return minutes * 60 + seconds
+# `_PERIOD_START_SECONDS` (the regulation period offsets of the continuous broadcast clock) and
+# `_parse_time_start` live in `_skillcorner_periods` (the GI period-label repair reads them; spec section 26) and are
+# re-exported here unchanged -- the same objects (`tracking/skillcorner.py` and `scripts/` import them from here).
 
 
 def _to_period_relative(time_seconds: pd.Series, period: pd.Series) -> pd.Series:
@@ -304,20 +280,30 @@ def convert_to_actions(
     pitch_width = match_metadata["pitch_width"]
     home_team_id = str(match_metadata["home_team"]["id"])
 
+    # --- GI period-label repair (spec section 26; DL ruling 2026-10-25) --- GI facts only, BEFORE the time base and
+    # the chronological sort. A unique positional index keeps the repair's Series aligned with every subset below.
+    events = events.reset_index(drop=True)
+    period_repair = repair_gi_periods(events, match_periods=match_metadata.get("match_periods"))
+
     # --- Filter to player_possession rows with valid actors ---
     pp = events[events["event_type"] == "player_possession"].copy()
     pp = pp[pp["player_id"].notna() & pp["team_id"].notna()].copy()
     pp["team_id"] = pp["team_id"].astype(str)
     pp["player_id"] = pp["player_id"].astype(str)
+    pp["period"] = period_repair.period.loc[pp.index]
+    pp["period_source"] = period_repair.period_source.loc[pp.index]
 
-    # OBE rows for tackle enrichment
+    # OBE rows for tackle enrichment. An OBE whose GI label conflicts with its frame period is withheld (never
+    # repaired: OBE is not on the frame clock; spec section 26.2.6) and counted on the report.
     obe = events[events["event_type"] == "on_ball_engagement"].copy()
+    obe = obe[~period_repair.obe_conflict.loc[obe.index].to_numpy(dtype=bool)].copy()
     if len(obe) > 0:
         obe["team_id"] = obe["team_id"].astype(str)
         obe["player_id"] = obe["player_id"].astype(str)
 
-    # --- Time parsing --- (re-base the continuous broadcast clock to period-relative; ADR-017)
-    pp["time_seconds"] = _to_period_relative(_parse_time_start(pp["time_start"]), pp["period"])
+    # --- Time parsing --- (re-base the continuous broadcast clock to period-relative; ADR-017). The clock is the
+    # repair's: the `_parse_time_start` value on every unrepaired row, the frame-re-based value on a repaired one.
+    pp["time_seconds"] = _to_period_relative(period_repair.clock.loc[pp.index], pp["period"])
     if len(obe) > 0 and "time_start" in obe.columns and "period" in obe.columns:
         obe["time_seconds"] = _to_period_relative(_parse_time_start(obe["time_start"]), obe["period"])
 
@@ -484,6 +470,23 @@ def convert_to_actions(
 
     # --- Build native actions DataFrame ---
     game_id = str(match_metadata.get("id", "unknown"))
+
+    # GI facts carried onto every native possession row (spec section 17.2, CL-1 / CL-13 / B-11). Optional
+    # on the input: a bronze without the GI columns leaves every GI column <NA> (backward compatible).
+    def _gi_int_series(col: str) -> np.ndarray:
+        if col in pp.columns:
+            return pd.to_numeric(pp[col], errors="coerce").astype("Int64").to_numpy()
+        return pd.array([pd.NA] * len(pp), dtype="Int64").to_numpy()
+
+    gi_possession_frame_start = _gi_int_series("frame_start")
+    gi_possession_frame_end = _gi_int_series("frame_end")
+    gi_attacking_side = (
+        pp["attacking_side"].astype("object").to_numpy()
+        if "attacking_side" in pp.columns
+        else np.full(len(pp), pd.NA, dtype=object)
+    )
+    gi_event_id = pp["event_id"].astype("object").to_numpy()
+
     actions = pd.DataFrame(
         {
             "game_id": game_id,
@@ -507,6 +510,16 @@ def convert_to_actions(
             "restart_evidence": pd.NA,
             "type_source": pd.NA,
             "repair_kind": pd.NA,
+            # GI facts (spec section 17.2). Every native possession row carries its possession's facts;
+            # the bracket ids are derived-restart only, so <NA> here.
+            "gi_marker_possession_frame_end": pd.NA,
+            "gi_next_possession_frame_start": pd.NA,
+            "gi_attacking_side": gi_attacking_side,
+            "gi_possession_frame_start": gi_possession_frame_start,
+            "gi_possession_frame_end": gi_possession_frame_end,
+            "gi_event_id": gi_event_id,
+            # native / frame: where period_id and the time come from (spec section 26.5); never <NA>.
+            "period_source": pp["period_source"].astype("object").to_numpy(),
         }
     )
 
@@ -528,6 +541,16 @@ def convert_to_actions(
             "game_interruption_after": gi_after.to_numpy(),
             "start_x": sx.to_numpy(),
             "start_y": sy.to_numpy(),
+            # GI facts threaded onto the derived restart rows (spec section 17.2, CL-1 / CL-13).
+            "frame_start": (pp["frame_start"].to_numpy() if "frame_start" in pp.columns else np.full(len(pp), np.nan)),
+            "frame_end": (pp["frame_end"].to_numpy() if "frame_end" in pp.columns else np.full(len(pp), np.nan)),
+            "attacking_side": (
+                pp["attacking_side"].astype("object").to_numpy()
+                if "attacking_side" in pp.columns
+                else np.full(len(pp), pd.NA, dtype=object)
+            ),
+            # a derived row's period comes from its marker / tag possession, so does its period source (section 26.5)
+            "period_source": pp["period_source"].astype("object").to_numpy(),
         }
     )
     derived_restarts = derive_restarts(pp_restart, opponent, match_metadata)
@@ -542,7 +565,17 @@ def convert_to_actions(
         )
 
     pp_for_inference = pp[
-        ["event_id", "period", "time_seconds", "team_id", "player_id", "start_type", "x_start", "y_start"]
+        [
+            "event_id",
+            "period",
+            "time_seconds",
+            "team_id",
+            "player_id",
+            "start_type",
+            "x_start",
+            "y_start",
+            "period_source",
+        ]
     ].copy()
 
     defensive = infer_defensive_actions(pp_for_inference, obe_for_inference)
@@ -563,7 +596,17 @@ def convert_to_actions(
         defensive["action_id"] = 0  # will be re-indexed
 
     keeper_saves_pp = pp[
-        ["event_id", "period", "time_seconds", "team_id", "player_id", "end_type", "x_start", "y_start"]
+        [
+            "event_id",
+            "period",
+            "time_seconds",
+            "team_id",
+            "player_id",
+            "end_type",
+            "x_start",
+            "y_start",
+            "period_source",
+        ]
     ].copy()
     if "game_interruption_after" in pp.columns:
         keeper_saves_pp["game_interruption_after"] = pp["game_interruption_after"].values
@@ -594,6 +637,15 @@ def convert_to_actions(
                 ("restart_evidence", pd.NA),
                 ("type_source", pd.NA),
                 ("repair_kind", pd.NA),
+                # Inferred defensive / keeper-save rows are not GI-possession rows -> every GI column <NA>.
+                ("gi_marker_possession_frame_end", pd.NA),
+                ("gi_next_possession_frame_start", pd.NA),
+                ("gi_attacking_side", pd.NA),
+                ("gi_possession_frame_start", pd.NA),
+                ("gi_possession_frame_end", pd.NA),
+                ("gi_event_id", pd.NA),
+                # carried from the source possession by the inference (section 26.5); "native" only as the default
+                ("period_source", "native"),
             ):
                 if _col not in _derived.columns:
                     _derived[_col] = _val
@@ -626,6 +678,7 @@ def convert_to_actions(
             "opponent_team_score": (
                 pp["opponent_team_score"].to_numpy() if "opponent_team_score" in pp.columns else np.nan
             ),
+            "period_source": pp["period_source"].astype("object").to_numpy(),  # own-goal / derived-shot rows (26.5)
         }
     )
     actions, goals_report = reconcile_goals(actions, pp_goals, match_metadata)
@@ -643,6 +696,13 @@ def convert_to_actions(
     # Mark dribbles as derived
     dribble_mask = actions["type_id"] == spadlconfig.actiontype_id["dribble"]
     actions.loc[dribble_mask, "action_provenance"] = "derived"
+    # A synthetic dribble takes its period from the action it precedes (``_add_dribbles``: ``nex.period_id``; it
+    # sorts directly before that action), so it takes that action's period source too (spec section 26.5). Only the
+    # inserted dribbles are filled: any other <NA> stays visible (a creation site that forgot the column).
+    inserted = (actions["period_source"].isna() & dribble_mask).to_numpy()
+    if inserted.any():
+        following = actions["period_source"].shift(-1).to_numpy(dtype=object)
+        actions["period_source"] = np.where(inserted, following, actions["period_source"].to_numpy(dtype=object))
 
     # --- LTR normalization (no-op for possession perspective) ---
     actions = to_spadl_ltr(
@@ -698,6 +758,12 @@ def convert_to_actions(
         goals_coverage_gap=goals_report.coverage_gap,
         repeated_restart_count=repeated_restart_count,
         kickoff_unresolved=0,
+        # The GI period-label repair (spec section 26.5).
+        period_repair_status=period_repair.status,
+        period_relabelled=dict(period_repair.relabelled),
+        period_repair_shape=period_repair.shape,
+        obe_period_conflict=int(period_repair.obe_conflict.sum()),
+        period_start_mismatch=bool(period_repair.period_start_mismatch),
     )
 
     # --- Finalize output ---

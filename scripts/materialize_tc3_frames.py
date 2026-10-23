@@ -230,6 +230,36 @@ def _guard_provider_frames(frames: pd.DataFrame, provider: str) -> None:
     assert_detection_aware_visibility(frames["visibility"], provider=provider)
 
 
+def parse_worker(spec: str | None) -> tuple[int, int] | None:
+    """``"I/N"`` -> ``(I, N)`` with ``0 <= I < N``; ``None`` -> ``None`` (every unit). Raises on a malformed spec.
+
+    Examples
+    --------
+    >>> parse_worker("3/16"), parse_worker(None)
+    ((3, 16), None)
+    """
+    if spec is None:
+        return None
+    i_s, sep, n_s = str(spec).partition("/")
+    if not sep or not i_s.isdigit() or not n_s.isdigit() or not 0 <= int(i_s) < int(n_s):
+        raise SystemExit(f"--worker must be I/N with 0 <= I < N, got {spec!r}")
+    return int(i_s), int(n_s)
+
+
+def in_worker_partition(key: tuple[str, str], i: int, n: int) -> bool:
+    """Whether the unit ``(provider, match_id)`` belongs to worker ``i`` of ``n``: a STABLE sha256 partition (never
+    Python's salted ``hash``), so every worker and every rerun agrees, and the N partitions are disjoint and cover
+    every unit.
+
+    Examples
+    --------
+    >>> sum(in_worker_partition(("skillcorner", "1886347"), i, 4) for i in range(4))
+    1
+    """
+    digest = hashlib.sha256(f"{key[0]}|{key[1]}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") % n == i
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Materialize pining frames into a resumable corpus cache.")
     ap.add_argument("--cache-dir", type=pathlib.Path, required=True)
@@ -251,8 +281,31 @@ def main() -> None:
         "179-match training corpus). Omit = the full pining catalog. Recorded in token_inputs as a "
         "roster hash so a constrained corpus lands its own generation.",
     )
+    ap.add_argument(
+        "--part2",
+        action="store_true",
+        help="TF-46 Arm 1 Part 2: also stage _native/ (provider-native events), _footprint/ (the SkillCorner camera "
+        "footprint) and _profile/ (the data-profile record) for EVERY unit (scripts._driver_sources."
+        "PART2_EXTRA_FILES), the corpus the tf46p2_* stage-contract walkers read.",
+    )
+    ap.add_argument(
+        "--profile-overrides-json",
+        type=pathlib.Path,
+        default=None,
+        help="--part2 only: JSON {provider: {match_id: {tracking_release, gi_release, competition_season, "
+        "is_opendata}}} -- the owner's per-match data-profile assignment (else derived from the artifacts).",
+    )
+    ap.add_argument(
+        "--worker",
+        default=None,
+        help="I/N: materialize ONLY the units whose stable key hash falls in partition I of N (0 <= I < N). It "
+        "does NOT enter the generation token, so N concurrent workers fill ONE generation (disjoint units, atomic "
+        "shard writes). A worker writes no home_teams.json / manifest; run ONE final pass WITHOUT --worker, which "
+        "resumes over every shard and assembles them.",
+    )
     ap.add_argument("--allow-dirty", action="store_true")
     args = ap.parse_args()
+    worker = parse_worker(args.worker)
     match_ids = json.loads(args.match_ids_json.read_text()) if args.match_ids_json else None
 
     prov = git_provenance()
@@ -261,6 +314,9 @@ def main() -> None:
     from scripts._loader_pining import list_match_refs, load_match, pining_source, resolve_cache_dir
 
     cache_dir = resolve_cache_dir(args.cache_dir)
+    if args.part2 and cache_dir is None:
+        # the Part 2 extras re-read the RAW artifacts `load_match` fetched; a temp per-match dir is gone
+        ap.error("--part2 needs --cache-dir (or $SILLY_KICKS_CORPUS_CACHE_DIR): the extras read the cache")
 
     # BEFORE the loop, and before any corpus work is paid for: a parity breach must STOP the pass,
     # and `for_each` would only record it as one failed item and carry on. See
@@ -275,6 +331,7 @@ def main() -> None:
 
     home_dir = args.out / "_home"
     actions_dir = args.out / "_actions"
+    overrides = json.loads(args.profile_overrides_json.read_text()) if args.profile_overrides_json else {}
 
     def _work(item):
         provider, match_id, actions, frames, home, *_ = item
@@ -309,7 +366,31 @@ def main() -> None:
         if actions is not None and len(actions) > 0:
             actions_dir.mkdir(parents=True, exist_ok=True)
             actions.to_parquet(actions_dir / f"{stem}.parquet")
+        if args.part2:
+            _write_part2(item, stem)
         return frames
+
+    def _write_part2(item, stem: str) -> None:
+        """TF-46 Part 2 extras for one unit -- ALWAYS all three files (an empty table where a provider has none),
+        so a unit's file list is fixed (scripts._driver_sources.PART2_EXTRA_FILES)."""
+        from scripts._loader_pining import part2_extras
+
+        provider, match_id = str(item[0]), str(item[1])
+        ref = ref_by_key[(provider, match_id)]
+        if cache_dir is None:  # refused at argument parsing; narrows the closure's view
+            raise RuntimeError("--part2 without a cache dir")
+        ex = part2_extras(
+            ref,
+            item,
+            cache_dir=cache_dir,
+            entry=manifest.get((provider, match_id)),
+            overrides=overrides.get(provider, {}).get(match_id),
+        )
+        for sub, table in (("_native", ex["native"]), ("_footprint", ex["footprint"])):
+            (args.out / sub).mkdir(parents=True, exist_ok=True)
+            table.to_parquet(args.out / sub / f"{stem}.parquet", index=False)
+        (args.out / "_profile").mkdir(parents=True, exist_ok=True)
+        (args.out / "_profile" / f"{stem}.json").write_text(json.dumps(ex["profile"], sort_keys=True), encoding="utf-8")
 
     # ADR-052: this walks a corpus and each item costs minutes, so it MUST persist per item.
     # Materializing 179 matches with a naive loop loses everything on a crash at match 150 -- the
@@ -322,6 +403,17 @@ def main() -> None:
         max_per_provider=args.max_per_provider,
         cache_dir=cache_dir,
     )
+    if worker is not None:
+        refs = [r for r in refs if in_worker_partition((str(r.provider), str(r.match_id)), *worker)]
+    ref_by_key = {(str(r.provider), str(r.match_id)): r for r in refs}
+    manifest: dict = {}
+    if args.part2:  # the manifest entries carry the date + visibility the Part 2 profile record reads
+        from scripts._loader_pining import _base_url, _list_matches, _resolve_token
+
+        tok, base = _resolve_token(None), _base_url()
+        for provider_name in args.providers:  # never `prov`: that name holds the run's git provenance
+            for m in _list_matches(provider_name, tok, base):
+                manifest[(provider_name, str(m["id"]))] = m
     res = for_each(
         refs,
         key=lambda ref: ref.key,
@@ -334,6 +426,8 @@ def main() -> None:
         token_inputs={
             "providers": sorted(args.providers),
             "schema": _SHARD_SCHEMA_VERSION,
+            # A Part 2 corpus carries the _native / _footprint / _profile extras: its own generation.
+            **({"part2": "tf46p2-staging-1"} if args.part2 else {}),
             # A roster constrains WHICH matches; record its hash so a constrained corpus (e.g. the
             # F1b 179) lands its own generation, distinct from the full-catalog run.
             **(
@@ -357,6 +451,12 @@ def main() -> None:
     # `counters_unrecorded`, so a hand-rolled call silently defaults it to 0 and a resumed pass
     # reports a complete corpus it never walked.
     args.out.mkdir(parents=True, exist_ok=True)
+    if worker is not None:
+        print(
+            f"worker {worker[0]}/{worker[1]}: {len(refs)} unit(s) of this partition done; run ONE final pass "
+            "without --worker to assemble home_teams.json + the manifest"
+        )
+        return
 
     # --- assemble the trainer's home-team map, and REFUSE a partial one -------------------------
     #

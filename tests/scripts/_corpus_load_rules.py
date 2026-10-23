@@ -50,6 +50,7 @@ _LOADER_NON_CORPUS: dict[str, str] = {
     "pin_open_data_revision": "pins every statsbombpy open-data URL to one commit (ADR-128 P6); loads nothing",
     "pining_source": "(refs, load) tracking factory: composes list_match_refs + load_match; not a stream/loop",
     "open_data_source": "(refs, load) open-data factory: composes list_open_data_refs + load_open_data_match",
+    "part2_extras": "derives one staged match's TF-46 Part 2 extras from its cached raw artifacts; loads no corpus",
 }
 
 #: Rule A exemption, function-granular (spec section 5.3). ``(module, function)``.

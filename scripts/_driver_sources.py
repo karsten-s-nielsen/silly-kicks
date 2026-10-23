@@ -168,6 +168,24 @@ def staged_flat_refs(data_root, dataset: str | None) -> list[StagedRef]:
     return refs
 
 
+#: TF-46 Arm 1 Part 2 staging extras (spec section 16.2): per unit, the provider-NATIVE event table (DFL
+#: shaped events / the flattened PFF gameEvents / the SkillCorner GI dynamic events, the section 5.6 tier-1
+#: truth source), the SkillCorner camera-footprint companion table (section 17.7), and a JSON profile record
+#: (the data-profile fields + the provider pitch length). The staging tool ALWAYS writes all three for every
+#: unit -- an empty table where a provider has none -- so a unit's file list is fixed and a job fetches exactly
+#: its own files (resume-before-download).
+PART2_EXTRA_FILES: tuple[str, ...] = ("_native/{stem}.parquet", "_footprint/{stem}.parquet", "_profile/{stem}.json")
+
+
+def staged_part2_refs(data_root, dataset: str | None) -> list[StagedRef]:
+    """Units of a ``flat_tc3`` dataset staged with the TF-46 Part 2 extras (``PART2_EXTRA_FILES``): the
+    ``staged_flat_refs`` frames + actions plus the native events, the camera footprint and the profile record."""
+    return [
+        dataclasses.replace(r, files=(*r.files, *(f.format(stem=r.stem) for f in PART2_EXTRA_FILES)))
+        for r in staged_flat_refs(data_root, dataset)
+    ]
+
+
 def staged_pergame_refs(data_root, dataset: str | None) -> list[StagedRef]:
     """Units of a ``pergame`` dataset: ``<game>/frames.parquet`` (+ ``actions.parquet``/``shots.parquet``).
     Dot-directories are never units (the ``hf download`` ``.cache/`` crash of 4.138.0)."""

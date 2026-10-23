@@ -220,26 +220,26 @@ def test_build_skillcorner_frames_chains_bronze_native_preprocess(tmp_path, monk
         "players": [{"id": 10, "team_id": 7, "player_role": {"acronym": "GK"}}],
     }
     (tmp_path / "m.json").write_text(json.dumps(meta), encoding="utf-8")
-    (tmp_path / "t.jsonl").write_text(
-        json.dumps(
-            {
-                "period": 1,
-                "frame": 1,
-                "timestamp": 0.0,
-                "player_data": [{"player_id": 10, "x": 0.0, "y": 0.0, "is_detected": True}],
-                "ball_data": {"x": 0.0, "y": 0.0, "z": 1.5},
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    records = [
+        {"period": None, "frame": 0, "timestamp": None, "player_data": [], "ball_data": {}},  # pre-match: no period
+        {
+            "period": 1,
+            "frame": 1,
+            "timestamp": 0.0,
+            "player_data": [{"player_id": 10, "x": 0.0, "y": 0.0, "is_detected": True}],
+            "ball_data": {"x": 0.0, "y": 0.0, "z": 1.5},
+        },
+        {"period": 1, "frame": 2, "timestamp": 0.1, "player_data": [], "ball_data": {}},  # labelled but empty
+    ]
+    (tmp_path / "t.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
 
     seen = {}
 
-    def _fake_convert(bronze, *, home_team_id, output_convention):
+    def _fake_convert(bronze, *, home_team_id, output_convention, period_frame_ranges=None):
         seen["bronze"] = bronze
         seen["home_team_id"] = home_team_id
         seen["output_convention"] = output_convention
+        seen["period_frame_ranges"] = period_frame_ranges
         return pd.DataFrame({"x": [1.0, 2.0]}), "REPORT"
 
     monkeypatch.setattr("silly_kicks.tracking.skillcorner.convert_to_frames", _fake_convert)
@@ -257,6 +257,10 @@ def test_build_skillcorner_frames_chains_bronze_native_preprocess(tmp_path, monk
     assert seen["bronze"]["is_visible"].tolist() == [True]  # is_detected survived
     assert seen["bronze"]["ball_z"].iloc[0] == 1.5  # ball_z recovered
     assert seen["home_team_id"] == "7"  # read from meta before the call
+    # TF-46 Part 2 spec section 17.7 (amended 2026-10-25): the PROVIDER period range comes from the whole raw feed,
+    # before the tracking_limit slice -- the empty labelled frame 2 counts, the period-None frame 0 does not
+    assert seen["period_frame_ranges"] == {1: (1, 2)}
+    assert seen["bronze"]["frame"].tolist() == [1]  # the bronze carries only frames with objects
     assert report == "REPORT"  # the native geometry report is threaded (Task 4's exclusion needs it)
     assert frames["_with_velocity"].all() and list(frames["x"]) == [1.0, 2.0]  # preprocess applied, velocity default
 

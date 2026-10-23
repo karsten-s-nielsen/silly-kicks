@@ -12,9 +12,10 @@ one-row provenance frame; the committed fixtures are the files, not the shards (
 transient bookkeeping, never committed).
 
 SkillCorner: ``<out>/skillcorner/opendata/<id>_events_slim.csv`` (the converter-read columns + the goal
-truth) + ``<id>_match.json``. IDSSE: ``<out>/idsse/<bare>_events_native.parquet`` + ``<bare>_meta.json``
-(home_team_id + DFL-derived home_team_start_left / _extratime). Writes ``<out>/SHA256SUMS`` over every
-fixture file; re-running reproduces each fixture byte for byte.
+truth) + ``<id>_match.json``; for ``_TRACKING_SLIM_IDS`` also ``<id>_tracking_bronze_slim.parquet`` (the tracking
+bronze on every ``_TRACKING_SLIM_STRIDE``-th frame). IDSSE: ``<out>/idsse/<bare>_events_native.parquet`` +
+``<bare>_meta.json`` (home_team_id + DFL-derived home_team_start_left / _extratime). Writes ``<out>/SHA256SUMS``
+over every fixture file; re-running reproduces each fixture byte for byte.
 """
 
 from __future__ import annotations
@@ -63,16 +64,55 @@ _SKILLCORNER_KEEP = [
     "received",
     "team_score",
     "opponent_team_score",
+    # TF-46 Arm 1 Part 2 GI facts (spec section 17.2, CL-1): the per-possession frame bracket and the
+    # attacking side. Absent-column safe (the `keep` filter below drops any the feed lacks).
+    "frame_start",
+    "frame_end",
+    "attacking_side",
+    # TF-46 Part 2 spec section 26 (DL ruling 2026-10-25): the GI period-label repair's G4 post-condition reads the
+    # possession association of every passing_option / off_ball_run, and parse_passing_options (single-sourced with
+    # the repair) reads the option columns.
+    "associated_player_possession_event_id",
+    "player_in_possession_id",
+    "targeted",
+    "xpass_completion",
+    "n_opponents_bypassed",
 ]
 
 
+#: Opendata matches that also get a slim TRACKING bronze (R.2 2026-10-23: the GI direction check is driven
+#: through the DEFAULT ``convert_to_frames`` on real data). One match keeps the fixture small (MIT opendata).
+_TRACKING_SLIM_IDS: frozenset[str] = frozenset({"1886347"})
+#: Every N-th tracking frame is kept: enough keeper geometry per period for the orienter and GoalMap.
+_TRACKING_SLIM_STRIDE = 100
+
+
+def _skillcorner_tracking_slim(ref: MatchRef, dest: Path, token: str, base_url: str) -> int:
+    """Write ``<id>_tracking_bronze_slim.parquet``: the loader's bronze (``_skillcorner_bronze``, the input of
+    ``tracking.skillcorner.convert_to_frames``) on every ``_TRACKING_SLIM_STRIDE``-th frame. Returns the rows."""
+    from scripts._loader_pining import _skillcorner_bronze, _skillcorner_raw_records
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _download_artifacts("skillcorner", ref.match_id, dict(ref.artifacts), token, base_url, Path(tmp))
+        meta = _read_json(paths["metadata"])
+        raw = [r for r in _skillcorner_raw_records(paths) if int(r.get("frame") or 0) % _TRACKING_SLIM_STRIDE == 0]
+        raw = [r for r in raw if r.get("period") is not None and r.get("player_data")]
+        bronze = _skillcorner_bronze(raw, meta, match_id=str(ref.match_id))
+    bronze = bronze.sort_values(["period", "frame", "player_id"], kind="mergesort").reset_index(drop=True)
+    bronze.to_parquet(dest / f"{ref.match_id}_tracking_bronze_slim.parquet", index=False)
+    return len(bronze)
+
+
 def _slim_match_json(meta: dict) -> dict:
-    """Keep only the ``match.json`` fields the converter + goals reconciliation read."""
+    """Keep only the ``match.json`` fields the converter + goals reconciliation read, plus ``match_periods`` (the
+    spec section 26.4 period-start diagnostic of the GI period-label repair reads it; public data)."""
     out: dict = {
         "id": meta.get("id"),
         "pitch_length": meta.get("pitch_length"),
         "pitch_width": meta.get("pitch_width"),
     }
+    if isinstance(meta.get("match_periods"), list):
+        out["match_periods"] = meta["match_periods"]
     for side in ("home_team", "away_team"):
         if meta.get(side) is not None:
             out[side] = {"id": meta[side].get("id"), "name": meta[side].get("name")}
@@ -94,7 +134,8 @@ def _read_json(path: Path) -> dict:
 
 
 def _write_json(path: Path, obj: dict) -> None:
-    path.write_text(json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=True) + "\n", encoding="utf-8")
+    # bytes, not write_text: write_text writes CRLF on Windows, so a Windows regen would not reproduce the LF fixtures
+    path.write_bytes((json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8"))
 
 
 def _skillcorner_item(ref: MatchRef, dest: Path, token: str, base_url: str) -> pd.DataFrame:
@@ -108,7 +149,10 @@ def _skillcorner_item(ref: MatchRef, dest: Path, token: str, base_url: str) -> p
         slim = events[keep].copy()
         slim.to_csv(dest / f"{ref.match_id}_events_slim.csv", index=False, lineterminator="\n")
         _write_json(dest / f"{ref.match_id}_match.json", _slim_match_json(_read_json(paths["metadata"])))
-    return pd.DataFrame([{"provider": "skillcorner", "match_id": ref.match_id, "rows": len(slim), "cols": len(keep)}])
+    n_track = _skillcorner_tracking_slim(ref, dest, token, base_url) if str(ref.match_id) in _TRACKING_SLIM_IDS else 0
+    return pd.DataFrame(
+        [{"provider": "skillcorner", "match_id": ref.match_id, "rows": len(slim), "cols": len(keep), "track": n_track}]
+    )
 
 
 def _idsse_item(ref: MatchRef, dest: Path, token: str, base_url: str) -> pd.DataFrame:
@@ -152,7 +196,7 @@ def _write_sha256sums(out_dir: Path) -> int:
         if p.is_file() and p.name != "SHA256SUMS" and "_shards" not in p.relative_to(out_dir).parts
     )
     lines = [f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(out_dir).as_posix()}" for p in files]
-    (out_dir / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (out_dir / "SHA256SUMS").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))  # LF on every platform
     return len(files)
 
 

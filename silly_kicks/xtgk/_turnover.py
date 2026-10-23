@@ -33,6 +33,10 @@ from silly_kicks.xthreat._grid import _get_flat_indexes
 
 _SHOT = spadlconfig.actiontype_id["shot"]
 
+#: Provenance dimensions this trainer READS (TF-46 Arm 1 Part 2, spec section 18.2.1): the result mask only;
+#: possession ORDER uses the guarded chronological sort, valid even for placeholder times.
+TRAINING_READS = frozenset({"result"})
+
 
 def _equality_codes(series: pd.Series) -> np.ndarray:
     """Map ``series`` to int64 codes that preserve ``==`` EXACTLY, so the turnover scan can run on a

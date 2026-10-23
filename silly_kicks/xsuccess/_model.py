@@ -20,12 +20,16 @@ from pathlib import Path
 import numpy as np
 
 import silly_kicks.spadl.config as cfg
-from silly_kicks.spadl._training_exclusion import training_exclusion_mask
+from silly_kicks.spadl._training_exclusion import provenance_masks
 
 from ._features import FEATURE_NAMES, feature_contract_block, xsuccess_features
 
 _NON_ACTION = cfg.actiontype_id["non_action"]
 _SUCCESS = cfg.result_id["success"]
+
+#: Provenance dimensions this trainer READS (TF-46 Arm 1 Part 2, spec section 18.2.1). The label is the
+#: action result; the features include the canonical start location. A row unvalidated in either is excluded.
+TRAINING_READS = frozenset({"result", "location"})
 
 _DEFAULT_PARAMS: dict = {
     "n_estimators": 200,
@@ -166,10 +170,12 @@ class XSuccessModel:
             assert model.is_fitted
         """
         sub = actions[actions["type_id"] != _NON_ACTION]
-        # TF-46 Arm 1 (decision B5/E): drop rows marked for training exclusion -- inferred/stopgap results,
-        # chain_ambiguous restarts, goals-reconciliation repairs. Tolerant: a frame without the base signal
-        # columns yields an all-False mask, so atomic / pre-re-convert frames fit unchanged.
-        sub = sub[~training_exclusion_mask(sub)]
+        # TF-46 Arm 1 Part 2 (spec section 18.2.1): drop rows unvalidated in a READ dimension -- the result
+        # (inferred/stopgap/chain_ambiguous/repair) or the start location (canonical NaN, no gated origin).
+        # Tolerant: a frame without the base signal columns yields all-False masks, so atomic / pre-re-convert
+        # frames fit unchanged.
+        pm = provenance_masks(sub)
+        sub = sub[~(pm["result"] | pm["location"])]
         X = xsuccess_features(sub)
         y = (np.asarray(sub["result_id"]) == _SUCCESS).astype(int)
         tid = np.asarray(sub["type_id"])

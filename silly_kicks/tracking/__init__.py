@@ -201,6 +201,7 @@ __all__ = [
     "detect_ball_contacts",
     "detect_line_breaking",
     "detect_off_ball_runs",
+    "detect_penalties",
     "detected_mask",
     "detection_aware_provider",
     "elastic_sync_xfns",
@@ -285,6 +286,7 @@ __all__ = [
     "resolve_defended_goals",
     "resolve_detected_keeper_xy",
     "resolve_intended_receiver",
+    "resolve_kicks",
     "resolve_restart_geometry",
     "run_tracking_features",
     "schema",
@@ -389,6 +391,7 @@ from ._ghost_outfield import (
 )
 from ._gk_geometry import resolve_restart_geometry
 from ._gk_influence import compute_gk_influence
+from ._kick_resolver import resolve_kicks
 from ._line_breaking import LineBreakingParams, detect_line_breaking
 from ._obso import ObsoParams, ObsoSurface, compute_obso_surface, compute_pass_obso
 from ._packing import (
@@ -398,6 +401,7 @@ from ._packing import (
     secured_reception,
 )
 from ._pausa import compute_pausa, compute_pausa_batch
+from ._penalty_detector import detect_penalties
 from ._player_influence import PlayerInfluence, compute_player_influence
 from ._provider_visibility import (
     detected_mask,

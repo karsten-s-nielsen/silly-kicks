@@ -4,6 +4,7 @@ Synthetic actions + possessions + match.json truth, each repair path with unique
 """
 
 import pandas as pd
+import pytest
 
 from silly_kicks.spadl import config as spadlcfg
 from silly_kicks.spadl._skillcorner_goals import _OWN_GOAL_END, _PENALTY_SPOT, reconcile_goals
@@ -442,3 +443,59 @@ def test_penalty_does_not_rewrite_an_earlier_miss_in_episode():
     assert miss["type_id"] == spadlcfg.actiontype_id["shot"] and miss["result_id"] == spadlcfg.result_id["fail"]
     pen = out[out["type_id"] == spadlcfg.actiontype_id["shot_penalty"]]
     assert len(pen) == 1 and (pen.iloc[0]["start_x"], pen.iloc[0]["start_y"]) == _PENALTY_SPOT
+
+
+@pytest.mark.parametrize("sources", [("native", "frame"), ("frame", "native")])
+def test_own_goal_row_takes_the_period_source_of_its_possession(sources):
+    # TF-46 Part 2 spec section 26.5: a row whose period comes from a GI possession carries that possession's
+    # period_source; the twin (sources swapped) proves it copies the RIGHT possession, not a constant.
+    acts = _actions([_action("e1", "H", "h9", "pass", "success")]).assign(period_source="native")
+    pp = pd.DataFrame(
+        [
+            _poss("e1", "H", "h9", end_type="pass", hs=0, as_=0),
+            _poss("e2", "A", "a3", end_type="possession_loss", hs=1, as_=0, t=20.0),
+        ]
+    ).assign(period_source=list(sources))
+    meta = _meta(
+        [
+            {"id": "h9", "team_id": "H", "goal": 0, "own_goal": 0},
+            {"id": "a3", "team_id": "A", "goal": 0, "own_goal": 1},
+        ]
+    )
+    out, _rep = reconcile_goals(acts, pp, meta)
+    og = out[out["repair_kind"] == "own_goal_unsignalled"].iloc[0]
+    assert og["period_source"] == dict(zip(pp["event_id"], pp["period_source"], strict=True))[og["original_event_id"]]
+
+
+@pytest.mark.parametrize("sources", [("native", "frame", "native"), ("frame", "native", "frame")])
+def test_derived_shot_row_takes_the_period_source_of_its_possession(sources):
+    acts = _actions([_action("e1", "H", "h9", "pass", "success", t=10.0)]).assign(period_source="native")
+    pp = pd.DataFrame(
+        [
+            _poss("e1", "H", "h9", end_type="pass", gi_before="penalty_for", hs=0, as_=0, t=10.0),
+            _poss("e2", "H", "h9", end_type="possession_loss", gi_before="penalty_for", hs=1, as_=0, t=15.0),
+            _poss("e3", "A", "a5", hs=1, as_=0, t=20.0),
+        ]
+    ).assign(period_source=list(sources))
+    out, _rep = reconcile_goals(acts, pp, _meta([{"id": "h9", "team_id": "H", "goal": 1, "own_goal": 0}]))
+    pen = out[out["type_id"] == spadlcfg.actiontype_id["shot_penalty"]].iloc[0]
+    assert pen["period_source"] == dict(zip(pp["event_id"], pp["period_source"], strict=True))[pen["original_event_id"]]
+
+
+def test_goals_rows_default_to_native_without_a_period_source_column():
+    # the possession table carries no period_source (a caller without the repair): the emitted row says "native"
+    acts = _actions([_action("e1", "H", "h9", "pass", "success")]).assign(period_source="native")
+    pp = pd.DataFrame(
+        [
+            _poss("e1", "H", "h9", end_type="pass", hs=0, as_=0),
+            _poss("e2", "A", "a3", end_type="possession_loss", hs=1, as_=0, t=20.0),
+        ]
+    )
+    meta = _meta(
+        [
+            {"id": "h9", "team_id": "H", "goal": 0, "own_goal": 0},
+            {"id": "a3", "team_id": "A", "goal": 0, "own_goal": 1},
+        ]
+    )
+    out, _rep = reconcile_goals(acts, pp, meta)
+    assert out[out["repair_kind"] == "own_goal_unsignalled"].iloc[0]["period_source"] == "native"
