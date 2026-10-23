@@ -261,6 +261,13 @@ def env_provenance(*, root: pathlib.Path | None = None) -> dict:
     }
 
 
+def resolve_training_platform(explicit: str | None, prov: Mapping[str, object]) -> str | None:
+    """The platform label to stamp on a trained artifact (S5.10): an explicit label if given, else the
+    detected platform from ``prov`` (``git_provenance``/``env_provenance`` carry ``platform``). Stamped at
+    ADOPT (``adopt.stamp_provenance``), never in a stage callable -- a stage reads no ``ctx.prov``."""
+    return explicit or prov.get("platform")  # type: ignore[return-value]
+
+
 def code_identity(prov: Mapping[str, object]) -> str:
     """The code identity a stage token digests (ADR-128, decision P9).
 

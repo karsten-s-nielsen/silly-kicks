@@ -154,3 +154,19 @@ def test_a_nested_slot_in_one_thread_reuses_the_held_slot(tmp_path, gate, monkey
 
     threading.Thread(target=nested, daemon=True).start()
     assert done.wait(10), "a nested read waited for a second slot (deadlock)"
+
+
+def test_the_store_gate_is_separate_from_the_dataset_gate(tmp_path, monkeypatch):
+    monkeypatch.setenv(dr.READ_CAP_ENV, "1")
+    monkeypatch.setenv(dr.STORE_READ_CAP_ENV, "1")
+    monkeypatch.setenv(dr.READ_GATE_DIR_ENV, str(tmp_path))
+    with dr.read_slot():  # a held dataset slot never blocks a store read
+        with dr.store_read_slot():
+            pass
+    assert dr.store_read_cap() == 1
+
+
+def test_store_read_cap_refuses_a_non_positive_value(monkeypatch):
+    monkeypatch.setenv(dr.STORE_READ_CAP_ENV, "0")
+    with pytest.raises(ValueError, match="positive"):
+        dr.store_read_cap()

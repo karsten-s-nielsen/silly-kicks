@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import functools
 import hashlib
 import importlib
 import io
@@ -37,16 +38,26 @@ import re
 import sys
 import time
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any, Protocol
 
 from scripts._driver import _token, _write_bytes_atomically, join_key
 from scripts._item_outcome import ItemExcluded
 
+#: The repo root (``scripts/`` parent): the base ``stage_code_identity`` resolves closure paths against.
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+#: The job IMAGE's Python version (INV-6), keyed into every clean-tree token. It is a FIXED constant, not the
+#: local interpreter's version, so the local controller (``--plan``) and the HF job compute the SAME token
+#: (CCTP-IMPL-15). Task 18 sources it from the image lock; until then it is pinned to the image's Python.
+_IMAGE_PYTHON = "3.12.14"
+
 #: Numeric key components are zero-padded to this width, so lexicographic key order == numeric order.
 KEY_WIDTH = 4
 _RESULT_SUFFIXES = (".parquet", ".json", ".fileset.json")
 _OUTPUT = "_output"
+#: Where a corrupt result's files are moved so its unit is pending again (INV-3, S5.1).
+CORRUPT_DIR = ".corrupt"
 MISSING = object()
 #: A failed unit is retried until it has failed this many times (single-sourced with the campaign
 #: controller, `planner.Constraints.unit_attempts`). A memory failure below it is DEFERRED: the unit waits
@@ -122,10 +133,11 @@ class Stage:
 
     ``params`` names the pipeline parameters the stage's numbers depend on; ``declare(params)`` adds
     any further declared inputs (the ADR-052 rule: a token closes silent omission, not mis-declaration).
-    ``cross_commit_version`` opts the stage into resume across commits (decision P9); default None
-    means the run commit is part of the token. ``max_failures`` (None = unlimited) is the failed-unit
-    tolerance: the executor aborts when it is exceeded and the reduce refuses. ``abort_first_k``: the
-    executor aborts when the first k units that complete in this job have all failed (systematic bug).
+    Resume across commits is sound by CLOSURE identity (ADR-129 `stage_code_identity`): a clean-tree token
+    keys on the stage's locked closure, not the commit, so an unrelated commit reuses the result.
+    ``max_failures`` (None = unlimited) is the failed-unit tolerance: the executor aborts when it is exceeded
+    and the reduce refuses. ``abort_first_k``: the executor aborts when the first k units that complete in this
+    job have all failed (systematic bug).
     """
 
     name: str
@@ -135,7 +147,6 @@ class Stage:
     reduce: Callable[[dict[str, Any], RunContext], Any] | None = None
     params: tuple[str, ...] = ()
     declare: Callable[[Mapping[str, Any]], Mapping[str, object]] | None = None
-    cross_commit_version: str | None = None
     inner_parallel: bool = False
     reduce_order: Callable[[str], Any] | None = None
     max_failures: int | None = 0
@@ -152,6 +163,14 @@ class Stage:
     #: declaration covers every read. Required when ``uses_dataset`` (`Pipeline.validate`). An
     #: ItemStage declares through its refs' ``files`` instead.
     dataset_files: Callable[[RunContext], Sequence[str]] | None = None
+    #: ADR-129 (S5.9): the repo-tracked PACKAGE-DATA path prefixes this stage opens (e.g. a bundled
+    #: ``silly_kicks/tracking/_*_weights/...`` directory, a verdicts JSON). The closure lock expands them with
+    #: ``git ls-files`` into the stage's DATA membership; a change to one re-runs only the stages that declare
+    #: it. Distinct from ``dataset_files`` (the DATASET mount). Required coverage is gated by the file-audit hook.
+    data_files: tuple[str, ...] = ()
+    #: ADR-129 (S5.10): Hub weight files this stage ADOPTS, as ``(repo_id, revision, path)`` triples; the token
+    #: keys on the adopted content and the attestation records it.
+    hub_files: tuple[tuple[str, str, str], ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -174,13 +193,15 @@ class ItemStage:
     reduce: Callable[[dict[str, Any], RunContext], Any] | None = None
     params: tuple[str, ...] = ()
     declare: Callable[[Mapping[str, Any]], Mapping[str, object]] | None = None
-    cross_commit_version: str | None = None
     reduce_order: Callable[[str], Any] | None = None
     max_failures: int | None = 0
     abort_first_k: int = 3
     uses_dataset: bool = False
     #: The parameter naming the dataset this stage reads (``uses_dataset``); its identity keys the token.
     dataset_param: str = "dataset"
+    #: ADR-129 (S5.9/S5.10): see ``Stage.data_files`` / ``Stage.hub_files`` (an ItemStage carries the same two).
+    data_files: tuple[str, ...] = ()
+    hub_files: tuple[tuple[str, str, str], ...] = ()
     inner_parallel: bool = dataclasses.field(default=False, init=False)
 
     def units(self, ctx: RunContext) -> list[str]:
@@ -283,7 +304,7 @@ def open_store(uri: str | os.PathLike) -> Store:
 
 @dataclasses.dataclass
 class RunContext:
-    pipeline: Pipeline
+    pipeline: Pipeline | PipelineView
     params: Mapping[str, Any]
     prov: Mapping[str, Any]
     store: Store
@@ -326,18 +347,20 @@ def compute_tokens(
     dataset_identity: Mapping[str, object] | None,
     *,
     dataset_identities: Mapping[str, Mapping[str, object] | None] | None = None,
+    stage_codes: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, dict], dict[str, str]]:
     """The declared token inputs and the token (generation name) of every stage, in DAG order.
 
     ``dataset_identity`` is the ``--dataset`` identity; ``dataset_identities`` maps any OTHER dataset
-    parameter a stage reads (`Stage.dataset_param`, e.g. ``probe_dataset``) to its identity."""
+    parameter a stage reads (`Stage.dataset_param`, e.g. ``probe_dataset``) to its identity. ``stage_codes``
+    is the per-stage clean-tree closure identity (ADR-129); a stage absent from it keeps the commit identity."""
     inputs: dict[str, dict] = {}
     tokens: dict[str, str] = {}
     for st in pipeline.stages:
         d: dict[str, object] = {
             "pipeline": pipeline.name,
             "stage": st.name,
-            "code": st.cross_commit_version or code_id,
+            "code": (stage_codes or {}).get(st.name) or code_id,
             "params": {
                 p: (params[p].as_posix() if isinstance(params[p], pathlib.PurePath) else params[p]) for p in st.params
             },
@@ -357,6 +380,67 @@ def compute_tokens(
         inputs[st.name] = d
         tokens[st.name] = _token(d, None)
     return inputs, tokens
+
+
+@functools.cache
+def _closure_file_bytes(path_str: str, _mtime_ns: int, _size: int) -> bytes:
+    """The bytes of a closure/data file, cached per (path, mtime, size) so ``--plan`` reads each shared
+    closure file once across every stage, yet re-reads a file edited in-process (the gate's token test).
+
+    A TEXT file's CRLF is normalized to LF so the closure token is identical on a CRLF Windows checkout and the
+    LF tree a Linux job builds from (ADR-129; otherwise a Windows controller's ``--plan`` token diverges from
+    the job's, splitting reuse identity across platforms -- the same class as the image-tag CRLF fix). A BINARY
+    file (it contains a NUL byte) is left raw: normalizing it would corrupt the content hash."""
+    raw = pathlib.Path(path_str).read_bytes()
+    return raw if b"\x00" in raw else raw.replace(b"\r\n", b"\n")
+
+
+def stage_code_identity(pipeline, st, *, root, env_values, image, python) -> str | None:
+    """ADR-129: the digest of the stage's locked closure files, its data members, ``uv.lock``, the image digest,
+    the Python version and the output-affecting environment values. A commit that changes none of these keeps
+    the identity, so its results are reused (INV-10). None when the stage is absent from the lock (the caller
+    keeps the commit identity: no reuse across commits, the safe side)."""
+    from scripts.hf_jobs.closures import load_lock
+
+    entry = load_lock().get(f"{pipeline.name}/{st.name}")
+    if entry is None:
+        return None
+    root = pathlib.Path(root)
+    h = hashlib.sha256()
+    for rel in [*entry["modules"], *entry["data"], "uv.lock"]:
+        f = root / rel
+        data = _closure_file_bytes(str(f), *(lambda s: (s.st_mtime_ns, s.st_size))(f.stat()))
+        h.update(rel.encode("utf-8") + b"\0" + data + b"\0")
+    hub: tuple[tuple[str, str, str], ...] = getattr(st, "hub_files", ())
+    for repo, rev, path in sorted(hub):
+        h.update(f"hub:{repo}@{rev}:{path}\0".encode())
+    h.update(
+        json.dumps({"image": image, "python": python, "env": dict(sorted(env_values.items()))}, sort_keys=True).encode()
+    )
+    return "closure-" + h.hexdigest()
+
+
+def _image_identity() -> str:
+    """The job image digest keyed into every clean-tree stage token (ADR-129 S5.12): the in-job
+    ``SILLY_KICKS_IMAGE`` (set by `launch.job_env` to the prebuilt-image ref), else the prebuilt-image ref from
+    the lock. `image` is stdlib-only, so this import never pulls a visibility concept into the trainer closure."""
+    from scripts.hf_jobs import image
+
+    return os.environ.get("SILLY_KICKS_IMAGE") or image.image_ref()
+
+
+@functools.cache
+def _is_compliant(pipeline_name: str) -> bool:
+    """Whether ``pipeline_name`` is a compliant pipeline's ``PIPELINE.name`` (`_pipeline_population.compliant`)."""
+    from scripts._pipeline_population import compliant
+
+    names = set()
+    for stem in compliant():
+        try:
+            names.add(importlib.import_module(f"scripts.{stem}").PIPELINE.name)
+        except Exception:  # noqa: S112 -- a pipeline that fails to import is not this run's pipeline
+            continue
+    return pipeline_name in names
 
 
 #: A local corpus file at or below this size enters the dataset identity by CONTENT digest (small
@@ -401,14 +485,57 @@ def make_context(
     pipeline.validate()
     code_id = str(prov.get("code_identity") or prov["commit"])
     others = sorted({st.dataset_param for st in pipeline.stages if st.uses_dataset and st.dataset_param != "dataset"})
+    stage_codes = _clean_tree_stage_codes(pipeline, prov)
     inputs, tokens = compute_tokens(
         pipeline,
         params,
         code_id,
         _dataset_identity(params, data_root),
         dataset_identities={name: _dataset_identity(params, data_root, param=name) for name in others},
+        stage_codes=stage_codes,
     )
     return RunContext(pipeline, dict(params), dict(prov), store, data_root, inputs, tokens)
+
+
+def _clean_tree_stage_codes(pipeline: Pipeline, prov: Mapping[str, Any]) -> dict[str, str] | None:
+    """ADR-129: the per-stage closure identity on a CLEAN tree (``None`` on a dirty tree -> every stage keeps the
+    ``dirty-<tree hash>`` identity). A compliant pipeline's stage absent from the lock in an HF job refuses the
+    run (the lock is stale); outside a job (toy / test pipelines) the stage keeps the commit identity."""
+    if prov.get("tree_state") != "clean":
+        return None
+    from scripts.hf_jobs import env_contract
+
+    # CCTP-IMPL-15/26: the token must be IDENTICAL on the local controller (`--plan`) and the HF job. An
+    # output-affecting env value DOES enter the token (S5.9) -- a value that changes a result byte
+    # (`GHOST_FORCE_NUMPY` -> ghost-KDE 1e-9; `COORDINATION_REFERENCE_NUMERICS`) must key it. The controller and
+    # the job agree because: the Python version is the fixed IMAGE constant (never the local interpreter);
+    # `OPEN_DATA_REVISION` is EXCLUDED here (the launcher sets it to the dataset lock revision -- `launch.py`
+    # `env[...] = d.revision` -- which is ALREADY the dataset identity's `revision`, so it keys the token
+    # through the dataset identity, not twice); and the controller runs `--plan` under
+    # `env_contract.controller_plan_env` (the output switches STRIPPED, `campaign.read_plan`), so an operator's
+    # shell switch cannot move the token. The controller therefore never keys the token on an output switch, and
+    # the job must not set one either (`launch.job_env` refuses it, CCTP-IMPL-27), or the two sides diverge.
+    env_values = {
+        k: v
+        for k, v in env_contract.output_values(os.environ).items()
+        if k != "SILLY_KICKS_OPEN_DATA_REVISION"  # keyed via the dataset identity (launch sets it to d.revision)
+    }
+    image = _image_identity()
+    python = _IMAGE_PYTHON
+    codes: dict[str, str] = {}
+    for st in pipeline.stages:
+        sid = stage_code_identity(pipeline, st, root=_REPO_ROOT, env_values=env_values, image=image, python=python)
+        if sid is None:
+            if os.environ.get("SILLY_KICKS_IN_HF_JOB") and _is_compliant(pipeline.name):
+                from scripts.hf_jobs.closures import ClosureViolationError
+
+                raise ClosureViolationError(
+                    f"{pipeline.name}/{st.name} is absent from the closure lock (stale lock); "
+                    f"run `python -m scripts.hf_jobs closures record`"
+                )
+            continue
+        codes[st.name] = sid
+    return codes
 
 
 def _encode(result: Any) -> tuple[str, bytes, dict[str, bytes]]:
@@ -451,35 +578,105 @@ def _present_suffix(names: set[str], stem: str) -> str | None:
     return hits[0] if hits else None
 
 
-def _verified(store: Store, base: str, suffix: str) -> bool:
+class UnitStates(dict):
+    """``{key: state}`` plus the generation listing it was computed from (``names``), so a caller that
+    reads results next reuses ONE listing (INV-11)."""
+
+    names: frozenset[str] = frozenset()
+
+
+def _read_verified(store: Store, base: str, suffix: str) -> tuple[bytes, dict[str, bytes]] | None:
+    """The result bytes and (for a FileSet) its member bytes, each read ONCE and checked against its digest;
+    None when any part is absent or fails its digest."""
     data = store.read_bytes(base + suffix)
     side = store.read_bytes(base + ".sha256")
     if data is None or side is None or _sha(data) != side.decode("ascii").strip():
-        return False
+        return None
+    members: dict[str, bytes] = {}
     if suffix == ".fileset.json":
         for name, want in json.loads(data)["files"].items():
             payload = store.read_bytes(f"{base}.files/{name}")
             if payload is None or _sha(payload) != want:
-                return False
-    return True
+                return None
+            members[name] = payload
+    return data, members
 
 
-def read_result(store: Store, base: str) -> Any:
-    """The verified result at ``base``, or ``MISSING`` (absent or failing its checksum)."""
-    rel_dir, _, stem = base.rpartition("/")
-    suffix = _present_suffix(store.names(rel_dir), stem)
-    if suffix is None or not _verified(store, base, suffix):
-        return MISSING
-    data = store.read_bytes(base + suffix)
-    assert data is not None  # noqa: S101 -- _verified read it a moment ago
+def _verified(store: Store, base: str, suffix: str) -> bool:
+    return _read_verified(store, base, suffix) is not None
+
+
+def _decode(suffix: str, data: bytes, members: Mapping[str, bytes]) -> Any:
     if suffix == ".parquet":
         import pandas as pd
 
         return pd.read_parquet(io.BytesIO(data))
     if suffix == ".json":
         return json.loads(data)
-    names = json.loads(data)["files"]
-    return FileSet({n: store.read_bytes(f"{base}.files/{n}") or b"" for n in names})
+    return FileSet(dict(members))
+
+
+def read_result(store: Store, base: str, *, names: Collection[str] | None = None) -> Any:
+    """The verified result at ``base``, or ``MISSING``. ``names`` is the caller's listing of the result's
+    directory; without it the directory is listed here (one listing per call)."""
+    rel_dir, _, stem = base.rpartition("/")
+    suffix = _present_suffix(set(names) if names is not None else store.names(rel_dir), stem)
+    if suffix is None:
+        return MISSING
+    got = _read_verified(store, base, suffix)
+    return MISSING if got is None else _decode(suffix, *got)
+
+
+def quarantine_corrupt(store: Store, gen: str, key: str, names: Collection[str]) -> None:
+    """Move every file of unit ``key`` (result, sidecar, FileSet members) under ``<gen>/.corrupt/<utc>/`` --
+    copy, then delete -- so the unit is ``pending`` again (INV-3) and the bytes stay for diagnosis."""
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    dest = f"{gen}/{CORRUPT_DIR}/{stamp}"
+    own = [n for n in names if n == f"{key}.sha256" or any(n == f"{key}{sfx}" for sfx in _RESULT_SUFFIXES)]
+    sfx = _present_suffix(set(names), key)
+    if sfx == ".fileset.json":
+        raw = store.read_bytes(f"{gen}/{key}{sfx}")
+        for member in json.loads(raw)["files"] if raw else ():
+            rel = f"{key}.files/{member}"
+            payload = store.read_bytes(f"{gen}/{rel}")
+            if payload is not None:
+                store.write_bytes(f"{dest}/{rel}", payload)
+                store.delete(f"{gen}/{rel}")
+    for name in own:
+        payload = store.read_bytes(f"{gen}/{name}")
+        if payload is not None:
+            store.write_bytes(f"{dest}/{name}", payload)
+        store.delete(f"{gen}/{name}")
+
+
+def read_results(
+    store: Store, gen: str, keys: Sequence[str], *, names: Collection[str], cap: int
+) -> tuple[dict[str, Any], list[str], int]:
+    """Read and verify every result of ``keys`` through a bounded thread pool (``cap`` readers, each under the
+    store read gate). Returns the results in ``keys`` order -- never completion order (INV-1) -- the keys
+    whose bytes failed their digest, and the TOTAL bytes read (the reduce record's ``bytes_read``, S5.2)."""
+    import concurrent.futures
+
+    from scripts._dataset_reads import store_read_slot
+
+    listing = set(names)
+
+    def one(k: str) -> tuple[str, Any, int]:
+        sfx = _present_suffix(listing, k)
+        if sfx is None:
+            return k, MISSING, 0
+        with store_read_slot():
+            got = _read_verified(store, f"{gen}/{k}", sfx)
+        if got is None:
+            return k, MISSING, 0
+        data, members = got
+        return k, _decode(sfx, data, members), len(data) + sum(len(v) for v in members.values())
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, int(cap))) as ex:
+        rows = {k: (res, nbytes) for k, res, nbytes in ex.map(one, keys)}
+    corrupt = [k for k in keys if rows[k][0] is MISSING]
+    results = {k: rows[k][0] for k in keys if rows[k][0] is not MISSING}
+    return results, corrupt, sum(nbytes for _, nbytes in rows.values())
 
 
 #: A joined key is a file stem: letters, digits, '_' and '-' only. No '.', so `<key>.json` (a result) can
@@ -509,28 +706,35 @@ def profile_sample(keys: Sequence[str], k: int | None) -> list[str]:
     return sorted({keys[(i * len(keys)) // k] for i in range(k)})
 
 
-def unit_states(ctx: RunContext, st: AnyStage, keys: Sequence[str], *, verify: bool) -> dict[str, str]:
-    """``done`` | ``excluded`` | ``failed`` | ``pending`` per key. ``verify`` re-hashes every present
-    result (the in-job resume check, INV-3); a failing one is deleted with a warning and is pending.
-    Without ``verify`` (the controller's plan) presence of result + sidecar counts as done."""
+def unit_states(
+    ctx: RunContext, st: AnyStage, keys: Sequence[str], *, verify: bool, names: Collection[str] | None = None
+) -> UnitStates:
+    """``done`` | ``excluded`` | ``failed`` | ``pending`` per key, plus the listing (``.names``). ``verify``
+    re-hashes every present result (the in-job resume check, INV-3); a failing one is deleted with a warning
+    and is pending. ``names`` is a listing the caller already holds (`plan`, Task 5); without it the
+    generation is listed here. Without ``verify`` (the controller's plan) presence of result + sidecar
+    counts as done."""
     gen = ctx.generation(st.name)
-    names = ctx.store.names(gen)
-    out: dict[str, str] = {}
+    listing = set(names) if names is not None else ctx.store.names(gen)
+    out = UnitStates()
+    deleted = False
     for k in keys:
-        suffix = _present_suffix(names, k)
-        if suffix is not None and f"{k}.sha256" in names:
+        suffix = _present_suffix(listing, k)
+        if suffix is not None and f"{k}.sha256" in listing:
             if not verify or _verified(ctx.store, f"{gen}/{k}", suffix):
                 out[k] = "done"
                 continue
             warnings.warn(f"checksum failure for {gen}/{k}{suffix}; deleting it and redoing the unit", stacklevel=2)
             for sfx in (suffix, ".sha256"):
                 ctx.store.delete(f"{gen}/{k}{sfx}")
-        if f"{k}.excluded.json" in names:
+            deleted = True
+        if f"{k}.excluded.json" in listing:
             out[k] = "excluded"
-        elif f"{k}.failed.json" in names:
+        elif f"{k}.failed.json" in listing:
             out[k] = "failed"
         else:
             out[k] = "pending"
+    out.names = frozenset(ctx.store.names(gen) if deleted else listing)
     return out
 
 
@@ -662,7 +866,9 @@ def combine_frames(parts: Sequence[Any], *, ids: Sequence[str]) -> Any:
     return out
 
 
-def _run_item(ctx: RunContext, st: ItemStage, key: str, ref: Any) -> tuple[str, str | None]:
+def _run_item(
+    ctx: RunContext, st: ItemStage, key: str, ref: Any, *, post_work: Callable[[], None] | None = None
+) -> tuple[str, str | None]:
     from scripts._driver import for_each
 
     root = ctx.store.local_path(ctx.stage_dir(st.name))
@@ -670,11 +876,18 @@ def _run_item(ctx: RunContext, st: ItemStage, key: str, ref: Any) -> tuple[str, 
         raise RuntimeError("an ItemStage executes only on a local (or mounted) store")
     loader = st.load
     load = (lambda r: loader(r, ctx)) if loader is not None else None
+
+    def _work(item):  # post_work gates the shard write: a non-closure import in work() fails the item (CCTP-IMPL-16)
+        out = st.work(item, ctx)
+        if post_work is not None:
+            post_work()
+        return out
+
     res = for_each(
         [ref],
         key=st.key,
         load=load,
-        work=lambda item: st.work(item, ctx),
+        work=_work,
         counters=st.counters,
         shard_root=root,
         token_inputs=ctx.token_inputs[st.name],
@@ -691,20 +904,40 @@ def _run_item(ctx: RunContext, st: ItemStage, key: str, ref: Any) -> tuple[str, 
     return "done", None
 
 
-def run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any = None, ref: Any = None) -> str:
-    """Run ONE unit, persist its result (or exclusion / failure) and its ledger record. Returns the outcome."""
+def run_unit(
+    ctx: RunContext,
+    st: AnyStage,
+    key: str,
+    *,
+    worker: str,
+    pool: Any = None,
+    ref: Any = None,
+    post_work: Callable[[], None] | None = None,
+) -> tuple[str, dict]:
+    """Run ONE unit, persist its result (or exclusion / failure) and its ledger record. Returns
+    ``(outcome, ledger record)`` -- the executor writes the record into its per-job cost aggregate (S5.11).
+
+    ``post_work`` runs AFTER ``work`` returns but BEFORE the result is written (ADR-129 CCTP-IMPL-16: the
+    fail-closed module check must gate the write, so a unit that loaded a non-closure module -- cached or not --
+    is ``failed`` with NO result file)."""
+    from scripts.hf_jobs.phases import publish_first_unit
+
     gen = ctx.generation(st.name)
     base = f"{gen}/{key}"
     attempt = _previous_attempts(ctx.store, base) + 1
     reset_ok = _reset_peak_rss()
+    publish_first_unit(ctx.store)  # once per attempt: the job phase record (S7.2), before the first unit times
     started = time.time_ns()
     outcome, error = "done", None
     unit_ctx = dataclasses.replace(ctx, pool=pool)
     try:
         if isinstance(st, ItemStage):
-            outcome, error = _run_item(unit_ctx, st, key, ref)
+            outcome, error = _run_item(unit_ctx, st, key, ref, post_work=post_work)
         else:
-            write_result(ctx.store, base, st.work(key, unit_ctx))
+            result = st.work(key, unit_ctx)
+            if post_work is not None:
+                post_work()  # gate the write: a non-closure module loaded in work() fails the unit, no result
+            write_result(ctx.store, base, result)
     except ItemExcluded as exc:
         from scripts._driver import write_exclusion
 
@@ -741,23 +974,28 @@ def run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any 
         "inner_completion": list(getattr(pool, "drain_log", lambda: [])()),
     }
     ctx.store.write_bytes(base + ".ledger.json", _canon_json(record))
-    return outcome
+    return outcome, record
 
 
-def output_present(ctx: RunContext, name: str, *, verify: bool) -> bool:
+def output_present(ctx: RunContext, name: str, *, verify: bool, names: Collection[str] | None = None) -> bool:
     gen = ctx.generation(name)
-    suffix = _present_suffix(ctx.store.names(gen), _OUTPUT)
+    listing = set(names) if names is not None else ctx.store.names(gen)
+    suffix = _present_suffix(listing, _OUTPUT)
     if suffix is None:
         return False
     return (not verify) or _verified(ctx.store, f"{gen}/{_OUTPUT}", suffix)
 
 
 def reduce_stage(ctx: RunContext, name: str) -> None:
-    """Write the stage output from every unit result, in ``reduce_order``. Idempotent and atomic, so
+    """Write the stage output from every unit result, in ``reduce_order``. Reads and verifies EVERY result
+    first (one listing, one read per file, INV-11); writes the summary, inputs and output only when all pass.
+    A corrupt result moves to ``.corrupt/`` and its unit is pending again (INV-3). Idempotent and atomic, so
     two jobs that both see a complete stage may both reduce: they write identical bytes."""
+    from scripts._dataset_reads import store_read_cap
+
     st = ctx.pipeline.stage(name)
     keys = sorted_units(ctx, st)
-    states = unit_states(ctx, st, keys, verify=True)
+    states = unit_states(ctx, st, keys, verify=False)
     pending = [k for k, v in states.items() if v == "pending"]
     failed = [k for k, v in states.items() if v == "failed"]
     if pending:
@@ -767,12 +1005,19 @@ def reduce_stage(ctx: RunContext, name: str) -> None:
             f"{ctx.pipeline.name}/{name}: {len(failed)} unit(s) failed (tolerance {st.max_failures}): {failed[:5]}"
         )
     gen = ctx.generation(name)
+    done = sorted((k for k, v in states.items() if v == "done"), key=st.reduce_order or (lambda k: k))
+    started = time.time_ns()
+    results, corrupt, bytes_read = read_results(ctx.store, gen, done, names=states.names, cap=store_read_cap() or 4)
+    if corrupt:
+        for k in corrupt:
+            warnings.warn(f"checksum failure for {gen}/{k}; moving it to {CORRUPT_DIR}/ (re-run)", stacklevel=2)
+            quarantine_corrupt(ctx.store, gen, k, states.names)
+        raise StageIncompleteError(f"{ctx.pipeline.name}/{name}: corrupt result(s) {corrupt[:5]} moved; re-run them")
     excluded = {}
     for k in keys:
         if states[k] == "excluded":
             raw = ctx.store.read_bytes(f"{gen}/{k}.excluded.json")
             excluded[k] = json.loads(raw)["reason"] if raw else "unknown"
-    done = sorted((k for k, v in states.items() if v == "done"), key=st.reduce_order or (lambda k: k))
     summary = {
         "stage": name,
         "token": ctx.tokens[name],
@@ -787,9 +1032,33 @@ def reduce_stage(ctx: RunContext, name: str) -> None:
     # The job's own record of WHAT it read (dataset name/repo/revision, params, upstream tokens): `adopt`
     # checks the recorded dataset revision against the pin (ADR-128 spec 5.7 step 4). Never a unit key.
     ctx.store.write_bytes(f"{gen}/_inputs.json", _canon_json(ctx.token_inputs[name]))
-    results = {k: read_result(ctx.store, f"{gen}/{k}") for k in done}
     output = st.reduce(results, ctx) if st.reduce is not None else summary
     write_result(ctx.store, f"{gen}/{_OUTPUT}", output)
+    write_reduce_record(ctx, name, started_ns=started, n_results=len(results), bytes_read=bytes_read)
+
+
+def write_reduce_record(ctx: RunContext, name: str, *, started_ns: int, n_results: int, bytes_read: int = 0) -> None:
+    """The S5.2 reduce ledger record: wall, results read, BYTES read, the read cap, ``in_job`` (False only in
+    a separate reduce job, E-4). A no-op outside a job (a laptop, CI): no identity, no record."""
+    from scripts._dataset_reads import store_read_cap
+    from scripts.hf_jobs import phases
+
+    ident = phases.identity()
+    if ident is None:
+        return
+    finished = time.time_ns()
+    rec = {
+        "stage": name,
+        "token": ctx.tokens[name],
+        "started_ns": started_ns,
+        "finished_ns": finished,
+        "wall_s": (finished - started_ns) / 1e9,
+        "n_results": n_results,
+        "bytes_read": bytes_read,
+        "read_cap": store_read_cap() or 4,
+        "in_job": os.environ.get(phases.ACTION_KIND_ENV, "run") != "reduce",
+    }
+    ctx.store.write_bytes(phases.reduce_rel(ctx.pipeline.name, name, ctx.tokens[name], *ident), _canon_json(rec))
 
 
 def ordered_values(results: Mapping[str, Any]) -> list:
@@ -844,15 +1113,27 @@ def _failure_record(store: Store, gen: str, key: str) -> dict:
     return rec
 
 
-def _ready(ctx: RunContext, st: AnyStage) -> bool:
-    return all(output_present(ctx, n, verify=False) for n in st.needs)
+def _ready(ctx: RunContext, st: AnyStage, names_of: Callable[[str], Collection[str] | None] | None = None) -> bool:
+    get = names_of or (lambda _n: None)
+    return all(output_present(ctx, n, verify=False, names=get(n)) for n in st.needs)
 
 
 def plan(ctx: RunContext) -> dict:
-    """The JSON the launcher reads (spec 5.1): per stage token, unit counts, done/pending, readiness."""
+    """The JSON the launcher reads (spec 5.1): per stage token, unit counts, done/pending, readiness.
+    Lists each generation directory AT MOST once and reads no result bytes (INV-11): the listing is shared
+    between the readiness check, the output presence check and the unit states."""
     stages = []
+    listings: dict[str, frozenset[str]] = {}
+
+    def names_of(stage_name: str) -> frozenset[str]:
+        g = ctx.generation(stage_name)
+        if g not in listings:
+            listings[g] = frozenset(ctx.store.names(g))
+        return listings[g]
+
     for st in ctx.pipeline.stages:
         gen = ctx.generation(st.name)
+        own = names_of(st.name)
         rec: dict[str, Any] = {
             "name": st.name,
             "needs": list(st.needs),
@@ -862,8 +1143,8 @@ def plan(ctx: RunContext) -> dict:
             "inner_width": getattr(st, "inner_width", 1),
             "history_key": _history_key(ctx.token_inputs[st.name]),
             "item_stage": isinstance(st, ItemStage),
-            "ready": _ready(ctx, st),
-            "reduced": output_present(ctx, st.name, verify=False),
+            "ready": _ready(ctx, st, names_of),
+            "reduced": output_present(ctx, st.name, verify=False, names=own),
             "n_units": None,
             "done": 0,
             "excluded": 0,
@@ -881,7 +1162,7 @@ def plan(ctx: RunContext) -> dict:
         except UpstreamNotReducedError:
             keys = None
         if keys is not None:
-            states = unit_states(ctx, st, keys, verify=False)
+            states = unit_states(ctx, st, keys, verify=False, names=own)
             failed = {k: _failure_record(ctx.store, gen, k) for k in keys if states[k] == "failed"}
             rec.update(
                 n_units=len(keys),
@@ -918,10 +1199,47 @@ def export_output(ctx: RunContext, dest: pathlib.Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     for name, data in out.files.items():
         _write_bytes_atomically(dest / name, data)
+    # The stage output is COMMIT-FREE (S5.10), so a model bundle has no provenance keys and no SHA256SUMS, and
+    # `load()` refuses it. A LOCAL export is a deliverable, not a shared store entry: stamp the copy with THIS
+    # run's provenance (a dirty tree stamps run_tree_dirty=true) through the same core `adopt` uses. Only a
+    # bundle (a metadata.json / metrics.json output) is stamped; the store output itself stays commit-free.
+    from scripts.hf_jobs import identity
+
+    if any(name in identity.NORMALIZED for name in out.files):
+        prov = ctx.prov
+        identity.stamp_provenance(
+            dest,
+            commit=str(prov.get("commit") or "unknown"),
+            tree_state=prov.get("tree_state") or "unknown",
+            platform=prov.get("platform"),
+            training_platform=ctx.params.get("training_platform"),
+        )
 
 
 def _jsonable(params: Mapping[str, Any]) -> dict:
     return {k: (str(v) if isinstance(v, pathlib.PurePath) else v) for k, v in params.items()}
+
+
+def _read_through_json(store: Any) -> dict | None:
+    """The read-through descriptor for a `CanaryReadThroughStore` (ADR-129 S5.10), so a worker rebuilds the same
+    store instead of a plain LocalStore that would lose the main-store fallback (CCTP-IMPL-29). None otherwise."""
+    main = getattr(store, "main", None)
+    allow = getattr(store, "allow", None)
+    if main is None or allow is None:
+        return None
+    main_root = getattr(main, "local_path", lambda _r: None)("")
+    if main_root is None:
+        return None
+    return {"root": str(main_root), "allow": sorted(allow)}
+
+
+def _wrap_read_through(local: Any, rt: dict | None) -> Any:
+    """Rebuild a `CanaryReadThroughStore` over ``local`` from a `_read_through_json` descriptor (worker side)."""
+    if not rt:
+        return local
+    from scripts.hf_jobs.store import CanaryReadThroughStore
+
+    return CanaryReadThroughStore(local, LocalStore(pathlib.Path(rt["root"])), allow=set(rt["allow"]))
 
 
 def context_to_json(ctx: RunContext) -> str:
@@ -931,9 +1249,14 @@ def context_to_json(ctx: RunContext) -> str:
     return json.dumps(
         {
             "module": ctx.pipeline.module,
+            "pipeline": ctx.pipeline.name,
             "params": _jsonable(ctx.params),
+            "param_types": {p.name: ("path" if p.type is pathlib.Path else "plain") for p in ctx.pipeline.params},
+            "stage_modules": {st.name: st.work.__module__ for st in ctx.pipeline.stages},
+            "output": getattr(ctx.pipeline, "output", None),
             "prov": ctx.prov,
             "store_root": str(root),
+            "read_through": _read_through_json(ctx.store),
             "data_root": None if ctx.data_root is None else str(ctx.data_root),
             "token_inputs": ctx.token_inputs,
             "tokens": ctx.tokens,
@@ -950,15 +1273,80 @@ def context_from_json(text: str) -> RunContext:
         if params.get(p.name) is not None and p.type is pathlib.Path:
             params[p.name] = pathlib.Path(params[p.name])
     data_root = None if d["data_root"] is None else pathlib.Path(d["data_root"])
+    store = _wrap_read_through(LocalStore(pathlib.Path(d["store_root"])), d.get("read_through"))
     return RunContext(
         pipeline,
         params,
         d["prov"],
-        LocalStore(pathlib.Path(d["store_root"])),
+        store,
         data_root,
         d["token_inputs"],
         d["tokens"],
     )
+
+
+@dataclasses.dataclass(frozen=True)
+class PipelineView:
+    """What a stage process needs of a pipeline, WITHOUT importing the trainer (S5.9): the name (store paths),
+    the module (recorded only), the params and the stages the running stage reaches.
+
+    The view carries the running stage AND the stages its work reads (an upstream ItemStage whose per-unit
+    results a reduce-like stage re-reads via ``ctx.pipeline.stage(...)``, e.g. census ``prefit`` ->
+    ``fit_prepass``). For a REUSABLE stage those module-mates are all reusable (the stage module's ``STAGES``),
+    so the trainer still never loads; for a fit-side stage the trainer IS in the closure, so the full pipeline
+    is used. A one-stage view would ``KeyError`` on such a sibling read, so the view is never narrower than the
+    stages reached."""
+
+    name: str
+    module: str
+    params: tuple[Param, ...]
+    stages: tuple[AnyStage, ...]
+    output: str | None = None
+
+    def stage(self, name: str) -> AnyStage:
+        for st in self.stages:
+            if st.name == name:
+                return st
+        raise KeyError(name)
+
+
+def stage_context_from_json(text: str, stage: str) -> tuple[RunContext, AnyStage]:
+    """Build the ``RunContext`` and the ONE running stage from the JSON alone (S5.9). A reusable stage's module
+    exports ``STAGES`` (no trainer import); a fit-side stage's module is the trainer (in its own closure)."""
+    d = json.loads(text)
+    work_mod = None
+    try:
+        work_mod = importlib.import_module(d["stage_modules"][stage])
+    except ModuleNotFoundError:
+        # An inline (test) stage has no importable module -> fall through to d["module"]. A real error INSIDE an
+        # existing stage module is NOT swallowed (it propagates), so a stage-module bug is never hidden (IMPL-23).
+        work_mod = None
+    if work_mod is not None and stage in getattr(work_mod, "STAGES", {}):
+        stages = tuple(work_mod.STAGES.values())  # the trainer's reusable set, declared together; no trainer import
+        st = work_mod.STAGES[stage]
+    else:
+        # A fit-side stage (its own module IS the trainer, in its closure) or an ad-hoc test pipeline: rebuild
+        # from the pipeline's own module. A REUSABLE stage never reaches here, so the trainer never loads for it.
+        pipe = importlib.import_module(d["module"]).PIPELINE
+        stages = tuple(pipe.stages)
+        st = pipe.stage(stage)
+    params = dict(d["params"])
+    for name, tag in d["param_types"].items():
+        if params.get(name) is not None and tag == "path":
+            params[name] = pathlib.Path(params[name])
+    view = PipelineView(d["pipeline"], d["module"], (), stages, output=d.get("output"))
+    data_root = None if d["data_root"] is None else pathlib.Path(d["data_root"])
+    store = _wrap_read_through(LocalStore(pathlib.Path(d["store_root"])), d.get("read_through"))
+    ctx = RunContext(view, params, d["prov"], store, data_root, d["token_inputs"], d["tokens"])
+    return ctx, st
+
+
+def prefetch_hub_files(stages, *, fetch) -> None:
+    """Download every stage's declared ``hub_files`` (ADR-129): the job runs this WITH network before the
+    offline run line, so a worker loads the file from the HF cache under ``HF_HUB_OFFLINE=1``."""
+    for st in stages:
+        for repo, rev, path in getattr(st, "hub_files", ()):
+            fetch(repo, rev, path)
 
 
 def build_parser(pipeline: Pipeline) -> argparse.ArgumentParser:
@@ -988,6 +1376,17 @@ def build_parser(pipeline: Pipeline) -> argparse.ArgumentParser:
         default=None,
         help="JSON list of unit keys: this job runs exactly these units of its ONE stage (planner LPT part)",
     )
+    ap.add_argument(
+        "--read-through",
+        default=None,
+        help="a canary: read an allowed upstream generation from this MAIN store (CanaryReadThroughStore, ADR-129)",
+    )
+    ap.add_argument(
+        "--read-through-allow",
+        type=pathlib.Path,
+        default=None,
+        help="JSON list of generations the --read-through store may serve (attested on HEAD/ancestor, not quarantined)",
+    )
     ap.add_argument("--workers", type=int, default=1)
     ap.add_argument(
         "--escalate",
@@ -1004,7 +1403,18 @@ def build_parser(pipeline: Pipeline) -> argparse.ArgumentParser:
     ap.add_argument(
         "--allow-dirty", action="store_true", help="permit a dirty tree (dev only; recorded, never laundered)"
     )
+    ap.add_argument(
+        "--prefetch-hub",
+        action="store_true",
+        help="fetch the --stages' declared hub_files into the HF cache (WITH network), then exit (ADR-129)",
+    )
     return ap
+
+
+def _hf_hub_download(repo: str, rev: str, path: str) -> None:
+    from huggingface_hub import hf_hub_download
+
+    hf_hub_download(repo_id=repo, revision=rev, filename=path)
 
 
 def _parse_shard(text: str) -> tuple[int, int]:
@@ -1019,13 +1429,30 @@ def main(pipeline: Pipeline, argv: Sequence[str] | None = None) -> int:
     """The uniform CLI every migrated trainer and driver exposes (spec 5.1)."""
     args = build_parser(pipeline).parse_args(argv)
     params = {p.name: getattr(args, p.name) for p in pipeline.params}
+    if getattr(args, "prefetch_hub", False):
+        names = [n for n in (args.stages or "").split(",") if n] or [st.name for st in pipeline.stages]
+        prefetch_hub_files([pipeline.stage(n) for n in names], fetch=_hf_hub_download)
+        return 0
     from scripts._provenance import code_identity, env_provenance, git_provenance, require_clean_tree
 
     git = git_provenance()
     if not args.plan:
         require_clean_tree(git, allow_dirty=args.allow_dirty)
     prov = {**git, "env": env_provenance(), "code_identity": code_identity(git)}
-    ctx = make_context(pipeline, params, prov, store=open_store(args.store), data_root=args.data_root)
+    store = open_store(args.store)
+    if args.read_through:  # ADR-129 canary: read an allowed upstream generation from the main store
+        from scripts.hf_jobs.store import CanaryReadThroughStore
+
+        allow = (
+            set(json.loads(args.read_through_allow.read_text(encoding="utf-8"))) if args.read_through_allow else set()
+        )
+        store = CanaryReadThroughStore(store, open_store(args.read_through), allow=allow)
+    ctx = make_context(pipeline, params, prov, store=store, data_root=args.data_root)
+    if args.read_through:  # a canary runs ONE unit: only with --shard-keys or a single-unit stage (S5.10)
+        names = [n for n in (args.stages or "").split(",") if n]
+        single = len(names) == 1 and len(sorted_units(ctx, pipeline.stage(names[0]))) <= 1
+        if not (args.shard_keys or single):
+            raise SystemExit("--read-through requires --shard-keys or a single-unit stage (ADR-129 canary)")
     if args.plan:
         print(json.dumps(plan(ctx), sort_keys=True))
         return 0

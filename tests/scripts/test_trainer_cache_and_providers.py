@@ -247,8 +247,12 @@ def test_main_calls_validate_corpus_visibility_before_extraction():
     import ast
 
     t = _load("train_ghost_gk")
-    tree = ast.parse((REPO / "scripts" / "train_ghost_gk.py").read_text(encoding="utf-8"))
-    funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    # ADR-129: the reusable stages (validate/extract) moved to scripts/_ghost_gk_stages.py; parse both.
+    funcs: dict = {}
+    for src in ("train_ghost_gk.py", "_ghost_gk_stages.py"):
+        for n in ast.walk(ast.parse((REPO / "scripts" / src).read_text(encoding="utf-8"))):
+            if isinstance(n, ast.FunctionDef):
+                funcs[n.name] = n
 
     def _calls(fn, pred):
         return any(isinstance(n, ast.Call) and pred(n) for n in ast.walk(funcs[fn]))

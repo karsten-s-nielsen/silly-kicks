@@ -33,6 +33,7 @@ matches/games/providers qualifies, whatever the source.
 from __future__ import annotations
 
 import ast
+import pathlib
 
 import pytest
 
@@ -183,7 +184,29 @@ def _population() -> dict[str, ast.AST]:
     seam's `string_literals` strips docstrings, and swapping it in here would silently move this
     gate's population. That is a separate decision from single-sourcing the universe.
     """
-    return {name: tree for name, tree in iter_scripts().items() if _is_corpus_driver(tree)}
+    trees = {name: _with_stage_modules(tree) for name, tree in iter_scripts().items()}
+    return {name: tree for name, tree in trees.items() if _is_corpus_driver(tree)}
+
+
+_SCRIPTS_DIR = pathlib.Path(__file__).resolve().parents[2] / "scripts"
+
+
+def _with_stage_modules(tree: ast.AST) -> ast.Module:
+    """The driver's tree plus every ADR-129 stage module it imports (`from scripts._X_stages import ...`).
+
+    ADR-129 moved each trainer's corpus walk (its `ItemStage(load=...)`) into a private `_*_stages` module,
+    which `iter_scripts` skips. The walk is still the driver's -- `_pipeline_population.NOT_A_PIPELINE` records
+    each stage module's coverage as its trainer's -- so the gate reads the two as one unit. Without this,
+    `train_ghost_gk` and the census silently left the population."""
+    body = list(getattr(tree, "body", []))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        stem = node.module.rpartition(".")[2]
+        path = _SCRIPTS_DIR / f"{stem}.py"
+        if stem.startswith("_") and stem.endswith("_stages") and stem != "_stages" and path.is_file():
+            body.extend(ast.parse(path.read_text(encoding="utf-8")).body)
+    return ast.Module(body=body, type_ignores=[])
 
 
 #: Drivers not yet migrated, each with the reason. Asserted EXACTLY, both ways (see the test below):
@@ -530,25 +553,28 @@ _KEY_EXCEPTIONS: dict[str, str] = {
     "build_rq_pass_scores": "ref.match_id",
     "measure_gs_shot_distribution": "f'{ref.provider}_{ref.match_id}'",
     "_xt_corpus": "key",
-    # The two trainers key BOTH their sources (pining refs + --data-dir tuples) through a shared
+    # ADR-129 moved each trainer's keyed extract `ItemStage` into its `_*_stages` module, so the entry lives
+    # with the module that now holds the key; the key itself is unchanged.
+    # The xShot/xCross extracts key BOTH their sources (pining refs + --data-dir tuples) through a shared
     # module-level `_source_key` (a MatchRef -> its .key, a tuple -> (provider, match_id)).
-    "train_xshot_occurrence": "_source_key",
-    "train_xcross_attempt": "_source_key",
+    "_xshot_stages": "_source_key",
+    "_xcross_stages": "_source_key",
     "train_receiver_model": "ref.stem",  # ADR-128: the staged unit stem == the legacy --data-dir match_id
-    "train_ghost_outfield": "ref.stem",  # ADR-128: the legacy flat-layout `_key` (the shard stem)
+    "_receiver_stages": "ref.stem",  # ADR-129: the same receiver extract key, in its stage module
+    "_ghost_outfield_stages": "ref.stem",  # ADR-128: the legacy flat-layout `_key` (the shard stem)
     # ADR-128: one game per staged flat file, so the stem; the legacy third key component (`home`) is served
     # by the dataset identity in the extract token (plan Task 13 M3).
-    "train_ghost_gk": "ref.stem",
+    "_ghost_gk_stages": "ref.stem",
     "validate_sb360_licensed_corpus": "_item_key",
     # BOTH sources keyed through a shared module-level `_item_key`: a StatsBomb MatchRef -> its
     # match_id, a Wyscout (match_id, actions) tuple -> its match_id, prefixed by the provider.
     "validate_team_kpi_reliability": "(args.provider, _item_key(item))",
     # Score pass keys by str(ref.match_id) so the single-competition generation's shard filenames stay
     # byte-identical to the pre-migration str(mid) keys (the fit prepass uses ref.key, a new generation).
-    "build_territory_ranking_census": "str(ref.match_id)",
+    "_census_stages": "str(ref.match_id)",
     # Keeps its pre-migration f"{comp}_{season}_{mid}" key (NOT ref.key -- which would be
     # "statsbomb__<mid>"), so finished coverage-shard generations resume across the migration.
-    "build_sb360_coverage": "f'{ref.competition_id}_{ref.season_id}_{ref.match_id}'",
+    "build_sb360_coverage": "f'{r.competition_id}_{r.season_id}_{r.match_id}'",
 }
 
 
@@ -588,6 +614,18 @@ def test_every_migrated_driver_keeps_its_pre_migration_key():
                 f"{mod}: for_each(load=...) keys by {src!r}, not `ref.key`. Add a _KEY_EXCEPTIONS entry "
                 f"with its pre-migration key if that is intended."
             )
+
+
+def test_every_key_exception_names_a_module_that_keys_a_load():
+    """Anti-rot (ADR-051): an entry must sit on the module that HOLDS the keyed `load=` call, and its recorded
+    key must appear in one of that module's non-`ref.key` sources. ADR-129 moved five keyed extracts into
+    `_*_stages` modules; their entries stayed on the trainers, where they exempted nothing."""
+    sources = _for_each_load_key_sources()
+    stale = sorted(set(_KEY_EXCEPTIONS) - set(sources))
+    assert not stale, f"_KEY_EXCEPTIONS entries with no keyed for_each(load=...) call: {stale}"
+    for mod, key in _KEY_EXCEPTIONS.items():
+        custom = [s for s in sources[mod] if not s.endswith(".key")]
+        assert any(key in s for s in custom), f"{mod}: recorded key {key!r} not in its load keys {custom}"
 
 
 # --- Step 8: anti-rot meta-assertions -----------------------------------------------------

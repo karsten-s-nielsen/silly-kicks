@@ -39,8 +39,10 @@ module to read only staged datasets (the I1 gate, below).
   further declared inputs; `uses_dataset=True` keys the token on the dataset identity (`dataset_param` names
   a second dataset). A plain `Stage` with `uses_dataset=True` also declares `dataset_files(ctx)`: the
   dataset-relative files (or fnmatch patterns) its units read, `()` for none. An `ItemStage` declares through
-  its refs' `files`. `cross_commit_version="<name>-<n>"` lets an extraction stage resume across commits
-  (decision P9); every other stage recomputes after a code change.
+  its refs' `files`. Resume across commits is sound by CLOSURE identity (ADR-129): a clean-tree stage token
+  keys on `stage_code_identity` (the stage's locked closure files, data members, `uv.lock`, the image digest,
+  the Python version and the output-affecting environment values), not the commit, so an unrelated commit
+  reuses the result and a change to a closure file recomputes exactly the stages that read it.
 - Failure rule: `max_failures` (default 0) and `abort_first_k` (the first k completed units all failed =
   a systematic bug; abort).
 - `inner_parallel=True` + `inner_width`: the unit runs alone in its job and gets `ctx.pool`, an `InnerPool`
@@ -115,3 +117,50 @@ bodies; keep the registrations. A shipped artifact needs its manifest entry and 
 `tests/scripts/test_compute_contract.py` asserts, per compliant member: a valid `PIPELINE` whose `module`
 is its own; a plan on its toy input; a parity test and a registry entry. `_LEGACY_UNMIGRATED` shrinks by
 migration; it grows only by a dated owner ruling.
+
+## Content-addressed reuse (ADR-129, Cycle 1b)
+
+The main store is CONTENT-ADDRESSED: `campaign.run_key(c, commit, job, tier)` is `{job}-{tier}` (no campaign or
+commit), so a generation named by its token is shared across commits and campaigns; a replica (`-r<N>`) and a
+canary (`-canary`) stay fresh.
+
+Prove determinism and reuse it:
+
+- **Attest** with `campaign … resume --with-replica <N>` (steps the fresh replica beside the main run) then
+  `campaign … verify --with-replica <N>`: a byte-identical main-vs-replica generation (`adopt.generation_diff`,
+  run history excluded) writes `_attest/{stage}/{token}/{commit}.json` to the main store. An attested stage is
+  skipped in the replica.
+- **Canary** with `resume --canary` + `verify --canary`: for each attested stage the controller runs ONE unit
+  (`canary_key`) in the `-canary` store, reading the reused upstream through `CanaryReadThroughStore` (allow file
+  under `_campaign/.../canary/`), and `verify` compares it to main byte for byte. A mismatch quarantines the
+  generation (`BucketStore.quarantine_generation`) and records an `unsound_reuse` finding.
+- **Adopt** at a later clean HEAD: `adopt` reuses an attested generation whose token still equals HEAD's token
+  (`adoption_refusals`), stamps each commit-free output from its oldest ancestor attestation, and records
+  `adopted_at_commit`/`attested_by` in `observed.json`.
+
+Every `verify --with-replica`/`--canary` call also records its byte-compares in
+`_campaign/{campaign}/{commit7}/comparisons.json` (`adopt.comparisons_rel`). A key is `replica|{N}|{instance}|{stage}`
+or `canary|{instance}|{stage}`, and a value is `true` (byte-identical) or `false` (mismatch). Each call MERGES its
+results into the file, so a later call never erases an earlier mismatch. Only a stage that materialized on both
+sides is recorded: an attested stage that the replica skipped is not a compare.
+
+`campaign … summary` writes the S7.2 acceptance bars (`compute_bars`, `BAR_THRESHOLDS`) into the campaign summary.
+The determinism bar reads `comparisons.json` (`adopt.read_comparisons`): no recorded compare is NOT a pass.
+
+## Cycle 1b operations (ADR-129 quick reference)
+
+- **Closure lock** — a stage's reuse key is its closure identity (`closures.lock.json`). Regenerate it after a
+  stage's code or inputs change: `python -m scripts.hf_jobs closures record`; the gate `test_closure_lock`
+  refuses a stale lock.
+- **Stage inputs** — a stage declares the dataset files it reads (`data_files=`) and any Hub files
+  (`hub_files=`, prefetched with network before the offline run line); the in-job environment is the registry's
+  (`env_contract`), never an ad-hoc install.
+- **Replica + canary** — prove determinism and reuse:
+  `python -m scripts.hf_jobs campaign <file> resume --with-replica <N>` (fresh replica beside the main run) then
+  `… verify --with-replica <N>` writes the attestations; `… resume --canary` + `… verify --canary` run and
+  compare one canary unit per attested stage.
+- **Clear a halt** — `… resume --clear-halt <instance>/<stage> --reason "<text>"` clears ONLY the error-resume
+  band (never a deterministic unit-failure halt).
+- **Build the image** — the owner pushes the tag `job-image/$(python -m scripts.hf_jobs image tag)` and approves
+  the `job-image` environment run; then records `registry_ref`/`digest` and runs `image probe-startup` to fill
+  `startup_s` in `image.lock.json`.

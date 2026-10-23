@@ -154,7 +154,7 @@ def _run_dataset_stages(pipeline, ctx, audit: _Audit) -> dict[str | None, list[s
         refs = st.ref_map(ctx) if isinstance(st, ItemStage) else {}
         pool = InnerPool(1) if st.inner_parallel else None
         for k in keys:
-            if run_unit(ctx, st, k, worker="audit", pool=pool, ref=refs.get(k)) == "failed":
+            if run_unit(ctx, st, k, worker="audit", pool=pool, ref=refs.get(k))[0] == "failed":
                 raw = ctx.store.read_bytes(f"{ctx.generation(st.name)}/{k}.failed.json")
                 pytest.fail(f"{st.name}/{k} failed under the audit: {json.loads(raw or b'{}').get('error')}")
         reduce_stage(ctx, st.name)
@@ -272,7 +272,7 @@ def test_the_audit_flags_an_undeclared_read(tmp_path, monkeypatch):
 def test_ghost_gk_validate_declares_every_detection_aware_shard_it_reads(monkeypatch):
     """`validate_corpus_visibility` reads the footer of EVERY detection-aware shard, not one: a download
     job must fetch them all (the toy corpus may hold one provider, so this pins the rule directly)."""
-    import scripts.train_ghost_gk as gk
+    import scripts._ghost_gk_stages as gk  # ADR-129: `_refs`/`_validate_files` live in the stage module
     from scripts._driver_sources import StagedRef
 
     refs = [

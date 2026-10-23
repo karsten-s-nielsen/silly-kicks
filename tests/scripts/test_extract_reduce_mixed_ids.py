@@ -12,7 +12,8 @@ import pytest
 from scripts._stages import LocalStore, read_result, write_result
 
 
-@pytest.mark.parametrize("module", ["scripts.train_xshot_occurrence", "scripts.train_xcross_attempt"])
+# ADR-129: the extract reduces live in the stage modules the trainers import.
+@pytest.mark.parametrize("module", ["scripts._xshot_stages", "scripts._xcross_stages"])
 def test_the_extract_reduce_stores_a_mixed_provider_group_column(tmp_path, module):
     import importlib
 

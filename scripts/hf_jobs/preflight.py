@@ -1,5 +1,5 @@
-"""Preflight (spec 5.4): six no-spend checks. `launch` refuses without a passing report for the same
-commit and the same campaign-file hash. The report lives in the bucket (the controller is stateless)."""
+"""Preflight (spec 5.4): seven no-spend checks (ADR-129 adds `check_image`). `launch` refuses without a passing
+report for the same commit and campaign-file hash. The report lives in the bucket (the controller is stateless)."""
 
 from __future__ import annotations
 
@@ -7,10 +7,12 @@ import dataclasses
 import datetime
 import inspect
 import json
+import pathlib
 import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 REPORT_REL = "_campaign/{campaign}/{commit7}/preflight.json"
@@ -23,6 +25,62 @@ class Check:
     ok: bool
     detail: str
     flags: tuple[str, ...] = ()
+
+
+def _iso_epoch(iso: str | None) -> float | None:
+    if not iso:
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=datetime.timezone.utc)).timestamp()
+
+
+def peak_concurrency(jobs: Iterable[Mapping]) -> int:
+    """The highest number of jobs whose ``started_at``..``finished_at`` windows overlap (a sweep line). A job
+    with no ``finished_at`` is treated as still running (its window extends to ``+inf``)."""
+    events: list[tuple[float, int]] = []
+    for j in jobs:
+        start = _iso_epoch(j.get("started_at"))
+        if start is None:
+            continue
+        events.append((start, 1))
+        events.append((_iso_epoch(j.get("finished_at")) or float("inf"), -1))
+    events.sort(key=lambda e: (e[0], e[1]))  # a close (-1) before an open (+1) at the same instant
+    cur = peak = 0
+    for _, delta in events:
+        cur += delta
+        peak = max(peak, cur)
+    return peak
+
+
+def check_concurrency(cap: int, summaries: Iterable[Any], api: Any) -> Check:
+    """S5.5: warn (never refuse; R3 covers a real refusal) when ``cap`` exceeds the highest concurrency the
+    committed summaries measured. `huggingface_hub` 2.2 exposes no per-account concurrent-job limit in the
+    typed surface, so the check relies on the measured peak and records that."""
+    peaks: list[int] = []
+    for p in summaries:
+        try:
+            data = json.loads(pathlib.Path(p).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        mc = data.get("max_concurrent")
+        mc = int(mc) if mc is not None else peak_concurrency(data.get("jobs", []))
+        if mc:
+            peaks.append(int(mc))
+    note = "account limit: not exposed by the API"
+    measured = max(peaks) if peaks else None
+    if measured is None:
+        return Check("concurrency", True, f"no committed concurrency measurement; {note}", (f"cap={cap}",))
+    if cap > measured:
+        return Check(
+            "concurrency",
+            True,
+            f"cap {cap} exceeds the highest measured concurrency {measured}; {note}",
+            (f"cap {cap} > measured {measured}",),
+        )
+    return Check("concurrency", True, f"cap {cap} <= measured {measured}; {note}")
 
 
 def _sh(run, argv: list[str], *, env: dict | None = None) -> tuple[int, str]:
@@ -78,17 +136,62 @@ def _image_resolves(image: str) -> bool:
 
 
 def check_lock(*, run=subprocess.run) -> Check:
-    """Check 2: `uv lock --check` passes and the pinned image digest resolves on Docker Hub."""
-    from scripts.hf_jobs.launch import IMAGE
-
+    """Check 2: `uv lock --check` passes (the image now has its own check, `check_image`, S5.12)."""
     rc, _ = _sh(run, ["uv", "lock", "--check"])
     if rc:
         return Check("lock", False, "uv lock --check failed: uv.lock is stale")
+    return Check("lock", True, "uv.lock current")
+
+
+def _registry_resolves(ref: str) -> bool:
+    """A GHCR manifest HEAD for the image ref resolves (an anonymous pull token, then HEAD the digest)."""
+    import urllib.request
+
+    repo, _, digest = ref.partition("@")
+    name = repo.partition("ghcr.io/")[2] or repo
+    with urllib.request.urlopen(f"https://ghcr.io/token?scope=repository:{name}:pull", timeout=30) as resp:
+        token = json.load(resp)["token"]
+    req = urllib.request.Request(
+        f"https://ghcr.io/v2/{name}/manifests/{digest}",
+        method="HEAD",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.oci.image.manifest.v1+json"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 -- fixed https GHCR manifest URL
+        return 200 <= resp.status < 300
+
+
+def _attestation_verifies(ref: str, *, run=subprocess.run, owner: str = "karsten-s-nielsen") -> bool:
+    """`gh attestation verify oci://<ref> --owner <owner>` exits 0 (build provenance, `job-image.yml`)."""
+    rc, _ = _sh(run, ["gh", "attestation", "verify", f"oci://{ref}", "--owner", owner])
+    return rc == 0
+
+
+def check_image(*, resolve=None, attested=None) -> Check:
+    """Check (S5.12): the image lock's tag matches its inputs (`derived_tag`), it carries a positive measured
+    ``startup_s``, its ref resolves on GHCR, and its build provenance verifies. A lock without a digest or a
+    startup_s (before Task 22 builds and probes) refuses."""
+    from scripts.hf_jobs import image
+
+    lock = image.load_lock()
+    want = image.derived_tag()
+    if lock.get("tag") != want:
+        return Check("image", False, f"image lock tag {lock.get('tag')!r} != derived {want!r}")
+    s = lock.get("startup_s")
+    if not (isinstance(s, (int, float)) and not isinstance(s, bool) and s > 0):
+        return Check("image", False, f"image.lock.json startup_s is not a positive number ({s!r}); build + probe first")
+    if not lock.get("digest"):
+        return Check("image", False, "image.lock.json has no digest; build the image (Task 22) first")
+    ref = image.image_ref()
+    resolve = resolve or _registry_resolves
     try:
-        ok = _image_resolves(IMAGE)
+        if not resolve(ref):
+            return Check("image", False, f"{ref} does not resolve on GHCR")
     except OSError as exc:
-        return Check("lock", False, f"image digest did not resolve: {exc}")
-    return Check("lock", ok, f"uv.lock current; {IMAGE} resolves" if ok else f"{IMAGE} does not resolve")
+        return Check("image", False, f"{ref} did not resolve: {exc}")
+    attested = attested or _attestation_verifies
+    if not attested(ref):
+        return Check("image", False, f"{ref} has no verified build provenance")
+    return Check("image", True, f"{ref} resolves, attested, startup_s={s}")
 
 
 def check_api(api: Any) -> Check:

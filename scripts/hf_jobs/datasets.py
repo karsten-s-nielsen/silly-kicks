@@ -71,6 +71,22 @@ def declared() -> dict[str, Declared]:
     return {n: _declared_entry(n, d) for n, d in raw.items()}
 
 
+@dataclasses.dataclass(frozen=True)
+class StoreSettings:
+    """The bucket-store read gate cap and the measured wall per result read (S5.1, S5.2), from the §7.1
+    store probe on real HF. Single-sourced in the ``[store]`` table of ``datasets.toml``."""
+
+    read_concurrency: int
+    per_result_read_s: float
+
+
+def store_settings() -> StoreSettings:
+    from scripts._toml import load_toml
+
+    raw = load_toml(DECLARED).get("store", {})
+    return StoreSettings(int(raw["read_concurrency"]), float(raw["per_result_read_s"]))
+
+
 def _read_lock(path: pathlib.Path = LOCK) -> dict:
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 

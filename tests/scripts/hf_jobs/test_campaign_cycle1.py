@@ -49,7 +49,8 @@ def test_instances_carry_dataset_args_and_derived_run_keys():
     xc = next(i for i in insts if i.job == "xcross_attempt" and i.tier == "sc_extended" and i.variant == "default")
     assert ["--dataset", "xshot115"] == list(xc.args[xc.args.index("--dataset") : xc.args.index("--dataset") + 2])
     assert "--probe-dataset" in xc.args and "--arms-json" in xc.args
-    assert xc.run_key == "cycle1-abcdef1-xcross_attempt-sc_extended"
+    assert xc.run_key == "xcross_attempt-sc_extended"  # ADR-129 content-addressed main store (no campaign/commit)
+    assert xc.role == "main"
 
 
 def test_a_staged_dataset_instance_fails_loud_without_its_dataset():

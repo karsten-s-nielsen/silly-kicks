@@ -5,6 +5,42 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — campaign throughput + content-addressed reuse (ADR-129)
+
+### Added
+
+> Harness and tooling only: no library behaviour change and no retrain; no version bump. Spec
+> `docs/superpowers/specs/2026-10-21-campaign-throughput-design.md`; plan
+> `docs/superpowers/plans/2026-10-21-campaign-throughput-plan.md`.
+
+- **Content-addressed main store** (`campaign.run_key` → `{job}-{tier}`): a generation is named by its token, so
+  equal tokens share one generation across commits and campaigns; a replica (`-r<N>`) and a canary (`-canary`)
+  stay fresh. Per-stage closure identity (`closures.lock.json`) replaces the campaign commit and the
+  `cross_commit_version`.
+- **Determinism attestation** (`adopt.verify(with_replica=)`): a byte-identical main-vs-replica generation
+  (`generation_diff`, run-history excluded) writes `_attest/{stage}/{token}/{commit}.json` to the main store.
+- **Content-addressed reuse + canary** (`adopt.adopt(api=)`, `adoption_refusals`, `campaign._schedule_canary`,
+  `CanaryReadThroughStore`): an attested generation is reused at a later clean HEAD whose stage token still
+  equals it; a one-unit canary re-runs over the reused upstream and a byte mismatch quarantines it
+  (`BucketStore.quarantine_generation`) and records an `unsound_reuse` finding. Commit-free outputs are stamped
+  at adopt from the oldest ancestor attestation.
+- **Prebuilt job image** (`scripts/hf_jobs/image.py`, `image.lock.json`, `image/Dockerfile`,
+  `.github/workflows/job-image.yml`): the locked third-party environment is built ONCE to GHCR (owner-gated,
+  SHA-pinned workflow) and each job CHECKS it (`uv sync --frozen --check`) instead of installing it; the derived
+  tag is line-ending-normalized so it matches on a Windows checkout and the LF CI build. `preflight.check_image`
+  gates the tag, `startup_s`, GHCR resolve and build provenance.
+- **Linear reduce and cost history**, commit-free stage outputs, and S7.2 acceptance bars
+  (`campaign.compute_bars`, `BAR_THRESHOLDS`) written into the campaign summary.
+
+### Fixed
+
+- A local `--run-all --out` bundle is stamped with the local run's provenance and a `SHA256SUMS`
+  (`identity.stamp_provenance`, shared with `adopt`), so `load()` accepts it; the store output stays commit-free.
+- `identity.write_sums` writes `SHA256SUMS` as the trainers' `save()` writers do (payload first, then
+  `metadata.json`; never `metrics.json`), so a stamped receiver bundle loads (its loader reads the first token).
+- The corpus-driver gate reads each driver together with the `_*_stages` modules it imports; seven drivers had
+  left its population, and the key exceptions now sit on the modules that hold the keys.
+
 ## [4.139.1] — 2026-10-22 — pandas 3.1 compatibility fix + compute contract harness (ADR-128) (PR-S202)
 
 > **Why a patch release:** pandas 3.1.0 broke `add_gradientsports_player_ids` (see Fixed). The release also

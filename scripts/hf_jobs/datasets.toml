@@ -57,3 +57,13 @@ visibility = "public"
 access = "open"
 revision = "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb"
 description = "StatsBomb open data pinned to a commit (decision P6): the public trainers and the census"
+
+# ADR-128 Cycle 1b (S5.1, S7.1): the job-wide cap on concurrent reads from the bucket STORE mount, and the
+# measured wall per RESULT read at that cap (data + sidecar + digest + parquet decode; S5.2). Measured
+# 2026-10-21 by the store read probe (job 6ad90fff5275124786e29d8b) over the Cycle 1 win_probability extract
+# generation (3961 results): caps 1/2/4/8/16 -> walls 777.03/62.38/31.62/29.22/29.15 s, errors 0, bad_digest 0.
+# Safe cap = the largest with no error and a wall within 10 % of the best (29.15 s * 1.10 = 32.07 s): cap 16.
+# per_result_read_s = 29.15 / 3961 = 0.00736 s (the wall per result at cap 16; never divide by the cap again).
+[store]
+read_concurrency = 16
+per_result_read_s = 0.00736

@@ -349,7 +349,7 @@ def test_a_memory_unit_recorded_during_a_strict_run_lets_the_job_complete(tmp_pa
                 record_memory_failure(ctx_.store, ctx_.generation(st_.name), k, "over its memory cap")
             else:
                 run_unit(ctx_, st_, k, worker="w0")
-        return 0, tuple(pending)
+        return 0, tuple(pending), []  # (relaunched, order, outcome rows) -- the S5.11 cost-aggregate seam
 
     ex = LocalExecutor(ExecutorConfig(workers=1))
     monkeypatch.setattr(ex, "_dispatch", dispatch)
@@ -373,3 +373,16 @@ def test_the_stage_cli_escalate_flag_runs_a_deferred_unit(tmp_path):
     assert (store / gen / "0002.failed.json").exists() and not (store / gen / "0002.json").exists()
     _cli(store, "--stages", "strict", "--workers", "1", "--escalate")
     assert (store / gen / "0002.json").exists() and not (store / gen / "0002.failed.json").exists()
+
+
+def test_a_shard_keys_list_runs_in_its_given_order(tmp_path):
+    """S5.4: the executor runs a --shard-keys list in the planner's LPT order (longest first); at W=1 the
+    outcomes' completion order follows it, so the measured schedule matches the model's."""
+    from scripts._stages import sorted_units
+    from scripts.hf_jobs.executor import ExecutorConfig, LocalExecutor
+
+    ctx = _toy_ctx(tmp_path)
+    units = sorted_units(ctx, ctx.pipeline.stage("gen"))
+    given = list(reversed(units[:6]))  # a deliberately non-sorted order
+    report = LocalExecutor(ExecutorConfig(workers=1)).run_stage(ctx, "gen", keys=given)
+    assert list(report.completion_order) == given

@@ -23,9 +23,9 @@ from __future__ import annotations
 import ast
 import dataclasses
 import functools
-import pathlib
 
-_SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
+from scripts._pipeline_population import all_script_trees
+from scripts._pipeline_population import call_name as _call_name
 
 #: The loader modules whose public functions form the corpus-call set (spec section 5.1).
 _LOADER_MODULES = ("_loader_pining", "_sb_open_data", "_loader_databricks")
@@ -101,16 +101,6 @@ class Violation:
     func: str  # innermost enclosing function name, or "" at module scope
     lineno: int
     detail: str
-
-
-@functools.cache
-def all_script_trees() -> dict[str, ast.AST]:
-    """Every ``scripts/*.py`` parsed once, PRIVATE INCLUDED (spec section 5.2)."""
-    return {p.stem: ast.parse(p.read_text(encoding="utf-8")) for p in sorted(_SCRIPTS.glob("*.py"))}
-
-
-def _call_name(call: ast.Call) -> str:
-    return getattr(call.func, "id", "") or getattr(call.func, "attr", "")
 
 
 def _func_stack(tree: ast.AST) -> dict[int, tuple[str, ...]]:

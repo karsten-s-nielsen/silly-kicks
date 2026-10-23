@@ -1,0 +1,53 @@
+# job-image — ADR-129 Cycle 1b (S5.12, owner ruling 11a): build, push and attest the locked job environment.
+# Triggered by a `job-image/env-<12 hex>` tag (ruleset: owner only); publishes only after the owner approves
+# the `job-image` environment (required reviewer), the same pattern as publish.yml's `pypi` environment.
+# Every action is pinned by full commit SHA with its version in a comment, as publish.yml does.
+name: job-image
+on:
+  push:
+    tags: ["job-image/env-*"]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    environment: job-image
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - id: meta
+        name: Derive the image tag and the build arguments; refuse a tag that does not match the inputs
+        run: |
+          tag="${GITHUB_REF_NAME#job-image/}"
+          want="$(python3 -m scripts.hf_jobs image tag)"
+          test "${tag}" = "${want}" || { echo "tag ${tag} != derived ${want}"; exit 1; }
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/silly-kicks-job" >> "$GITHUB_OUTPUT"
+          python3 -m scripts.hf_jobs image build-args >> "$GITHUB_ENV"   # writes UV_REQ=... and EXTRAS=...
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - name: Refuse an existing image tag (after login, so a private package is visible)
+        run: |
+          if docker manifest inspect "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}" >/dev/null 2>&1; then
+            echo "image tag ${{ steps.meta.outputs.tag }} exists; never rebuilt"; exit 1; fi
+      - id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          file: scripts/hf_jobs/image/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          build-args: |
+            UV_REQUIREMENT=${{ env.UV_REQ }}
+            EXTRAS=${{ env.EXTRAS }}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ${{ steps.meta.outputs.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Record the digest for the image lock
+        run: echo "digest=${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

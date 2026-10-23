@@ -89,3 +89,58 @@ def test_an_extra_file_and_a_nested_dir_are_reported(tmp_path):
     (tmp_path / "b" / "sub").mkdir()
     with pytest.raises(ValueError, match="nested"):
         artifact_identity(tmp_path / "b")
+
+
+def _shipped_bundles():
+    import pathlib
+    import subprocess
+
+    out = subprocess.run(
+        ["git", "ls-files", "silly_kicks/**/SHA256SUMS"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return sorted({str(pathlib.PurePosixPath(p).parent) for p in out.stdout.split()})
+
+
+#: Shipped bundles whose writer does NOT follow `sums_names`, each with the reason. None passes through a stage
+#: pipeline (`commit_free` / `stamp_provenance`), so its own `save()` stays the only writer.
+_SUMS_CONVENTION_EXCEPTIONS = {
+    "silly_kicks/xsuccess/weights": "XSuccessModel.save covers model.json only; xsuccess is not a stage pipeline",
+}
+
+
+@pytest.mark.parametrize("bundle", _shipped_bundles())
+def test_write_sums_reproduces_every_shipped_bundle_byte_for_byte(tmp_path, bundle):
+    """S5.10 'the same writer the trainer uses today': a stamped bundle's SHA256SUMS must equal what the
+    trainer's own `save()` shipped -- payload first, then metadata.json, never metrics.json (B: the receiver
+    loader reads only the first token, so an all-files sorted manifest made an adopted bundle unloadable)."""
+    import pathlib
+    import shutil
+    import subprocess
+
+    from scripts.hf_jobs import identity
+
+    if bundle in _SUMS_CONVENTION_EXCEPTIONS:
+        pytest.skip(_SUMS_CONVENTION_EXCEPTIONS[bundle])
+    tracked = subprocess.run(  # noqa: S603
+        ["git", "ls-files", bundle],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    work = tmp_path / "b"
+    work.mkdir()
+    for t in tracked:
+        p = pathlib.Path(t)
+        if p.parent.as_posix() == bundle and p.name != identity.SUMS:
+            shutil.copyfile(p, work / p.name)
+    identity.write_sums(work)
+    shipped = pathlib.Path(bundle, identity.SUMS).read_bytes().replace(b"\r\n", b"\n")
+    assert (work / identity.SUMS).read_bytes() == shipped
+    assert identity.verify_sums(work)
+
+
+def test_the_sums_exceptions_name_real_bundles():
+    assert set(_SUMS_CONVENTION_EXCEPTIONS) <= set(_shipped_bundles())

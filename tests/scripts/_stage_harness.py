@@ -59,14 +59,31 @@ def failure_of(ctx: RunContext, stage: str, key: str = "only") -> str:
 
 
 def export(ctx: RunContext, dest: pathlib.Path) -> pathlib.Path:
-    """Write the pipeline output FileSet into ``dest`` and return it."""
-    assert ctx.pipeline.output is not None, f"{ctx.pipeline.name} declares no output stage"
+    """Write the pipeline output into ``dest`` exactly as ``--run-all --out`` does (`_stages.export_output`: a
+    bundle is stamped with the run's provenance + SHA256SUMS) and return it. One export path, not a copy."""
+    from scripts._stages import export_output
+
+    export_output(ctx, pathlib.Path(dest))
+    return pathlib.Path(dest)
+
+
+def run_toy(module: str, tmp: pathlib.Path) -> dict[str, bytes]:
+    """Run ``module``'s toy pipeline end to end (``toy_session``) and return the output stage's FileSet as
+    ``{name: bytes}`` -- the commit-free output gate (S5.10) reads it."""
+    import importlib
+    import os
+
+    from scripts._toy_corpora import TOY_PARAMS, toy_session
+
+    pipe = importlib.import_module(module).PIPELINE
+    tmp = pathlib.Path(tmp)
+    with toy_session(module, str(tmp / "d")) as (data, extra_env):
+        os.environ.update(extra_env)
+        ctx = run_in_process(pipe, list(TOY_PARAMS[module]), store=tmp / "s", data_root=data)
+    assert ctx.pipeline.output is not None, f"{module} declares no output stage"
     out = ctx.upstream(ctx.pipeline.output)
-    assert isinstance(out, FileSet)
-    dest.mkdir(parents=True, exist_ok=True)
-    for name, data in out.files.items():
-        (dest / name).write_bytes(data)
-    return dest
+    assert isinstance(out, FileSet), f"{module} output is not a FileSet"
+    return dict(out.files)
 
 
-__all__ = ["PROV", "StageIncompleteError", "export", "failure_of", "params_from_args", "run_in_process"]
+__all__ = ["PROV", "StageIncompleteError", "export", "failure_of", "params_from_args", "run_in_process", "run_toy"]

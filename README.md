@@ -135,7 +135,7 @@ actions_wyscout, _ = wyscout.convert_to_actions(wyscout_events, home_team_id)
 
 ## Architecture
 
-Open [`docs/c4/architecture.html`](docs/c4/architecture.html) in a browser to explore the C4 architecture diagrams (System Context, Containers).
+Open [`docs/c4/architecture.html`](docs/c4/architecture.html) in a browser to explore the C4 architecture diagrams (System Context, Containers, and the HF-campaign controller Component view).
 
 ## Attribution
 

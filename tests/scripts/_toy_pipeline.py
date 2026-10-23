@@ -128,5 +128,25 @@ PIPELINE = Pipeline(
     output="final",
 )
 
+
+def open_undeclared(_i: int) -> int:
+    """An inner task that opens a TRACKED repo file outside any closure (test_closure_runtime_check)."""
+    return len(open("docs/research/skillcorner_s1_event_validity/verdicts.json", "rb").read())
+
+
+def load_undeclared(_i: int) -> int:
+    """An inner task that LOADS a non-closure repo module via ``exec_module`` -- no ``import`` audit event, so
+    only the after-task module check (run in the CHILD, CCTP-IMPL-16) catches it (test_closure_runtime_check)."""
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("_sk_undeclared_probe", "scripts/_cache.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_sk_undeclared_probe"] = mod  # register so `check_modules` finds it via sys.modules
+    spec.loader.exec_module(mod)
+    return 1
+
+
 if __name__ == "__main__":
     raise SystemExit(main(PIPELINE))

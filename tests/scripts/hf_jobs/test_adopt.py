@@ -8,6 +8,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -210,6 +211,7 @@ def _toy_repo(tmp_path: Path) -> tuple[Path, Path]:
 
 class _Campaign:
     name = "toy"
+    bucket = "b/x"
 
 
 def _clean() -> dict:
@@ -361,3 +363,206 @@ def test_bootstrap_observed_without_write_leaves_the_file_alone(tmp_path, monkey
     root, hub = _bootstrap_world(tmp_path, monkeypatch)
     assert set(A.bootstrap_observed(api=hub, write=False)) == {"toy_wheel", "toy_hub"}
     assert (root / "docs/artifacts/observed.json").read_text(encoding="utf-8") == "{}\n"
+
+
+def test_stamping_writes_every_key_from_its_source_and_regenerates_the_sums(tmp_path):
+    import json
+
+    from scripts.hf_jobs import adopt, identity
+
+    d = tmp_path / "art"
+    d.mkdir()
+    (d / "metadata.json").write_text('{"variant":"default"}')
+    (d / "metrics.json").write_text('{"cv":1}')
+    att = {"commit": "a" * 40, "main": {"env": {"platform": "Linux-x"}, "tree_state": "clean"}}
+    adopt.stamp_provenance(d, attestation=att, params={"training_platform": None}, generation="tok")
+    meta = json.loads((d / "metadata.json").read_text())
+    assert meta["training_commit"] == "a" * 40 and meta["run_tree_dirty"] is False
+    assert meta["generation"] == "tok"
+    assert identity.verify_sums(d)  # SHA256SUMS lists the final bytes
+
+
+class _MemStore:
+    def __init__(self, files=None):
+        self.files = dict(files or {})
+
+    def read_bytes(self, rel):
+        return self.files.get(rel)
+
+    def upload_bytes(self, rel, data):
+        self.files[rel] = data
+
+    def names(self, rel_dir):
+        base = rel_dir.rstrip("/") + "/"
+        return {k[len(base) :] for k in self.files if k.startswith(base) and "/" not in k[len(base) :]}
+
+    def list_tree(self, rel_dir):
+        base = rel_dir.rstrip("/") + "/"
+        return {k[len(base) :] for k in self.files if k.startswith(base)}
+
+
+def _wire_adopt(monkeypatch, store, *, ancestor=True):
+    from scripts.hf_jobs import adopt as AA
+    from scripts.hf_jobs import campaign as CC
+    from scripts.hf_jobs import store as SS
+
+    inst = CC.Instance("ghost_gk", "owner", "default", "scripts.train_ghost_gk", (), (), "ghost_gk-owner")
+    monkeypatch.setattr(CC, "instances", lambda c, commit, *, replica=None, canary=False: [inst])
+    monkeypatch.setattr(
+        CC,
+        "read_plan",
+        lambda inst, bucket: {
+            "pipeline": "ghost_gk",
+            "output": "fit",
+            "stages": [{"name": "fit", "generation": "gen_f", "token": "t_f"}],
+        },
+    )
+    monkeypatch.setattr(SS, "BucketStore", lambda bucket, rk, api=None: store)
+    monkeypatch.setattr(AA, "is_ancestor", lambda c_, head, **k: ancestor)
+
+
+def test_assert_adoptable_api_path_passes_with_an_ancestor_attestation_and_canary(tmp_path, monkeypatch):
+    from scripts.hf_jobs import adopt as A
+
+    store = _MemStore({"_attest/fit/t_f/anc.json": json.dumps({"commit": "anc"}).encode()})
+    _wire_adopt(monkeypatch, store)
+    rep = {"canary": {"ghost_gk-owner/default": {"fit": {"ok": True}}}}
+    A._assert_adoptable(_Campaign(), "camp", "h" * 40, rep, api=object(), run=None)  # type: ignore[arg-type]
+
+
+def test_assert_adoptable_api_path_refuses_without_an_attestation(monkeypatch):
+    from scripts.hf_jobs import adopt as A
+
+    _wire_adopt(monkeypatch, _MemStore())
+    with pytest.raises(A.AdoptionRefusedError, match="attestation"):
+        A._assert_adoptable(_Campaign(), "camp", "h" * 40, {}, api=object(), run=None)  # type: ignore[arg-type]
+
+
+def test_expectation_violations_tolerate_a_commit_free_output(tmp_path):
+    # B#30 regression: a commit-free retrieved output (no training_commit; adopt stamps it) must not be flagged
+    # "training_commit missing".
+    d = tmp_path / "f"
+    d.mkdir()
+    (d / "metadata.json").write_text(json.dumps({"shipped_variant": "public"}), encoding="utf-8")
+    metrics = {"shipped_variant": "public", "reproducibility": "public", **expected_identity("xshot17", "pergame")}
+    (d / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+    bad = A.expectation_violations(MAN.artifacts["xshot_default"], d, _record("xshot17"), C)
+    assert not any("training_commit" in v for v in bad), bad
+
+
+def test_assert_adoptable_detects_a_quarantine_in_a_utc_subdir(monkeypatch):
+    # B#36 regression: quarantine writes `_quarantine/{stage}/{token}/{utc}/...`; the check must recurse.
+    store = _MemStore(
+        {
+            "_attest/fit/t_f/anc.json": json.dumps({"commit": "anc"}).encode(),
+            "_quarantine/fit/t_f/20261022T000000Z/record.json": b"{}",
+        }
+    )
+    _wire_adopt(monkeypatch, store)
+    rep = {"canary": {"ghost_gk-owner/default": {"fit": {"ok": True}}}}
+    with pytest.raises(A.AdoptionRefusedError, match="quarantine"):
+        A._assert_adoptable(_Campaign(), "camp", "h" * 40, rep, api=object(), run=None)  # type: ignore[arg-type]
+
+
+def test_stamp_uses_the_real_shipped_variant_in_the_restricted_note(tmp_path):
+    # B#37 regression: the restricted note names the real variant, not the reproducibility class.
+    d = tmp_path / "art"
+    d.mkdir()
+    (d / "metadata.json").write_text(
+        json.dumps({"reproducibility": "restricted", "shipped_variant": "sc_extended", "providers": ["idsse"]}),
+        encoding="utf-8",
+    )
+    att = {"commit": "a" * 40, "main": {"env": {"platform": "Linux"}, "tree_state": "clean"}}
+    A.stamp_provenance(d, attestation=att, params={"training_platform": None})
+    meta = json.loads((d / "metadata.json").read_text(encoding="utf-8"))
+    assert "sc_extended" in meta["reproducibility_note"] and "restricted" == meta["reproducibility"]
+
+
+def test_adopt_reuse_stamps_commit_free_output_and_records_the_provenance(tmp_path, monkeypatch):
+    from scripts.hf_jobs import adopt as A
+
+    root, staging = _toy_repo(tmp_path)
+    fresh = staging / _INST
+    (fresh / "metadata.json").write_text(json.dumps({"variant": "default"}), encoding="utf-8")  # commit-free
+    (fresh / "metrics.json").write_text(json.dumps({"cv_mae_euclidean_mean": 1.1}), encoding="utf-8")
+    anc = "e" * 40
+    head = "h" * 40
+    monkeypatch.setattr(A, "_assert_adoptable", lambda *a, **k: None)
+
+    def fake_stamp(c, commit, h, inst_id, fr, *, api, run):
+        A.stamp_provenance(
+            fr,
+            attestation={"commit": anc, "main": {"env": {"platform": "Linux"}, "tree_state": "clean"}},
+            params={"training_platform": None},
+            generation="tok",
+        )
+        return anc
+
+    monkeypatch.setattr(A, "_stamp_fresh", fake_stamp)
+    out = A.adopt(
+        _Campaign(),  # type: ignore[arg-type]
+        C,
+        staging=staging,
+        api=object(),
+        git=lambda: {**_clean(), "commit": head},
+        root=root,
+        gate=False,
+    )
+    assert sorted(out["adopted"]) == ["toy_hub", "toy_wheel"]
+    man = M.load(root / "docs" / "artifacts" / "manifest.toml")
+    assert man.artifacts["toy_wheel"].training_commit == anc  # stamped attester, not HEAD
+    observed = json.loads((root / "docs/artifacts/observed.json").read_text(encoding="utf-8"))
+    assert observed["toy_wheel"]["adopted_at_commit"] == head and observed["toy_wheel"]["attested_by"] == anc
+
+
+def test_assert_adoptable_is_order_independent_across_instances_sharing_a_stage(monkeypatch):
+    # B#31 regression: two instances share stage name "fit" (one attested, one not). The verdict must not depend
+    # on instance iteration order -- bare-stage keys collided (last wins) and fail-opened on one order.
+    from scripts.hf_jobs import adopt as AA
+    from scripts.hf_jobs import campaign as CC
+    from scripts.hf_jobs import store as SS
+
+    att = _MemStore({"_attest/fit/t_f/anc.json": json.dumps({"commit": "anc"}).encode()})
+    noatt = _MemStore()
+    stores = {"rk-att": att, "rk-noatt": noatt}
+    insts = [
+        CC.Instance("ghost_gk", "owner", "a", "m", (), (), "rk-att"),
+        CC.Instance("win", "owner", "b", "m", (), (), "rk-noatt"),
+    ]
+    monkeypatch.setattr(
+        CC,
+        "read_plan",
+        lambda inst, bucket: {
+            "pipeline": "p",
+            "output": "fit",
+            "stages": [{"name": "fit", "generation": "g", "token": "t_f"}],
+        },
+    )
+    monkeypatch.setattr(SS, "BucketStore", lambda bucket, rk, api=None: stores[rk])
+    monkeypatch.setattr(AA, "is_ancestor", lambda c_, h, **k: True)
+    rep = {"canary": {"rk-att/a": {"fit": {"ok": True}}, "rk-noatt/b": {"fit": {"ok": True}}}}
+    for order in (insts, list(reversed(insts))):
+        monkeypatch.setattr(CC, "instances", lambda c, commit, _o=order: list(_o))
+        with pytest.raises(AA.AdoptionRefusedError, match="attestation"):  # rk-noatt/fit unattested, either order
+            AA._assert_adoptable(_Campaign(), "camp", "h" * 40, rep, api=object(), run=None)  # type: ignore[arg-type]
+
+
+def test_adoption_refusals_cover_every_rule_from_both_sides():
+    from scripts.hf_jobs import adopt
+
+    anc = {"old", "mid"}.__contains__
+    base: dict[str, Any] = dict(
+        head_tokens={"fit": "T"},
+        adopted={"fit": "T"},
+        attestations={"fit": ["old", "mid"]},
+        quarantined=set(),
+        canary_ok={"fit": True},
+        is_ancestor=anc,
+    )
+    assert adopt.adoption_refusals(**base) == []
+    assert "token" in adopt.adoption_refusals(**{**base, "adopted": {"fit": "OTHER"}})[0]
+    assert "attestation" in adopt.adoption_refusals(**{**base, "attestations": {"fit": []}})[0]
+    assert "ancestor" in adopt.adoption_refusals(**{**base, "attestations": {"fit": ["branch"]}})[0]
+    assert "quarantine" in adopt.adoption_refusals(**{**base, "quarantined": {"T"}})[0]
+    assert "canary" in adopt.adoption_refusals(**{**base, "canary_ok": {"fit": False}})[0]
+    assert adopt.oldest_ancestor_attester(["mid", "old"], order=["new", "mid", "old"]) == "old"
