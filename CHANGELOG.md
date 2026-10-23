@@ -5,21 +5,9 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — compute contract + HF campaigns (ADR-128)
+## [Unreleased] — campaign throughput + content-addressed reuse (ADR-129)
 
-> Harness and tooling only: no library behaviour change and no retrain. No version bump: the published package
-> changes only in three private modules (additive per-fold seams, byte-identical outputs). The Cycle 1 campaign ran
-> on real HF (20 of 21 instances completed their whole DAG); by owner ruling (2026-10-21) its artifacts are not
-> adopted, and the re-fit moves to the campaign-throughput cycle (ADR-129). Spec
-> `docs/superpowers/specs/2026-10-18-compute-contract-hf-campaigns-design.md`; plan
-> `docs/superpowers/plans/2026-10-18-compute-contract-hf-campaigns-plan.md`; outcome in ADR-128 "Cycle 1 outcome".
->
-> **Known limitations (fixed in ADR-129):** the stage reduce lists its generation once per unit (quadratic over
-> the bucket mount); the controller reads every unit ledger record for its cost history (about 0.5 s each over the
-> bucket API); one stage at a time per instance; no result reuse across commits; no supported resume for a halted
-> stage or for a job that fails before its first unit; every job installs its environment.
-
-### Added (Cycle 1b, ADR-129)
+### Added
 
 > Harness and tooling only: no library behaviour change and no retrain; no version bump. Spec
 > `docs/superpowers/specs/2026-10-21-campaign-throughput-design.md`; plan
@@ -43,6 +31,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gates the tag, `startup_s`, GHCR resolve and build provenance.
 - **Linear reduce and cost history**, commit-free stage outputs, and S7.2 acceptance bars
   (`campaign.compute_bars`, `BAR_THRESHOLDS`) written into the campaign summary.
+
+### Fixed
+
+- A local `--run-all --out` bundle is stamped with the local run's provenance and a `SHA256SUMS`
+  (`identity.stamp_provenance`, shared with `adopt`), so `load()` accepts it; the store output stays commit-free.
+- `identity.write_sums` writes `SHA256SUMS` as the trainers' `save()` writers do (payload first, then
+  `metadata.json`; never `metrics.json`), so a stamped receiver bundle loads (its loader reads the first token).
+- The corpus-driver gate reads each driver together with the `_*_stages` modules it imports; seven drivers had
+  left its population, and the key exceptions now sit on the modules that hold the keys.
+
+## [4.139.1] — 2026-10-22 — pandas 3.1 compatibility fix + compute contract harness (ADR-128) (PR-S202)
+
+> **Why a patch release:** pandas 3.1.0 broke `add_gradientsports_player_ids` (see Fixed). The release also
+> carries the ADR-128 compute-contract harness, which was merged to `main` without a version.
+>
+> ADR-128 harness and tooling: no library behaviour change and no retrain. The published package
+> changes only in three private modules (additive per-fold seams, byte-identical outputs). The Cycle 1 campaign ran
+> on real HF (20 of 21 instances completed their whole DAG); by owner ruling (2026-10-21) its artifacts are not
+> adopted, and the re-fit moves to the campaign-throughput cycle (ADR-129). Spec
+> `docs/superpowers/specs/2026-10-18-compute-contract-hf-campaigns-design.md`; plan
+> `docs/superpowers/plans/2026-10-18-compute-contract-hf-campaigns-plan.md`; outcome in ADR-128 "Cycle 1 outcome".
+>
+> **Known limitations (fixed in ADR-129):** the stage reduce lists its generation once per unit (quadratic over
+> the bucket mount); the controller reads every unit ledger record for its cost history (about 0.5 s each over the
+> bucket API); one stage at a time per instance; no result reuse across commits; no supported resume for a halted
+> stage or for a job that fails before its first unit; every job installs its environment.
 
 ### Added
 
@@ -107,6 +121,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`add_gradientsports_player_ids` raised `TypeError: boolean value of NA is ambiguous` on pandas 3.1.**
+  From pandas 3.1 a `.map` over a string key returns `bool[pyarrow]` and a roster miss stays `<NA>` through
+  `== True`, so the `is_goalkeeper` cast failed. The column now uses `isin([True])`, which never yields NA;
+  the output is identical on pandas 2 and 3.
+- The pressure snapshot test (`tests/tracking/test_pressure_snapshot.py`) rounds values to 1e-9 before hashing
+  and pins one hash per method. The raw-bytes hash moved with the runner CPU and numpy/pandas micro-versions
+  (last-ULP jitter), so it needed a growing set of accepted hashes and still flaked on `main`.
 - The xcross probe no longer reads a `.cache` dotdir as a game.
 - The campaign controller schedules a resumed stage's pending units (the plan JSON's `pending_units`); it
   scheduled the first `pending` keys of `units`, which re-launched a job for an already-done unit in a loop.

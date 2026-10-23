@@ -14,22 +14,15 @@ import pandas as pd
 
 from silly_kicks.tracking.features import pressure_on_actor
 
-# Pinned hashes -- regenerate via REGENERATE_SNAPSHOTS=1 + scripts/regenerate_pressure_snapshot_shas.py
-# Multiple valid hashes per method: numpy micro-version differences across runner
-# images cause ULP-level float divergence in trig/hypot chains. Both hashes are
-# correct outputs — the test guards against algorithmic drift, not platform jitter.
+# Pinned hashes -- regenerate via scripts/regenerate_pressure_snapshot_shas.py.
+# ONE hash per method. `_hash_series` rounds to `_HASH_DECIMALS` before hashing: the runner CPU (its
+# numpy SIMD path) and numpy/pandas micro-versions move trig/hypot chains by the last ULP (~1e-14),
+# which a raw-bytes hash turned into a growing set of accepted hashes and a CPU-dependent flake.
+# The test guards against algorithmic drift, not platform jitter.
 EXPECTED_SHAS = {
-    "andrienko_oval": {
-        "8d49f11737ae1874aa3a65bf12c37d76f0f8d977738f2944a8be3244138e5a9c",
-        "23a32e695889bfc61cb90328c948b03787ac670748b20b4d7639bc7d59cf3294",
-    },
-    "link_zones": {
-        "834889e6f2707046f0dcdbaea0805c829137b84d2ad54893a316a99282064ec5",
-    },
-    "bekkers_pi": {
-        "3515a6aa716f97db256686f94b253ef17cebc0de510edce92778e24fbf2a3b28",
-        "3ddcb35c67ca559e3ab19f405d45ff34872c29ba2f752b9992a08e39bc4086b2",
-    },
+    "andrienko_oval": "e1ab2f35e8bc7365a746d476956c3257400ad310f5c7c4f18f4122d85c2f7c76",
+    "link_zones": "feb621a88c5d69cb313d17a0fb3bb74d9790938ee6d4f51811e827f340746276",
+    "bekkers_pi": "0d303dd5ebfd6ced20b604d81d30ef9fd6ce4a4abc4af65ff7a8f26e35d51fc0",
 }
 
 
@@ -128,9 +121,14 @@ def _build_fixture():
     return pd.DataFrame(actions_rows), pd.DataFrame(frames_rows)
 
 
+# 1e-9 is five orders of magnitude above the observed ULP jitter and far below any algorithmic change.
+_HASH_DECIMALS = 9
+
+
 def _hash_series(s: pd.Series) -> str:
-    arr = s.fillna(-99999.0).astype("float64").values
-    return hashlib.sha256(arr.tobytes()).hexdigest()  # type: ignore[attr-defined]
+    arr = np.round(s.fillna(-99999.0).astype("float64").to_numpy(copy=True), _HASH_DECIMALS)
+    arr = arr + 0.0  # fold a rounded -0.0 into 0.0: the two differ in bytes
+    return hashlib.sha256(arr.tobytes()).hexdigest()
 
 
 def test_andrienko_snapshot_stable() -> None:
@@ -138,7 +136,7 @@ def test_andrienko_snapshot_stable() -> None:
     result = pressure_on_actor(actions, frames, method="andrienko_oval")
     actual = _hash_series(result)
     expected = EXPECTED_SHAS["andrienko_oval"]
-    assert actual in expected, f"Andrienko drift; expected one of {expected}, got {actual}"
+    assert actual == expected, f"Andrienko drift; expected {expected}, got {actual}"
 
 
 def test_link_snapshot_stable() -> None:
@@ -146,7 +144,7 @@ def test_link_snapshot_stable() -> None:
     result = pressure_on_actor(actions, frames, method="link_zones")
     actual = _hash_series(result)
     expected = EXPECTED_SHAS["link_zones"]
-    assert actual in expected, f"Link drift; expected one of {expected}, got {actual}"
+    assert actual == expected, f"Link drift; expected {expected}, got {actual}"
 
 
 def test_bekkers_snapshot_stable() -> None:
@@ -154,4 +152,4 @@ def test_bekkers_snapshot_stable() -> None:
     result = pressure_on_actor(actions, frames, method="bekkers_pi")
     actual = _hash_series(result)
     expected = EXPECTED_SHAS["bekkers_pi"]
-    assert actual in expected, f"Bekkers drift; expected one of {expected}, got {actual}"
+    assert actual == expected, f"Bekkers drift; expected {expected}, got {actual}"
