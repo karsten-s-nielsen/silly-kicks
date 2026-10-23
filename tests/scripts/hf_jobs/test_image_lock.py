@@ -135,3 +135,27 @@ def test_the_tag_comes_from_the_derived_output_not_the_ref_name():
     txt = _workflow_text()
     assert "steps.meta.outputs.tag" in txt
     assert "tags: ${{ github.ref_name }}" not in txt
+
+
+def test_the_registry_probe_names_every_job_within_the_hf_label_limit(monkeypatch):
+    """Without an explicit `name`, hf_hub derives the `name` label from the image; the digest-pinned GHCR ref
+    (113 chars) broke HF's 100-character label limit (HTTP 400, 2026-10-23). Each probe job is named."""
+    import types
+
+    from scripts.hf_jobs import image_probe
+
+    calls: list[dict] = []
+
+    class _Api:
+        def run_job(self, **kw):
+            calls.append(kw)
+            return types.SimpleNamespace(id=f"j{len(calls)}")
+
+    long_ref = "ghcr.io/karsten-s-nielsen/silly-kicks-job@sha256:" + "a" * 64
+    monkeypatch.setattr(image_probe, "_candidates", lambda: (long_ref, image.BASE_IMAGE))
+    monkeypatch.setattr(image_probe, "_wait", lambda api, job_id, timeout_s=900: "COMPLETED")
+    out = image_probe.probe_registry(api=_Api())
+    assert len(long_ref) > launch.LABEL_MAX  # the case that failed
+    assert [c["image"] for c in calls] == [long_ref, image.BASE_IMAGE]
+    assert all(c.get("name") and len(c["name"]) <= launch.LABEL_MAX for c in calls)
+    assert out["pulled"] == [long_ref, image.BASE_IMAGE]

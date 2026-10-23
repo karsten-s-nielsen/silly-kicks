@@ -57,13 +57,16 @@ def probe_registry(api: Any = None) -> dict:
     If none pulls, the caller STOPS and reports to the owner (S5.12)."""
     api = api or _api()
     results: dict[str, str] = {}
-    for ref in _candidates():
+    for i, ref in enumerate(_candidates()):
         info = api.run_job(
             image=ref,
             command=["python", "-c", "print(1)"],
             flavor="cpu-upgrade",
             timeout=600,
             labels={"campaign": "image-probe", "run_key": "image-probe-registry"},
+            # Explicit, as `launch.job_name` does: without it hf_hub derives the `name` label from the image, and
+            # the digest-pinned GHCR ref (113 chars) breaks HF's 100-character label limit (HTTP 400).
+            name=f"image-probe-registry-{i}",
         )
         results[ref] = _wait(api, info.id, timeout_s=900)
     pulled = [r for r, s in results.items() if s == "COMPLETED"]
