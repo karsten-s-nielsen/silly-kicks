@@ -1461,8 +1461,8 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     FeatureColumn(
         name="start_coord_source",
         definition=(
-            "Provenance tier of the imputed start coordinate (native / tracking_ball / tracking_gk / restart_prior / "
-            "next_event / unresolved / tripwire_reverted)."
+            "Provenance tier of the imputed start coordinate (native / stationary_window / t_kick_ball / "
+            "tracking_ball / tracking_gk / restart_prior / next_event / unresolved / tripwire_reverted)."
         ),
         unit="dimensionless",
         emitting_module=_M_GK_GEOMETRY,
@@ -1471,6 +1471,30 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         name="start_coord_confidence",
         definition="Confidence (0-1) of the imputed start coordinate.",
         unit="ratio",
+        emitting_module=_M_GK_GEOMETRY,
+    ),
+    FeatureColumn(
+        name="origin_evidence",
+        definition=(
+            "Validation tier behind a tracking-derived restart origin (reference / transfer); <NA> when the origin "
+            "cell is withheld by the restart gate table (TF-46 Arm 1 Part 2)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_GK_GEOMETRY,
+    ),
+    FeatureColumn(
+        name="origin_gate_version",
+        definition="Hash of the restart gate-table artifact the origin decision was read from ('unpinned' when empty).",
+        unit="dimensionless",
+        emitting_module=_M_GK_GEOMETRY,
+    ),
+    FeatureColumn(
+        name="origin_cell_resolution",
+        definition=(
+            "Gate-table cell that licensed the origin: 'cell' (its own cell) or 'pooled_<level>' (a passing parent); "
+            "<NA> when withheld."
+        ),
+        unit="dimensionless",
         emitting_module=_M_GK_GEOMETRY,
     ),
     FeatureColumn(

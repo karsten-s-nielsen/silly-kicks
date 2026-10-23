@@ -159,6 +159,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/spadl/kloppy.py",
     "silly_kicks/spadl/gradientsports.py",
     "silly_kicks/spadl/skillcorner.py",
+    "silly_kicks/spadl/_refine_restart_types.py",
     "silly_kicks/atomic/spadl/utils.py",
     "silly_kicks/atomic/spadl/base.py",
     "silly_kicks/vaep/base.py",
@@ -285,6 +286,8 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/tracking/_das_taxonomy.py",
     "silly_kicks/tracking/_ghost_gk.py",
     "silly_kicks/tracking/_gk_geometry.py",
+    "silly_kicks/tracking/_kick_resolver.py",
+    "silly_kicks/tracking/_penalty_detector.py",
     # compute_gk_influence exported for restdefense._danger (TF-60 PR2); its pre-existing
     # zone/return-type helpers are deferred one at a time in `_EXAMPLES_DEBT`.
     "silly_kicks/tracking/_gk_influence.py",

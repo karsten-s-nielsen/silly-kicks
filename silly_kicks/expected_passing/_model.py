@@ -20,9 +20,13 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
-from silly_kicks.spadl._training_exclusion import training_exclusion_mask
+from silly_kicks.spadl._training_exclusion import provenance_masks
 
 from ._features import FEATURE_NAMES, feature_contract_block, pass_completion_features
+
+#: Provenance dimensions this trainer READS (TF-46 Arm 1 Part 2, spec section 18.2.1): the completion label
+#: (result) and the origin geometry (location). A row unvalidated in either is excluded.
+TRAINING_READS = frozenset({"result", "location"})
 
 _PASS = spadlconfig.actiontype_id["pass"]
 _SUCCESS = spadlconfig.result_id["success"]
@@ -132,10 +136,12 @@ class PassCompletionModel:
         from sklearn.linear_model import LogisticRegression  # training-only import
 
         p = actions[actions["type_id"] == _PASS].dropna(subset=["start_x", "start_y", "end_x", "end_y"])
-        # TF-46 Arm 1 (decision B5/E, the G1 GK-completion filter): drop inferred/stopgap results,
-        # chain_ambiguous restarts and repair rows from the completion training set. Tolerant of a frame
-        # without the base signal columns (all-False mask) -- atomic / pre-re-convert frames fit unchanged.
-        p = p[~training_exclusion_mask(p)]
+        # TF-46 Arm 1 Part 2 (spec section 18.2.1): drop rows unvalidated in a READ dimension -- the result
+        # (inferred/stopgap/chain_ambiguous/repair) or the start location (canonical NaN, no gated origin).
+        # Tolerant of a frame without the base signal columns (all-False masks) -- atomic / pre-re-convert
+        # frames fit unchanged.
+        pm = provenance_masks(p)
+        p = p[~(pm["result"] | pm["location"])]
         X = pass_completion_features(
             p["start_x"].to_numpy(),
             p["start_y"].to_numpy(),

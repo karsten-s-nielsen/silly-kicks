@@ -38,6 +38,14 @@ field_width: float = 68.0  # unit: meters
 # into a load-time raise rather than a silent trained-feature skew.
 penalty_area_half_width: float = 20.16
 penalty_area_depth: float = 16.5
+# FIFA Laws of the Game: the goal area is 18.32 m wide and 5.5 m deep; the corner arc has a 1 m radius.
+# CANONICAL (ADR-050) -- the TF-46 restart rest conditions (spec section 6.4) read these.
+goal_area_half_width: float = 9.16
+goal_area_depth: float = 5.5
+corner_arc_radius: float = 1.0
+# Law 2: the ball's circumference is 68-70 cm, so its radius is ~0.11 m (a ball ON a line has its centre up to this
+# far outside it; Law 1: the lines belong to the areas they bound).
+ball_radius: float = 0.11
 
 bodyparts: list[str] = ["foot", "head", "other", "head/other", "foot_left", "foot_right"]
 results: list[str] = [

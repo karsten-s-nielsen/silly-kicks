@@ -532,7 +532,10 @@ def _call_corner_windows(actions, frames, links, home_team_id):
                 "type_source": None,  # TF-46 Arm 1: travels from the action; NA on this synthesized corner
             }
         ]
-    ).astype(CORNER_IDENTIFY_COLUMNS)
+    )
+    # Every other identify column (TF-46 Part 2: the resolver / event-coded first-touch columns) is NA on this
+    # synthesized corner; the schema is the single source, so a new identify column needs no edit here.
+    corners = corners.reindex(columns=list(CORNER_IDENTIFY_COLUMNS)).astype(CORNER_IDENTIFY_COLUMNS)
     contacts = detect_ball_contacts(frames)
     return _acw(corners, frames, contacts)
 

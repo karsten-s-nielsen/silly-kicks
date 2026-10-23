@@ -21,7 +21,7 @@ import uuid
 import warnings
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from typing import Literal, NamedTuple, cast, overload
+from typing import Any, Literal, NamedTuple, TypedDict, cast, overload
 
 import pandas as pd
 
@@ -63,6 +63,8 @@ def _apply_et_direction(frames: pd.DataFrame, et_value, *, label: str):
 
 _DEFAULT_BASE_URL = "https://ozqgk9a3ji.execute-api.us-east-1.amazonaws.com/v1"
 _PUBLIC_TOKEN = "test-token-pining-for-the-data"  # noqa: S105  # documented PUBLIC token, not a secret
+#: Presigned-read attempts before a long download is declared failed (TF-46 Arm 1 Part 2, F6).
+_STREAM_READ_ATTEMPTS = 3
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -173,14 +175,33 @@ def _download_to_temp(
     if not location:
         raise RuntimeError(f"pining {provider}/{match_id}/{artifact_key}: expected a 302 redirect")
     partial = _partial_path(dest)
-    with urllib.request.urlopen(location, timeout=600) as resp, open(partial, "wb") as fh:  # noqa: S310
-        while True:
-            chunk = resp.read(1 << 20)  # 1 MiB
-            if not chunk:
-                break
-            fh.write(chunk)
-    partial.replace(dest)  # atomic — no partial cache entry on a mid-stream crash
-    return dest
+    # TF-46 Arm 1 Part 2 (F6, spec section 14.3): a presigned read of a ~419 MB tracking file can time out
+    # mid-stream. RESUME it: re-open the presigned URL with `Range: bytes=<bytes already written>-` and append.
+    # A server that ignores the range answers 200 with the whole body, so the `.partial` is then rewritten from
+    # the start. The `.partial` is renamed into place only on a complete stream, so a timed-out attempt never
+    # leaves a corrupt cache entry. A non-timeout error is NOT retried.
+    last_exc: TimeoutError | None = None
+    for _attempt in range(_STREAM_READ_ATTEMPTS):
+        have = partial.stat().st_size if partial.exists() else 0
+        # The presigned GET NEVER carries the bearer: a fresh read passes the BARE URL (no Request, so no header can
+        # attach); a resume builds a Request whose ONLY header is the byte Range.
+        target = urllib.request.Request(location, headers={"Range": f"bytes={have}-"}) if have else location  # noqa: S310
+        try:
+            with urllib.request.urlopen(target, timeout=600) as resp:  # noqa: S310
+                resumed = have > 0 and getattr(resp, "status", 200) == 206
+                with open(partial, "ab" if resumed else "wb") as fh:
+                    while True:
+                        chunk = resp.read(1 << 20)  # 1 MiB
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+            partial.replace(dest)  # atomic — no partial cache entry on a mid-stream crash
+            return dest
+        except TimeoutError as exc:  # socket.timeout is TimeoutError on 3.10 -- a slow read; resume from the bytes held
+            last_exc = exc
+    raise RuntimeError(
+        f"pining {provider}/{match_id}/{artifact_key}: presigned read timed out {_STREAM_READ_ATTEMPTS} times"
+    ) from last_exc
 
 
 def _artifact_key(artifacts: dict, *, suffix: str, role: str) -> str:
@@ -864,6 +885,15 @@ def _skillcorner_bronze(raw_frames: list[dict], meta: dict, *, match_id: str) ->
     rows = []
     for rec in raw_frames:
         bd = rec.get("ball_data") or {}
+        # Frame-level GI facts (TF-46 Arm 1 Part 2, spec section 17.7). Optional: absent -> None (today's
+        # output, byte-identical). The possession id is canonicalised to a plain string BEFORE any DataFrame
+        # exists (DL ruling 2: never astype(str) a possibly-float64 column, which would give "366.0").
+        poss = rec.get("possession") or {}
+        poss_pid = poss.get("player_id")
+        sc_poss_pid = None if poss_pid is None else str(int(poss_pid))
+        sc_poss_group = poss.get("group")
+        icp = rec.get("image_corners_projection") or {}
+        ball_is_visible = bd.get("is_detected")
         for p in rec.get("player_data") or []:
             if p.get("x") is None:
                 continue
@@ -889,6 +919,18 @@ def _skillcorner_bronze(raw_frames: list[dict], meta: dict, *, match_id: str) ->
                     "ball_y": bd.get("y"),
                     "ball_z": bd.get("z"),
                     "is_visible": p.get("is_detected"),
+                    # TF-46 Arm 1 Part 2 adapter fields (spec section 17.7); repeat per player row of a frame.
+                    "ball_is_visible": ball_is_visible,
+                    "sc_possession_player_id": sc_poss_pid,
+                    "sc_possession_group": sc_poss_group,
+                    "cam_tl_x": icp.get("x_top_left"),
+                    "cam_tl_y": icp.get("y_top_left"),
+                    "cam_tr_x": icp.get("x_top_right"),
+                    "cam_tr_y": icp.get("y_top_right"),
+                    "cam_br_x": icp.get("x_bottom_right"),
+                    "cam_br_y": icp.get("y_bottom_right"),
+                    "cam_bl_x": icp.get("x_bottom_left"),
+                    "cam_bl_y": icp.get("y_bottom_left"),
                     "frame_rate": 10.0,  # SkillCorner V3 is exactly 10.000 fps (measured)
                     "pitch_length": float(meta["pitch_length"]),
                     "pitch_width": float(meta["pitch_width"]),
@@ -913,25 +955,11 @@ def _skillcorner_bronze(raw_frames: list[dict], meta: dict, *, match_id: str) ->
     return pd.DataFrame(rows)
 
 
-def build_skillcorner_frames(paths, match_id, tracking_limit, *, with_velocity: bool = True):
-    """Preprocessed silly-kicks frames from SkillCorner artifacts via the NATIVE builder.
-
-    Was: the kloppy gateway (``visibility=None``, no ``ball_z``, and a pitch scale that disagrees
-    with our own events converter by ~0.26 m on a 104 m pitch). Now: the TF-23/ADR-034 native
-    builder, which single-sources the coordinate transform with ``spadl.skillcorner`` (spec 3.3/3.4).
-
-    ``match_id`` is PASSED IN, never parsed from a path -- it becomes ``game_id``, the CV grouping
-    key. Returns ``(frames, TrackingConversionReport)``; the report carries the S1 geometry rate-gate
-    that ``load_matches`` reads to DROP a geometrically-broken match. Reused by both
-    ``_build_skillcorner`` (calibration) and the TF-27 GK-roster e2e.
-    """
+def _skillcorner_raw_records(paths) -> list[dict]:
+    """The SkillCorner tracking artifact as the list-of-records shape the bronze builder consumes (one dict per
+    frame: ``frame``, ``period``, ``timestamp``, ``ball_data``, ``player_data``). The single reader for the frames
+    build and the TF-46 Part 2 camera-footprint staging (``part2_extras``)."""
     import gzip
-
-    from silly_kicks.tracking import skillcorner as tracking_sk
-
-    with open(paths["metadata"], encoding="utf-8") as fh:
-        meta = json.load(fh)
-    home_team_id = str(meta["home_team"]["id"])  # required kw-only arg below
 
     tpath = str(paths["tracking"])
     if tpath.endswith(".parquet"):
@@ -948,12 +976,34 @@ def build_skillcorner_frames(paths, match_id, tracking_limit, *, with_velocity: 
             pdata = rec.get("player_data")
             if pdata is not None and not isinstance(pdata, list):
                 rec["player_data"] = list(pdata)
-    else:
-        opener = gzip.open if tpath.endswith(".gz") else open
-        with opener(tpath, "rt", encoding="utf-8") as fh:  # type: ignore[operator]
-            first = fh.read(1)
-            fh.seek(0)
-            raw = json.load(fh) if first == "[" else [json.loads(line) for line in fh if line.strip()]
+        return raw
+    opener = gzip.open if tpath.endswith(".gz") else open
+    with opener(tpath, "rt", encoding="utf-8") as fh:  # type: ignore[operator]
+        first = fh.read(1)
+        fh.seek(0)
+        return json.load(fh) if first == "[" else [json.loads(line) for line in fh if line.strip()]
+
+
+def build_skillcorner_frames(paths, match_id, tracking_limit, *, with_velocity: bool = True):
+    """Preprocessed silly-kicks frames from SkillCorner artifacts via the NATIVE builder.
+
+    Was: the kloppy gateway (``visibility=None``, no ``ball_z``, and a pitch scale that disagrees
+    with our own events converter by ~0.26 m on a 104 m pitch). Now: the TF-23/ADR-034 native
+    builder, which single-sources the coordinate transform with ``spadl.skillcorner`` (spec 3.3/3.4).
+
+    ``match_id`` is PASSED IN, never parsed from a path -- it becomes ``game_id``, the CV grouping
+    key. Returns ``(frames, TrackingConversionReport)``; the report carries the S1 geometry rate-gate
+    that ``load_matches`` reads to DROP a geometrically-broken match. Reused by both
+    ``_build_skillcorner`` (calibration) and the TF-27 GK-roster e2e.
+    """
+
+    from silly_kicks.tracking import skillcorner as tracking_sk
+
+    with open(paths["metadata"], encoding="utf-8") as fh:
+        meta = json.load(fh)
+    home_team_id = str(meta["home_team"]["id"])  # required kw-only arg below
+
+    raw = _skillcorner_raw_records(paths)
 
     if tracking_limit:
         raw = _head_with_player_data(raw, tracking_limit)
@@ -1359,3 +1409,108 @@ def _build_gradientsports(paths, tracking_limit=None, *, with_velocity: bool = T
         home_team_start_left_extratime=home_start_left_et,
     )
     return actions, _preprocess(frames, with_velocity=with_velocity), str(home_team_id)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# TF-46 Arm 1 Part 2 staging extras (scripts._driver_sources.PART2_EXTRA_FILES; the DGX staging side, CL-8)
+# ---------------------------------------------------------------------------------------------------------------
+
+
+class Part2Extras(TypedDict):
+    """The TF-46 Part 2 extras of one match (``part2_extras``): the native event table, the camera footprint and
+    the data profile (a JSON-ready dict)."""
+
+    native: pd.DataFrame
+    footprint: pd.DataFrame
+    profile: dict[str, Any]
+
+
+def part2_extras(
+    ref: MatchRef,
+    loaded: LoadedMatch,
+    *,
+    cache_dir: str | Path,
+    entry: Mapping[str, object] | None = None,
+    overrides: Mapping[str, object] | None = None,
+    token: str | None = None,
+    base_url: str | None = None,
+) -> Part2Extras:
+    """The TF-46 Part 2 staging extras of ONE loaded match (spec section 16.2): ``native`` (the provider-native
+    event table -- the DFL shaped events, the flattened PFF gameEvents, or the SkillCorner GI dynamic events; the
+    section 5.6 tier-1 truth source), ``footprint`` (the SkillCorner camera-footprint companion,
+    ``convert_camera_footprint`` with the match's OWN frames report, so frames and footprint share one orientation
+    decision) and ``profile`` (the data-profile record).
+
+    The profile record: ``tracking_release`` / ``gi_release`` from ``overrides`` (the owner's per-match release
+    assignment), else derived from the artifact generation (SkillCorner: the tracking artifact format); the
+    ``competition_season`` from the manifest ``date`` (July split); ``is_opendata`` = a PUBLIC SkillCorner match
+    (opendata ships GI and tracking together: known-paired, C-11); ``pitch_length`` = the SkillCorner match
+    metadata (the converter scales to 105 m), else 105.0 (the Sportec / GS frames are already on the 105 m frame).
+    Reads the per-match cache (``cache_dir``, the artifacts ``load_match`` just fetched)."""
+    from silly_kicks.tracking import skillcorner as tracking_sk
+
+    tok = _resolve_token(token)
+    base = base_url or _base_url()
+    dl_dir = Path(cache_dir) / ref.provider / str(ref.match_id)
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    paths = _download_artifacts(ref.provider, ref.match_id, ref.artifacts, tok, base, dl_dir, use_cache=True)
+    entry = dict(entry or {})
+    over = dict(overrides or {})
+    native = pd.DataFrame()
+    footprint = pd.DataFrame()
+    pitch_length, pitch_width = 105.0, 68.0  # a provider already on the SPADL frame (idsse / gradientsports)
+    release = "native"
+    flips: dict[str, bool | None] | None = None  # the SkillCorner frames' applied orientation flip per period
+    if ref.provider == "idsse":
+        from silly_kicks.providers.sportec import parse_dfl_events, parse_dfl_match_info, shape_events_to_native
+
+        mi = parse_dfl_match_info(str(paths["metadata"]))
+        bare = str(ref.match_id).removeprefix("DFL-MAT-")
+        native = shape_events_to_native(parse_dfl_events(str(paths["events"]), match_info=mi, match_id=bare))
+    elif ref.provider == "gradientsports":
+        with open(paths["roster"], encoding="utf-8") as fh:
+            roster_raw = json.load(fh)
+        roster = pd.DataFrame(
+            {
+                "team_id": [int(r["team"]["id"]) for r in roster_raw],
+                "shirt_number": [str(r["shirtNumber"]) for r in roster_raw],
+                "player_id": [int(r["player"]["id"]) for r in roster_raw],
+                "position_group_type": [r.get("positionGroupType") for r in roster_raw],
+            }
+        )
+        with open(paths["events"], encoding="utf-8") as fh:
+            native = _gs_flatten_events(json.load(fh), roster)
+    elif ref.provider == "skillcorner":
+        with open(paths["metadata"], encoding="utf-8") as fh:
+            meta = json.load(fh)
+        ev = str(paths["events"])
+        native = pd.read_parquet(ev) if ev.endswith(".parquet") else pd.read_csv(ev, low_memory=False)
+        pitch_length = float(meta.get("pitch_length", 105.0))
+        pitch_width = float(meta.get("pitch_width", 68.0))
+        release = "sc_parquet" if str(paths["tracking"]).endswith(".parquet") else "sc_jsonl"
+        if loaded.report is not None:
+            bronze = _skillcorner_bronze(_skillcorner_raw_records(paths), meta, match_id=str(ref.match_id))
+            footprint = tracking_sk.convert_camera_footprint(bronze, report=loaded.report)  # type: ignore[arg-type]
+            # GI attacking_side is in the DELIVERED frame; the frames were oriented (report.ltr_flip_by_period).
+            # Staged so the GI direction check maps GI through the SAME recorded flip (R.2 2026-10-23).
+            flips = {str(int(p)): v for p, v in sorted(loaded.report.ltr_flip_by_period.items())}  # type: ignore[union-attr]
+    date = entry.get("date")
+    season = None
+    ds = str(date) if date is not None else ""
+    if len(ds) >= 7 and ds[:4].isdigit() and ds[5:7].isdigit():
+        y, mth = int(ds[:4]), int(ds[5:7])
+        season = f"{y}/{y + 1}" if mth >= 7 else f"{y - 1}/{y}"
+    profile = {
+        "provider": "sportec" if ref.provider == "idsse" else ref.provider,
+        "tracking_release": str(over.get("tracking_release", release)),
+        "gi_release": over.get("gi_release", "gi" if ref.provider == "skillcorner" else None),
+        "competition_season": str(over.get("competition_season", season or "unknown")),
+        "pitch_length": pitch_length,
+        "pitch_width": pitch_width,
+        "is_opendata": bool(
+            over.get("is_opendata", ref.provider == "skillcorner" and str(entry.get("visibility", "")) == "public")
+        ),
+    }
+    if flips is not None:
+        profile["ltr_flip_by_period"] = flips
+    return {"native": native, "footprint": footprint, "profile": profile}

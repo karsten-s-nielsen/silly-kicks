@@ -484,6 +484,23 @@ def convert_to_actions(
 
     # --- Build native actions DataFrame ---
     game_id = str(match_metadata.get("id", "unknown"))
+
+    # GI facts carried onto every native possession row (spec section 17.2, CL-1 / CL-13 / B-11). Optional
+    # on the input: a bronze without the GI columns leaves every GI column <NA> (backward compatible).
+    def _gi_int_series(col: str) -> np.ndarray:
+        if col in pp.columns:
+            return pd.to_numeric(pp[col], errors="coerce").astype("Int64").to_numpy()
+        return pd.array([pd.NA] * len(pp), dtype="Int64").to_numpy()
+
+    gi_possession_frame_start = _gi_int_series("frame_start")
+    gi_possession_frame_end = _gi_int_series("frame_end")
+    gi_attacking_side = (
+        pp["attacking_side"].astype("object").to_numpy()
+        if "attacking_side" in pp.columns
+        else np.full(len(pp), pd.NA, dtype=object)
+    )
+    gi_event_id = pp["event_id"].astype("object").to_numpy()
+
     actions = pd.DataFrame(
         {
             "game_id": game_id,
@@ -507,6 +524,14 @@ def convert_to_actions(
             "restart_evidence": pd.NA,
             "type_source": pd.NA,
             "repair_kind": pd.NA,
+            # GI facts (spec section 17.2). Every native possession row carries its possession's facts;
+            # the bracket ids are derived-restart only, so <NA> here.
+            "gi_marker_possession_frame_end": pd.NA,
+            "gi_next_possession_frame_start": pd.NA,
+            "gi_attacking_side": gi_attacking_side,
+            "gi_possession_frame_start": gi_possession_frame_start,
+            "gi_possession_frame_end": gi_possession_frame_end,
+            "gi_event_id": gi_event_id,
         }
     )
 
@@ -528,6 +553,14 @@ def convert_to_actions(
             "game_interruption_after": gi_after.to_numpy(),
             "start_x": sx.to_numpy(),
             "start_y": sy.to_numpy(),
+            # GI facts threaded onto the derived restart rows (spec section 17.2, CL-1 / CL-13).
+            "frame_start": (pp["frame_start"].to_numpy() if "frame_start" in pp.columns else np.full(len(pp), np.nan)),
+            "frame_end": (pp["frame_end"].to_numpy() if "frame_end" in pp.columns else np.full(len(pp), np.nan)),
+            "attacking_side": (
+                pp["attacking_side"].astype("object").to_numpy()
+                if "attacking_side" in pp.columns
+                else np.full(len(pp), pd.NA, dtype=object)
+            ),
         }
     )
     derived_restarts = derive_restarts(pp_restart, opponent, match_metadata)
@@ -594,6 +627,13 @@ def convert_to_actions(
                 ("restart_evidence", pd.NA),
                 ("type_source", pd.NA),
                 ("repair_kind", pd.NA),
+                # Inferred defensive / keeper-save rows are not GI-possession rows -> every GI column <NA>.
+                ("gi_marker_possession_frame_end", pd.NA),
+                ("gi_next_possession_frame_start", pd.NA),
+                ("gi_attacking_side", pd.NA),
+                ("gi_possession_frame_start", pd.NA),
+                ("gi_possession_frame_end", pd.NA),
+                ("gi_event_id", pd.NA),
             ):
                 if _col not in _derived.columns:
                     _derived[_col] = _val

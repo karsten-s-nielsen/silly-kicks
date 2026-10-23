@@ -433,6 +433,49 @@ def _xtf_va_inputs():
     return [actions, make_frames(), _fresh_xt(), _full_pitch_visible(actions)]
 
 
+def _restart_actions() -> pd.DataFrame:
+    """``make_actions`` with its first row a corner (a restart row the TF-46 stages act on)."""
+    from silly_kicks.spadl import config as spadlconfig
+
+    a = make_actions()
+    a.loc[a.index[0], "type_id"] = spadlconfig.actiontype_id["corner_crossed"]
+    return a
+
+
+def _profile():
+    from silly_kicks.tracking._restart_validation import DataProfile
+
+    return DataProfile("skillcorner", "r1", "g1", "2025")
+
+
+def _resolve_kicks(actions, frames, *, provider, with_contacts=False):
+    from silly_kicks.tracking._ball_contact import detect_ball_contacts
+    from silly_kicks.tracking._gk_resolve import resolve_defended_goals
+    from silly_kicks.tracking._kick_resolver import resolve_kicks
+
+    contacts = detect_ball_contacts(frames) if with_contacts else None
+    return resolve_kicks(actions, frames, provider=provider, goal_map=resolve_defended_goals(frames), contacts=contacts)
+
+
+def _detect_penalties(actions, frames, *, with_profile):
+    from silly_kicks.tracking._gk_resolve import resolve_defended_goals
+    from silly_kicks.tracking._penalty_detector import detect_penalties
+
+    return detect_penalties(
+        actions,
+        frames,
+        provider="skillcorner",
+        goal_map=resolve_defended_goals(frames),
+        data_profile=_profile() if with_profile else None,
+    )
+
+
+def _refine(actions, frames, *, provider):
+    from silly_kicks.spadl._refine_restart_types import refine_restart_types
+
+    return refine_restart_types(actions, frames, provider=provider, data_profile=_profile())
+
+
 PURITY_ENTRIES: dict[str, list[tuple]] = {
     # ---- spadl --------------------------------------------------------------
     # add_game_state branches on input FORMAT (`type_name`/`result_name` vs `type_id`/`result_id`); both
@@ -819,6 +862,45 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: add_corner_windows(i[0], i[1], i[2]),
         ),
     ],
+    # ---- TF-46 Arm 1 Part 2 restart stages (Task 2.14): module-level stages, pure + non-mutating --------
+    # resolve_kicks / detect_penalties / refine_restart_types are not add_* and not in a package __all__, so
+    # they register under their DEFINING module (prefix -> _PKG_MOD); the per-package meta gate is unaffected.
+    "tracking._kick_resolver:resolve_kicks": [
+        (
+            "native_provider",
+            lambda: [_restart_actions(), make_frames()],
+            lambda i: _resolve_kicks(i[0], i[1], provider="sportec"),
+        ),
+        (
+            "precomputed_contacts",
+            lambda: [_restart_actions(), make_frames()],
+            lambda i: _resolve_kicks(i[0], i[1], provider="gradientsports", with_contacts=True),
+        ),
+    ],
+    "tracking._penalty_detector:detect_penalties": [
+        (
+            "no_gate",
+            lambda: [_restart_actions(), make_frames()],
+            lambda i: _detect_penalties(i[0], i[1], with_profile=False),
+        ),
+        (
+            "with_profile",
+            lambda: [_restart_actions(), make_frames()],
+            lambda i: _detect_penalties(i[0], i[1], with_profile=True),
+        ),
+    ],
+    "spadl._refine_restart_types:refine_restart_types": [
+        (
+            "skillcorner",
+            lambda: [_restart_actions(), make_frames()],
+            lambda i: _refine(i[0], i[1], provider="skillcorner"),
+        ),
+        (
+            "native_provider",
+            lambda: [_restart_actions(), make_frames()],
+            lambda i: _refine(i[0], i[1], provider="sportec"),
+        ),
+    ],
 }
 
 REGISTERED_NAMES = set(PURITY_ENTRIES)
@@ -835,6 +917,10 @@ _PKG_MOD = {
     # TF-46: corners is a tracking-CONSUMING compute family (not in tracking.__all__); its one public
     # add_* (add_corner_windows) is purity-gated here under its own prefix.
     "corners": "silly_kicks.corners",
+    # TF-46 Arm 1 Part 2 restart stages (not add_*, not exported): registered under their defining module.
+    "tracking._kick_resolver": "silly_kicks.tracking._kick_resolver",
+    "tracking._penalty_detector": "silly_kicks.tracking._penalty_detector",
+    "spadl._refine_restart_types": "silly_kicks.spadl._refine_restart_types",
 }
 
 

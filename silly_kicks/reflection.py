@@ -148,12 +148,30 @@ _TRACKING_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "source_provider": "invariant",
     "is_goalkeeper_source": "invariant",
     "z_source": "invariant",  # ADR-125: ball-z provenance token; non-geometric, unchanged by reflection
+    # --- TF-46 Arm 1 Part 2 SkillCorner adapter fields (spec section 17.7). Frame columns invariant; the eight
+    #     camera-footprint companion-table corners are POINT PAIRS (ADR-045), reflected by orient_camera_footprint. ---
+    "sc_possession_player_id": "invariant",
+    "sc_possession_group": "invariant",
+    "in_camera_view": "invariant",
+    "cam_tl_x": "point_x",
+    "cam_tl_y": "point_y",
+    "cam_tr_x": "point_x",
+    "cam_tr_y": "point_y",
+    "cam_br_x": "point_x",
+    "cam_br_y": "point_y",
+    "cam_bl_x": "point_x",
+    "cam_bl_y": "point_y",
     # --- TF-79 ball-contact table (detect_ball_contacts output; a separate schema, declared here so a
     #     consumer reflecting the contacts table through the tracking kinds handles its geometry) ---
     "contact_x": "point_x",
     "contact_y": "point_y",
     "velocity_change_ms": "invariant",
     "contact_source": "invariant",
+    # TF-46 Arm 1 Part 2 attribution ambiguity (spec section 17.4): distances (isometry-invariant) + flags.
+    "attribution_margin": "invariant",
+    "attribution_margin_player": "invariant",
+    "attribution_other_visible": "invariant",
+    "attribution_other_unseen_reason": "invariant",
 }
 """Transform kind per tracking-frame column. Covers TRACKING_FRAMES_COLUMNS plus the
 preprocess-added columns (and the TF-79 contacts-table geometry). Completeness is
@@ -217,15 +235,84 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "tackle_winner_team_id": "invariant",
     "tackle_loser_player_id": "invariant",
     "tackle_loser_team_id": "invariant",
+    # skillcorner GI facts (TF-46 Arm 1 Part 2, spec section 17.2): frame ids + provenance tokens, invariant.
+    "gi_marker_possession_frame_end": "invariant",
+    "gi_next_possession_frame_start": "invariant",
+    "gi_attacking_side": "invariant",
+    "gi_possession_frame_start": "invariant",
+    "gi_possession_frame_end": "invariant",
+    "gi_event_id": "invariant",
+    # --- TF-46 Arm 1 Part 2 restart-refinement columns (RESTART_REFINEMENT_COLUMNS, spec section 17.1). ---
+    # The action-frame geometry (kick rest median, the prior start kept by a rebound retype, the merged
+    # derived row's end) is declared like its canonical twin; times, ids, tokens and flags are invariant.
+    "kick_bracket_lo": "invariant",
+    "kick_bracket_hi": "invariant",
+    "t_contact": "invariant",
+    "t_onset": "invariant",
+    "kick_time_delta": "invariant",
+    "t_kick": "invariant",
+    "kick_time_source": "invariant",
+    "kick_time_resolution": "invariant",
+    "kick_time_evidence": "invariant",
+    "kick_time_gate_version": "invariant",
+    "kick_time_cell_resolution": "invariant",
+    "kick_retake": "invariant",
+    "kick_rest_x": "point_x",
+    "kick_rest_y": "point_y",
+    "gi_pairing": "invariant",
+    "gi_pairing_failed_test": "invariant",
+    "gi_next_possession_time": "invariant",
+    "taker_source": "invariant",
+    "taker_evidence": "invariant",
+    "taker_gate_version": "invariant",
+    "taker_cell_resolution": "invariant",
+    "refine_created": "invariant",
+    "type_id_events": "invariant",
+    "type_source_events": "invariant",
+    "start_x_events": "point_x",
+    "start_y_events": "point_y",
+    "type_tracking_disagrees": "invariant",
+    "subtype_evidence": "invariant",
+    "subtype_gate_version": "invariant",
+    "subtype_cell_resolution": "invariant",
+    "merged_from_derived_action_id": "invariant",
+    "merged_from_shot_action_id": "invariant",
+    "merged_derived_type_id": "invariant",
+    "merged_derived_result_id": "invariant",
+    "merged_derived_time_seconds": "invariant",
+    "merged_derived_end_x": "point_x",
+    "merged_derived_end_y": "point_y",
+    "merged_derived_gi_marker_possession_frame_end": "invariant",
+    "merged_derived_gi_next_possession_frame_start": "invariant",
+    "merged_derived_gi_attacking_side": "invariant",
+    "merged_derived_result_source": "invariant",
+    "merged_derived_restart_evidence": "invariant",
+    "merged_derived_type_source": "invariant",
+    "merged_derived_original_event_id": "invariant",
+    "merged_derived_repair_kind": "invariant",
+    "merge_evidence": "invariant",
+    "merge_gate_version": "invariant",
+    "merge_cell_resolution": "invariant",
+    "penalty_evidence": "invariant",
+    "penalty_gate_version": "invariant",
+    "penalty_cell_resolution": "invariant",
+    "penalty_crosscheck": "invariant",
+    "penalty_outcome": "invariant",
+    "origin_evidence": "invariant",
+    "origin_gate_version": "invariant",
+    "origin_cell_resolution": "invariant",
 }
 """Transform kind per SPADL action column.
 
-40 columns: the 20 canonical (incl. the 2 TF-51-prereq block-detection columns and the 4 TF-46 Arm 1
+102 columns: the 20 canonical (incl. the 2 TF-51-prereq block-detection columns and the 4 TF-46 Arm 1
 base signal columns result_source / restart_evidence / type_source / repair_kind, repair_kind promoted to
-base by decision D1), the 3 ``add_names`` outputs, the 9 provider-variant columns (union over
+base by decision D1), the 3 ``add_names`` outputs, the 15 provider-variant columns (union over
 ``*_SPADL_COLUMNS``; result_source + repair_kind moved to canonical, sportec ball_claim_type + the §25
-sportec penalty_result_method / shot_woodwork_type added), and the 8
-ADR-025 enrichment columns. Completeness is a CI
+sportec penalty_result_method / shot_woodwork_type, and the 6 skillcorner GI facts gi_marker_possession_frame_end /
+gi_next_possession_frame_start / gi_attacking_side / gi_possession_frame_start / gi_possession_frame_end /
+gi_event_id added), and the 8
+ADR-025 enrichment columns, plus the 56 TF-46 Arm 1 Part 2 ``RESTART_REFINEMENT_COLUMNS`` (6 action-frame
+point columns, the rest invariant). Completeness is a CI
 contract (tests/test_reflection.py), NOT a runtime one -- ``preserve_native``
 (``spadl/utils.py:1651``) lets a caller attach arbitrarily-named provider fields, so the SPADL
 column universe is unbounded by construction and no registry can enumerate it at runtime.

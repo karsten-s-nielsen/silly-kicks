@@ -245,6 +245,18 @@ ARTIFACT_DRIVERS = (
     # writes <--out>/numerics_noflip.json (commit 2 copies it in) -- the verdict that decides whether the
     # numerics ship, over external data, so provenance.
     "validate_coordination_numerics",
+    # TF-46 Arm 1 Part 2 pre-flight runs (spec section 16.2). Each walks the pining corpus (or reads a
+    # reviewed list / the per-run aggregates) and writes a committed tier aggregate under
+    # docs/research/tf46_part2/ from which the restart gate table derives (ADR-056) -- cited numbers over
+    # external data, so clean-tree provenance. The runs execute on the DGX in the C3 phase; the code lands
+    # here in C2 so the C3 run uses committed code (B-01 / CL-7).
+    "tf46p2_truth",
+    "tf46p2_kick_cells",
+    "tf46p2_subtype_merge",
+    "tf46p2_penalty",
+    "tf46p2_origin",
+    "tf46p2_video_census",
+    "tf46p2_gate_table",
 )
 
 

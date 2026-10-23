@@ -149,3 +149,29 @@ def test_pure_does_not_mutate_input():
     before = acts.copy(deep=True)
     identify_corners(acts, provider="sportec")
     pd.testing.assert_frame_equal(acts, before)
+
+
+def test_event_coded_first_touch_on_gradientsports_only():
+    # Spec 9.3: GS events code the first touch -> the next action by a DIFFERENT player within the 6 s window.
+    rows = [
+        {"type_id": _CORNER_CROSSED, "start_x": 104.5, "start_y": 0.2, "time_seconds": 100.0, "player_id": "pT"},
+        {"type_id": _PASS, "time_seconds": 100.4, "player_id": "pT", "team_id": "t1"},  # the taker again: skipped
+        {"type_id": _PASS, "time_seconds": 101.3, "player_id": "pD", "team_id": "t2"},
+        {"type_id": _PASS, "time_seconds": 101.9, "player_id": "pE", "team_id": "t1"},
+    ]
+    gs = identify_corners(_actions(rows), provider="gradientsports").iloc[0]
+    assert (gs["event_first_touch_time"], gs["event_first_touch_player_id"], gs["event_first_touch_team_id"]) == (
+        101.3,
+        "pD",
+        "t2",
+    )
+    sportec = identify_corners(_actions(rows), provider="sportec").iloc[0]
+    assert pd.isna(sportec["event_first_touch_time"]) and pd.isna(sportec["event_first_touch_player_id"])
+
+
+def test_event_coded_first_touch_outside_the_window_is_nan():
+    rows = [
+        {"type_id": _CORNER_CROSSED, "start_x": 104.5, "start_y": 0.2, "time_seconds": 100.0, "player_id": "pT"},
+        {"type_id": _PASS, "time_seconds": 106.5, "player_id": "pD", "team_id": "t2"},  # > t_kick + 6 s
+    ]
+    assert pd.isna(identify_corners(_actions(rows), provider="gradientsports").iloc[0]["event_first_touch_time"])

@@ -693,6 +693,88 @@ def _build_phase_lookup(
     return _phase
 
 
+#: Restart types whose kick anchors the match phase (`_build_phase_lookup`): set pieces + goal kick.
+_PHASE_ANCHOR_TYPES = ("freekick_crossed", "freekick_short", "corner_crossed", "corner_short", "goalkick")
+
+
+def _phase_anchor_type_mask(actions: pd.DataFrame) -> np.ndarray:
+    """True per row for a phase-anchor restart type (set piece / goal kick), by ``type_name`` or ``type_id``."""
+    if "type_name" in actions.columns:
+        return actions["type_name"].isin(_PHASE_ANCHOR_TYPES).to_numpy(dtype=bool)
+    ids = {spadlconfig.actiontype_id[t] for t in _PHASE_ANCHOR_TYPES if t in spadlconfig.actiontype_id}
+    if "type_id" not in actions.columns:
+        return np.zeros(len(actions), dtype=bool)
+    return actions["type_id"].isin(ids).to_numpy(dtype=bool)
+
+
+def build_restart_phase_censor_intervals(actions: pd.DataFrame | None) -> pd.DataFrame:
+    """Per-(game_id, period_id) time intervals whose ghost-GK frames must be CENSORED (spec section 18.2.1,
+    CL-5): a time-unvalidated set-piece / goal-kick anchor extends its kick bracket by the set-piece decay (its
+    mis-timed anchor would mislabel the ``phase`` feature of frames in that window); a time-unvalidated goal row
+    uses its goal-episode interval. A phase anchor WITH a gated ``t_kick`` is time-valid and censors nothing.
+    Pure (new frame). Empty when ``actions`` is ``None`` or carries no time-unvalidated row.
+
+    Examples
+    --------
+    Build the intervals once per game, then drop the training frames inside them::
+
+        intervals = build_restart_phase_censor_intervals(actions)  # game_id, period_id, t_lo, t_hi
+        for iv in intervals.itertuples(index=False):
+            in_window = (frames_time >= iv.t_lo) & (frames_time <= iv.t_hi)
+    """
+    cols = ["game_id", "period_id", "t_lo", "t_hi"]
+    if actions is None or len(actions) == 0:
+        return pd.DataFrame(columns=cols)
+    from silly_kicks.spadl._training_exclusion import provenance_masks, uncertainty_interval
+
+    a = actions.reset_index(drop=True)
+    tmask = provenance_masks(a)["time"].to_numpy(dtype=bool)
+    if not tmask.any():
+        return pd.DataFrame(columns=cols)
+    ui = uncertainty_interval(a)
+    anchor = _phase_anchor_type_mask(a)
+    rows = []
+    for i in np.nonzero(tmask)[0]:
+        lo, hi = float(ui["t_lo"].iloc[i]), float(ui["t_hi"].iloc[i])
+        if not (np.isfinite(lo) and np.isfinite(hi)):
+            continue
+        if anchor[i]:
+            hi = hi + _SET_PIECE_DECAY_SECONDS
+        rows.append({"game_id": a["game_id"].iloc[i], "period_id": a["period_id"].iloc[i], "t_lo": lo, "t_hi": hi})
+    return pd.DataFrame(rows, columns=cols)
+
+
+def ghost_restart_censor_mask(
+    meta: pd.DataFrame, game_frames: pd.DataFrame, actions: pd.DataFrame | None
+) -> np.ndarray:
+    """Boolean per ``meta`` row: True where the frame falls in a restart censor interval (spec section 18.2.1,
+    CL-5). ``meta`` carries ``period_id`` / ``frame_id`` (from ``prepare_ghost_gk_training_data``); ``game_frames``
+    supplies each frame's ``time_seconds``. ``actions`` is this game's SPADL actions. Team-agnostic: a mis-timed
+    anchor corrupts the phase of every frame in the window. The trainer drops these rows and counts them.
+
+    Examples
+    --------
+    Censor the ghost-GK training rows of one game::
+
+        feats, labs, meta = prepare_ghost_gk_training_data(game_frames, ...)
+        drop = ghost_restart_censor_mask(meta, game_frames, actions)
+        feats, meta = feats[~drop], meta[~drop]
+    """
+    n = len(meta)
+    out = np.zeros(n, dtype=bool)
+    intervals = build_restart_phase_censor_intervals(actions)
+    if n == 0 or intervals.empty:
+        return out
+    tmap = game_frames.drop_duplicates(["period_id", "frame_id"]).set_index(["period_id", "frame_id"])["time_seconds"]
+    keys = list(zip(meta["period_id"].astype(int).to_numpy(), meta["frame_id"].astype(int).to_numpy(), strict=True))
+    mtime = tmap.reindex(keys).to_numpy(dtype=float)
+    p = meta["period_id"].astype(int).to_numpy()
+    for _, iv in intervals.iterrows():
+        same = p == int(iv["period_id"])
+        out |= same & (mtime >= iv["t_lo"]) & (mtime <= iv["t_hi"])
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Feature engineering
 # ---------------------------------------------------------------------------

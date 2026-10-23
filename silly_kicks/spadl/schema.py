@@ -151,6 +151,15 @@ SKILLCORNER_SPADL_COLUMNS: dict[str, str] = {
     "action_provenance": "object",
     # result_source AND repair_kind now come from base SPADL_COLUMNS (ADR-046 / decision D / D1); not
     # re-declared here.
+    # TF-46 Arm 1 Part 2 GI facts (spec section 17.2, CL-1 / CL-13 / B-11). The bracket ids are on derived
+    # restart rows only; the possession facts are on every row backed by a GI possession (native and derived).
+    # <NA> whenever the input lacks the GI frame columns.
+    "gi_marker_possession_frame_end": "Int64",  # derived rows: the marker possession frame_end (bracket lo)
+    "gi_next_possession_frame_start": "Int64",  # derived rows: the next possession frame_start (bracket hi)
+    "gi_attacking_side": "object",  # every GI-possession row: the possession attacking_side (CL-1 direction)
+    "gi_possession_frame_start": "Int64",  # every GI-possession row: pairing input (CL-13, spec section 6.1)
+    "gi_possession_frame_end": "Int64",
+    "gi_event_id": "object",  # the GI possession event_id; the pairing de-duplicates by it (C-PLAN-17)
 }
 """SkillCorner SPADL output schema: KLOPPY_SPADL_COLUMNS (object-dtype IDs) +
 ``action_provenance`` (``"native"`` or ``"derived"``). ``repair_kind`` (goals-reconciliation

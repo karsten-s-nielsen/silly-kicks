@@ -5,13 +5,19 @@ chronologically-sorted ``player_possession`` frame carrying SPADL-frame start co
 marker/tag columns, and emits one derived restart row per restart.
 """
 
+import json
+from pathlib import Path
+
 import pandas as pd
 
 from silly_kicks.spadl import config as spadlcfg
 from silly_kicks.spadl._skillcorner_restarts import derive_restarts
+from silly_kicks.spadl.skillcorner import convert_to_actions
 
 _META = {"id": "M1", "home_team": {"id": "100"}}
 _OPP = "200"
+
+_FIXTURE_DIR = Path(__file__).resolve().parent.parent / "datasets" / "skillcorner"
 
 
 def _pp(rows: list[dict]) -> pd.DataFrame:
@@ -217,3 +223,129 @@ def test_derived_time_is_strictly_inside_the_marker_bracket():
     )
     t = float(derive_restarts(pp, _OPP, _META).iloc[0]["time_seconds"])
     assert 10.0 < t < 20.0
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3 — GI facts on derived and native rows (spec section 17.2, CL-1 / CL-13 / B-11)
+# ---------------------------------------------------------------------------
+
+
+def test_derived_row_carries_gi_bracket_and_possession_facts():
+    pp = _pp(
+        [
+            {
+                "team_id": "100",
+                "game_interruption_after": "corner_for",
+                "event_id": "m0",
+                "frame_start": 1000,
+                "frame_end": 1050,
+                "attacking_side": "left_to_right",
+            },
+            {
+                "team_id": "100",
+                "game_interruption_before": "corner_for",
+                "start_x": 95.0,
+                "start_y": 34.0,
+                "event_id": "m1",
+                "frame_start": 1080,
+                "frame_end": 1120,
+                "attacking_side": "left_to_right",
+            },
+        ]
+    )
+    row = derive_restarts(pp, _OPP, _META).iloc[0]
+    assert row["gi_marker_possession_frame_end"] == 1050  # marker possession frame_end (bracket lo)
+    assert row["gi_next_possession_frame_start"] == 1080  # next possession frame_start (bracket hi)
+    assert row["gi_possession_frame_start"] == 1000
+    assert row["gi_possession_frame_end"] == 1050
+    assert row["gi_event_id"] == "m0"
+    assert row["gi_attacking_side"] == "left_to_right"
+
+
+def test_chain_marker_row_has_na_next_possession_frame():
+    # poss0 corner marker is chained (poss1 carries a different restart tag) -> no possession lies between.
+    pp = _pp(
+        [
+            {
+                "team_id": "100",
+                "game_interruption_after": "corner_for",
+                "event_id": "m0",
+                "frame_start": 1000,
+                "frame_end": 1050,
+                "attacking_side": "ltr",
+            },
+            {
+                "team_id": "100",
+                "game_interruption_before": "free_kick_for",
+                "start_x": 60.0,
+                "start_y": 34.0,
+                "event_id": "m1",
+                "frame_start": 1080,
+                "frame_end": 1120,
+                "attacking_side": "ltr",
+            },
+            {"team_id": "100", "start_x": 62.0, "start_y": 34.0, "event_id": "m2", "frame_start": 1200},
+        ]
+    )
+    out = derive_restarts(pp, _OPP, _META)
+    corner = out[out["type_id"] == _tid("corner_crossed")].iloc[0]
+    assert pd.isna(corner["gi_next_possession_frame_start"])
+    assert corner["gi_marker_possession_frame_end"] == 1050
+
+
+def test_derived_rows_na_frame_cols_when_input_lacks_gi_columns():
+    pp = _pp(
+        [
+            {"team_id": "100", "game_interruption_after": "corner_for", "event_id": "e0"},
+            {"team_id": "100", "game_interruption_before": "corner_for", "start_x": 95.0, "start_y": 34.0},
+        ]
+    )
+    row = derive_restarts(pp, _OPP, _META).iloc[0]
+    for c in (
+        "gi_marker_possession_frame_end",
+        "gi_next_possession_frame_start",
+        "gi_attacking_side",
+        "gi_possession_frame_start",
+        "gi_possession_frame_end",
+    ):
+        assert pd.isna(row[c])
+    assert row["gi_event_id"] == "e0"  # the possession's own event_id is always present
+
+
+def _load_derived_events() -> tuple[pd.DataFrame, dict]:
+    events = pd.read_csv(_FIXTURE_DIR / "derived_actions.csv", low_memory=False)
+    with open(_FIXTURE_DIR / "match_metadata.json") as f:
+        meta = json.load(f)
+    return events, meta
+
+
+def test_native_rows_carry_possession_gi_facts():
+    events, meta = _load_derived_events()
+    events["frame_start"] = 2000
+    events["frame_end"] = 2050
+    events["attacking_side"] = "home_ltr"
+    actions, _ = convert_to_actions(events, meta)
+    native = actions[actions["action_provenance"] == "native"]
+    assert len(native) > 0
+    assert (native["gi_attacking_side"] == "home_ltr").all()
+    assert (native["gi_possession_frame_start"] == 2000).all()
+    assert (native["gi_possession_frame_end"] == 2050).all()
+    assert native["gi_event_id"].notna().all()
+    # the bracket ids are derived-restart-only -> <NA> on native rows
+    assert native["gi_marker_possession_frame_end"].isna().all()
+    assert native["gi_next_possession_frame_start"].isna().all()
+
+
+def test_convert_is_backward_compatible_without_gi_columns():
+    events, meta = _load_derived_events()
+    actions, _ = convert_to_actions(events, meta)
+    for c in (
+        "gi_marker_possession_frame_end",
+        "gi_next_possession_frame_start",
+        "gi_attacking_side",
+        "gi_possession_frame_start",
+        "gi_possession_frame_end",
+    ):
+        assert actions[c].isna().all()
+    native = actions[actions["action_provenance"] == "native"]
+    assert native["gi_event_id"].notna().all()

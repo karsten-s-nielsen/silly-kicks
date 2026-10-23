@@ -43,6 +43,15 @@ def test_goal_line_lands_on_the_goal_line_for_a_short_pitch():
     assert p["y"] == pytest.approx(34.0, abs=1e-9)
 
 
+def test_pitch_length_is_stamped_on_the_frame_attrs():
+    # C2-IMPL-07: the original pitch length rides frames.attrs so detect_penalties can place the pitch-scaled
+    # penalty spot. The coords are scaled to 105, so the raw length (101 here) must be recoverable.
+    frames, _ = convert_to_frames(
+        _bronze(101.0, 67.0, x=0.0, y=0.0), home_team_id="A", output_convention="absolute_frame"
+    )
+    assert frames.attrs["pitch_length"] == pytest.approx(101.0, abs=1e-9)
+
+
 def test_standard_pitch_is_unchanged():
     # 105 x 68: the new scale must be a NO-OP versus the old +52.5/+34 offset.
     frames, _ = convert_to_frames(

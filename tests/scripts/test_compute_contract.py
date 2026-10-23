@@ -215,4 +215,11 @@ def test_the_compliant_set_is_the_cycle1_migration():
         "train_receiver_model",
         "train_win_probability",
         "build_territory_ranking_census",
+        # TF-46 Arm 1 Part 2 pre-flight walkers: born-ready (owner ruling 2026-10-22; ADR-128 ruling 11, the DGX is
+        # not a second path -- never carved into _NOT_A_PIPELINE).
+        "tf46p2_truth",
+        "tf46p2_kick_cells",
+        "tf46p2_subtype_merge",
+        "tf46p2_penalty",
+        "tf46p2_origin",
     }

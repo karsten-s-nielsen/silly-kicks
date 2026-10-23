@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 Method = Literal["singh_counts", "kde_smoothed"]
 _LEVELS: tuple[PressureLevel, ...] = (1, 2, 3)
 
+#: Provenance dimensions this trainer READS (TF-46 Arm 1 Part 2, spec section 18.2.1): the result mask only;
+#: possession ORDER uses the guarded chronological sort, valid even for placeholder times.
+TRAINING_READS = frozenset({"result"})
+
 
 class MarkovPossessionValue:
     def __init__(self, *, l: int = N, w: int = M, eps: float = 1e-5, method: Method = "singh_counts") -> None:

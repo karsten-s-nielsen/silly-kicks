@@ -12,9 +12,10 @@ one-row provenance frame; the committed fixtures are the files, not the shards (
 transient bookkeeping, never committed).
 
 SkillCorner: ``<out>/skillcorner/opendata/<id>_events_slim.csv`` (the converter-read columns + the goal
-truth) + ``<id>_match.json``. IDSSE: ``<out>/idsse/<bare>_events_native.parquet`` + ``<bare>_meta.json``
-(home_team_id + DFL-derived home_team_start_left / _extratime). Writes ``<out>/SHA256SUMS`` over every
-fixture file; re-running reproduces each fixture byte for byte.
+truth) + ``<id>_match.json``; for ``_TRACKING_SLIM_IDS`` also ``<id>_tracking_bronze_slim.parquet`` (the tracking
+bronze on every ``_TRACKING_SLIM_STRIDE``-th frame). IDSSE: ``<out>/idsse/<bare>_events_native.parquet`` +
+``<bare>_meta.json`` (home_team_id + DFL-derived home_team_start_left / _extratime). Writes ``<out>/SHA256SUMS``
+over every fixture file; re-running reproduces each fixture byte for byte.
 """
 
 from __future__ import annotations
@@ -63,7 +64,35 @@ _SKILLCORNER_KEEP = [
     "received",
     "team_score",
     "opponent_team_score",
+    # TF-46 Arm 1 Part 2 GI facts (spec section 17.2, CL-1): the per-possession frame bracket and the
+    # attacking side. Absent-column safe (the `keep` filter below drops any the feed lacks).
+    "frame_start",
+    "frame_end",
+    "attacking_side",
 ]
+
+
+#: Opendata matches that also get a slim TRACKING bronze (R.2 2026-10-23: the GI direction check is driven
+#: through the DEFAULT ``convert_to_frames`` on real data). One match keeps the fixture small (MIT opendata).
+_TRACKING_SLIM_IDS: frozenset[str] = frozenset({"1886347"})
+#: Every N-th tracking frame is kept: enough keeper geometry per period for the orienter and GoalMap.
+_TRACKING_SLIM_STRIDE = 100
+
+
+def _skillcorner_tracking_slim(ref: MatchRef, dest: Path, token: str, base_url: str) -> int:
+    """Write ``<id>_tracking_bronze_slim.parquet``: the loader's bronze (``_skillcorner_bronze``, the input of
+    ``tracking.skillcorner.convert_to_frames``) on every ``_TRACKING_SLIM_STRIDE``-th frame. Returns the rows."""
+    from scripts._loader_pining import _skillcorner_bronze, _skillcorner_raw_records
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _download_artifacts("skillcorner", ref.match_id, dict(ref.artifacts), token, base_url, Path(tmp))
+        meta = _read_json(paths["metadata"])
+        raw = [r for r in _skillcorner_raw_records(paths) if int(r.get("frame") or 0) % _TRACKING_SLIM_STRIDE == 0]
+        raw = [r for r in raw if r.get("period") is not None and r.get("player_data")]
+        bronze = _skillcorner_bronze(raw, meta, match_id=str(ref.match_id))
+    bronze = bronze.sort_values(["period", "frame", "player_id"], kind="mergesort").reset_index(drop=True)
+    bronze.to_parquet(dest / f"{ref.match_id}_tracking_bronze_slim.parquet", index=False)
+    return len(bronze)
 
 
 def _slim_match_json(meta: dict) -> dict:
@@ -108,7 +137,10 @@ def _skillcorner_item(ref: MatchRef, dest: Path, token: str, base_url: str) -> p
         slim = events[keep].copy()
         slim.to_csv(dest / f"{ref.match_id}_events_slim.csv", index=False, lineterminator="\n")
         _write_json(dest / f"{ref.match_id}_match.json", _slim_match_json(_read_json(paths["metadata"])))
-    return pd.DataFrame([{"provider": "skillcorner", "match_id": ref.match_id, "rows": len(slim), "cols": len(keep)}])
+    n_track = _skillcorner_tracking_slim(ref, dest, token, base_url) if str(ref.match_id) in _TRACKING_SLIM_IDS else 0
+    return pd.DataFrame(
+        [{"provider": "skillcorner", "match_id": ref.match_id, "rows": len(slim), "cols": len(keep), "track": n_track}]
+    )
 
 
 def _idsse_item(ref: MatchRef, dest: Path, token: str, base_url: str) -> pd.DataFrame:
