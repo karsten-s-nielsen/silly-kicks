@@ -1,5 +1,7 @@
 """The two trainers' loader seam (spec section 4.5): `_pining_source` / `_source_key` / `_extract(load=)`.
 
+ADR-129 moved `_source_key` (with the extract stage) into `scripts/_xshot_stages.py` / `_xcross_stages.py`.
+
 tests/scripts/ has NO __init__.py; conftest puts scripts/ on sys.path, so bare imports resolve.
 """
 
@@ -8,12 +10,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-import train_xcross_attempt as xc
 import train_xshot_occurrence as xs
 from _fake_corpus import make_ref
 
+from scripts import _xcross_stages as xcs
+from scripts import _xshot_stages as xss
 
-@pytest.mark.parametrize("mod", [xs, xc])
+
+@pytest.mark.parametrize("mod", [xss, xcs])
 def test_source_key_handles_both_a_ref_and_a_data_dir_tuple(mod):
     """A MatchRef (pining) keys by its `.key`; a --data-dir tuple keys by (provider, match_id)."""
     assert mod._source_key(make_ref("gradientsports", "10502")) == ("gradientsports", "10502")

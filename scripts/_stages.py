@@ -1199,6 +1199,21 @@ def export_output(ctx: RunContext, dest: pathlib.Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     for name, data in out.files.items():
         _write_bytes_atomically(dest / name, data)
+    # The stage output is COMMIT-FREE (S5.10), so a model bundle has no provenance keys and no SHA256SUMS, and
+    # `load()` refuses it. A LOCAL export is a deliverable, not a shared store entry: stamp the copy with THIS
+    # run's provenance (a dirty tree stamps run_tree_dirty=true) through the same core `adopt` uses. Only a
+    # bundle (a metadata.json / metrics.json output) is stamped; the store output itself stays commit-free.
+    from scripts.hf_jobs import identity
+
+    if any(name in identity.NORMALIZED for name in out.files):
+        prov = ctx.prov
+        identity.stamp_provenance(
+            dest,
+            commit=str(prov.get("commit") or "unknown"),
+            tree_state=prov.get("tree_state") or "unknown",
+            platform=prov.get("platform"),
+            training_platform=ctx.params.get("training_platform"),
+        )
 
 
 def _jsonable(params: Mapping[str, Any]) -> dict:

@@ -65,27 +65,101 @@ def commit_free(files: Mapping[str, bytes]) -> dict[str, bytes]:
     return out
 
 
+#: Files a shipped bundle's `SUMS` never covers: every bundled weights directory lists its payload and
+#: ``metadata.json`` only (`tests/scripts/hf_jobs/test_identity.py` checks it against each shipped bundle).
+UNCOVERED: tuple[str, ...] = ("metrics.json", "MODEL_CARD.md")
+
+
+def sums_names(names: Sequence[str] | set[str]) -> list[str]:
+    """The files `SUMS` covers, in the shipped order: the payload (name-sorted), then ``metadata.json``.
+
+    This is the trainers' own writers' convention (``model.save``): some loaders read ONLY the first token
+    (`ReceiverModel.load`), so the payload must come first and ``metrics.json`` must not be listed."""
+    covered = set(names) - {SUMS, *UNCOVERED}
+    payload = sorted(n for n in covered if n != "metadata.json")
+    return payload + (["metadata.json"] if "metadata.json" in covered else [])
+
+
+def _file_sha256(p: Path) -> str:
+    raw = p.read_bytes()
+    if p.name.endswith(".json"):  # the trainers' writers hash JSON LF-normalized (platform-independent)
+        raw = raw.replace(b"\r\n", b"\n")
+    return _sha256(raw)
+
+
 def write_sums(directory: str | Path) -> None:
-    """Write `SUMS` over every top-level file of ``directory`` (except `SUMS` itself): ``<sha256>  <name>``
-    lines, name-sorted, LF. The ONE SHA256SUMS writer (trainers via ``adopt`` and `adopt.stamp_provenance`)."""
+    """Write `SUMS` exactly as the trainers' writers do (`sums_names`: payload first, then ``metadata.json``;
+    ``<sha256>  <name>`` lines, LF). The ONE writer for a stamped bundle (`stamp_provenance`)."""
     d = Path(directory)
-    lines = [f"{_sha256(p.read_bytes())}  {p.name}" for p in sorted(d.iterdir()) if p.is_file() and p.name != SUMS]
-    (d / SUMS).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    names = sums_names([p.name for p in d.iterdir() if p.is_file()])
+    lines = [f"{_file_sha256(d / n)}  {n}" for n in names]
+    (d / SUMS).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
+def stamp_provenance(
+    directory: str | Path,
+    *,
+    commit: str,
+    tree_state: str | None,
+    platform: str | None,
+    training_platform: str | None = None,
+    generation: str | None = None,
+) -> None:
+    """S5.10: stamp a run's provenance onto a COMMIT-FREE artifact directory and rewrite `SUMS` LAST.
+
+    The ONE stamping core: `adopt.stamp_provenance` calls it with the attesting commit and job provenance, and
+    `_stages.export_output` (``--run-all --out``) calls it with the LOCAL run's provenance, so a local bundle
+    stays loadable. Stdlib-only at import (it sits in every job closure). ``reproducibility_note`` is rebuilt
+    from the artifact's own ``reproducibility`` label and ``providers`` (both commit-free)."""
+    from scripts._corpus_identity import reproducibility
+    from scripts._provenance import resolve_training_platform
+
+    d = Path(directory)
+    stamp: dict[str, Any] = {
+        "training_commit": commit,
+        "run_commit": commit,
+        "run_tree_state": tree_state,
+        "run_tree_dirty": tree_state != "clean",
+        "training_platform": resolve_training_platform(training_platform, {"platform": platform}),
+    }
+    if generation is not None:
+        stamp["generation"] = generation
+    for name in NORMALIZED:
+        p = d / name
+        if not p.is_file():
+            continue
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        # Reproduce the trainer's caveat (ADR-067 M4): the stored ``reproducibility`` class decides public vs
+        # restricted; the note's variant label is the real ``shipped_variant``, not the class, so a restricted
+        # bundle keeps "(variant 'sc_extended')" rather than degrading to "(variant 'restricted')" (B#37).
+        cls = doc.get("reproducibility")
+        if cls == "public":
+            note: dict = {"reproducibility": "public"}
+        elif cls == "restricted":
+            shipped = doc.get("shipped_variant") or "restricted"
+            if shipped == "public":  # a restricted class never carries a public shipped label; guard the discriminator
+                shipped = "restricted"
+            note = reproducibility(str(shipped), doc.get("providers", []), training_commit=commit)
+        else:
+            note = {}
+        doc.update({**stamp, **note})
+        p.write_text(json.dumps(doc, sort_keys=True, indent=2, default=str) + "\n", encoding="utf-8")
+    write_sums(d)
 
 
 def verify_sums(directory: str | Path) -> bool:
-    """True when `SUMS` lists EXACTLY the directory's other top-level files and every listed sha256 matches."""
+    """True when `SUMS` lists EXACTLY `sums_names` of the directory, in that order, and every sha256 matches."""
     d = Path(directory)
     sums = d / SUMS
     if not sums.is_file():
         return False
-    listed: dict[str, str] = {}
+    listed: list[tuple[str, str]] = []
     for line in sums.read_text(encoding="utf-8").splitlines():
         parts = line.split()
         if len(parts) >= 2:
-            listed[parts[-1].lstrip("*")] = parts[0]
-    present = {p.name for p in d.iterdir() if p.is_file() and p.name != SUMS}
-    return set(listed) == present and all(_sha256((d / name).read_bytes()) == sha for name, sha in listed.items())
+            listed.append((parts[-1].lstrip("*"), parts[0]))
+    present = [p.name for p in d.iterdir() if p.is_file()]
+    return [n for n, _ in listed] == sums_names(present) and all(_file_sha256(d / n) == sha for n, sha in listed)
 
 
 def normalized_sums(data: bytes) -> bytes:

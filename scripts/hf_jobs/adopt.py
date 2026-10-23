@@ -850,48 +850,19 @@ def stamp_provenance(
     """S5.10: stamp the adopting commit's provenance onto a COMMIT-FREE artifact and rewrite SHA256SUMS. The
     adopting commit is ``attestation["commit"]``; the tree state and platform come from the attesting MAIN job's
     recorded provenance (``attestation["main"]``). ``reproducibility_note`` is rebuilt from the artifact's own
-    ``reproducibility`` label and ``providers`` (both commit-free). SHA256SUMS is written LAST (identity.write_sums)."""
-    from scripts._corpus_identity import reproducibility
-    from scripts._provenance import resolve_training_platform
+    ``reproducibility`` label and ``providers`` (both commit-free). SHA256SUMS is written LAST. The core is
+    `identity.stamp_provenance`, shared with the local ``--run-all --out`` export."""
     from scripts.hf_jobs import identity
 
-    d = pathlib.Path(directory)
-    commit = str(attestation["commit"])
     main = attestation.get("main", {})
-    tree_state = main.get("tree_state")
-    env = main.get("env") or {}
-    stamp: dict[str, Any] = {
-        "training_commit": commit,
-        "run_commit": commit,
-        "run_tree_state": tree_state,
-        "run_tree_dirty": tree_state != "clean",
-        "training_platform": resolve_training_platform(
-            params.get("training_platform"), {"platform": env.get("platform")}
-        ),
-    }
-    if generation is not None:
-        stamp["generation"] = generation
-    for name in identity.NORMALIZED:
-        p = d / name
-        if not p.is_file():
-            continue
-        doc = json.loads(p.read_text(encoding="utf-8"))
-        # Reproduce the trainer's caveat (ADR-067 M4): the stored ``reproducibility`` class decides public vs
-        # restricted; the note's variant label is the real ``shipped_variant``, not the class, so a restricted
-        # bundle keeps "(variant 'sc_extended')" rather than degrading to "(variant 'restricted')" (B#37).
-        cls = doc.get("reproducibility")
-        if cls == "public":
-            note: dict = {"reproducibility": "public"}
-        elif cls == "restricted":
-            shipped = doc.get("shipped_variant") or "restricted"
-            if shipped == "public":  # a restricted class never carries a public shipped label; guard the discriminator
-                shipped = "restricted"
-            note = reproducibility(str(shipped), doc.get("providers", []), training_commit=commit)
-        else:
-            note = {}
-        doc.update({**stamp, **note})
-        p.write_text(json.dumps(doc, sort_keys=True, indent=2, default=str) + "\n", encoding="utf-8")
-    identity.write_sums(d)
+    identity.stamp_provenance(
+        directory,
+        commit=str(attestation["commit"]),
+        tree_state=main.get("tree_state"),
+        platform=(main.get("env") or {}).get("platform"),
+        training_platform=params.get("training_platform"),
+        generation=generation,
+    )
 
 
 def _topo_order(head: str, run: Callable[..., Any]) -> list[str]:

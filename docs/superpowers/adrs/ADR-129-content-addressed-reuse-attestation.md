@@ -91,6 +91,21 @@ OLDEST ancestor attestation (`oldest_ancestor_attester`); its stamped commit bec
 `training_commit`. With no `api` (the pure-diff unit path) `adopt` keeps the ADR-037 rule that HEAD IS the
 campaign commit.
 
+### Stamping a bundle: one core, two callers
+
+`identity.stamp_provenance` is the one stamping core (stdlib-only at import, so it is safe in every job closure).
+`adopt.stamp_provenance` calls it with the attesting commit and job provenance. `_stages.export_output`
+(`--run-all --out`) calls it with the LOCAL run's provenance (owner ruling 2026-10-22): a local trainer run
+produces a loadable bundle, and a dirty local tree stamps `run_tree_dirty: true`. Only an output that holds a
+`metadata.json` or `metrics.json` is stamped (the census `census.json` is exported unchanged). The store output
+stays commit-free, so content addressing and the S5.10 gate are unaffected.
+
+`identity.write_sums` writes `SHA256SUMS` exactly as the trainers' own `save()` writers do (`identity.sums_names`):
+the payload first, name-sorted, then `metadata.json`; never `metrics.json` or `MODEL_CARD.md`. Some loaders read
+only the first token (`ReceiverModel.load`), so an all-files, name-sorted manifest made a stamped receiver bundle
+unloadable. `test_identity` re-derives every shipped bundle's `SHA256SUMS` byte for byte; the one exception
+(`xsuccess/weights`, not a stage pipeline) is named with its reason.
+
 ### INV-10 / INV-11
 
 - **INV-10 (reuse is attested):** a generation is reused only when an attestation records a byte-identical
