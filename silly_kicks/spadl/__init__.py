@@ -35,6 +35,7 @@ __all__ = [
     "kloppy",
     "opta",
     "play_left_to_right",
+    "refine_restart_types",
     "require_et_direction",
     "resolve_next_touch_receiver",
     "results_df",
@@ -56,6 +57,7 @@ from ._coordinate_diagnosis import (
     CoordinateTableDiagnosis,
     diagnose_coordinates,
 )
+from ._refine_restart_types import refine_restart_types
 from .config import actiontypes_df, bodyparts_df, results_df
 from .orientation import (
     ABSOLUTE_FRAME_HOME_RIGHT,

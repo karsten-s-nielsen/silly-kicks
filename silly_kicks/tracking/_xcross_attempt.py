@@ -28,7 +28,7 @@ from silly_kicks.tracking._ball_carrier import (
     infer_ball_carrier,
 )
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
-from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
+from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels, occurrence_labels_and_censor
 from silly_kicks.tracking._velocity_availability import (
     variant_key_for_velocity as _variant_key_for_velocity,
 )
@@ -91,6 +91,11 @@ _BOX_HALF_WIDTH_M = _spc.penalty_area_half_width  # 20.16 (40.32/2)
 _GOAL_HALF_WIDTH_M = 3.66  # goal width 7.32 / 2
 
 _DEFAULT_CROSS_TYPES = ("cross",)  # open-play only (corner/freekick excluded by default)
+
+#: Provenance dimensions this trainer READS (TF-46 Arm 1 Part 2, spec section 18.2.1). The open-play variant
+#: reads TIME (an unvalidated-time cross censors its window); the set-piece sensitivity variant also reads TYPE
+#: (a ``default`` subtype censors its window).
+TRAINING_READS = frozenset({"time", "type"})
 _DEFAULT_CARRIER_PARAMS = DEFAULT_CARRIER_PARAMS
 
 _HF_REPO_ID = "silly-kicks/xcross-attempt-v1"
@@ -356,14 +361,32 @@ def build_xcross_labels(
     horizon_seconds: float = 1.0,
     cross_types: tuple[str, ...] = _DEFAULT_CROSS_TYPES,
     frame_team_col: str = "team_in_possession",
-) -> pd.Series:
+    return_censor: bool = False,
+) -> pd.Series | tuple[pd.Series, np.ndarray]:
     """Per-frame xCross label: 1 iff a same-team cross occurs in [t, t+horizon] (same period).
 
     Open-play ``cross`` only by default; ``cross_types`` can add ``corner_crossed`` /
     ``freekick_crossed`` for sensitivity. Thin wrapper over the shared occurrence helper.
+
+    With ``return_censor`` the provenance contract applies (TF-46 Arm 1 Part 2, spec section 18.2.1): a cross
+    with an unvalidated time, or -- for the set-piece sensitivity variant -- an unvalidated (``default``)
+    subtype, is NOT dropped; it censors its window. Returns ``(labels, censor_mask)``. The default open-play
+    variant reads TIME only; the sensitivity variant (any set-piece cross type) also reads TYPE.
     """
     type_ids = {_spc.actiontype_id[t] for t in cross_types}
-    crosses = actions[actions["type_id"].isin(type_ids)][["game_id", "period_id", "team_id", "time_seconds"]]
+    crosses_t = actions[actions["type_id"].isin(type_ids)]
+    if return_censor:
+        sensitivity = any(t in ("corner_crossed", "freekick_crossed") for t in cross_types)
+        if sensitivity:
+            y, censor = occurrence_labels_and_censor(
+                frames_index, crosses_t, horizon=horizon_seconds, frame_team_col=frame_team_col, reads_type=True
+            )
+        else:
+            y, censor = occurrence_labels_and_censor(
+                frames_index, crosses_t, horizon=horizon_seconds, frame_team_col=frame_team_col, reads_type=False
+            )
+        return pd.Series(y, index=frames_index.index), censor
+    crosses = crosses_t[["game_id", "period_id", "team_id", "time_seconds"]]
     y = _build_occurrence_labels(frames_index, crosses, horizon=horizon_seconds, frame_team_col=frame_team_col)
     return pd.Series(y, index=frames_index.index)
 
@@ -544,7 +567,21 @@ def prepare_xcross_training_data(
 
     features = pd.concat(feat_rows, ignore_index=True)
     frame_index = pd.DataFrame(frame_index_rows)  # carries team_in_possession (matches label helper)
-    y = np.asarray(build_xcross_labels(frame_index, actions, horizon_seconds=horizon_seconds, cross_types=cross_types))
+    # TF-46 Arm 1 Part 2 (spec section 18.2.1): CENSOR frames whose cross anchor has an unvalidated time (and,
+    # for a set-piece sensitivity run, a `default` subtype) rather than dropping the cross. Byte-identical for a
+    # native provider (empty censor mask).
+    y_s, censor = build_xcross_labels(
+        frame_index, actions, horizon_seconds=horizon_seconds, cross_types=cross_types, return_censor=True
+    )
+    y = np.asarray(y_s)
+    n_censored = int(censor.sum())
+    if censor.any():
+        keep = ~censor
+        features = features[keep].reset_index(drop=True)
+        y = y[keep]
+        frame_index = frame_index[keep].reset_index(drop=True)
+        meta_details = [d for d, k in zip(meta_details, keep, strict=True) if k]
+    features.attrs["n_provenance_censored"] = n_censored  # read at the call site (spec section 18.2.1)
     groups = frame_index["game_id"].to_numpy()
     if return_meta:
         meta = frame_index.copy()

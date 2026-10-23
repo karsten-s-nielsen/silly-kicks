@@ -33,6 +33,31 @@ def _corpus(n: int = 400, seed: int = 0) -> pd.DataFrame:
     )
 
 
+def test_training_exclusion_drops_marked_rows():
+    # TF-46 Arm 1 (decision B5): rows marked result_source="inferred" (K2 / chain) are excluded from the
+    # fit, so a corpus plus marked extra rows trains the SAME model as the corpus alone.
+    base = _corpus(400)
+    base["result_source"] = pd.NA  # <NA> = kept
+    marked = _corpus(60, seed=99)
+    marked["result_source"] = "inferred"  # excluded
+    combined = pd.concat([base, marked], ignore_index=True)
+    probe = _corpus(40, seed=7)
+    p_base = XSuccessModel().fit(base).predict_success(probe)
+    p_combined = XSuccessModel().fit(combined).predict_success(probe)
+    np.testing.assert_array_equal(p_base, p_combined)
+
+
+def test_training_exclusion_tolerates_absent_columns():
+    # A frame WITHOUT the base signal columns fits exactly as one with result_source=<NA> (no raise).
+    base = _corpus(300)
+    with_na = base.copy()
+    with_na["result_source"] = pd.NA
+    probe = _corpus(30, seed=3)
+    p_absent = XSuccessModel().fit(base).predict_success(probe)
+    p_na = XSuccessModel().fit(with_na).predict_success(probe)
+    np.testing.assert_array_equal(p_absent, p_na)
+
+
 def test_unfitted_refuses():
     with pytest.raises(XSuccessIntegrityError):
         XSuccessModel().predict_success(_corpus(1))

@@ -1,0 +1,233 @@
+{
+  "away_team": {
+    "id": 4177,
+    "name": "Auckland FC"
+  },
+  "away_team_score": 1,
+  "home_team": {
+    "id": 2902,
+    "name": "Western Sydney Wanderers FC"
+  },
+  "home_team_score": 0,
+  "id": 1986691,
+  "pitch_length": 105,
+  "pitch_width": 68,
+  "players": [
+    {
+      "goal": 0,
+      "id": 23418,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 795526,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 13567,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 133498,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 5521,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 51036,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 133495,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 560990,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 582974,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 163972,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 624628,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 795525,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 13542,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 31147,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 969676,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 965691,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 957034,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 1,
+      "id": 43829,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 14736,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 560991,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 795523,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 809826,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 735576,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 51664,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 5468,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 4322,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 33697,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 50951,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 38673,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 133501,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 14355,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 51713,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 285188,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 14043,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 795533,
+      "own_goal": 0,
+      "team_id": 2902
+    },
+    {
+      "goal": 0,
+      "id": 23885,
+      "own_goal": 0,
+      "team_id": 2902
+    }
+  ]
+}

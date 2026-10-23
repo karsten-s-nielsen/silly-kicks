@@ -16,12 +16,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import pairwise
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.tracking.schema import Z_SOURCE_VALUES
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from silly_kicks.tracking._restart_validation import DataProfile
 
 
 @dataclass(frozen=True)
@@ -174,19 +180,24 @@ class _Candidate:
     magnitude: float
 
 
-def _attribute(cand_pos, bx, by, bz, players, params: BallContactParams):
+def _attribute(cand_pos, bx, by, bz, zsrc, players, params: BallContactParams, *, overhead_active: bool):
     """Attribute a candidate frame to the nearest playable player.
 
     ``bx``/``by``/``bz`` are the ball coordinate arrays for the segment and
     ``cand_pos`` indexes the candidate frame. ``players`` is a DataFrame with
     ``player_id``/``x``/``y`` columns for that frame. Returns
     ``(player_id, distance)`` for the nearest player within the attribution
-    radius, else ``(pd.NA, nan)``. A ball above ``contact_max_z_m`` (and not NaN)
-    is overhead -- not a contact (returns NA).
+    radius, else ``(pd.NA, nan)``.
+
+    **F3 overhead gate (TF-46 Arm 1 Part 2, spec section 14.1):** a ball above
+    ``contact_max_z_m`` removes the contact ONLY when ``overhead_active`` (the data
+    profile has a passing ``z_overhead`` gate entry) AND the frame's ``z_source`` is
+    ``"measured"``. Estimated / absent z, or no gate entry, never removes a contact.
     """
     z = bz[cand_pos]
-    playable = bool(np.isnan(z) or z <= params.contact_max_z_m)
-    if not playable or players is None or len(players) == 0:
+    z_src = str(zsrc[cand_pos])
+    overhead = overhead_active and z_src == "measured" and (not np.isnan(z)) and z > params.contact_max_z_m
+    if overhead or players is None or len(players) == 0:
         return pd.NA, float("nan")
     px = players["x"].to_numpy(dtype=np.float64, copy=True)
     py = players["y"].to_numpy(dtype=np.float64, copy=True)
@@ -201,6 +212,75 @@ def _attribute(cand_pos, bx, by, bz, players, params: BallContactParams):
     cand_idx = np.where(pool)[0]
     best = cand_idx[int(np.argmin(d[cand_idx]))]
     return players["player_id"].iloc[int(best)], float(d[best])
+
+
+def _visibility_mask(players, provider) -> np.ndarray | None:
+    """Per-player detected mask for the attribution leg (spec section 17.4; ADR-109), or ``None`` = UNKNOWN.
+
+    The provider decides how the flag reads (``detected_mask``, which validates the provider first): a
+    fully-observed provider -> every present player is visible; a detection-aware provider -> its ``visibility``
+    (an absent or entirely-null flag RAISES: the pipeline discarded it). With NO provider (no data profile and no
+    declared ``provider``) the flag cannot be read, and ``assume_observed`` is never the default (ADR-109): the
+    mask is ``None`` and the visibility-based columns fail closed (NaN / ``<NA>``)."""
+    from silly_kicks.tracking._provider_visibility import detected_mask
+
+    if provider is None:
+        return None
+    if "visibility" not in players:
+        return detected_mask(pd.Series([pd.NA] * len(players), dtype="boolean"), provider=provider)
+    return detected_mask(players["visibility"], provider=provider)
+
+
+def _attribution_margins(attr_id, dist, cand_pos, bx, by, players, *, footprint_active: bool, provider=None):
+    """The attribution-ambiguity columns for an attributed contact (spec sections 8, 17.4).
+
+    Returns ``(attribution_margin, attribution_margin_player, attribution_other_visible,
+    attribution_other_unseen_reason)``:
+    - ``attribution_margin`` = d(nearest VISIBLE other-team player) - d(attributed); NaN when no other-team
+      player is visible (never ``+inf``).
+    - ``attribution_margin_player`` = d(nearest VISIBLE other player of ANY team) - d(attributed); NaN when none.
+    - ``attribution_other_visible`` = any other-team player detected in the frame.
+    - ``attribution_other_unseen_reason`` = when NO other-team player is visible AND the footprint gate is
+      active: the nearest other-team row (by extrapolated position) is ``off_camera`` (``in_camera_view`` False)
+      or ``missed_detection`` (True); ``<NA>`` when an other-team player is visible, ``in_camera_view`` is
+      ``<NA>``, or the footprint gate is inactive (CL-16: always ``<NA>`` in commit 2).
+    """
+    from silly_kicks.id_compat import canonical_id, canonical_id_series
+
+    if players is None or len(players) == 0 or pd.isna(attr_id) or not np.isfinite(dist):
+        return float("nan"), float("nan"), pd.NA, pd.NA
+    px = players["x"].to_numpy(dtype=np.float64)
+    py = players["y"].to_numpy(dtype=np.float64)
+    d = np.hypot(px - float(bx[cand_pos]), py - float(by[cand_pos]))
+    # Canonical-id compare against a SCALAR (ids_equal is Series-vs-Series / positional only).
+    pids = canonical_id_series(players["player_id"]).to_numpy(dtype=object)
+    team = (
+        canonical_id_series(players["team_id"]).to_numpy(dtype=object)
+        if "team_id" in players
+        else np.full(len(players), None, dtype=object)
+    )
+    vis = _visibility_mask(players, provider)
+    if vis is None:  # no provider: detection unknown -> fail closed, never a guessed "observed"
+        return float("nan"), float("nan"), pd.NA, pd.NA
+    finite = np.isfinite(d)
+    is_attr = pids == canonical_id(attr_id)
+    attr_team = team[is_attr][0] if is_attr.any() else None
+    same_team = (team == attr_team) if attr_team is not None else np.zeros(len(players), dtype=bool)
+    other = (~same_team) & (~is_attr)
+    ov = other & vis & finite
+    margin = (float(d[ov].min()) - float(dist)) if bool(ov.any()) else float("nan")
+    av = (~is_attr) & vis & finite
+    margin_player = (float(d[av].min()) - float(dist)) if bool(av.any()) else float("nan")
+    other_visible = bool(ov.any())
+    reason: object = pd.NA
+    if footprint_active and not other_visible:
+        cand = other & finite
+        if bool(cand.any()):
+            nearest = int(np.where(cand)[0][int(np.argmin(d[cand]))])
+            icv = players["in_camera_view"].iloc[nearest] if "in_camera_view" in players else pd.NA
+            if not pd.isna(icv):
+                reason = "missed_detection" if bool(icv) else "off_camera"
+    return margin, margin_player, other_visible, reason
 
 
 def _merge_clusters(cands, mag, source, t, params: BallContactParams, *, frame_period: float = 0.0) -> list[_Candidate]:
@@ -266,6 +346,11 @@ _CONTACT_COLUMNS: tuple[str, ...] = (
     "is_aerial",
     "aerial_source",
     "contact_source",
+    # TF-46 Arm 1 Part 2 attribution ambiguity (spec sections 8, 17.4)
+    "attribution_margin",
+    "attribution_margin_player",
+    "attribution_other_visible",
+    "attribution_other_unseen_reason",
 )
 
 
@@ -336,6 +421,10 @@ def _empty_contacts(frames: pd.DataFrame) -> pd.DataFrame:
             "is_aerial": pd.Series([], dtype="boolean"),
             "aerial_source": pd.Categorical([], categories=Z_SOURCE_VALUES),
             "contact_source": pd.Categorical([], categories=CONTACT_SOURCE_VALUES),
+            "attribution_margin": pd.Series([], dtype="float64"),
+            "attribution_margin_player": pd.Series([], dtype="float64"),
+            "attribution_other_visible": pd.Series([], dtype="boolean"),
+            "attribution_other_unseen_reason": pd.Series([], dtype="object"),
         }
     )
 
@@ -357,8 +446,22 @@ def _segments(finite: np.ndarray) -> list[tuple[int, int]]:
     return segs
 
 
-def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _DEFAULT_PARAMS) -> pd.DataFrame:
+def detect_ball_contacts(
+    frames: pd.DataFrame,
+    *,
+    params: BallContactParams = _DEFAULT_PARAMS,
+    data_profile: DataProfile | None = None,
+    gate_table: Mapping | None = None,
+    provider: str | None = None,
+) -> pd.DataFrame:
     """Detect candidate ball contacts from tracking frames (TF-79 primitive).
+
+    ``provider`` declares how the frames' ``visibility`` reads for the attribution-ambiguity columns (ADR-109);
+    ``data_profile.provider`` wins when both are given and must agree. With neither, those columns are NaN /
+    ``<NA>`` (fail closed: detection is unknown, never assumed).
+
+    ``gate_table`` overrides the shipped restart gate table for the profile-level ``z_overhead`` /
+    ``footprint`` gates (the pre-flight drivers inject one to score gate-on vs gate-off).
 
     Pure: does not mutate ``frames``. Returns one row per candidate contact with
     columns ``period_id, frame_id, time_seconds, player_id, contact_x, contact_y,
@@ -369,7 +472,23 @@ def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _D
     """
     from silly_kicks._frame_index import group_rows
     from silly_kicks.id_compat import restore_id_dtype
+    from silly_kicks.tracking._restart_validation import gate
     from silly_kicks.tracking.preprocess._dedup import trajectory_dedup_mask
+
+    # F3 (spec section 14.1) / footprint (section 17.4): both gates are OFF unless a data profile carries a
+    # passing entry. In commit 2 the gate table is empty, so both are inactive (CL-3 / CL-16).
+    overhead_active = (
+        data_profile is not None and gate(data_profile, "*", "z_overhead", "-", table=gate_table) is not None
+    )
+    footprint_active = (
+        data_profile is not None and gate(data_profile, "*", "footprint", "-", table=gate_table) is not None
+    )
+    if data_profile is not None and provider is not None and str(provider) != str(data_profile.provider):
+        raise ValueError(
+            f"detect_ball_contacts: provider={provider!r} disagrees with data_profile.provider="
+            f"{data_profile.provider!r}"
+        )
+    provider = data_profile.provider if data_profile is not None else provider
 
     required = {"is_ball", "period_id", "frame_id", "time_seconds", "x", "y"}
     missing = required - set(frames.columns)
@@ -446,7 +565,10 @@ def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _D
                 if np.isfinite(dv) and dv < params.min_velocity_change_ms:
                     continue
                 players_here = players_by_frame.get(pid, int(fid[gp]))
-                attr_id, dist = _attribute(gp, bx, by, bz, players_here, params)
+                attr_id, dist = _attribute(gp, bx, by, bz, zsrc, players_here, params, overhead_active=overhead_active)
+                margin, margin_player, other_visible, unseen_reason = _attribution_margins(
+                    attr_id, dist, gp, bx, by, players_here, footprint_active=footprint_active, provider=provider
+                )
                 z_here = bz[gp]
                 # ADR-125: is_aerial is honest-NaN unless z is a trustworthy MEASUREMENT (z_source
                 # "measured"); "estimated" (SkillCorner) and "absent" (SB360) -> <NA>.
@@ -481,6 +603,10 @@ def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _D
                         "is_aerial": is_aerial,
                         "aerial_source": z_src_here,
                         "contact_source": src,
+                        "attribution_margin": margin,
+                        "attribution_margin_player": margin_player,
+                        "attribution_other_visible": other_visible,
+                        "attribution_other_unseen_reason": unseen_reason,
                     }
                 )
 
@@ -493,6 +619,10 @@ def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _D
     out["is_aerial"] = out["is_aerial"].astype("boolean")
     out["aerial_source"] = pd.Categorical(out["aerial_source"], categories=Z_SOURCE_VALUES)
     out["contact_source"] = pd.Categorical(out["contact_source"], categories=CONTACT_SOURCE_VALUES)
+    out["attribution_margin"] = out["attribution_margin"].astype("float64")
+    out["attribution_margin_player"] = out["attribution_margin_player"].astype("float64")
+    out["attribution_other_visible"] = out["attribution_other_visible"].astype("boolean")
+    out["attribution_other_unseen_reason"] = out["attribution_other_unseen_reason"].astype("object")
     return out
 
 

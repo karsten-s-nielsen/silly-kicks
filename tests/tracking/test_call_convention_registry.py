@@ -67,3 +67,19 @@ def test_exemptions_carry_a_reason():
 def test_exemptions_are_all_real_exports():
     stale = set(_CALL_SHAPE_EXEMPT) - _public_add_names()
     assert not stale, f"exemption names a non-exported add_*: {sorted(stale)}"
+
+
+def test_tf46_restart_stages_follow_the_frame_consumer_call_shape():
+    """Task 2.14 (ADR-078): the TF-46 Arm 1 Part 2 restart stages are frame consumers but not ``add_*`` (so the
+    enumeration above cannot see them). Each takes ``(actions, frames)`` positional-or-keyword and EVERY other
+    parameter keyword-only."""
+    from silly_kicks.spadl import refine_restart_types
+    from silly_kicks.tracking._kick_resolver import resolve_kicks
+    from silly_kicks.tracking._penalty_detector import detect_penalties
+
+    for fn in (resolve_kicks, detect_penalties, refine_restart_types):
+        params = list(inspect.signature(fn).parameters.values())
+        assert [p.name for p in params[:2]] == ["actions", "frames"], fn.__name__
+        assert all(p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD for p in params[:2]), fn.__name__
+        rest = [p.name for p in params[2:] if p.kind != inspect.Parameter.KEYWORD_ONLY]
+        assert not rest, f"{fn.__name__}: options must be keyword-only, got positional {rest}"

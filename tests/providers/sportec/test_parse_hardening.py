@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -294,3 +295,57 @@ def test_ball_state_domain_matches_tracking_schema():
     from silly_kicks.tracking.schema import TRACKING_CATEGORICAL_DOMAINS
 
     assert _BALL_STATE_DOMAIN == TRACKING_CATEGORICAL_DOMAINS["ball_state"]
+
+
+# ---------------------------------------------------------------------------
+# C1-IMPL-14: the unmapped-first-child-tag warn (OwnGoal LOCAL HARDENING, TF-46 Part 2 decision 3)
+# ---------------------------------------------------------------------------
+
+_DATASETS = Path(__file__).parents[2] / "datasets"
+_SLICE = _DATASETS / "sportec" / "idsse_slice"
+_KLOPPY = _DATASETS / "kloppy"
+_UNMAPPED_WARN = "no _EVENT_TYPE_PREFIX"
+
+
+def test_unmapped_first_child_with_attrs_warns(tmp_path):
+    # A first-child tag with attributes but no _EVENT_TYPE_PREFIX entry must not drop them silently (the
+    # OwnGoal bug class). RED by deleting the elif-warn branch in _build_event_row.
+    from silly_kicks.providers.sportec.parse import parse_dfl_events, parse_dfl_match_info
+
+    xml = tmp_path / "events.xml"
+    xml.write_text(
+        "<?xml version='1.0' encoding='utf-8'?>\n"
+        '<PutDataRequest DataStatus="postmatch">\n'
+        '<Event MatchId="DFL-MAT-J03WMX" EventTime="2023-05-27T15:30:12.230+02:00" EventId="1" '
+        'X-Position="52.50" Y-Position="34.00" X-Source-Position="52.50" Y-Source-Position="34.00">\n'
+        ' <KickOff TeamLeft="DFL-CLU-00000G" TeamRight="DFL-CLU-000008" GameSection="firstHalf">\n'
+        '  <Play Player="DFL-OBJ-0027G6" Team="DFL-CLU-00000G" Evaluation="successfullyCompleted"/>\n'
+        " </KickOff>\n"
+        "</Event>\n"
+        '<Event MatchId="DFL-MAT-J03WMX" EventTime="2023-05-27T15:30:15.000+02:00" EventId="2" '
+        'X-Position="40.0" Y-Position="34.0" X-Source-Position="40.0" Y-Source-Position="34.0">\n'
+        ' <ZzzUnmappedTag Player="DFL-OBJ-0027KL" Team="DFL-CLU-00000G" SomeAttr="x"/>\n'
+        "</Event>\n"
+        "</PutDataRequest>\n",
+        encoding="utf-8",
+    )
+    match_info = parse_dfl_match_info(str(_SLICE / "info.xml"))
+    with pytest.warns(UserWarning, match=_UNMAPPED_WARN):
+        parse_dfl_events(str(xml), match_info=match_info, match_id="J03WMX")
+
+
+def test_known_fixtures_do_not_warn_on_unmapped_tags():
+    # Non-vacuity: the committed raw-DFL fixtures (the parity slice + the kloppy excerpt) must map every
+    # attr-bearing first-child tag, so the warn stays silent. (The 7 IDSSE matches ship only as parquet, not
+    # XML, so they cannot be parsed here -- these two are the committed raw-DFL coverage.)
+    from silly_kicks.providers.sportec.parse import parse_dfl_events, parse_dfl_match_info
+
+    for events, meta, match_id in (
+        (_SLICE / "events.xml", _SLICE / "info.xml", "J03WMX"),
+        (_KLOPPY / "sportec_events.xml", _KLOPPY / "sportec_meta.xml", "003BN1"),
+    ):
+        match_info = parse_dfl_match_info(str(meta))
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            parse_dfl_events(str(events), match_info=match_info, match_id=match_id)
+        assert not [w for w in rec if _UNMAPPED_WARN in str(w.message)], str(events)

@@ -20,9 +20,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         // --- The System ---
         sillyKicks = softwareSystem "silly-kicks" "Classifies football actions into SPADL representation and values them via VAEP" {
 
-            spadl = container "silly_kicks.spadl" "SPADL event conversion (23 action types) from 7 providers + a kloppy gateway; enrichments (possessions, game state, GK analytics), block-detection columns, canonical pitch/penalty-area constants." "Python" "Library"
+            spadl = container "silly_kicks.spadl" "SPADL event conversion (23 action types) from 7 providers + a kloppy gateway; enrichments (possessions, game state, GK analytics), restart coordinates + gated refinement, canonical pitch constants." "Python" "Library"
             vaep = container "silly_kicks.vaep" "VAEP action valuation: features, action/possession/time-windowed labels, and gradient-boosted models. HybridVAEP removes result leakage; optional Expected-Threat feature factory." "Python" "Library"
-            tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, adapters, linkage, spatial/GKDV models, 32 action-coupled aggregators, run_tracking_features, native GK + native DAS engine (ADR-107/108), feature-contract guard." "Python" "Library"
+            tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, adapters, linkage, spatial/GKDV models, 32 action-coupled aggregators, run_tracking_features, native DAS, gated restart kick + penalty resolution (TF-46)." "Python" "Library"
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 32-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid; held-out transition-NLL evaluator; physical_grid resampling. ADR-041." "Python" "Library"
             xtgk = container "silly_kicks.xtgk" "xT-GK v2: possession value V(z,p) (Markov surface + deep-zone gate), metric compute_xt_gk_v2 over 3 injected ports, resolved-GK-geometry edge (apply_resolved_gk_geometry), bundled rho weights." "Python" "Library"
@@ -42,7 +42,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze): Sportec/DFL + SB360 freeze-frames -> frames + visible_area; keeper-appearance extractors (4 providers) -> KeeperAppearances port. ADR-031/054/084." "Python" "Library"
-            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 533 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 536 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
             keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
             positioning = container "silly_kicks.positioning" "TF-56 prescriptive positioning optimiser: SA solver (optimise_positions) for the best REACHABLE shape + measured positioning_gap = threat(actual) - threat(optimum). compute_*; xt injected." "Python" "Library"
             coordination = container "silly_kicks.coordination" "TF-58 team-coordination dynamics: relative phase, cross-correlation, vector coding, spectral, cluster phase, relative stretch between the two teams; per-segment surrogate baselines. ADR-110." "Python" "Library"
@@ -146,7 +146,8 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         // --- Relationships: TF-46 Arm 1 corner offence (Shaw) ---
         analyst -> corners "Infers corner routines + per-routine chance quality (raw primitives; naming/ranking consumer-side) via" "compute_corner_run_encoding() / cluster_corner_routines()"
         corners -> spadl "Reads SPADL corner action types + shot results from" "Python import"
-        corners -> tracking "Reads tracking frames + the TF-79 first ball contact from" "first_contact_in_window()"
+        corners -> tracking "Reads tracking frames, the gated kick time + the TF-79 first ball contact from" "resolve_kicks() / first_contact_in_window()"
+        spadl -> tracking "Refines restart types + gated restart origins from tracking (GoalMap direction) via" "refine_restart_types() / add_restart_coordinates()"
         analyst -> territory "Computes territorial dominance (threat conceded/prevented through a defender's hull) from an injected fitted xT via" "compute_territorial_dominance()"
         territory -> spadl "Reads SPADL config + action-type / result ids from" "Python import"
         territory -> xthreat "Values opponent passes at their destination with an injected fitted model via" "values_at_points"

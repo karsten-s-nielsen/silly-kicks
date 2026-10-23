@@ -23,9 +23,12 @@ CORNER_SOURCE = "corner_source"
 #: Closed vocabularies (validated by tests/corners/test_columns.py).
 CORNER_SIDE_VALUES = frozenset({"left", "right"})
 CORNER_KIND_VALUES = frozenset({"direct", "short", "unclear"})
-CORNER_SOURCE_VALUES = frozenset({"skillcorner_gi", "spadl_corner", "sb360_event"})
+# ``skillcorner_marker`` (not ``skillcorner_gi``): SkillCorner corners come from the interruption
+# MARKER, not the GI reception token (decision C7, spec section 9.4).
+CORNER_SOURCE_VALUES = frozenset({"skillcorner_marker", "spadl_corner", "sb360_event"})
 
-#: Full identification-table column order + dtype.
+#: Full identification-table column order + dtype. ``type_source`` travels from the SPADL action's base
+#: signal column (spec section 9.4): native / inferred / default / ``<NA>``.
 CORNER_IDENTIFY_COLUMNS: dict[str, str] = {
     "game_id": "object",
     "corner_id": "int64",
@@ -37,11 +40,26 @@ CORNER_IDENTIFY_COLUMNS: dict[str, str] = {
     "kick_y": "float64",
     CORNER_KIND: "category",
     CORNER_SOURCE: "category",
+    "type_source": "object",
+    # TF-46 Arm 1 Part 2 (spec section 9): the resolve_kicks kick-time + taker provenance.
+    "kick_time_source": "object",
+    "kick_time_evidence": "object",
+    "taker_player_id": "object",
+    "taker_known": "boolean",
+    "gi_next_possession_time": "float64",  # the resolve_kicks GI next-possession time (section 9.4 source)
+    # Section 9.3: the event-coded first touch (event-coded providers only; NaN / <NA> elsewhere).
+    "event_first_touch_time": "float64",
+    "event_first_touch_player_id": "object",
+    "event_first_touch_team_id": "object",
 }
 
 # --- window columns (add_corner_windows, additive onto the identification table) -------------
 TARGET_SNAPSHOT_SOURCE = "target_snapshot_source"
 TARGET_SNAPSHOT_SOURCE_VALUES = frozenset({"first_contact", "kick_plus_2s", "sb360_event"})
+
+#: TF-46 Arm 1 Part 2 (spec section 9.3 / 9.4) closed vocabularies.
+WINNER_SOURCE_VALUES = frozenset({"tf79_contact", "event_coded", "withheld", "none"})
+FIRST_POSSESSION_STATUS_VALUES = frozenset({"gi", "chain", "native_anchor"})
 
 #: The columns add_corner_windows appends (names only; dtypes in CORNER_WINDOW_COLUMNS).
 CORNER_WINDOW_COLUMNS: dict[str, str] = {
@@ -53,6 +71,13 @@ CORNER_WINDOW_COLUMNS: dict[str, str] = {
     "winner_team_id": "object",
     "winner_player_id": "object",
     TARGET_SNAPSHOT_SOURCE: "category",
+    # TF-46 Arm 1 Part 2 (spec section 9): first-contact R* provenance + GI first-possession status.
+    "winner_source": "object",
+    "first_contact_evidence": "object",
+    "first_contact_gate_version": "object",
+    "first_contact_cell_resolution": "object",
+    "first_contact_attribution_margin": "float64",
+    "first_possession_status": "object",
 }
 
 # --- per-routine chance quality (compute_corner_chance_quality) -- the registered mart -------

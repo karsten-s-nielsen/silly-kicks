@@ -31,6 +31,15 @@ from scripts._stages import ItemStage, Param, Pipeline, Stage, main
 
 _FeatureSet = Literal["faithful", "position_only"]
 
+#: Provenance dimensions this trainer READS (TF-46 Arm 1 Part 2, spec section 18.2.1, CL-5): TIME only. The
+#: phase anchors (set pieces / goal kicks) and goal rows feed `_build_phase_lookup` / the score context; a
+#: mis-timed anchor censors its window. No row is excluded and no frame is weighted on any other dimension.
+TRAINING_READS = frozenset({"time"})
+
+#: The restart censored-frame counter, carried through `for_each`'s `counters` channel (spec section 18.2.1).
+_CENSOR_COUNTERS = ("prov_censored_n",)
+_UNIT_CENSOR: dict[str, float] = {}
+
 
 def feature_set_for_variant(variant: str) -> _FeatureSet:
     """Map the CLI ``--variant`` onto the model feature set."""
@@ -337,17 +346,38 @@ def _extract_load(ref, ctx):
 
 def _extract_work(item, ctx):
     from scripts._driver_sources import read_dataset_parquet
+    from silly_kicks.id_compat import canonical_id, canonical_id_series
+    from silly_kicks.tracking._ghost_gk import build_restart_phase_censor_intervals
 
+    _UNIT_CENSOR.update(dict.fromkeys(_CENSOR_COUNTERS, 0.0))
     p, ns = item
     frames = read_dataset_parquet(p)
-    return extract_match(
+    actions = _actions_for(p, ns)
+    out = extract_match(
         frames,
-        _actions_for(p, ns),
+        actions,
         feature_set_for_variant(ctx.params["variant"]),
         n_rearguard=ctx.params["n_rearguard"],
         home_team_id=_home_team_for(p, frames, _home_map(ctx)),
         subsample_fps=ctx.params["subsample_fps"],
     )
+    # TF-46 Arm 1 Part 2 (spec section 18.2.1, CL-5): drop rows whose phase/score anchor has an unvalidated
+    # time (a SkillCorner derived restart without a gated t_kick, or an unvalidated-time goal). The output
+    # carries its own `game_id` / `period_id` / `time_seconds`. Byte-identical for a native provider (no such
+    # row -> empty intervals). Counted through the counters channel, never weighted.
+    intervals = build_restart_phase_censor_intervals(actions)
+    if out is not None and len(out) and not intervals.empty:
+        gid = canonical_id_series(out["game_id"]).to_numpy(dtype=object)
+        pid = out["period_id"].astype(float).to_numpy()
+        ts = out["time_seconds"].astype(float).to_numpy()
+        censor = np.zeros(len(out), dtype=bool)
+        for _, iv in intervals.iterrows():
+            same = (gid == canonical_id(iv["game_id"])) & (pid == float(iv["period_id"]))
+            censor |= same & (ts >= iv["t_lo"]) & (ts <= iv["t_hi"])
+        if censor.any():
+            _UNIT_CENSOR["prov_censored_n"] += float(int(censor.sum()))
+            out = out[~censor].reset_index(drop=True)
+    return out
 
 
 def _extract_reduce(results, ctx):
@@ -485,6 +515,11 @@ def _assemble_work(key, ctx):
         "run_tree_dirty": bool(ctx.prov["dirty"]),
         "training_platform": p["training_platform"],
     }
+    # TF-46 Arm 1 Part 2 (spec section 18.2.1): the restart censored-frame count (corpus-wide).
+    from scripts._stages import item_counters
+
+    _cens, _ = item_counters(ctx, "extract")
+    metrics["provenance_censored_frames"] = int(_cens.get("prov_censored_n", 0.0))
     files = {name: data_ for name, data_ in fit.files.items() if name != "coherence.json"}
     files["metrics.json"] = json.dumps(metrics, indent=2).encode("utf-8")  # the legacy json.dump bytes
     return FileSet(files)
@@ -502,6 +537,7 @@ PIPELINE = Pipeline(
             load=_extract_load,
             work=_extract_work,
             reduce=_extract_reduce,
+            counters=lambda _item, _frame: dict(_UNIT_CENSOR),
             # extraction_inputs is the legacy token; n_rearguard is declared too, so a changed rearguard
             # size can never reuse stale shards.
             params=("n_rearguard",),

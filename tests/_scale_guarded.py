@@ -85,6 +85,27 @@ SCALE_GUARDED: dict[str, str] = {
     # growth fixture is a zigzag whose candidate count scales with the frame count, so a per-candidate
     # `frames[frames.frame_id==fid]` rescan would be O(candidates*frames) == quadratic; group_rows keeps it linear.
     "silly_kicks.tracking._ball_contact.detect_ball_contacts": "test_detect_ball_contacts_is_subquadratic",
+    # TF-46 Arm 1 Part 2: resolve_kicks groups the contacts by period ONCE (ADR-068) and builds each period's
+    # player->team roster once, then .get the period's contacts per restart in the loop. The growth fixture
+    # scales the RESTART dimension so a per-restart `contacts[contacts.period==p & window]` rescan + per-restart
+    # roster rebuild would be O(restarts*contacts) == quadratic; group_rows + the prebuilt roster keep it linear.
+    "silly_kicks.tracking._kick_resolver.resolve_kicks": "test_resolve_kicks_is_subquadratic",
+    # TF-46 Arm 1 Part 2 (C2 r2 B-15): add_corner_windows builds the per-period contact index and the frame_id
+    # groups ONCE, then searchsorted-slices each corner's R* window and .get the contact's frame. The growth
+    # fixture scales the CORNER count with the frame and contact tables, so the earlier per-corner contact mask
+    # and per-contact frame scan would be O(corners x rows) == quadratic.
+    "silly_kicks.corners._windows.add_corner_windows": "test_add_corner_windows_is_subquadratic",
+    # The group_rows call sites themselves (the AST-derived caller set): _frame_groups is add_corner_windows'
+    # once-per-call frame index; _resolve_per_match is resolve_kicks' once-per-call game partition -- each covered
+    # by its parent's growth fixture (the corner count / the GAME count).
+    "silly_kicks.corners._windows._frame_groups": "test_add_corner_windows_is_subquadratic",
+    "silly_kicks.tracking._kick_resolver._resolve_per_match": "test_resolve_kicks_is_subquadratic",
+    # TF-46 Part 2 C2 delta (C2-DELTA-01): the GI pairing / proximity profile partition the frames by game_id ONCE
+    # (canonical ids), and the direction check builds its (game, period) row groups once. The growth fixture scales
+    # the GAME count, so a per-game / per-period full-table mask would be O(games x rows) == quadratic.
+    "silly_kicks.tracking._restart_frame.gi_direction_check": "test_gi_pairing_is_subquadratic_in_games",
+    "silly_kicks.tracking._restart_frame.assess_gi_pairing": "test_gi_pairing_is_subquadratic_in_games",
+    "silly_kicks.tracking._restart_frame.pairing_proximity_profile": "test_gi_pairing_is_subquadratic_in_games",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.

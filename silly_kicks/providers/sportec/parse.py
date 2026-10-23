@@ -36,9 +36,14 @@ silly-kicks-local hardening helpers marked ``LOCAL HARDENING`` below
 (:func:`_normalize_ball_state` / :func:`_resolve_period_column`), which close two
 *silent-degradation* paths in the lifted bodies, and (e) the ADR-068 **single-pass** structure of
 :func:`_parse_positions_xml` (one file read + a deferred player-row replay instead of two full
-reads), which is **byte-identical** to the two-pass original. Adaptations (d)/(e) are output-neutral
-on valid input, so the golden parity gate stays the authority. (There is no live upstream to re-pin
-from -- see the ownership note above; these are now silly-kicks-owned.) The parse layer
+reads), which is **byte-identical** to the two-pass original, and (f) the ``OwnGoal`` first-child
+prefix (TF-46 Arm 1 Part 2, decision 3): a local fix of an upstream omission (luxury-lakehouse
+@499804d6 has no ``OwnGoal`` in ``_dfl_event_schema.py``), so the DFL ``OwnGoal`` event's attributes
+(``Player`` / ``Team`` / ``TeamOwnGoalCountsFor`` / ``TypeOfShot``) reach the bronze as ``own_goal_*``
+instead of being silently dropped; a ``LOCAL HARDENING`` warn now surfaces any first-child tag with
+attributes but no prefix, so the drop cannot recur. Adaptations (d)/(e)/(f) are output-neutral
+on the golden-parity slice (it has no ``OwnGoal``), so the golden parity gate stays the authority. (There is
+no live upstream to re-pin from -- see the ownership note above; these are now silly-kicks-owned.) The parse layer
 is faithful ``bytes -> RAW bronze``; **data-quality (Savitzky-Golay smoothing, velocity
 derivation) stays consumer-side** --- the lakehouse applies its own ``_smooth_tracking``
 after this parse, and the silly-kicks harness applies ``_preprocess``. The Phase-2.1
@@ -215,6 +220,8 @@ _EVENT_TYPE_PREFIX: dict[str, str] = {
     "KickOff": "kickoff",
     "Nutmeg": "nutmeg",
     "Offside": "offside",
+    "OwnGoal": "own_goal",  # TF-46 Arm 1 Part 2 decision 3 (f): upstream-omitted; keeps Team / Player /
+    #                         TeamOwnGoalCountsFor / TypeOfShot as own_goal_* bronze columns.
     "OtherBallAction": "otherball",
     "OtherPlayerAction": "other_action",
     "Penalty": "penalty",
@@ -862,6 +869,14 @@ def _build_event_row(
     if prefix is not None:
         for attr_name, attr_val in first_child.attrib.items():
             row[f"{prefix}_{_to_snake_case(attr_name)}"] = attr_val
+    elif first_child.attrib:
+        # LOCAL HARDENING (TF-46 Arm 1 Part 2 decision 3): a first-child tag with attributes but no
+        # prefix silently drops those attributes (the OwnGoal bug). Surface it so it cannot recur.
+        warnings.warn(
+            f"sportec parse: first-child tag {event_type!r} has {len(first_child.attrib)} attribute(s) "
+            f"but no _EVENT_TYPE_PREFIX entry; they are dropped. Add a prefix if any are needed.",
+            stacklevel=2,
+        )
 
     # --- Nested children attrs → {nested_prefix}_{snake(attr)} bronze cols ---
     for nested_child in first_child:

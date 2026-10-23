@@ -154,6 +154,52 @@ def convergent_timing(df: pd.DataFrame, contact_col: str, possession_col: str) -
     }
 
 
+def convergent_timing_kick_relative(
+    df: pd.DataFrame,
+    *,
+    contact_col: str = "first_contact_time",
+    possession_col: str = "first_possession_time",
+    kick_col: str = "t_kick",
+    provider_col: str = "provider",
+    winner_source_col: str = "winner_source",
+) -> dict:
+    """F5 (TF-46 Arm 1 Part 2, spec section 14.2): per-provider Spearman between the two KICK-RELATIVE onsets
+    ``t - t_kick`` (first-contact and first GI possession), on non-``<NA>`` rows.
+
+    Onsets are rebased to the kick so a provider's clock offset cannot inflate agreement. On a NATIVE provider
+    the first-contact leg uses only ``winner_source == "event_coded"`` rows (its coded first touch is the truth
+    leg); SkillCorner keeps its TF-79 broadcast contact. Reported, not gated. NaN with < 3 paired corners.
+    """
+    from scipy.stats import spearmanr
+
+    out: dict[str, dict] = {}
+    if provider_col not in df.columns:
+        return out
+    for prov, g in df.groupby(provider_col, observed=True):
+        gg = g
+        # NATIVE providers: restrict the contact leg to event-coded rows (SkillCorner = broadcast TF-79).
+        if str(prov) != "skillcorner" and winner_source_col in gg.columns:
+            gg = gg[gg[winner_source_col].astype("string") == "event_coded"]
+        s = gg[[contact_col, possession_col, kick_col]].dropna()
+        n = len(s)
+        nan = float("nan")
+        if n < 3:
+            out[str(prov)] = {"n": n, "rho": nan, "p": nan, "offset_mean_s": nan, "offset_median_s": nan}
+            continue
+        c_rel = (s[contact_col] - s[kick_col]).to_numpy(dtype=float)
+        p_rel = (s[possession_col] - s[kick_col]).to_numpy(dtype=float)
+        res = spearmanr(c_rel, p_rel)
+        off = p_rel - c_rel
+        out[str(prov)] = {
+            "n": n,
+            "rho": float(res.statistic),  # type: ignore[reportAttributeAccessIssue]
+            "p": float(res.pvalue),  # type: ignore[reportAttributeAccessIssue]
+            "offset_mean_s": float(off.mean()),
+            "offset_median_s": float(np.median(off)),
+        }
+    return out
+
+
 def sb360_init_divergence(init_xy: np.ndarray, kick_xy: np.ndarray, model) -> dict:
     """Section 12.7: bound the SB360 train/serve mismatch. ``init_xy`` is the tracking -2s snapshot and
     ``kick_xy`` the kick-frame snapshot for the SAME players; report the positional-delta distribution
@@ -261,12 +307,14 @@ def reduce_samples(samples: pd.DataFrame) -> dict:
     # Section 12.6 convergent timing: TF-79 first-contact vs GI first player-possession (SkillCorner only).
     if {"first_contact_time", "first_possession_time"}.issubset(samples.columns):
         out["convergent_timing"] = convergent_timing(samples, "first_contact_time", "first_possession_time")
-    # TF46-IMPL-06: attribute a dark GI timing leg -- matches whose GI events fetch/parse FAILED (vs the
-    # honest absence of a GI artifact, which stays NaN and is NOT counted here).
-    if "gi_fetch_failed" in samples.columns and "game_id" in samples.columns:
-        out["n_matches_gi_fetch_failed"] = int(
-            samples.loc[samples["gi_fetch_failed"].astype(bool), "game_id"].nunique()
-        )
+        # F5 (spec section 14.2): the same agreement on KICK-RELATIVE onsets, per provider.
+        if "t_kick" in samples.columns:
+            out["convergent_timing_kick_relative"] = convergent_timing_kick_relative(samples)
+    # TF46-IMPL-06 / F6: attribute a dark GI timing leg. The GI times now ride the restart rows (resolve_kicks,
+    # spec section 9.4), so a dark leg is a match whose GI / tracking pairing was measured UNPAIRED (every
+    # bracket-dependent output withheld for it, spec section 6.1) -- counted, never silently NaN.
+    if "gi_unpaired" in samples.columns and "game_id" in samples.columns:
+        out["n_matches_gi_unpaired"] = int(samples.loc[samples["gi_unpaired"].astype(bool), "game_id"].nunique())
     return out
 
 
@@ -277,32 +325,29 @@ def _work(item) -> pd.DataFrame:
     raise NotImplementedError("validate_corners._work is wired by main(); run the e2e corpus pass on the DGX.")
 
 
-def gi_possession_times(gi: pd.DataFrame) -> pd.DataFrame:
-    """Per SkillCorner GI player-possession event: ``(period, t_rel)`` where ``t_rel`` is seconds RELATIVE
-    TO THE PERIOD START.
+def resolve_corners_for_match(item):
+    """One match -> ``(windowed corners, goal_map, contacts, gi_unpaired)`` (F6, spec sections 9.4 / 14.3).
 
-    GI carries ``minute_start``/``second_start`` on a MATCH-ABSOLUTE clock (period 2 continues past 45:00,
-    e.g. 2701-5810 s), while the SPADL corner ``t_kick`` is PERIOD-RELATIVE (ADR-017). Rebase GI by
-    subtracting each period's earliest possession time (its kickoff proxy, ~0-2 s in) so the two clocks
-    compare. ``time_start`` is a "MM:SS.s" STRING and is deliberately not used.
-    """
-    if gi is None or gi.empty or "event_type" not in gi.columns:
-        return pd.DataFrame(columns=["period", "t_rel"])
-    pp = gi[gi["event_type"] == "player_possession"]
-    if pp.empty or not {"minute_start", "second_start", "period"}.issubset(pp.columns):
-        return pd.DataFrame(columns=["period", "t_rel"])
-    t_abs = pp["minute_start"].astype(float) * 60.0 + pp["second_start"].astype(float)
-    out = pd.DataFrame({"period": pp["period"].astype(int).to_numpy(), "t_abs": t_abs.to_numpy()})
-    out["t_rel"] = out["t_abs"] - out.groupby("period")["t_abs"].transform("min")
-    return out[["period", "t_rel"]]
+    ``resolve_kicks`` runs FIRST, so the GI next-possession time is mapped from the converter's GI frame ids on
+    the RESTART row itself; ``identify_corners`` / ``add_corner_windows`` carry it to ``first_possession_time``.
+    The GI join therefore keys on the restart identity, never an exact float or a whole-second pad, and the
+    driver fetches no separate GI artifact. ``gi_unpaired`` is the measured per-match pairing verdict (section
+    6.1): an unpaired match withholds every bracket-dependent output."""
+    from silly_kicks.corners import add_corner_windows, identify_corners
+    from silly_kicks.tracking._ball_contact import detect_ball_contacts
+    from silly_kicks.tracking._gk_resolve import resolve_defended_goals
+    from silly_kicks.tracking._kick_resolver import resolve_kicks
+    from silly_kicks.tracking._provider_visibility import classified_provider
 
-
-def gi_first_possession(pt: pd.DataFrame, period: int, t_kick: float) -> float:
-    """First GI player-possession (period-relative) time at/after ``t_kick`` in ``period`` (NaN if none)."""
-    if pt.empty:
-        return float("nan")
-    hit = pt[(pt["period"] == period) & (pt["t_rel"] >= t_kick)]
-    return float(hit["t_rel"].min()) if not hit.empty else float("nan")
+    goal_map = resolve_defended_goals(item.frames)  # ADR-055: built once per match, threaded in
+    contacts = detect_ball_contacts(item.frames, provider=classified_provider(item.provider))
+    resolved = resolve_kicks(item.actions, item.frames, provider=item.provider, goal_map=goal_map, contacts=contacts)
+    gi_unpaired = bool(
+        "gi_pairing" in resolved.columns and (resolved["gi_pairing"].astype("string") == "unpaired").fillna(False).any()
+    )
+    corners = identify_corners(resolved, provider=item.provider)
+    windowed = add_corner_windows(corners, item.frames, contacts)
+    return windowed, goal_map, contacts, gi_unpaired
 
 
 def _divergence_rows(item, zone_model) -> pd.DataFrame:
@@ -314,6 +359,7 @@ def _divergence_rows(item, zone_model) -> pd.DataFrame:
     from silly_kicks.corners import add_corner_windows, identify_corners
     from silly_kicks.corners._encode import _nearest_frame_xy, _reflect_y
     from silly_kicks.tracking._ball_contact import detect_ball_contacts
+    from silly_kicks.tracking._provider_visibility import classified_provider
 
     cols = ["init_x", "init_y", "kick_x", "kick_y"]
     if zone_model is None or item.frames is None or item.frames.empty:
@@ -322,12 +368,16 @@ def _divergence_rows(item, zone_model) -> pd.DataFrame:
     corners = corners[corners["corner_kind"] == "direct"]
     if corners.empty:
         return pd.DataFrame(columns=cols)
-    windowed = add_corner_windows(corners, item.frames, detect_ball_contacts(item.frames))
+    contacts = detect_ball_contacts(item.frames, provider=classified_provider(item.provider))
+    windowed = add_corner_windows(corners, item.frames, contacts)
+    from silly_kicks.tracking._gk_resolve import resolve_defended_goals
+
+    goal_map = resolve_defended_goals(item.frames)  # ADR-055: built once per match, threaded in (F0)
     rows: list[dict] = []
     for _, c in windowed.iterrows():
         period, team, side = int(c["period_id"]), c["attacking_team_id"], str(c["corner_side"])
-        init = _nearest_frame_xy(item.frames, period, float(c["t_init"]), team)
-        kick = _nearest_frame_xy(item.frames, period, float(c["t_kick"]), team)
+        init = _nearest_frame_xy(item.frames, period, float(c["t_init"]), team, goal_map=goal_map)
+        kick = _nearest_frame_xy(item.frames, period, float(c["t_kick"]), team, goal_map=goal_map)
         if init is None or kick is None:
             continue
         init, kick = _reflect_y(init, side), _reflect_y(kick, side)
@@ -361,18 +411,14 @@ def main() -> None:
     from scripts._input_contract import declare_inputs
     from scripts._loader_pining import _base_url, _list_matches, _resolve_token, pining_source
     from scripts._provenance import git_provenance, require_clean_tree
-    from scripts.validate_gk_decision import _GI_EV_TRIES, _download_first
     from silly_kicks.corners import (
         CornerRoutineModel,
         RunZoneModel,
-        add_corner_windows,
         compute_corner_chance_quality,
         compute_corner_routine_features,
         compute_corner_run_encoding,
-        identify_corners,
     )
     from silly_kicks.id_compat import ids_differ
-    from silly_kicks.tracking._ball_contact import detect_ball_contacts
 
     prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
@@ -381,12 +427,11 @@ def main() -> None:
     routine_model = CornerRoutineModel.load(models_dir / "routine") if models_dir else None
     dest = Path(args.out)
 
-    # Manifest-derived season (date -> European season, for the transfer leg) + SkillCorner GI artifact
-    # keys (for the section 12.6 convergent-timing leg). Listed ONCE here; no LoadedMatch change.
+    # Manifest-derived season (date -> European season, for the transfer leg). Listed ONCE here. The section
+    # 12.6 GI timing leg needs no artifact listing: GI times ride the restart rows (F6, spec section 9.4).
     tok = _resolve_token(args.token)
     base = _base_url()
     season_map: dict[str, str | None] = {}
-    gi_artifacts: dict[str, dict] = {}
     n_manifest_listing_failed = 0  # TF46-IMPL-06: a swallowed listing failure is COUNTED, not silent
     for provider in args.providers:
         try:
@@ -397,16 +442,12 @@ def main() -> None:
         for m in manifest:
             mid = str(m["id"])
             season_map[mid] = derive_season(m.get("date"))
-            if provider == "skillcorner":
-                gi_artifacts[mid] = dict(m.get("artifacts", {}))
-    gi_cache = (Path(args.cache_dir) if args.cache_dir else dest) / "gi_events"
 
     def _match_rows(item) -> pd.DataFrame:
         if zone_model is None or routine_model is None or item.frames is None or item.frames.empty:
             return pd.DataFrame()
-        corners = identify_corners(item.actions, provider=item.provider)
-        windowed = add_corner_windows(corners, item.frames, detect_ball_contacts(item.frames))
-        encoding = compute_corner_run_encoding(windowed, item.frames, model=zone_model)
+        windowed, goal_map, _contacts, gi_unpaired = resolve_corners_for_match(item)
+        encoding = compute_corner_run_encoding(windowed, item.frames, model=zone_model, goal_map=goal_map)
         feats = compute_corner_routine_features(encoding, model=routine_model)
         # Dominant routine (argmax of the NMF coefficients) -> the routine-fixed-effect bucket; a NaN
         # (short/unclear) corner keeps its own -1 bucket (ADR-042: never dropped).
@@ -415,7 +456,18 @@ def main() -> None:
         # n_shots/n_goals are model-free (always computed); sum_xg only where the provider injects xG.
         xg_col = "xg" if "xg" in item.actions.columns else None
         quality = compute_corner_chance_quality(windowed, item.actions, xg_column=xg_col)
-        keep = ["game_id", "corner_id", "attacking_team_id", "period_id", "t_kick", "first_contact_time"]
+        keep = [
+            "game_id",
+            "corner_id",
+            "attacking_team_id",
+            "period_id",
+            "t_kick",
+            "first_contact_time",
+            "first_possession_time",  # F6: from the restart row (resolve_kicks -> add_corner_windows, 9.4)
+            "first_possession_status",
+        ]
+        if "winner_source" in windowed.columns:  # F5: the native event-coded first-contact leg
+            keep.append("winner_source")
         rows = feats.merge(windowed[keep], on=["game_id", "corner_id"])
         rows = rows.rename(columns={"attacking_team_id": "team_id"})
         rows["provider"] = item.provider  # for the section 12.5 cross-provider stability leg
@@ -429,29 +481,7 @@ def main() -> None:
             rows["defending_team_id"] = np.where(is_a, b, a)
         else:
             rows["defending_team_id"] = pd.NA
-        # Section 12.6: first GI player-possession time per corner (SkillCorner GI only), joined on timing.
-        # TF46-IMPL-06: gi_fetch_failed distinguishes a genuine FETCH/PARSE failure (counted) from honest
-        # data-absence (no GI events artifact) so a dark timing leg is attributable, not silently NaN.
-        rows["first_possession_time"] = np.nan
-        rows["gi_fetch_failed"] = False
-        if item.provider == "skillcorner" and str(item.actions["game_id"].iloc[0]) in gi_artifacts:
-            gid = str(item.actions["game_id"].iloc[0])
-            try:
-                gi_dir = gi_cache / gid
-                gi_dir.mkdir(parents=True, exist_ok=True)  # _download_first writes here but does not create it
-                ev = _download_first(gi_dir, gi_artifacts[gid], _GI_EV_TRIES, tok=tok, base=base, mid=gid)
-                gi = None
-                if ev is not None:
-                    gi = pd.read_parquet(ev) if str(ev).endswith(".parquet") else pd.read_csv(ev, low_memory=False)
-                if gi is not None:
-                    pt = gi_possession_times(gi)
-                    rows["first_possession_time"] = [
-                        gi_first_possession(pt, int(pid), float(tk))
-                        for pid, tk in zip(rows["period_id"], rows["t_kick"], strict=True)
-                    ]
-                # ev is None == the match carries no GI events artifact: honest absence, NOT a failure.
-            except Exception:
-                rows["gi_fetch_failed"] = True
+        rows["gi_unpaired"] = gi_unpaired
         return rows.merge(quality, on=["game_id", "corner_id"], how="left")
 
     refs, load = pining_source(
