@@ -1068,6 +1068,22 @@ existing Metrica contract-test fixture
 (tests/datasets/metrica/sample_match.parquet) is Sample Game 2 from
 metrica-sports/sample-data (CC-BY-NC-4.0).
 
+The TF-46 Arm 1 IDSSE events fixtures
+(tests/datasets/idsse/<id>_events_native.parquet + <id>_meta.json, 7 matches:
+J03WMX, J03WN1, J03WOH, J03WOY, J03WPY, J03WQQ, J03WR9) are the shaped native
+events derived from the DFL Bundesliga Match Tracking Data -- Open Match Data
+2022/23, published by Bassek et al. (2025) under CC-BY 4.0 (public DFL
+competition identifiers -- no PII). Citation: Bassek, M., Skinner, J., Niemann,
+J., et al. (2025). "An Open Bundesliga Match Tracking Dataset." DFL DataHub.
+Regenerable via scripts/regen_tf46_fixtures.py.
+
+The TF-46 Arm 1 SkillCorner events fixtures
+(tests/datasets/skillcorner/opendata/<id>_events_slim.csv + <id>_match.json,
+20 matches) are slimmed from the SkillCorner open-data release (the columns the
+converter reads), redistributed under the SkillCorner open-data (MIT) license.
+Regenerable via scripts/regen_tf46_fixtures.py; byte digests are recorded in
+tests/datasets/tf46_fixture_sha256sums.txt.
+
 The StatsBomb contract-test fixtures (tests/datasets/statsbomb/raw/events/*.json
 and tests/datasets/statsbomb/three-sixty/*.json) are from StatsBomb Open Data
 under the StatsBomb Public Data License. Redistribution is permitted under the

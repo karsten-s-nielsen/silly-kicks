@@ -45,7 +45,7 @@ from ._kloppy_coordinates import (
 from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
-from .utils import _finalize_output
+from .utils import _ensure_base_signal_columns, _finalize_output
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +252,7 @@ def convert_to_actions(
     df_actions["end_x"] = df_actions["end_x"].clip(0, spadlconfig.field_length)
     df_actions["end_y"] = df_actions["end_y"].clip(0, spadlconfig.field_width)
 
+    df_actions = _ensure_base_signal_columns(df_actions)
     df_actions = _finalize_output(df_actions, KLOPPY_SPADL_COLUMNS, extra_columns=preserve_native)
 
     mapped_counts: dict[str, int] = {}

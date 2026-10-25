@@ -13,6 +13,7 @@ import pandas as pd
 
 from silly_kicks.id_compat import ids_match
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.tracking._gk_resolve import GoalMap
 
 from ._columns import CORNER_KEYS
 from ._config import RunEncodingParams
@@ -27,8 +28,9 @@ def _run_column_names(model: RunZoneModel) -> list[str]:
     return [f"run_{i + 1}{chr(97 + t)}" for i in range(model.n_initial_zones) for t in range(model.n_target_zones)]
 
 
-def _nearest_frame_xy(frames: pd.DataFrame, period: int, t: float, team) -> pd.DataFrame | None:
-    """The attacking team's player (player_id, x, y) at the frame nearest ``t`` in ``period``."""
+def _nearest_frame_xy(frames: pd.DataFrame, period: int, t: float, team, *, goal_map: GoalMap) -> pd.DataFrame | None:
+    """The attacking team's player (player_id, x, y) at the frame nearest ``t`` in ``period``, in the ACTION
+    frame of that team (it attacks +x)."""
     # NA-safe id compare (ADR-019): the ball row carries a <NA> team_id, so a raw ``==`` yields an
     # NA-bearing mask that crashes under boolean indexing. Both masks are positional numpy arrays --
     # ids_match returns a fresh-RangeIndex Series, so never ``&`` it with a label-indexed Series.
@@ -39,8 +41,22 @@ def _nearest_frame_xy(frames: pd.DataFrame, period: int, t: float, team) -> pd.D
     if sub.empty:
         return None
     fid = sub.iloc[(sub["time_seconds"] - t).abs().to_numpy().argmin()]["frame_id"]
-    snap = sub[sub["frame_id"] == fid][["player_id", "x", "y"]].reset_index(drop=True)
-    return snap if not snap.empty else None
+    snap = sub[sub["frame_id"] == fid].reset_index(drop=True)
+    if snap.empty:
+        return None
+    # F0 (TF-46 Arm 1 Part 2, spec section 13.3): orient the snapshot to the ACTION frame (the attacking
+    # team attacks +x) so the zone geometry (_ATTACKED_GOAL_X = 105) holds for either play direction. The
+    # direction comes from the GoalMap ONLY (ADR-055: one defended-goal implementation; never a frame label
+    # or team identity, ADR-051). An unresolved direction (<NA>) gives NaN coords (the encoding withholds).
+    from silly_kicks.tracking._restart_frame import team_attacks_rtl, to_action_frame
+
+    gid = snap["game_id"].iloc[0] if "game_id" in snap.columns else None
+    key = pd.DataFrame({"game_id": [gid] * len(snap), "period_id": [period] * len(snap), "team_id": [team] * len(snap)})
+    rtl = team_attacks_rtl(key, goal_map)
+    ax, ay = to_action_frame(snap["x"].to_numpy(dtype=np.float64), snap["y"].to_numpy(dtype=np.float64), rtl)
+    snap = snap.assign(x=ax, y=ay)
+    snap = snap[np.isfinite(ax) & np.isfinite(ay)]
+    return snap[["player_id", "x", "y"]].reset_index(drop=True) if not snap.empty else None
 
 
 def _reflect_y(snap: pd.DataFrame, side: str) -> pd.DataFrame:
@@ -52,15 +68,17 @@ def _reflect_y(snap: pd.DataFrame, side: str) -> pd.DataFrame:
     return out
 
 
-def _encode_one(corner: pd.Series, frames: pd.DataFrame, model: RunZoneModel, params: RunEncodingParams):
+def _encode_one(
+    corner: pd.Series, frames: pd.DataFrame, model: RunZoneModel, params: RunEncodingParams, goal_map: GoalMap
+):
     period = int(corner["period_id"])
     team = corner["attacking_team_id"]
     # SB360 (freeze-frame only): the initial snapshot is the KICK freeze frame (t_kick), not the -2s
     # continuous snapshot -- consistent with the fit driver (spec §7; divergence measured in §12.7).
     sb360 = "corner_source" in corner and str(corner["corner_source"]) == "sb360_event"
     init_t = float(corner["t_kick"]) if sb360 else float(corner["t_init"])
-    init = _nearest_frame_xy(frames, period, init_t, team)
-    target = _nearest_frame_xy(frames, period, float(corner["t_target"]), team)
+    init = _nearest_frame_xy(frames, period, init_t, team, goal_map=goal_map)
+    target = _nearest_frame_xy(frames, period, float(corner["t_target"]), team, goal_map=goal_map)
     if init is None or target is None:
         return None
     side = str(corner["corner_side"])
@@ -82,8 +100,12 @@ def compute_corner_run_encoding(
     *,
     model: RunZoneModel,
     params: RunEncodingParams = _DEFAULT_ENCODING_PARAMS,
+    goal_map: GoalMap | None = None,
 ) -> pd.DataFrame:
     """Per-corner run vector at grain ``(game_id, corner_id)``. Pure (new frame).
+
+    ``goal_map`` (ADR-055) orients each corner's snapshots to the attacking team's action frame (F0); when
+    omitted it is resolved ONCE from ``frames`` via ``resolve_defended_goals``.
 
     Examples
     --------
@@ -93,10 +115,15 @@ def compute_corner_run_encoding(
         encoding = compute_corner_run_encoding(windowed_corners, frames, model=run_zone_model)
     """
     run_cols = _run_column_names(model)
+    if goal_map is None and len(corners):
+        from silly_kicks.tracking._gk_resolve import resolve_defended_goals
+
+        goal_map = resolve_defended_goals(frames)
     rows: list[dict] = []
     for _, c in corners.iterrows():
         row: dict = {"game_id": c["game_id"], "corner_id": int(c["corner_id"])}
-        vec = None if str(c["corner_kind"]) in ("short", "unclear") else _encode_one(c, frames, model, params)
+        skip = str(c["corner_kind"]) in ("short", "unclear")
+        vec = None if skip or goal_map is None else _encode_one(c, frames, model, params, goal_map)
         if vec is None:
             row.update(dict.fromkeys(run_cols, np.nan))
         else:

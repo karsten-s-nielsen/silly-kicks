@@ -245,6 +245,18 @@ ARTIFACT_DRIVERS = (
     # writes <--out>/numerics_noflip.json (commit 2 copies it in) -- the verdict that decides whether the
     # numerics ship, over external data, so provenance.
     "validate_coordination_numerics",
+    # TF-46 Arm 1 Part 2 pre-flight runs (spec section 16.2). Each walks the pining corpus (or reads a
+    # reviewed list / the per-run aggregates) and writes a committed tier aggregate under
+    # docs/research/tf46_part2/ from which the restart gate table derives (ADR-056) -- cited numbers over
+    # external data, so clean-tree provenance. The runs execute on the DGX in the C3 phase; the code lands
+    # here in C2 so the C3 run uses committed code (B-01 / CL-7).
+    "tf46p2_truth",
+    "tf46p2_kick_cells",
+    "tf46p2_subtype_merge",
+    "tf46p2_penalty",
+    "tf46p2_origin",
+    "tf46p2_video_census",
+    "tf46p2_gate_table",
 )
 
 
@@ -277,6 +289,14 @@ _NOT_A_DRIVER: dict[str, str] = {
     "regenerate_gs_et_native_gk": (
         "regenerates the committed gs_et ET tracking fixture from the local pining CACHE (no "
         "network, no token). Output is a test input, not a cited number."
+    ),
+    "regen_tf46_fixtures": (
+        "regenerates the committed TF-46 Arm 1 slim test fixtures (20 SkillCorner opendata + 7 IDSSE) "
+        "from pining (public token). Output is a test input, SHA-pinned by "
+        "tests/datasets/tf46_fixture_sha256sums.txt and policed by the offline "
+        "tests/datasets/test_tf46_fixture_hashes.py gate -- not a cited number. Same class as "
+        "build_worldcup_fixture / regenerate_gs_et_native_gk: a fixture regenerated during a "
+        "converter change must run on the dirty tree carrying that change."
     ),
     "audit_velocity_fixtures": (
         "reads COMMITTED test sources and runs library code on a synthetic frame -- no corpus "

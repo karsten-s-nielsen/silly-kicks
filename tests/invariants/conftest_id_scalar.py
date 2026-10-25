@@ -1243,6 +1243,14 @@ COVERED_BY_AGGREGATOR_GATE: dict[str, str] = {
 #: Genuinely cannot be dtype-invariant. Each entry states WHY, and each is a case where
 #: invariance would mean the function is BROKEN -- not a case we chose not to test.
 NOT_INVARIANT: dict[str, str] = {
+    "silly_kicks.tracking.schema.TrackingConversionReport": (
+        "SCOPE: the CONSTRUCTOR -- `inspect.signature(TrackingConversionReport)` sees the dataclass "
+        "`__init__`, whose `game_id` field (added for the TF-46 Part 2 SkillCorner adapter) the discovery "
+        "heuristic false-positives. It is a carried provenance field: the report STORES the match id so a "
+        "consumer can key the orientation-flip record (`ltr_flip_by_period`) and the footprint companion back "
+        "to the match; it is never compared against another id. A value-equal scalar of a different dtype "
+        "produces a legitimately different-dtype stored field -- there is no entity-id compare to keep invariant."
+    ),
     "silly_kicks.tracking._ball_contact.first_contact_in_window": (
         "The flagged scalar is `period_id` -- a PERIOD NUMBER (1-5), which this registry's own module "
         "docstring explicitly lists as id-SHAPED but NOT an entity id (alongside cluster labels). The "

@@ -41,6 +41,7 @@ def infer_defensive_actions(
         ``player_possession`` rows, sorted chronologically.
         Required columns: ``event_id``, ``period``, ``time_seconds``,
         ``team_id``, ``player_id``, ``start_type``, ``x_start``, ``y_start``.
+        Optional: ``period_source`` (copied onto each derived row; ``"native"`` when absent).
     obe : pd.DataFrame
         ``on_ball_engagement`` rows.
         Required columns: ``period``, ``time_seconds``, ``team_id``,
@@ -101,6 +102,8 @@ def infer_defensive_actions(
             {
                 "event_id": row["event_id"],
                 "period_id": int(period),
+                # the period comes from this possession, so does its source (TF-46 Part 2 spec section 26.5)
+                "period_source": row["period_source"] if "period_source" in pp.columns else "native",
                 "time_seconds": float(t) - 0.01,  # just before the native action
                 "team_id": team,
                 "player_id": player,
@@ -127,7 +130,8 @@ def infer_keeper_saves(pp: pd.DataFrame) -> pd.DataFrame:
         ``player_possession`` rows, sorted chronologically.
         Required columns: ``period``, ``time_seconds``, ``team_id``,
         ``player_id``, ``end_type``, ``x_start``, ``y_start``.
-        Optional: ``game_interruption_after``.
+        Optional: ``game_interruption_after``; ``period_source`` (copied onto each derived row; ``"native"`` when
+        absent).
 
     Returns
     -------
@@ -165,6 +169,8 @@ def infer_keeper_saves(pp: pd.DataFrame) -> pd.DataFrame:
         rows.append(
             {
                 "period_id": int(next_row["period"]),
+                # the period comes from the next possession, so does its source (TF-46 Part 2 spec section 26.5)
+                "period_source": next_row["period_source"] if "period_source" in pp.columns else "native",
                 "time_seconds": float(next_row["time_seconds"]) - 0.01,
                 "team_id": next_row["team_id"],
                 "player_id": next_row["player_id"],

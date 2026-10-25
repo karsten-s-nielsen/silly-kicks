@@ -12,11 +12,14 @@ that the luxury-lakehouse previously duplicated. See spec
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pandas as pd
+
+from silly_kicks.id_compat import ids_match
 
 # Same-provider single-source: spadl.skillcorner (the SkillCorner EVENTS converter) owns the
 # nominal period offsets; SK tracking imports the SAME constant so frames match events (kills
@@ -24,6 +27,13 @@ import pandas as pd
 # is NOT the metrica cross-wire the review flagged -- metrica.py has its own per-period-min clock.
 from silly_kicks.spadl.skillcorner import _PERIOD_START_SECONDS, _scale_to_spadl
 
+from ._camera_footprint import (
+    FOOTPRINT_X_COLUMNS,
+    FOOTPRINT_Y_COLUMNS,
+    footprint_degenerate_mask,
+    in_camera_view_mask,
+    orient_camera_footprint,
+)
 from ._gk_identification import (
     _SPADL_X_MAX,
     _SPADL_X_MIN,
@@ -31,8 +41,20 @@ from ._gk_identification import (
     _SPADL_Y_MIN,
     derive_goalkeepers,
 )
-from .direction import orient_frames_to_ltr_by_geometry, require_et_direction
-from .schema import SKILLCORNER_TRACKING_FRAMES_COLUMNS, Z_PROVENANCE, TrackingConversionReport
+from .direction import (
+    _decide_ltr_flips,
+    _orient_frames_to_ltr_by_geometry,
+    home_attacks_right_per_period,
+    require_et_direction,
+)
+from .schema import (
+    FRAME_FLIPS_ATTR,
+    PERIOD_FRAME_RANGES_ATTR,
+    SKILLCORNER_CAMERA_FOOTPRINT_COLUMNS,
+    SKILLCORNER_TRACKING_FRAMES_COLUMNS,
+    Z_PROVENANCE,
+    TrackingConversionReport,
+)
 from .utils import _derive_speed, orient_frames_to_ltr
 
 if TYPE_CHECKING:
@@ -149,6 +171,42 @@ def geometry_rate_gate(frames: pd.DataFrame) -> GeometryGateReport:
     )
 
 
+def _resolve_pitch_dims(bronze: pd.DataFrame, assume_standard_pitch: bool) -> tuple[float, float]:
+    """The fail-closed pitch-dimension rule (spec 3.4), shared by ``convert_to_frames`` and
+    ``convert_camera_footprint`` so the footprint scales on the SAME dims as the frames (CL-15)."""
+    if assume_standard_pitch:
+        return 105.0, 68.0
+    missing_dims = [c for c in ("pitch_length", "pitch_width") if c not in bronze.columns]
+    if missing_dims:
+        raise ValueError(
+            f"skillcorner: bronze missing {missing_dims}. Pitch dimensions are REQUIRED -- defaulting to "
+            "105x68 silently reproduces the goal-line defect this fixes (spec 3.4). Pass "
+            "assume_standard_pitch=True only if you know the pitch is 105x68."
+        )
+    return float(bronze["pitch_length"].iloc[0]), float(bronze["pitch_width"].iloc[0])
+
+
+def _scale_footprint(bronze: pd.DataFrame, *, pitch_length: float, pitch_width: float) -> pd.DataFrame:
+    """One row per (game_id, period_id, frame_id) with the four footprint corners scaled to the SPADL frame
+    via the SAME ``_scale_to_spadl`` affine as the tracking (spec section 17.7). Absent corner columns -> NaN
+    (a bronze that carries no footprint; the per-profile fallback)."""
+    cam_cols = [*FOOTPRINT_X_COLUMNS, *FOOTPRINT_Y_COLUMNS]
+    has = all(c in bronze.columns for c in cam_cols)
+    base = bronze[["match_id", "period", "frame", *(cam_cols if has else ())]].drop_duplicates(
+        subset=["period", "frame"]
+    )
+    fp = base.rename(columns={"match_id": "game_id", "period": "period_id", "frame": "frame_id"}).reset_index(drop=True)
+    if has:
+        for cx, cy in zip(FOOTPRINT_X_COLUMNS, FOOTPRINT_Y_COLUMNS, strict=True):
+            sx, sy = _scale_to_spadl(fp[cx].astype("float64"), fp[cy].astype("float64"), pitch_length, pitch_width)
+            fp[cx] = sx.to_numpy()
+            fp[cy] = sy.to_numpy()
+    else:
+        for c in cam_cols:
+            fp[c] = np.nan
+    return fp
+
+
 def convert_to_frames(
     bronze: pd.DataFrame,
     *,
@@ -158,6 +216,7 @@ def convert_to_frames(
     home_team_start_left_extratime: bool | None = None,
     preprocess: PreprocessConfig | None = None,
     assume_standard_pitch: bool = False,
+    period_frame_ranges: Mapping[int, tuple[int, int]] | None = None,
 ) -> tuple[pd.DataFrame, TrackingConversionReport]:
     """Convert post-join SkillCorner bronze tracking to canonical SPADL frames.
 
@@ -188,6 +247,14 @@ def convert_to_frames(
         silent 105x68 default would reproduce the very goal-line defect this fixes, and
         a warning is invisible in a DGX batch log -- so missing dims RAISE unless this
         is set. Pass ``True`` only when the pitch is known to be 105x68.
+    period_frame_ranges : Mapping[int, tuple[int, int]] | None
+        The PROVIDER period range of this match, ``{period_id: (first_frame, last_frame)}`` over every raw frame
+        the provider labels with that period (empty frames included): :func:`provider_period_frame_ranges` of the
+        raw feed. The bronze carries only frames with objects, so only the raw reader knows it. Recorded on
+        ``report.provider_period_frame_ranges`` and stamped on ``frames.attrs`` (spec section 17.7, amended
+        2026-10-25). RAISES ``ValueError`` when a retained frame lies outside its period's range or its period has
+        none (a range from another match), ``TypeError`` on a ``(game_id, period_id)``-keyed mapping. ``None``
+        records nothing.
 
     Returns
     -------
@@ -206,27 +273,15 @@ def convert_to_frames(
     missing = [c for c in required if c not in bronze.columns]
     if missing:
         raise ValueError(f"skillcorner.convert_to_frames: bronze missing column(s): {missing}")
-    if assume_standard_pitch:
-        pitch_length, pitch_width = 105.0, 68.0
-    else:
-        missing_dims = [c for c in ("pitch_length", "pitch_width") if c not in bronze.columns]
-        if missing_dims:
-            # Fail-closed (spec 3.4 / reviewer m1): defaulting to 105x68 silently reproduces the
-            # goal-line defect this fixes, and a warning is invisible in a DGX batch log.
-            raise ValueError(
-                f"skillcorner.convert_to_frames: bronze missing {missing_dims}. Pitch dimensions are "
-                "REQUIRED -- defaulting to 105x68 silently reproduces the goal-line defect this "
-                "fixes (spec 3.4). Pass assume_standard_pitch=True only if you know the pitch is "
-                "105x68."
-            )
-        pitch_length = float(bronze["pitch_length"].iloc[0])
-        pitch_width = float(bronze["pitch_width"].iloc[0])
+    # Fail-closed dims (spec 3.4 / reviewer m1): defaulting to 105x68 silently reproduces the goal-line defect.
+    pitch_length, pitch_width = _resolve_pitch_dims(bronze, assume_standard_pitch)
     if home_team_start_left is not None and output_convention == "ltr":
         require_et_direction(bronze["period"], home_team_start_left_extratime, source="skillcorner convert_to_frames")
 
     src = bronze.copy()
     game_id = str(src["match_id"].iloc[0])
     frame_rate = float(src["frame_rate"].iloc[0]) if "frame_rate" in src else 10.0
+    provider_ranges = _check_period_frame_ranges(period_frame_ranges, src)
 
     # --- player rows ---
     players = src[
@@ -245,11 +300,11 @@ def convert_to_frames(
     players["team_id"] = players["team_id"].astype(str)
 
     # --- ball rows (one per (frame, period); recover ball_z) ---
-    ball = (
-        src[["frame", "period", "timestamp", "ball_x", "ball_y", "ball_z"]]
-        .drop_duplicates(subset=["frame", "period"])
-        .copy()
-    )
+    _ball_cols = ["frame", "period", "timestamp", "ball_x", "ball_y", "ball_z"]
+    _has_ball_vis = "ball_is_visible" in src.columns
+    if _has_ball_vis:
+        _ball_cols = [*_ball_cols, "ball_is_visible"]
+    ball = src[_ball_cols].drop_duplicates(subset=["frame", "period"]).copy()
     ball = ball.rename(
         columns={
             "frame": "frame_id",
@@ -265,7 +320,9 @@ def convert_to_frames(
     ball["player_id"] = None
     ball["team_id"] = None
     ball["is_goalkeeper"] = False
-    ball["visibility"] = None
+    # Ball-row visibility = the source `ball_data.is_detected` (spec section 17.7); None when the bronze
+    # carries no detection flag (backward compatible with the pre-adapter bronze).
+    ball["visibility"] = ball.pop("ball_is_visible") if _has_ball_vis else None
     ball["is_ball"] = True
 
     df = pd.concat([players, ball], ignore_index=True)
@@ -282,6 +339,37 @@ def convert_to_frames(
     df["team_attacking_direction"] = None
     df["speed"] = np.nan
     df["speed_source"] = None
+
+    # --- TF-46 Arm 1 Part 2 adapter fields (spec section 17.7) ---
+    # Frame-level possession carried onto every row (players + ball); absent in the bronze -> <NA>.
+    _poss_cols = ["sc_possession_player_id", "sc_possession_group"]
+    if all(c in src.columns for c in _poss_cols):
+        poss_lu = src.drop_duplicates(subset=["frame", "period"])[["frame", "period", *_poss_cols]].rename(
+            columns={"frame": "frame_id", "period": "period_id"}
+        )
+        df = df.merge(poss_lu, on=["frame_id", "period_id"], how="left")
+    else:
+        for _c in _poss_cols:
+            df[_c] = pd.NA
+    # in_camera_view: per object row, computed in the SCALED (pre-orientation) frame. Orientation-invariant
+    # (DL ruling): the scale is a positive-diagonal affine and the LTR flip is a 180 deg rotation, both preserve
+    # containment and corner order. A degenerate / null footprint -> <NA>, counted on the report.
+    _footprint = _scale_footprint(src, pitch_length=pitch_length, pitch_width=pitch_width)
+    # Count only PRESENT-but-degenerate footprints (non-convex / zero-area). An ABSENT footprint (all-NaN
+    # corners, e.g. a bronze that carries none) is not "degenerate" -- it simply has no footprint to test.
+    _fp_present = _footprint[[*FOOTPRINT_X_COLUMNS, *FOOTPRINT_Y_COLUMNS]].notna().all(axis=1).to_numpy()
+    n_degenerate_footprint = int((footprint_degenerate_mask(_footprint) & _fp_present).sum())
+    _fp_rows = _footprint.set_index(["period_id", "frame_id"]).reindex(
+        pd.MultiIndex.from_arrays([df["period_id"], df["frame_id"]], names=["period_id", "frame_id"])
+    )
+    _corners = np.stack(
+        [
+            np.stack([_fp_rows[c].to_numpy("float64") for c in FOOTPRINT_X_COLUMNS], axis=1),
+            np.stack([_fp_rows[c].to_numpy("float64") for c in FOOTPRINT_Y_COLUMNS], axis=1),
+        ],
+        axis=2,
+    )
+    df["in_camera_view"] = in_camera_view_mask(df["x"].to_numpy("float64"), df["y"].to_numpy("float64"), _corners)
 
     # period-relative clock via the SINGLE-SOURCED nominal constant (matches the SK events
     # converter, so action<->frame linkage is exact). SkillCorner's `timestamp` is
@@ -360,6 +448,8 @@ def convert_to_frames(
     for c, dt in SKILLCORNER_TRACKING_FRAMES_COLUMNS.items():
         if dt == "bool":
             final[c] = final[c].astype("bool")
+        elif dt == "boolean":  # nullable boolean (in_camera_view): <NA>-preserving
+            final[c] = final[c].astype("boolean")
         elif dt in {"int64", "float64", "float32"}:
             final[c] = pd.to_numeric(final[c], errors="coerce").astype(dt)  # type: ignore[arg-type]
         elif dt == "category":
@@ -367,12 +457,37 @@ def convert_to_frames(
         else:
             final[c] = final[c].astype(object)
 
+    ltr_flip_by_period: dict[int, bool | None] = {}
     if output_convention == "ltr":
         if home_team_start_left is None:
-            final = orient_frames_to_ltr_by_geometry(
-                final, home_team_id=str(home_team_id), source="skillcorner", game_id=game_id
+            # Decide the per-period geometric flip ONCE, record it, thread it to the orienter (DL ruling: not
+            # decided twice). The camera-footprint companion applies the SAME recorded flip.
+            _is_ball = final["is_ball"].astype(bool).to_numpy()
+            ltr_flip_by_period = _decide_ltr_flips(
+                x_arr=final["x"].to_numpy("float64"),
+                period_arr=final["period_id"].to_numpy(),
+                home_arr=ids_match(final["team_id"], str(home_team_id)).fillna(False).to_numpy(dtype=bool),
+                player_arr=~_is_ball,
+                gk_arr=final["is_goalkeeper"].astype(bool).to_numpy(),
+            )
+            final = _orient_frames_to_ltr_by_geometry(
+                final,
+                home_team_id=str(home_team_id),
+                source="skillcorner",
+                game_id=game_id,
+                on_missing_home="raise",
+                copy=True,
+                flips=ltr_flip_by_period,
+                stacklevel=2,
             )
         else:
+            # Flag path: flip = not home_attacks_right (spec section 17.7 amendment).
+            _har = home_attacks_right_per_period(
+                home_team_start_left=home_team_start_left,
+                home_team_start_left_extratime=home_team_start_left_extratime,
+            )
+            _present = sorted({int(p) for p in pd.Series(final["period_id"]).dropna().unique()})
+            ltr_flip_by_period = {p: (not _har[p]) for p in _present if p in _har}
             final = orient_frames_to_ltr(
                 final,
                 home_team_id=str(home_team_id),
@@ -417,5 +532,198 @@ def convert_to_frames(
         geometry_reason=gate.reason,
         player_off_pitch_rate=gate.player_off_pitch_rate,
         ball_off_pitch_rate=gate.ball_off_pitch_rate,
+        ltr_flip_by_period=ltr_flip_by_period,
+        n_degenerate_footprint_frames=n_degenerate_footprint,
+        game_id=game_id,
+        provider_period_frame_ranges=provider_ranges,
     )
+    # The coords are scaled to the 105 x 68 frame, so the ORIGINAL pitch dimensions (which fix where every
+    # real-metre Law location lands after scaling: the spot, the goal area, the corner arc; spec sections 6.4 / 12,
+    # amended 2026-10-22) are stamped here, after every transform (attrs do not survive most pandas ops, so set
+    # them last, before return).
+    final.attrs["pitch_length"] = float(pitch_length)
+    final.attrs["pitch_width"] = float(pitch_width)
+    # The flip APPLIED to these frames per period (R.2 2026-10-23): a GI attacking_side is in the delivered frame,
+    # so the GI direction check maps it through this record. "absolute_frame" applies none (False); a "ltr" period
+    # without a decision stays None (unresolved). A JSON-safe triple list: attrs cross parquet only as JSON. A
+    # consumer should still pass frame_flips_from_report(report) explicitly -- attrs drop through most pandas
+    # operations and every write to disk.
+    applied = (
+        ltr_flip_by_period
+        if output_convention == "ltr"
+        else {int(p): False for p in pd.Series(final["period_id"]).dropna().unique()}
+    )
+    final.attrs[FRAME_FLIPS_ATTR] = [[str(game_id), int(p), v] for p, v in sorted(applied.items())]
+    if provider_ranges is not None:
+        # The PROVIDER period range (spec section 17.7, amended 2026-10-25): a JSON-safe fallback for the GI pairing
+        # Range test; pass period_frame_ranges_from_report(report) explicitly (attrs drop through most operations).
+        final.attrs[PERIOD_FRAME_RANGES_ATTR] = [
+            [str(game_id), int(p), int(lo), int(hi)] for p, (lo, hi) in sorted(provider_ranges.items())
+        ]
     return final, report
+
+
+def provider_period_frame_ranges(records: Iterable[Mapping[str, Any]] | pd.DataFrame) -> dict[int, tuple[int, int]]:
+    """The PROVIDER period range of one SkillCorner match: ``{period_id: (first_frame, last_frame)}`` over every raw
+    tracking record the provider labels with that period, empty frames (no objects) included, records with period
+    ``None`` (before kick-off, the inter-period jump) excluded (spec sections 6.1 / 17.7, amended 2026-10-25). Pure.
+
+    ``records`` is the raw feed as a list of frame records (``frame``, ``period``; the JSONL / parquet record shape)
+    or a frame with those columns. The bronze cannot give this: it carries only frames with objects.
+
+    Examples
+    --------
+    Compute the range from the raw records, then pass it with the bronze built from the same records::
+
+        ranges = provider_period_frame_ranges(raw_records)        # {1: (10, 28530), 2: (28540, 58080)}
+        frames, report = convert_to_frames(bronze, home_team_id="31", period_frame_ranges=ranges)
+    """
+    if isinstance(records, pd.DataFrame):
+        pairs = zip(records["frame"].tolist(), records["period"].tolist(), strict=True)
+    else:
+        pairs = ((r.get("frame"), r.get("period")) for r in records)
+    out: dict[int, tuple[int, int]] = {}
+    for frame, period in pairs:
+        if frame is None or period is None or pd.isna(frame) or pd.isna(period):
+            continue
+        p, f = int(period), int(frame)
+        lo, hi = out.get(p, (f, f))
+        out[p] = (min(lo, f), max(hi, f))
+    return dict(sorted(out.items()))
+
+
+def _check_period_frame_ranges(
+    ranges: Mapping[int, tuple[int, int]] | None, src: pd.DataFrame
+) -> dict[int, tuple[int, int]] | None:
+    """Validate a supplied provider period range against the bronze: keyed by period (one match), and every
+    retained frame inside its period's range (the retained frames are a subset of the raw ones). ``None`` gives
+    ``None``."""
+    if ranges is None:
+        return None
+    bad = [k for k in ranges if isinstance(k, tuple)]
+    if bad:
+        raise TypeError(
+            f"convert_to_frames: period_frame_ranges is keyed by period_id for ONE match; got key {bad[0]!r}. "
+            "Build it with provider_period_frame_ranges(raw_records)."
+        )
+    clean = {int(p): (int(lo), int(hi)) for p, (lo, hi) in ranges.items()}
+    for p, g in src.groupby("period"):
+        period = _as_int(p)
+        lohi = clean.get(period)
+        f = g["frame"].to_numpy("int64")
+        if lohi is None or int(f.min()) < lohi[0] or int(f.max()) > lohi[1]:
+            raise ValueError(
+                f"convert_to_frames: retained period {period} frames {int(f.min())}..{int(f.max())} lie outside the "
+                f"supplied provider range {lohi} -- the range belongs to another match or another feed."
+            )
+    return dict(sorted(clean.items()))
+
+
+def _as_int(v) -> int:
+    """pandas Scalar / Hashable -> int; the untyped arg sidesteps the stub friction (the ``_restart_frame._i``
+    idiom)."""
+    return int(v)
+
+
+def period_frame_ranges_from_report(report: TrackingConversionReport) -> dict[tuple[str, int], tuple[int, int]]:
+    """The PROVIDER period range per ``(game_id, period_id)`` -- the ``period_ranges`` input of
+    ``assess_gi_pairing`` / ``resolve_kicks`` -- from the SkillCorner tracking report of ONE match (the CL-37
+    ``frame_flips_from_report`` pattern; a period-only mapping passed downstream raises ``TypeError``). RAISES
+    ``ValueError`` when the report is not a SkillCorner report, carries no ``game_id``, or recorded no provider
+    range (``convert_to_frames`` was called without ``period_frame_ranges``).
+
+    Examples
+    --------
+    Convert with the raw range, then pass THAT report's range to the pairing::
+
+        frames, report = convert_to_frames(bronze, home_team_id="31", period_frame_ranges=ranges)
+        period_ranges = period_frame_ranges_from_report(report)  # {("m1", 1): (10, 28530), ("m1", 2): (28540, 58080)}
+    """
+    if report.provider != "skillcorner":
+        raise ValueError(
+            f"period_frame_ranges_from_report: report.provider={report.provider!r}, expected 'skillcorner'."
+        )
+    if report.game_id is None:
+        raise ValueError("period_frame_ranges_from_report: the report carries no game_id (the match cannot be keyed).")
+    if report.provider_period_frame_ranges is None:
+        raise ValueError(
+            "period_frame_ranges_from_report: the report recorded no provider period range -- pass "
+            "period_frame_ranges=provider_period_frame_ranges(raw_records) to convert_to_frames."
+        )
+    gid = str(report.game_id)
+    return {(gid, int(p)): (int(lo), int(hi)) for p, (lo, hi) in sorted(report.provider_period_frame_ranges.items())}
+
+
+def frame_flips_from_report(
+    report: TrackingConversionReport,
+    *,
+    output_convention: Literal["absolute_frame", "ltr"] = "ltr",
+) -> dict[tuple[str, int], bool | None]:
+    """The frames' applied orientation flip per ``(game_id, period_id)`` -- the ``flips`` input of
+    ``gi_direction_check`` / ``resolve_kicks`` -- from the SkillCorner tracking report of ONE match.
+
+    ``report.ltr_flip_by_period`` is keyed by period only; this adds the report's ``game_id``. Pass the SAME
+    ``output_convention`` the frames were converted with: ``"ltr"`` returns the recorded decision (a ``None``
+    period stays ``None`` = unresolved); ``"absolute_frame"`` applied no flip, so every converted period is
+    ``False``. RAISES ``ValueError`` when the report is not a SkillCorner report or carries no ``game_id`` (an
+    unprovable match). Frames written to disk lose their ``attrs`` stamp, so store this record with them.
+
+    Examples
+    --------
+    Convert the frames, then pass THAT report's flips to the GI direction check::
+
+        frames, report = convert_to_frames(bronze, home_team_id="31")
+        flips = frame_flips_from_report(report)  # {("m1", 1): False, ("m1", 2): True}
+        check = gi_direction_check(actions, resolve_defended_goals(frames), flips=flips)
+    """
+    if report.provider != "skillcorner":
+        raise ValueError(f"frame_flips_from_report: report.provider={report.provider!r}, expected 'skillcorner'.")
+    if report.game_id is None:
+        raise ValueError("frame_flips_from_report: the report carries no game_id (the match cannot be keyed).")
+    gid = str(report.game_id)
+    if output_convention == "absolute_frame":
+        return {(gid, int(p)): False for p in sorted(report.frame_coverage_per_period)}
+    return {(gid, int(p)): v for p, v in sorted(report.ltr_flip_by_period.items())}
+
+
+def convert_camera_footprint(
+    bronze: pd.DataFrame,
+    *,
+    report: TrackingConversionReport,
+    assume_standard_pitch: bool = False,
+) -> pd.DataFrame:
+    """The SkillCorner camera-footprint companion table (spec section 17.7 / CL-15, DL ruling): one row per
+    (game_id, period_id, frame_id) with the four footprint corners in the SPADL frame.
+
+    It scales the footprint on the SAME pitch dims as ``convert_to_frames`` and APPLIES
+    ``report.ltr_flip_by_period`` -- it NEVER re-decides the flip, so the footprint cannot disagree with the
+    frames. It RAISES when ``report`` is not a SkillCorner report, or belongs to a different match (the frames
+    and footprint must share one orientation decision).
+
+    Examples
+    --------
+    Convert the frames first, then the footprint with THAT report::
+
+        frames, report = convert_to_frames(bronze, home_team_id="31")
+        footprint = convert_camera_footprint(bronze, report=report)
+        # one row per (game_id, period_id, frame_id); cam_tl_x ... cam_bl_y in the frames' orientation
+    """
+    if report.provider != "skillcorner":
+        raise ValueError(f"convert_camera_footprint: report.provider={report.provider!r}, expected 'skillcorner'.")
+    game_id = str(bronze["match_id"].iloc[0])
+    if report.game_id is None or str(report.game_id) != game_id:  # no game id = unprovable match = refuse
+        raise ValueError(
+            f"convert_camera_footprint: report.game_id={report.game_id!r} does not match the bronze "
+            f"game_id={game_id!r} -- the report must belong to this match (its orientation decision applies)."
+        )
+    pitch_length, pitch_width = _resolve_pitch_dims(bronze, assume_standard_pitch)
+    footprint = _scale_footprint(bronze, pitch_length=pitch_length, pitch_width=pitch_width)
+    flips = {(game_id, int(p)): v for p, v in report.ltr_flip_by_period.items()}
+    footprint = orient_camera_footprint(footprint, flips)
+    out = pd.DataFrame({c: footprint[c] for c in SKILLCORNER_CAMERA_FOOTPRINT_COLUMNS})
+    for c, dt in SKILLCORNER_CAMERA_FOOTPRINT_COLUMNS.items():
+        if dt in {"int64", "float64", "float32"}:
+            out[c] = pd.to_numeric(out[c], errors="coerce").astype(dt)  # type: ignore[arg-type]
+        else:
+            out[c] = out[c].astype(object)
+    return out

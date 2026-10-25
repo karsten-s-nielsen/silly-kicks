@@ -24,10 +24,24 @@ class TestSkillcornerSchema:
         assert SKILLCORNER_SPADL_COLUMNS["action_provenance"] == "object"
 
     def test_skillcorner_extra_columns(self):
-        # action_provenance (native/derived) + result_source (completion-label tier, D-S8/G1)
+        # SkillCorner-specific extra over the KLOPPY family: action_provenance (native/derived) and the six
+        # TF-46 Arm 1 Part 2 GI facts (spec section 17.2, CL-1 / CL-13 / B-11).
+        # result_source / restart_evidence / type_source AND repair_kind are now base SPADL_COLUMNS
+        # (ADR-046 / decision D / D1: repair_kind promoted to base — two emitters + shared readers), so
+        # KLOPPY inherits them too and they cancel in the set difference.
         extra = set(SKILLCORNER_SPADL_COLUMNS) - set(KLOPPY_SPADL_COLUMNS)
-        assert extra == {"action_provenance", "result_source"}
-        assert SKILLCORNER_SPADL_COLUMNS["result_source"] == "object"
+        assert extra == {
+            "action_provenance",
+            "gi_marker_possession_frame_end",
+            "gi_next_possession_frame_start",
+            "gi_attacking_side",
+            "gi_possession_frame_start",
+            "gi_possession_frame_end",
+            "gi_event_id",
+            "period_source",  # the GI period-label repair provenance (TF-46 Part 2 spec section 26.5)
+        }
+        assert SKILLCORNER_SPADL_COLUMNS["result_source"] == "object"  # from base, dtype unchanged (Hyrum)
+        assert SKILLCORNER_SPADL_COLUMNS["repair_kind"] == "object"  # from base (D1), dtype unchanged (Hyrum)
 
 
 class TestCoordinateTransform:

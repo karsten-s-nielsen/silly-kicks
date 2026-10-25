@@ -770,7 +770,12 @@ _ADD_RESTART_COORDS_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (
 
 @nan_safe_enrichment
 def add_restart_coordinates(
-    actions: pd.DataFrame, *, frames: pd.DataFrame | None = None, links: pd.DataFrame | None = None
+    actions: pd.DataFrame,
+    *,
+    frames: pd.DataFrame | None = None,
+    links: pd.DataFrame | None = None,
+    data_profile=None,
+    gate_table=None,
 ) -> pd.DataFrame:
     """Impute missing restart coordinates as new, provenance-tagged columns (Phase 1, additive).
 
@@ -796,14 +801,21 @@ def add_restart_coordinates(
         Long-form tracking frames (``TRACKING_FRAMES_COLUMNS``). Enables the tracking tiers.
     links : pd.DataFrame | None, default None
         Pre-computed action->frame pointers (skips internal linking).
+    data_profile : DataProfile | None, default None
+        The TF-46 data profile. When given, the section 10.1 gated origin tiers (``stationary_window`` /
+        ``t_kick_ball`` / bracket-anchored ``tracking_gk``) run, each behind its own restart gate cell; the
+        commit-2 gate table is empty, so they withhold.
+    gate_table : Mapping | None, default None
+        Overrides the shipped restart gate table (the pre-flight drivers inject one to score the rule).
 
     Returns
     -------
     pd.DataFrame
         Sorted copy of ``actions`` (by ``game_id``, ``period_id``, ``time_seconds`` when present,
-        then ``action_id``) with 8 appended
+        then ``action_id``) with 11 appended
         columns: ``enriched_start_x``/``_y``, ``start_coord_source``, ``start_coord_confidence``,
-        ``enriched_end_x``/``_y``, ``end_coord_source``, ``end_coord_confidence``.
+        ``enriched_end_x``/``_y``, ``end_coord_source``, ``end_coord_confidence``, and the origin
+        provenance ``origin_evidence``, ``origin_gate_version``, ``origin_cell_resolution``.
 
     Raises
     ------
@@ -837,7 +849,9 @@ def add_restart_coordinates(
 
     from silly_kicks.tracking._gk_geometry import apply_restart_tripwire, resolve_restart_geometry
 
-    geom = resolve_restart_geometry(sorted_actions, frames=frames, links=links)  # PURE: no tripwire
+    geom = resolve_restart_geometry(
+        sorted_actions, frames=frames, links=links, data_profile=data_profile, gate_table=gate_table
+    )
     geom["type_id"] = sorted_actions["type_id"].to_numpy()  # apply_restart_tripwire needs type_id
     apply_restart_tripwire(geom)  # feature-policy step at the EDGE (spec section 6); mutates geom in place
     for col in (
@@ -849,6 +863,10 @@ def add_restart_coordinates(
         "enriched_end_y",
         "end_coord_source",
         "end_coord_confidence",
+        # TF-46 Arm 1 Part 2 origin provenance (spec section 10.1); <NA> in commit 2 (empty gate).
+        "origin_evidence",
+        "origin_gate_version",
+        "origin_cell_resolution",
     ):
         sorted_actions[col] = geom[col].to_numpy()
     return sorted_actions
@@ -1663,6 +1681,30 @@ def _assert_chronological_action_id(actions: pd.DataFrame) -> None:
                 f"sort chronologically at the top of the frame (chronological-action_id invariant, "
                 f"spec 2026-08-20; use spadl.base.sort_actions_chronologically)."
             )
+
+
+#: TF-46 Arm 1 base signal columns (ADR-046 / decision D). On base ``SPADL_COLUMNS``; every converter
+#: emits them. The shared training-exclusion helper reads ``result_source`` + ``restart_evidence``; the
+#: corner layer reads ``type_source``.
+_BASE_SIGNAL_COLUMNS: tuple[str, ...] = ("result_source", "restart_evidence", "type_source", "repair_kind")
+
+
+def _ensure_base_signal_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Set the three base signal columns to ``pd.NA`` where a converter has not assigned a real value.
+
+    Fill-if-absent, never overwrite: a converter that classifies a row (e.g. SkillCorner ``result_source``,
+    Sportec ``type_source``) keeps its value; everything else is ``<NA>`` = "tier not classified". Call this
+    immediately before ``_finalize_output``. A converter that forgets the call trips ``_finalize_output``
+    strict projection (``KeyError``) -- that is the producer-side guarantee the tolerant exclusion helper
+    relies on (decision E).
+
+    Mutates *df* in place (adds the missing columns) and returns the same object; converters own their
+    working frame and reassign the result, so no copy is made.
+    """
+    for col in _BASE_SIGNAL_COLUMNS:
+        if col not in df.columns:
+            df[col] = pd.NA
+    return df
 
 
 def _finalize_output(

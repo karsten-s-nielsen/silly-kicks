@@ -211,10 +211,11 @@ def test_meta_every_known_spadl_column_declares_a_kind():
     fifth provider variant is added -- exactly the rot this guards.
     """
     from silly_kicks.spadl import schema as S
+    from silly_kicks.tracking._restart_validation import RESTART_REFINEMENT_COLUMNS
 
     provider_variants = set().union(*(set(getattr(S, n)) for n in dir(S) if n.endswith("_SPADL_COLUMNS")))
     known = (
-        provider_variants  # 14 canonical + 7 provider-specific
+        provider_variants  # 20 canonical (incl. 2 block + 4 TF-46 signal incl. repair_kind) + 16 provider-specific
         | set(S.SPADL_NAME_COLUMNS)  # type_name / result_name / bodypart_name
         | {  # ADR-025 restart-coordinate enrichment
             "enriched_start_x",
@@ -226,13 +227,14 @@ def test_meta_every_known_spadl_column_declares_a_kind():
             "start_coord_confidence",
             "end_coord_confidence",
         }
+        | set(RESTART_REFINEMENT_COLUMNS)  # TF-46 Arm 1 Part 2 additive restart columns (spec section 17.1)
     )
     missing = sorted(known - set(SPADL_REFLECTION_KINDS))
     assert not missing, (
         f"columns without a declared reflection kind: {missing}. Under on_unknown='raise' "
         f"these RAISE in production, they do not pass through."
     )
-    assert len(known) == 34, f"expected the measured 34-column surface, got {len(known)}"
+    assert len(known) == 103, f"expected the measured 103-column surface (47 + 56 refinement), got {len(known)}"
 
 
 def test_meta_every_known_atomic_spadl_column_declares_a_kind():

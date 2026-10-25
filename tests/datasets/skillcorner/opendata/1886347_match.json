@@ -1,0 +1,251 @@
+{
+  "away_team": {
+    "id": 1805,
+    "name": "Newcastle United Jets FC"
+  },
+  "away_team_score": 0,
+  "home_team": {
+    "id": 4177,
+    "name": "Auckland FC"
+  },
+  "home_team_score": 2,
+  "id": 1886347,
+  "match_periods": [
+    {
+      "duration_frames": 27780,
+      "duration_minutes": 46.3,
+      "end_frame": 27790,
+      "name": "period_1",
+      "period": 1,
+      "start_frame": 10
+    },
+    {
+      "duration_frames": 31260,
+      "duration_minutes": 52.1,
+      "end_frame": 59060,
+      "name": "period_2",
+      "period": 2,
+      "start_frame": 27800
+    }
+  ],
+  "pitch_length": 104,
+  "pitch_width": 68,
+  "players": [
+    {
+      "goal": 0,
+      "id": 38673,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 51713,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 50951,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 50978,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 1,
+      "id": 133498,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 33697,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 51667,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 14736,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 966125,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 966124,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 808965,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 735573,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 51009,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 176224,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 735578,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 735574,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 50983,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 51649,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 965685,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 795506,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 797297,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 560992,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 800320,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 1,
+      "id": 43829,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 31147,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 163972,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 133501,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 23418,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 795507,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 795505,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 966120,
+      "own_goal": 0,
+      "team_id": 1805
+    },
+    {
+      "goal": 0,
+      "id": 23928,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 14355,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 965684,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 133495,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 285188,
+      "own_goal": 0,
+      "team_id": 4177
+    }
+  ]
+}

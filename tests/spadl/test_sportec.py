@@ -154,8 +154,10 @@ def _df_freekick() -> pd.DataFrame:
 
 
 def _df_freekick_cross() -> pd.DataFrame:
+    # F7 (TF-46 Arm 1): the crossed free kick is driven by the DFL play_penalty_box qualifier, not the old
+    # freekick_execution_mode mapping (whose cross/long/... values never occur in DFL).
     df = _df_freekick()
-    df["freekick_execution_mode"] = ["cross"]
+    df["play_penalty_box"] = ["true"]
     return df
 
 
@@ -269,14 +271,22 @@ class TestSportecActionMappingPassAndSetPieces:
         assert actions["bodypart_id"].iloc[0] == spadlconfig.bodypart_id["head"]
 
     def test_freekick_default_maps_to_freekick_short(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_freekick(), home_team_id="T-HOME", home_team_start_left=True)
+        # No play_penalty_box qualifier -> freekick_short, type_source="inferred" (F7 stopgap).
+        actions, report = sportec_mod.convert_to_actions(
+            _df_freekick(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["freekick_short"]
+        assert actions["type_source"].iloc[0] == "inferred"
+        assert report.freekick_inferred_count == 1
 
-    def test_freekick_with_cross_execution_maps_to_freekick_crossed(self):
-        actions, _ = sportec_mod.convert_to_actions(
+    def test_freekick_penalty_box_maps_to_freekick_crossed(self):
+        # F7: play_penalty_box=="true" -> freekick_crossed, type_source="native" (flag-driven).
+        actions, report = sportec_mod.convert_to_actions(
             _df_freekick_cross(), home_team_id="T-HOME", home_team_start_left=True
         )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["freekick_crossed"]
+        assert actions["type_source"].iloc[0] == "native"
+        assert report.freekick_inferred_count == 0
 
     def test_corner_default_maps_to_corner_short(self):
         actions, _ = sportec_mod.convert_to_actions(_df_corner(), home_team_id="T-HOME", home_team_start_left=True)
@@ -852,6 +862,15 @@ class TestSportecGKQualifierSynthesis:
         )
         assert actions["type_id"].iloc[1] == spadlconfig.actiontype_id["pass"]
         assert actions["bodypart_id"].iloc[1] == spadlconfig.bodypart_id["other"]
+
+    def test_distribution_rows_marked_derived(self):
+        # Spec section 7.2 (decision B2): throwOut/punt synthesize a keeper_pick_up + a distribution second
+        # half; BOTH rows are action_provenance="derived". A mutation leaving them "native" must fail here. -18.
+        for qualifier in ("throwOut", "punt"):
+            actions, _ = sportec_mod.convert_to_actions(
+                _df_play_gk(qualifier), home_team_id="T-HOME", home_team_start_left=True
+            )
+            assert (actions["action_provenance"] == "derived").all(), qualifier
 
     def test_punt_first_action_is_keeper_pick_up(self):
         actions, _ = sportec_mod.convert_to_actions(
@@ -1482,3 +1501,279 @@ def test_shot_blocked_excludes_own_team_deflection():
     assert (shots["shot_blocked"] == True).sum() == 3  # noqa: E712
     assert (shots["shot_blocked"] == False).sum() >= 1  # noqa: E712  (incl. the own-team deflection)
     assert actions["cross_blocked"].isna().all()
+
+
+# ---------------------------------------------------------------------------
+# F7 — free-kick crossed from the DFL play_penalty_box qualifier (TF-46 Arm 1)
+# ---------------------------------------------------------------------------
+class TestSportecFreeKickCrossedF7:
+    """F7: freekick_crossed iff play_penalty_box=="true"; else freekick_short.
+
+    A missing qualifier stays freekick_short with type_source="inferred" and is counted in the report.
+    """
+
+    @staticmethod
+    def _fk(pen_box: str | None, event_id: str = "e1", t: float = 10.0) -> pd.DataFrame:
+        df = _df_freekick().assign(event_id=event_id, timestamp_seconds=t)
+        if pen_box is not None:
+            df["play_penalty_box"] = [pen_box]
+        return df
+
+    def test_true_is_crossed_native(self):
+        actions, report = sportec_mod.convert_to_actions(
+            self._fk("true"), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["freekick_crossed"]
+        assert actions["type_source"].iloc[0] == "native"
+        assert report.freekick_inferred_count == 0
+
+    def test_false_is_short_native(self):
+        actions, report = sportec_mod.convert_to_actions(
+            self._fk("false"), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["freekick_short"]
+        assert actions["type_source"].iloc[0] == "native"
+        assert report.freekick_inferred_count == 0
+
+    def test_missing_is_short_inferred_counted(self):
+        actions, report = sportec_mod.convert_to_actions(
+            self._fk(None), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["freekick_short"]
+        assert actions["type_source"].iloc[0] == "inferred"
+        assert report.freekick_inferred_count == 1
+
+    def test_report_counts_one_inferred_among_three(self):
+        events = pd.concat(
+            [self._fk("true", "e1", 10.0), self._fk("false", "e2", 20.0), self._fk(None, "e3", 30.0)],
+            ignore_index=True,
+        )
+        actions, report = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
+        tn = actions["type_id"].map({v: k for k, v in spadlconfig.actiontype_id.items()})
+        assert (tn == "freekick_crossed").sum() == 1
+        assert (tn == "freekick_short").sum() == 2
+        assert report.freekick_inferred_count == 1
+
+
+# ---------------------------------------------------------------------------
+# F4 — DFL BallClaiming -> ball_claim_type qualifier + derived rows (TF-46 Arm 1)
+# ---------------------------------------------------------------------------
+def _claim_match() -> pd.DataFrame:
+    """One synthetic DFL match exercising all four claim_type values and every F4 branch."""
+    rows: list[dict] = [
+        # InterceptedBall with a plain pass partner -> derived interception + qualifier on the pass
+        {"event_id": "p1", "event_type": "Play", "timestamp_seconds": 10.0, "player_id": "P1"},
+        {
+            "event_id": "c1",
+            "event_type": "BallClaiming",
+            "timestamp_seconds": 10.05,
+            "player_id": "P1",
+            "claim_type": "InterceptedBall",
+        },
+        # InterceptedBall with a tackle partner -> skip (already a defensive touch), qualifier on the tackle
+        {"event_id": "t1", "event_type": "TacklingGame", "timestamp_seconds": 20.0, "player_id": "P2"},
+        {
+            "event_id": "c2",
+            "event_type": "BallClaiming",
+            "timestamp_seconds": 20.03,
+            "player_id": "P2",
+            "claim_type": "InterceptedBall",
+        },
+        # InterceptedBall with a keeper_save partner -> skip
+        {
+            "event_id": "k1",
+            "event_type": "Play",
+            "timestamp_seconds": 30.0,
+            "player_id": "P9",
+            "play_goal_keeper_action": "save",
+        },
+        {
+            "event_id": "c3",
+            "event_type": "BallClaiming",
+            "timestamp_seconds": 30.02,
+            "player_id": "P9",
+            "claim_type": "InterceptedBall",
+        },
+        # BallHeld with a non-keeper partner -> derived keeper_pick_up + qualifier on the pass
+        {"event_id": "p2", "event_type": "Play", "timestamp_seconds": 40.0, "player_id": "P3"},
+        {
+            "event_id": "c4",
+            "event_type": "BallClaiming",
+            "timestamp_seconds": 40.02,
+            "player_id": "P3",
+            "claim_type": "BallHeld",
+        },
+        # BallHeld with an existing keeper_save partner -> duplicate-keeper guard: NO derived row
+        {
+            "event_id": "k2",
+            "event_type": "Play",
+            "timestamp_seconds": 50.0,
+            "player_id": "P9",
+            "play_goal_keeper_action": "save",
+        },
+        {
+            "event_id": "c5",
+            "event_type": "BallClaiming",
+            "timestamp_seconds": 50.02,
+            "player_id": "P9",
+            "claim_type": "BallHeld",
+        },
+        # BallClaimed with a pass partner -> derived interception carrying ball_claim_type on the ROW
+        # (not a qualifier on the partner); never keeper_claim.
+        {"event_id": "p3", "event_type": "Play", "timestamp_seconds": 60.0, "player_id": "P4"},
+        {
+            "event_id": "c6",
+            "event_type": "BallClaiming",
+            "timestamp_seconds": 60.02,
+            "player_id": "P4",
+            "claim_type": "BallClaimed",
+        },
+        # Block -> qualifier only
+        {"event_id": "p4", "event_type": "Play", "timestamp_seconds": 70.0, "player_id": "P5"},
+        {
+            "event_id": "c7",
+            "event_type": "BallClaiming",
+            "timestamp_seconds": 70.02,
+            "player_id": "P5",
+            "claim_type": "Block",
+        },
+        # BallClaimed with NO surviving partner (P6 has no other event) -> standalone derived interception
+        # at the claim's own time and coordinates, carrying ball_claim_type="BallClaimed".
+        {
+            "event_id": "c8",
+            "event_type": "BallClaiming",
+            "timestamp_seconds": 90.0,
+            "player_id": "P6",
+            "claim_type": "BallClaimed",
+        },
+        # BallClaimed with a tackle partner -> skip (defensive touch exists): the qualifier lands on the
+        # tackle, no derived interception row. 0 such cases on IDSSE; guards the "206 land" invariant (-19).
+        {"event_id": "t2", "event_type": "TacklingGame", "timestamp_seconds": 100.0, "player_id": "P7"},
+        {
+            "event_id": "c9",
+            "event_type": "BallClaiming",
+            "timestamp_seconds": 100.03,
+            "player_id": "P7",
+            "claim_type": "BallClaimed",
+        },
+        # The existing Play "claim" branch (play_gk_claim) is unchanged -> keeper_claim
+        {
+            "event_id": "k3",
+            "event_type": "Play",
+            "timestamp_seconds": 80.0,
+            "player_id": "P9",
+            "play_goal_keeper_action": "claim",
+        },
+    ]
+    df = pd.DataFrame(rows)
+    df["match_id"] = "M1"
+    df["period"] = 1
+    df["team"] = "T-HOME"
+    df["x"] = 50.0
+    df["y"] = 34.0
+    return df
+
+
+class TestSportecBallClaimingF4:
+    @staticmethod
+    def _convert():
+        return sportec_mod.convert_to_actions(_claim_match(), home_team_id="T-HOME", home_team_start_left=True)
+
+    @staticmethod
+    def _names(actions):
+        return actions["type_id"].map({v: k for k, v in spadlconfig.actiontype_id.items()})
+
+    def test_report_ball_claim_counts(self):
+        _, report = self._convert()
+        assert report.ball_claim_counts == {"InterceptedBall": 3, "BallHeld": 2, "BallClaimed": 3, "Block": 1}
+        # InterceptedBall plain-pass partner (1; tackle + keeper partners skip) + BallClaimed partnered c6
+        # + standalone c8 -> 3 derived interceptions. The tackle-partner BallClaimed c9 skips (no row).
+        assert report.interceptions_added == 3
+        assert report.keeper_pick_ups_added == 1  # only the non-keeper partner; the keeper partner is a dup
+        assert report.ball_claim_unattached == 0  # every claim lands (c9 as a qualifier on its tackle)
+
+    def test_interception_row_emitted_and_derived(self):
+        actions, _ = self._convert()
+        names = self._names(actions)
+        interceptions = actions[names == "interception"]
+        assert len(interceptions) == 3
+        assert (interceptions["action_provenance"] == "derived").all()
+        # c1 -> P1 (InterceptedBall), c6 -> P4 (BallClaimed, partner p3's player), c8 -> P6 (standalone).
+        assert set(interceptions["player_id"]) == {"P1", "P4", "P6"}
+
+    def test_qualifier_lands_on_partner_actions(self):
+        actions, _ = self._convert()
+        by_event = actions.set_index("original_event_id")["ball_claim_type"]
+        assert by_event.get("p1") == "InterceptedBall"  # pass partner
+        assert by_event.get("t1") == "InterceptedBall"  # tackle partner (skip case still gets the qualifier)
+        assert by_event.get("k1") == "InterceptedBall"  # keeper_save partner (skip case)
+        assert by_event.get("p2") == "BallHeld"
+        assert by_event.get("k2") == "BallHeld"
+        assert by_event.get("p4") == "Block"
+        # A BallClaimed carries its token on its own derived interception row, not on the partner pass p3.
+        assert pd.isna(by_event.get("p3"))
+        # EXCEPT a skipped BallClaimed (tackle/keeper partner, no derived row) -> qualifier lands on the tackle.
+        assert by_event.get("t2") == "BallClaimed"
+
+    def test_ball_claimed_derived_interception_carries_token(self):
+        # Spec section 7.1 (amended): a BallClaimed becomes a derived interception whose OWN row carries
+        # ball_claim_type="BallClaimed" (partnered and standalone), keeping ball wins separable from pass
+        # interceptions. The InterceptedBall-origin interception keeps ball_claim_type NA on its row.
+        actions, _ = self._convert()
+        names = self._names(actions)
+        bc_rows = actions[(names == "interception") & (actions["ball_claim_type"] == "BallClaimed")]
+        assert set(bc_rows["original_event_id"]) == {"c6_f4_interception", "c8_f4_interception"}
+        assert (bc_rows["action_provenance"] == "derived").all()
+        standalone = bc_rows[bc_rows["original_event_id"] == "c8_f4_interception"].iloc[0]
+        assert standalone["player_id"] == "P6"
+        assert standalone["time_seconds"] == 90.0
+        assert standalone["start_x"] == 50.0 and standalone["start_y"] == 34.0
+        ib = actions[(names == "interception") & actions["ball_claim_type"].isna()]
+        assert len(ib) == 1 and ib["player_id"].iloc[0] == "P1"
+
+    def test_ball_claimed_skip_lands_as_qualifier(self):
+        # TF46C-IMPL-19 / A1-IMPL-12: a BallClaimed whose partner is already a tackle/keeper skips the derived
+        # row (no double count) but still LANDS -- the qualifier is recorded on that partner. 0 cases on IDSSE.
+        actions, _ = self._convert()
+        by_event = actions.set_index("original_event_id")["ball_claim_type"]
+        assert by_event.get("t2") == "BallClaimed"  # landed on the tackle partner
+        oeid = actions["original_event_id"].astype(str)
+        assert int(oeid.str.endswith("c9_f4_interception").sum()) == 0  # no derived row for the skipped claim
+
+    def test_derived_interception_sorts_just_before_partner(self):
+        # Spec section 7.1: the derived interception is placed just BEFORE its partner row
+        # (_row_order = partner_index*10 - 1). A mutation to *10 + 1 (after the partner) must fail here. -17.
+        actions, _ = self._convert()
+        oeid = list(actions["original_event_id"].astype(str))
+        assert oeid.index("c1_f4_interception") == oeid.index("p1") - 1
+
+    def test_keeper_pick_up_derived_only_without_existing_keeper(self):
+        actions, _ = self._convert()
+        names = self._names(actions)
+        # The derived keeper_pick_up is the F4 one (its original_event_id carries the _f4 suffix).
+        f4_kpu = actions[(names == "keeper_pick_up") & actions["original_event_id"].str.endswith("_f4_keeper_pick_up")]
+        assert len(f4_kpu) == 1
+        assert f4_kpu["player_id"].iloc[0] == "P3"
+
+    def test_ball_claimed_and_block_never_keeper_claim(self):
+        actions, _ = self._convert()
+        names = self._names(actions)
+        # The only keeper_claim is the native Play-claim branch (event k3); no BallClaimed/Block created one.
+        keeper_claims = actions[names == "keeper_claim"]
+        assert len(keeper_claims) == 1
+        assert keeper_claims["original_event_id"].iloc[0] == "k3"
+        assert keeper_claims["ball_claim_type"].isna().all()
+
+    def test_derived_rows_marked_derived_natives_native(self):
+        actions, _ = self._convert()
+        names = self._names(actions)
+        derived = actions[names.isin(["interception"]) | actions["original_event_id"].str.contains("_f4_")]
+        assert (derived["action_provenance"] == "derived").all()
+        # A plain pass partner stays native.
+        assert actions.loc[actions["original_event_id"] == "p1", "action_provenance"].iloc[0] == "native"
+
+    def test_no_input_mutation(self):
+        events = _claim_match()
+        before = events.copy(deep=True)
+        sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
+        pd.testing.assert_frame_equal(events, before)

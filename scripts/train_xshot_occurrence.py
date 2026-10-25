@@ -512,6 +512,9 @@ def _extract_work(item, ctx) -> pd.DataFrame | None:
     )
     if not len(X):
         return None
+    # TF-46 Arm 1 Part 2 (spec section 18.2.1): the per-match provenance-censored frame count, stashed for the
+    # counters channel (read here before any concat clears the attribute).
+    _LAST_CENSORED[str(mid)] = int(X.attrs.get("n_provenance_censored", 0))
     return X.assign(
         _y=np.asarray(y, int),
         _group=np.asarray(groups),
@@ -520,14 +523,22 @@ def _extract_work(item, ctx) -> pd.DataFrame | None:
     )
 
 
+#: Per-match provenance-censored frame count, set by `_extract_work` and read by `_extract_counters` in the
+#: same item (TF-46 Arm 1 Part 2, spec section 18.2.1).
+_LAST_CENSORED: dict[str, int] = {}
+
+
 def _extract_counters(item, _frame) -> dict:
     """The ADR-126 integrity inputs of one match (shots by the label's own ``type_id`` set, frames,
-    duration): counters only, never in a token or the artifact (ADR-128 plan Task 20)."""
+    duration): counters only, never in a token or the artifact (ADR-128 plan Task 20). Also carries the
+    provenance-censored frame count (spec section 18.2.1)."""
     from scripts._integrity_counters import integrity_counters
     from silly_kicks.tracking._xshot_occurrence import _DEFAULT_SHOT_TYPES
 
-    _prov, _mid, shots, frames, _home = item
-    return integrity_counters(frames, shots, _DEFAULT_SHOT_TYPES)
+    _prov, mid, shots, frames, _home = item
+    out = dict(integrity_counters(frames, shots, _DEFAULT_SHOT_TYPES))
+    out["provenance_censored"] = float(_LAST_CENSORED.pop(str(mid), 0))
+    return out
 
 
 def _extract_reduce(results, ctx) -> pd.DataFrame:
@@ -924,6 +935,11 @@ def _assemble_work(key, ctx):
         "estimates_are_cv_not_shipped_fit": True,
         "artifact_size_bytes": sum(len(b) for b in fit.files.values()),
     }
+    # TF-46 Arm 1 Part 2 (spec section 18.2.1): the corpus-wide provenance-censored frame count.
+    from scripts._stages import item_counters
+
+    _cnt, _ = item_counters(ctx, "extract")
+    metrics["provenance_censored_frames"] = int(_cnt.get("provenance_censored", 0.0))
     files = dict(fit.files)
     files["metrics.json"] = json.dumps(metrics, indent=2).encode("utf-8")  # the legacy json.dump bytes
     print(f"Wrote artifact + metrics ({sorted(files)})")

@@ -84,6 +84,209 @@ def test_detect_ball_contacts_is_subquadratic():
     assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="detect_ball_contacts")
 
 
+def _resolve_kicks_inputs(n):
+    """``n`` native restart rows (period 1) + a 5 fps ball trace + ``n`` explicit contacts (one per restart).
+    resolve_kicks groups the contacts by period ONCE and searchsorted-slices each restart's window."""
+    import silly_kicks.spadl.config as spadlcfg
+    from silly_kicks.tracking._gk_resolve import GoalMap
+
+    t_events = [10.0 + 10.0 * i for i in range(n)]
+    actions = pd.DataFrame(
+        {
+            "game_id": ["g"] * n,
+            "period_id": [1] * n,
+            "time_seconds": t_events,
+            "team_id": ["H"] * n,
+            "player_id": ["h7"] * n,
+            "type_id": [spadlcfg.actiontype_id["freekick_short"]] * n,
+            "action_provenance": ["native"] * n,
+        }
+    )
+    t_grid = np.arange(0.0, t_events[-1] + 6.0, 0.2)
+    frames = pd.DataFrame(
+        {
+            "game_id": "g",
+            "period_id": 1,
+            "frame_id": np.arange(len(t_grid)) + 1000,
+            "time_seconds": t_grid,
+            "player_id": None,
+            "team_id": None,
+            "is_ball": True,
+            "is_goalkeeper": False,
+            "x": 50.0,
+            "y": 34.0,
+            "visibility": True,
+        }
+    )
+    contacts = pd.DataFrame(
+        {
+            "period_id": [1] * n,
+            "frame_id": [1000] * n,
+            "time_seconds": [t + 0.5 for t in t_events],
+            "player_id": ["h7"] * n,
+            "contact_source": pd.Series(["velocity_break"] * n, dtype="object"),
+        }
+    )
+    return actions, frames, contacts, GoalMap(resolved={}, guessed={}, unresolved=frozenset())
+
+
+def test_resolve_kicks_is_subquadratic():
+    from silly_kicks.tracking import _kick_resolver as kr
+
+    def measure(n):
+        actions, frames, contacts, gm = _resolve_kicks_inputs(n)
+        with rows_scanned_counter() as c:
+            kr.resolve_kicks(actions, frames, provider="idsse", goal_map=gm, contacts=contacts)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(64, 128, 256), label="resolve_kicks")
+
+    # C2 r2 A-06: the GAME dimension. A multi-match input is partitioned by game_id ONCE (group_rows); a
+    # per-game full-table mask over actions / frames / contacts would be O(games x rows) == quadratic here.
+    def measure_games(n_games):
+        actions, frames, contacts, gm = _resolve_kicks_games_inputs(n_games)
+        with rows_scanned_counter() as c:
+            kr.resolve_kicks(actions, frames, provider="idsse", goal_map=gm, contacts=contacts)
+        return c["n"]
+
+    assert_subquadratic_growth(measure_games, sizes=(16, 32, 64), label="resolve_kicks[games]")
+
+
+def _resolve_kicks_games_inputs(n_games):
+    """``n_games`` matches, each with 2 restarts, its own short ball trace and 2 contacts (all carry game_id)."""
+    parts = [_resolve_kicks_inputs(2) for _ in range(n_games)]
+    actions = pd.concat([p[0].assign(game_id=f"g{i}") for i, p in enumerate(parts)], ignore_index=True)
+    frames = pd.concat([p[1].assign(game_id=f"g{i}") for i, p in enumerate(parts)], ignore_index=True)
+    contacts = pd.concat([p[2].assign(game_id=f"g{i}") for i, p in enumerate(parts)], ignore_index=True)
+    return actions, frames, contacts, parts[0][3]
+
+
+def _corner_windows_inputs(n):
+    """``n`` tracking corners (one every 20 s), a 5 fps position table and one resolved contact per corner.
+    add_corner_windows builds the per-period contact index and the frame groups ONCE; a per-corner contact
+    re-filter or a per-contact frame scan would be O(corners x rows) == quadratic."""
+    t_kick = [100.0 + 20.0 * i for i in range(n)]
+    corners = pd.DataFrame(
+        {
+            "game_id": "g1",
+            "corner_id": np.arange(n),
+            "period_id": 1,
+            "t_kick": t_kick,
+            "attacking_team_id": "tA",
+            "corner_side": pd.Series(["left"] * n, dtype="category"),
+            "kick_x": 104.5,
+            "kick_y": 1.0,
+            "corner_kind": pd.Series(["direct"] * n, dtype="category"),
+            "corner_source": pd.Series(["spadl_corner"] * n, dtype="category"),
+            "taker_player_id": pd.array(["pT"] * n, dtype="object"),
+            "taker_known": pd.array([True] * n, dtype="boolean"),
+        }
+    )
+    t_grid = np.arange(90.0, t_kick[-1] + 10.0, 0.2)
+    frames = pd.DataFrame(
+        {
+            "period_id": 1,
+            "frame_id": np.arange(len(t_grid)) + 1,
+            "time_seconds": t_grid,
+            "player_id": "pW",
+            "team_id": "tW",
+            "x": 90.0,
+            "y": 30.0,
+        }
+    )
+    fid = {round(t, 1): f for t, f in zip(t_grid, frames["frame_id"], strict=True)}
+    contacts = pd.DataFrame(
+        {
+            "period_id": 1,
+            "frame_id": [fid[round(t + 0.6, 1)] for t in t_kick],
+            "time_seconds": [t + 0.6 for t in t_kick],
+            "player_id": "pW",
+            "attribution_margin": 1.2,
+            "contact_source": "velocity_break",
+        }
+    )
+    return corners, frames, contacts
+
+
+def test_add_corner_windows_is_subquadratic():
+    from silly_kicks.corners import add_corner_windows
+
+    def measure(n):
+        corners, frames, contacts = _corner_windows_inputs(n)
+        with rows_scanned_counter() as c:
+            add_corner_windows(corners, frames, contacts)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(32, 64, 128), label="add_corner_windows")
+
+
+def _gi_pairing_games_inputs(n_games):
+    """``n_games`` SkillCorner matches (int game ids in the actions, string ids in the frames: the ADR-019 skew),
+    each with 6 GI possessions over 2 periods and a short detected ball + possessor trace. The GI pairing and the
+    direction check build their game / (game, period) groups ONCE; a per-game (or per-period) full-table mask
+    would be O(games x rows) == quadratic (C2 delta C2-DELTA-01)."""
+    actions, frames = [], []
+    for g in range(n_games):
+        for p in (1, 2):
+            for k in range(3):
+                fs = 10 + 10 * k
+                actions.append(
+                    {
+                        "game_id": g,
+                        "period_id": p,
+                        "team_id": "1",
+                        "player_id": "A",
+                        "gi_event_id": f"e{g}-{p}-{k}",
+                        "gi_possession_frame_start": fs,
+                        "gi_possession_frame_end": fs + 2,
+                        "gi_attacking_side": "ltr",
+                    }
+                )
+            for f in range(5, 40):
+                for is_ball, pid in ((True, None), (False, "A")):
+                    frames.append(
+                        {
+                            "game_id": str(g),
+                            "period_id": p,
+                            "frame_id": f,
+                            "time_seconds": f / 10.0,
+                            "player_id": pid,
+                            "is_ball": is_ball,
+                            "x": 50.0,
+                            "y": 34.0,
+                            "visibility": True,
+                            "sc_possession_player_id": "A",
+                        }
+                    )
+    return pd.DataFrame(actions), pd.DataFrame(frames)
+
+
+def test_gi_pairing_is_subquadratic_in_games():
+    from silly_kicks.tracking import _restart_frame as rf
+    from silly_kicks.tracking import resolve_defended_goals
+
+    def measure(fn):
+        def run(n_games):
+            actions, frames = _gi_pairing_games_inputs(n_games)
+            with rows_scanned_counter() as c:
+                fn(actions, frames)
+            return c["n"]
+
+        return run
+
+    empty_map = resolve_defended_goals(
+        pd.DataFrame(columns=["game_id", "period_id", "team_id", "is_ball", "is_goalkeeper", "x", "y"])
+    )
+    # flips=None -> every period takes the unresolved branch (the per-(game, period) withhold lookup)
+    direction = measure(lambda a, f: rf.gi_direction_check(a, empty_map, flips=None))
+    assert_subquadratic_growth(direction, sizes=(16, 32, 64), label="gi_direction_check[games]")
+    no_check = rf.gi_direction_check(pd.DataFrame(), empty_map, flips=None)
+    pairing = measure(lambda a, f: rf.assess_gi_pairing(a, f, provider="skillcorner", direction=no_check))
+    assert_subquadratic_growth(pairing, sizes=(16, 32, 64), label="assess_gi_pairing[games]")
+    profile = measure(lambda a, f: rf.pairing_proximity_profile(a, f, prox_ms=(2.0,), shifts_s=(5.0,)))
+    assert_subquadratic_growth(profile, sizes=(16, 32, 64), label="pairing_proximity_profile[games]")
+
+
 # ============================ rows_scanned growth adopters ============================
 def test__pressure_at_entry_is_subquadratic():
     import silly_kicks.causal._confounders as C

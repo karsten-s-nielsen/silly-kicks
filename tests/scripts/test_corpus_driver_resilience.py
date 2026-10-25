@@ -549,6 +549,13 @@ _KEY_EXCEPTIONS: dict[str, str] = {
     # Keeps its pre-migration f"{comp}_{season}_{mid}" key (NOT ref.key -- which would be
     # "statsbomb__<mid>"), so finished coverage-shard generations resume across the migration.
     "build_sb360_coverage": "f'{ref.competition_id}_{ref.season_id}_{ref.match_id}'",
+    # ADR-128 TF-46 Part 2 walkers (born-ready, owner ruling 2026-10-22): one staged flat unit per match, keyed
+    # by its stem (`<provider>__<match_id>`); there is no pre-migration key to keep.
+    "tf46p2_truth": "ref.stem",
+    "tf46p2_kick_cells": "ref.stem",
+    "tf46p2_subtype_merge": "ref.stem",
+    "tf46p2_penalty": "ref.stem",
+    "tf46p2_origin": "ref.stem",
 }
 
 

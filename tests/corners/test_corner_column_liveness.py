@@ -30,6 +30,7 @@ from silly_kicks.corners import (
     compute_corner_run_encoding,
     identify_corners,
 )
+from tests.corners._frame_helpers import with_keepers
 
 _CORNER_CROSSED = 5
 _SHOT = 11
@@ -155,7 +156,7 @@ def _encoding_frames():
         ],
         ignore_index=True,
     )
-    return corners, frames
+    return corners, with_keepers(frames)
 
 
 def _chance_inputs():
@@ -190,8 +191,15 @@ def test_fixture_precondition_in_domain():
 
 # --- per-emitter liveness --------------------------------------------------------------------------
 def test_add_corner_windows_live():
-    corners, frames, contacts, gi = _two_corners_windowed()
-    out = add_corner_windows(corners, frames, contacts, gi=gi)
+    from ._gate_helpers import passing
+
+    corners, frames, contacts, _gi = _two_corners_windowed()
+    # SkillCorner-derived corners with a GI next-possession time, so first_possession_time is live (section 9.4);
+    # a passing first-contact gate is injected so the winner / first_contact_time ship (section 9.2).
+    corners = corners.copy()
+    corners["corner_source"] = pd.Series(["skillcorner_marker", "skillcorner_marker"], dtype="category")
+    corners["gi_next_possession_time"] = [120.0, 220.0]
+    out = add_corner_windows(corners, frames, contacts, **passing())
     for col in ("t_init", "t_target", "t_outcome", "first_contact_time", "first_possession_time"):
         assert out[col].notna().all(), f"{col} 100%-null on the in-domain fixture"
         assert out[col].nunique() > 1, f"{col} constant across >=2 corners (dead)"

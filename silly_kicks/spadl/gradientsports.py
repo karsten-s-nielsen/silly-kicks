@@ -78,7 +78,13 @@ from . import config as spadlconfig
 from .base import _derive_end_coordinates, sort_actions_chronologically
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import GRADIENTSPORTS_SPADL_COLUMNS, ConversionReport
-from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
+from .utils import (
+    _blocked_flag,
+    _ensure_base_signal_columns,
+    _finalize_output,
+    _validate_input_columns,
+    _validate_preserve_native,
+)
 
 # ---------------------------------------------------------------------------
 # Required input columns (raise ValueError if any are missing)
@@ -894,6 +900,7 @@ def convert_to_actions(
     # ------------------------------------------------------------------
     # Finalize
     # ------------------------------------------------------------------
+    actions = _ensure_base_signal_columns(actions)
     actions = _finalize_output(
         actions,
         schema=GRADIENTSPORTS_SPADL_COLUMNS,

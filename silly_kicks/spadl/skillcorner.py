@@ -24,12 +24,17 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
+from ..id_compat import canonical_id
 from . import config as spadlconfig
+from ._skillcorner_goals import reconcile_goals
 from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves
+from ._skillcorner_periods import _PERIOD_START_SECONDS, _parse_time_start, repair_gi_periods
+from ._skillcorner_periods import GiPeriodRepairWarning as GiPeriodRepairWarning  # public re-export (spec section 26)
+from ._skillcorner_restarts import derive_restarts
 from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr
-from .schema import SKILLCORNER_SPADL_COLUMNS, ConversionReport
-from .utils import _blocked_flag, _finalize_output
+from .schema import SKILLCORNER_SPADL_COLUMNS, SkillCornerConversionReport
+from .utils import _blocked_flag, _ensure_base_signal_columns, _finalize_output
 
 
 def _scale_to_spadl(
@@ -78,35 +83,9 @@ def _transform_coords(
     return x_out.clip(lower=0.0, upper=105.0), y_out.clip(lower=0.0, upper=68.0)
 
 
-# SkillCorner's `time_start` is the CONTINUOUS broadcast clock (the 2nd half shows 45:00+,
-# extra time 90:00+/105:00+), so each period's nominal start offset must be subtracted to get
-# the period-relative seconds the tracking-frame contract requires (ADR-017). The offsets are
-# the regulation period boundaries (45/90/105/120 min), matching the Gradient Sports adapter.
-_PERIOD_START_SECONDS = {1: 0.0, 2: 45 * 60.0, 3: 90 * 60.0, 4: 105 * 60.0, 5: 120 * 60.0}
-
-
-def _parse_time_start(time_start: pd.Series) -> pd.Series:
-    """Parse ``MM:SS.d`` time strings to float seconds (CONTINUOUS match clock).
-
-    NOTE: SkillCorner's ``time_start`` is the continuous broadcast clock (2nd-half values are
-    45:00+), so this returns seconds since MATCH start, NOT since period start. Callers must
-    re-base to period-relative via :func:`_to_period_relative` to satisfy the period-relative
-    frame contract (ADR-017).
-
-    Parameters
-    ----------
-    time_start : pd.Series
-        String series in ``"MM:SS.d"`` format (e.g. ``"12:34.5"``).
-
-    Returns
-    -------
-    pd.Series
-        Float64 seconds since match start (continuous broadcast clock).
-    """
-    parts = time_start.str.split(":", expand=True)
-    minutes = parts[0].astype("float64")
-    seconds = parts[1].astype("float64")
-    return minutes * 60 + seconds
+# `_PERIOD_START_SECONDS` (the regulation period offsets of the continuous broadcast clock) and
+# `_parse_time_start` live in `_skillcorner_periods` (the GI period-label repair reads them; spec section 26) and are
+# re-exported here unchanged -- the same objects (`tracking/skillcorner.py` and `scripts/` import them from here).
 
 
 def _to_period_relative(time_seconds: pd.Series, period: pd.Series) -> pd.Series:
@@ -188,7 +167,10 @@ def _native_completion_result(
     src = np.full(n, "stopgap", dtype=object)
     po = pass_outcome.astype("string").str.lower()
     has_po = po.isin(["successful", "unsuccessful", "offside"]).to_numpy()
-    po_succ = (po == "successful").to_numpy()
+    # fillna(False) + bool dtype: the nullable-string `==` yields <NA> for rows without a known outcome,
+    # which makes `~po_succ` a per-element Python-bool inversion (deprecated). Those rows are masked out
+    # by `has_po &` below, so coercing <NA> to False is behaviour-preserving and keeps a numpy bool array.
+    po_succ = (po == "successful").fillna(False).to_numpy(dtype=bool)
     rec_true = received.astype("string").str.lower().isin(["true", "1", "1.0"]).to_numpy()
     stn = same_team_next.fillna(False).to_numpy()
     passlike = is_passlike.fillna(False).to_numpy()
@@ -209,12 +191,56 @@ def _native_completion_result(
     return rid, src
 
 
+def _resolve_opponent(pp: pd.DataFrame, match_metadata: dict) -> str | None:
+    """Resolve the single opponent team id from the possession team ids (decision C6, spec 5.2).
+
+    The opponent is the distinct event ``team_id`` that is not ``home_team.id``. Ids compare
+    through :mod:`silly_kicks.id_compat` (``canonical_id``), never ``str()`` -- a float id would
+    stringify to ``"866.0"`` and never equal ``"866"``. Returns the canonical opponent id, or
+    ``None`` when the slice carries a single team (no ``_against`` restart is derivable; the caller
+    counts it unresolved).
+
+    Raises
+    ------
+    ValueError
+        When more than two distinct team ids appear; when ``home_team.id`` is absent from the event
+        team ids; or when ``away_team.id`` is present and the event team set is not
+        ``{home_team.id, away_team.id}``. Each message names ``match_metadata["id"]``.
+    """
+    match_id = match_metadata.get("id")
+    home_id = str(canonical_id(match_metadata["home_team"]["id"]))
+    team_ids = {str(canonical_id(t)) for t in pp["team_id"].dropna().unique()}
+    if len(team_ids) > 2:
+        raise ValueError(
+            f"SkillCorner match {match_id!r}: more than two distinct team ids in the possessions "
+            f"{sorted(team_ids)}; cannot resolve the opponent."
+        )
+    if home_id not in team_ids:
+        raise ValueError(
+            f"SkillCorner match {match_id!r}: home_team.id {home_id!r} is not among the event team "
+            f"ids {sorted(team_ids)}."
+        )
+    away = match_metadata.get("away_team") or {}
+    away_raw = away.get("id")
+    if away_raw is not None:
+        away_id = str(canonical_id(away_raw))
+        if team_ids != {home_id, away_id}:
+            raise ValueError(
+                f"SkillCorner match {match_id!r}: event team set {sorted(team_ids)} does not equal "
+                f"{{home_team.id, away_team.id}} = {sorted({home_id, away_id})}."
+            )
+    others = team_ids - {home_id}
+    if not others:
+        return None
+    return next(iter(others))
+
+
 def convert_to_actions(
     events: pd.DataFrame,
     match_metadata: dict,
     *,
     preserve_native: bool = False,
-) -> tuple[pd.DataFrame, ConversionReport]:
+) -> tuple[pd.DataFrame, SkillCornerConversionReport]:
     """Convert SkillCorner dynamic_events.csv to SPADL actions.
 
     Parameters
@@ -231,8 +257,9 @@ def convert_to_actions(
 
     Returns
     -------
-    tuple[pd.DataFrame, ConversionReport]
-        SPADL actions and conversion audit trail.
+    tuple[pd.DataFrame, SkillCornerConversionReport]
+        SPADL actions and the conversion audit trail (a ``ConversionReport`` subclass carrying the
+        TF-46 restart + goals diagnostics).
 
     Examples
     --------
@@ -253,20 +280,30 @@ def convert_to_actions(
     pitch_width = match_metadata["pitch_width"]
     home_team_id = str(match_metadata["home_team"]["id"])
 
+    # --- GI period-label repair (spec section 26; DL ruling 2026-10-25) --- GI facts only, BEFORE the time base and
+    # the chronological sort. A unique positional index keeps the repair's Series aligned with every subset below.
+    events = events.reset_index(drop=True)
+    period_repair = repair_gi_periods(events, match_periods=match_metadata.get("match_periods"))
+
     # --- Filter to player_possession rows with valid actors ---
     pp = events[events["event_type"] == "player_possession"].copy()
     pp = pp[pp["player_id"].notna() & pp["team_id"].notna()].copy()
     pp["team_id"] = pp["team_id"].astype(str)
     pp["player_id"] = pp["player_id"].astype(str)
+    pp["period"] = period_repair.period.loc[pp.index]
+    pp["period_source"] = period_repair.period_source.loc[pp.index]
 
-    # OBE rows for tackle enrichment
+    # OBE rows for tackle enrichment. An OBE whose GI label conflicts with its frame period is withheld (never
+    # repaired: OBE is not on the frame clock; spec section 26.2.6) and counted on the report.
     obe = events[events["event_type"] == "on_ball_engagement"].copy()
+    obe = obe[~period_repair.obe_conflict.loc[obe.index].to_numpy(dtype=bool)].copy()
     if len(obe) > 0:
         obe["team_id"] = obe["team_id"].astype(str)
         obe["player_id"] = obe["player_id"].astype(str)
 
-    # --- Time parsing --- (re-base the continuous broadcast clock to period-relative; ADR-017)
-    pp["time_seconds"] = _to_period_relative(_parse_time_start(pp["time_start"]), pp["period"])
+    # --- Time parsing --- (re-base the continuous broadcast clock to period-relative; ADR-017). The clock is the
+    # repair's: the `_parse_time_start` value on every unrepaired row, the frame-re-based value on a repaired one.
+    pp["time_seconds"] = _to_period_relative(period_repair.clock.loc[pp.index], pp["period"])
     if len(obe) > 0 and "time_start" in obe.columns and "period" in obe.columns:
         obe["time_seconds"] = _to_period_relative(_parse_time_start(obe["time_start"]), obe["period"])
 
@@ -341,21 +378,11 @@ def convert_to_actions(
     next_team = pp["team_id"].shift(-1)
     same_team_next = (pp["team_id"] == next_team).fillna(False)
 
-    # Short corner/freekick detection: next action same team within 15m
-    next_sx = sx.shift(-1)
-    next_sy = sy.shift(-1)
-    dist_to_next = np.sqrt((sx - next_sx) ** 2 + (sy - next_sy) ** 2)
-    is_short = same_team_next & (dist_to_next < 15.0)
-
     # --- Vectorized dispatch ---
-    # Priority 1: set pieces from game_interruption_before
-    # Exclude shots -- a free kick or corner that ends with a shot is a shot, not a set piece pass
-    is_goalkick = gi_before == "goal_kick_for"
-    is_corner = (gi_before == "corner_for") & (end_type != "shot")
-    is_throw_in = gi_before == "throw_in_for"
-    is_freekick = (gi_before == "free_kick_for") & (end_type != "shot")
-
-    # Priority 2: end_type
+    # Every possession keeps its own type from end_type (spec section 5.3, F2 fix). The former
+    # priority-1 GI relabel (receiver -> set piece) and the native 15 m short rule are deleted: each
+    # restart is now a separate DERIVED row (_skillcorner_restarts.derive_restarts), so a receiver's
+    # shot or cross stays visible and a defence-won restart is no longer dropped.
     is_shot = end_type == "shot"
     is_pass = (end_type == "pass") & ~cross_mask
     is_cross_action = (end_type == "pass") & cross_mask
@@ -367,18 +394,12 @@ def convert_to_actions(
     # VAEP foul credit in cross-provider analyses.
     is_foul = end_type == "foul_suffered"
 
-    # Priority 3: residuals
+    # Priority: residuals
     is_possession_loss = end_type == "possession_loss"
     is_unknown = end_type == "unknown"
 
     type_id_arr = np.select(
         [
-            is_goalkick,
-            is_corner & is_short,
-            is_corner & ~is_short,
-            is_throw_in,
-            is_freekick & is_short,
-            is_freekick & ~is_short,
             is_shot,
             is_cross_action,
             is_pass,
@@ -388,12 +409,6 @@ def convert_to_actions(
             is_unknown,
         ],
         [
-            spadlconfig.actiontype_id["goalkick"],
-            spadlconfig.actiontype_id["corner_short"],
-            spadlconfig.actiontype_id["corner_crossed"],
-            spadlconfig.actiontype_id["throw_in"],
-            spadlconfig.actiontype_id["freekick_short"],
-            spadlconfig.actiontype_id["freekick_crossed"],
             spadlconfig.actiontype_id["shot"],
             spadlconfig.actiontype_id["cross"],
             spadlconfig.actiontype_id["pass"],
@@ -455,6 +470,23 @@ def convert_to_actions(
 
     # --- Build native actions DataFrame ---
     game_id = str(match_metadata.get("id", "unknown"))
+
+    # GI facts carried onto every native possession row (spec section 17.2, CL-1 / CL-13 / B-11). Optional
+    # on the input: a bronze without the GI columns leaves every GI column <NA> (backward compatible).
+    def _gi_int_series(col: str) -> np.ndarray:
+        if col in pp.columns:
+            return pd.to_numeric(pp[col], errors="coerce").astype("Int64").to_numpy()
+        return pd.array([pd.NA] * len(pp), dtype="Int64").to_numpy()
+
+    gi_possession_frame_start = _gi_int_series("frame_start")
+    gi_possession_frame_end = _gi_int_series("frame_end")
+    gi_attacking_side = (
+        pp["attacking_side"].astype("object").to_numpy()
+        if "attacking_side" in pp.columns
+        else np.full(len(pp), pd.NA, dtype=object)
+    )
+    gi_event_id = pp["event_id"].astype("object").to_numpy()
+
     actions = pd.DataFrame(
         {
             "game_id": game_id,
@@ -473,8 +505,55 @@ def convert_to_actions(
             "result_source": result_source_arr,
             "bodypart_id": bodypart_arr,
             "action_provenance": "native",
+            # Base signal columns pre-created so the derived-restart concat (which sets real values)
+            # survives the `[actions.columns]` reindex; <NA> on native rows.
+            "restart_evidence": pd.NA,
+            "type_source": pd.NA,
+            "repair_kind": pd.NA,
+            # GI facts (spec section 17.2). Every native possession row carries its possession's facts;
+            # the bracket ids are derived-restart only, so <NA> here.
+            "gi_marker_possession_frame_end": pd.NA,
+            "gi_next_possession_frame_start": pd.NA,
+            "gi_attacking_side": gi_attacking_side,
+            "gi_possession_frame_start": gi_possession_frame_start,
+            "gi_possession_frame_end": gi_possession_frame_end,
+            "gi_event_id": gi_event_id,
+            # native / frame: where period_id and the time come from (spec section 26.5); never <NA>.
+            "period_source": pp["period_source"].astype("object").to_numpy(),
         }
     )
+
+    # --- Derived restarts (marker-keyed; spec section 5) ---
+    opponent = _resolve_opponent(pp, match_metadata)
+    restart_start_type = (
+        pp["start_type"].fillna("").astype(str).to_numpy()
+        if "start_type" in pp.columns
+        else np.full(len(pp), "", dtype=object)
+    )
+    pp_restart = pd.DataFrame(
+        {
+            "event_id": pp["event_id"].astype("object").to_numpy(),
+            "period_id": pp["period"].astype("int64").to_numpy(),
+            "time_seconds": pp["time_seconds"].to_numpy(),
+            "team_id": pp["team_id"].to_numpy(),
+            "start_type": restart_start_type,
+            "game_interruption_before": gi_before.to_numpy(),
+            "game_interruption_after": gi_after.to_numpy(),
+            "start_x": sx.to_numpy(),
+            "start_y": sy.to_numpy(),
+            # GI facts threaded onto the derived restart rows (spec section 17.2, CL-1 / CL-13).
+            "frame_start": (pp["frame_start"].to_numpy() if "frame_start" in pp.columns else np.full(len(pp), np.nan)),
+            "frame_end": (pp["frame_end"].to_numpy() if "frame_end" in pp.columns else np.full(len(pp), np.nan)),
+            "attacking_side": (
+                pp["attacking_side"].astype("object").to_numpy()
+                if "attacking_side" in pp.columns
+                else np.full(len(pp), pd.NA, dtype=object)
+            ),
+            # a derived row's period comes from its marker / tag possession, so does its period source (section 26.5)
+            "period_source": pp["period_source"].astype("object").to_numpy(),
+        }
+    )
+    derived_restarts = derive_restarts(pp_restart, opponent, match_metadata)
 
     # --- Derived actions ---
     # Prepare OBE for inference
@@ -486,7 +565,17 @@ def convert_to_actions(
         )
 
     pp_for_inference = pp[
-        ["event_id", "period", "time_seconds", "team_id", "player_id", "start_type", "x_start", "y_start"]
+        [
+            "event_id",
+            "period",
+            "time_seconds",
+            "team_id",
+            "player_id",
+            "start_type",
+            "x_start",
+            "y_start",
+            "period_source",
+        ]
     ].copy()
 
     defensive = infer_defensive_actions(pp_for_inference, obe_for_inference)
@@ -507,7 +596,17 @@ def convert_to_actions(
         defensive["action_id"] = 0  # will be re-indexed
 
     keeper_saves_pp = pp[
-        ["event_id", "period", "time_seconds", "team_id", "player_id", "end_type", "x_start", "y_start"]
+        [
+            "event_id",
+            "period",
+            "time_seconds",
+            "team_id",
+            "player_id",
+            "end_type",
+            "x_start",
+            "y_start",
+            "period_source",
+        ]
     ].copy()
     if "game_interruption_after" in pp.columns:
         keeper_saves_pp["game_interruption_after"] = pp["game_interruption_after"].values
@@ -529,10 +628,27 @@ def convert_to_actions(
         ks["action_id"] = 0
 
     # Derived defensive / keeper-save actions have deterministic (non-completion) results -> tag
-    # their result_source "native" so the `[actions.columns]` reindex below finds the column.
+    # result_source "native"; they are not restarts/repairs -> base signal columns <NA>. All four are
+    # set so the `[actions.columns]` reindex below finds every column.
     for _derived in (defensive, ks):
-        if len(_derived) > 0 and "result_source" not in _derived.columns:
-            _derived["result_source"] = "native"
+        if len(_derived) > 0:
+            for _col, _val in (
+                ("result_source", "native"),
+                ("restart_evidence", pd.NA),
+                ("type_source", pd.NA),
+                ("repair_kind", pd.NA),
+                # Inferred defensive / keeper-save rows are not GI-possession rows -> every GI column <NA>.
+                ("gi_marker_possession_frame_end", pd.NA),
+                ("gi_next_possession_frame_start", pd.NA),
+                ("gi_attacking_side", pd.NA),
+                ("gi_possession_frame_start", pd.NA),
+                ("gi_possession_frame_end", pd.NA),
+                ("gi_event_id", pd.NA),
+                # carried from the source possession by the inference (section 26.5); "native" only as the default
+                ("period_source", "native"),
+            ):
+                if _col not in _derived.columns:
+                    _derived[_col] = _val
 
     # Merge all actions
     parts = [actions]
@@ -540,9 +656,37 @@ def convert_to_actions(
         parts.append(defensive[actions.columns])
     if len(ks) > 0:
         parts.append(ks[actions.columns])
+    if len(derived_restarts) > 0:
+        parts.append(derived_restarts[actions.columns])
 
     actions = pd.concat(parts, ignore_index=True)
-    actions = actions.sort_values(["period_id", "time_seconds"]).reset_index(drop=True)
+
+    # --- Goals reconciliation (spec section 6): repairs shot results, sets repair_kind, and may append
+    # own-goal / derived-shot rows. Runs on the combined frame before the sort so appended rows order in.
+    pp_goals = pd.DataFrame(
+        {
+            "event_id": pp["event_id"].astype("object").to_numpy(),
+            "period_id": pp["period"].astype("int64").to_numpy(),
+            "time_seconds": pp["time_seconds"].to_numpy(),
+            "team_id": pp["team_id"].to_numpy(),
+            "player_id": pp["player_id"].to_numpy(),
+            "end_type": end_type.to_numpy(),
+            "start_type": restart_start_type,
+            "game_interruption_before": gi_before.to_numpy(),
+            "game_interruption_after": gi_after.to_numpy(),
+            "team_score": pp["team_score"].to_numpy() if "team_score" in pp.columns else np.nan,
+            "opponent_team_score": (
+                pp["opponent_team_score"].to_numpy() if "opponent_team_score" in pp.columns else np.nan
+            ),
+            "period_source": pp["period_source"].astype("object").to_numpy(),  # own-goal / derived-shot rows (26.5)
+        }
+    )
+    actions, goals_report = reconcile_goals(actions, pp_goals, match_metadata)
+
+    # ADR-065 order-insensitive combined sort (the placeholder restart times make co-timestamped rows
+    # likelier, so the guarded chronological path matters); _assert_chronological_action_id runs in
+    # _finalize_output.
+    actions = sort_actions_chronologically(actions, by=("period_id", "time_seconds")).reset_index(drop=True)
     actions["action_id"] = np.arange(len(actions), dtype="int64")
 
     # --- Post-processors ---
@@ -552,6 +696,13 @@ def convert_to_actions(
     # Mark dribbles as derived
     dribble_mask = actions["type_id"] == spadlconfig.actiontype_id["dribble"]
     actions.loc[dribble_mask, "action_provenance"] = "derived"
+    # A synthetic dribble takes its period from the action it precedes (``_add_dribbles``: ``nex.period_id``; it
+    # sorts directly before that action), so it takes that action's period source too (spec section 26.5). Only the
+    # inserted dribbles are filled: any other <NA> stays visible (a creation site that forgot the column).
+    inserted = (actions["period_source"].isna() & dribble_mask).to_numpy()
+    if inserted.any():
+        following = actions["period_source"].shift(-1).to_numpy(dtype=object)
+        actions["period_source"] = np.where(inserted, following, actions["period_source"].to_numpy(dtype=object))
 
     # --- LTR normalization (no-op for possession perspective) ---
     actions = to_spadl_ltr(
@@ -574,15 +725,45 @@ def convert_to_actions(
         name = id_to_name.get(int(tid), "unknown")
         mapped_counts[name] = mapped_counts.get(name, 0) + 1
 
-    # Field names verified against schema.py ConversionReport dataclass:
-    # mapped_counts, excluded_counts, unrecognized_counts (not _types)
-    report = ConversionReport(
+    # --- Restart + goals census (C4): per-type and per-restart_evidence derived-row counts, the
+    # repeated-restart diagnostic, and the goals-reconciliation summary. ``derived_restarts`` is the
+    # pre-concat frame (its .attrs carry the unresolved-against count).
+    restart_counts: dict[str, int] = {}
+    restart_evidence_counts: dict[str, int] = {}
+    repeated_restart_count = 0
+    if len(derived_restarts) > 0:
+        for tid in derived_restarts["type_id"].to_numpy():
+            name = id_to_name.get(int(tid), "unknown")
+            restart_counts[name] = restart_counts.get(name, 0) + 1
+        restart_evidence_counts = {
+            str(k): int(v) for k, v in derived_restarts["restart_evidence"].value_counts().items()
+        }
+        repeated_restart_count = int(
+            derived_restarts["restart_evidence"].isin(["chain", "chain_ambiguous", "tag_only"]).sum()
+        )
+
+    report = SkillCornerConversionReport(
         provider="skillcorner",
         total_events=total_pp,
         total_actions=len(actions),
         mapped_counts=mapped_counts,
         excluded_counts=excluded_counts,
         unrecognized_counts={},
+        restart_counts=restart_counts,
+        restart_evidence_counts=restart_evidence_counts,
+        restart_unresolved=int(derived_restarts.attrs.get("unresolved_against", 0)),
+        goals_repaired=dict(goals_report.repaired),
+        goals_ambiguous=goals_report.ambiguous,
+        goals_unresolved=goals_report.unresolved,
+        goals_coverage_gap=goals_report.coverage_gap,
+        repeated_restart_count=repeated_restart_count,
+        kickoff_unresolved=0,
+        # The GI period-label repair (spec section 26.5).
+        period_repair_status=period_repair.status,
+        period_relabelled=dict(period_repair.relabelled),
+        period_repair_shape=period_repair.shape,
+        obe_period_conflict=int(period_repair.obe_conflict.sum()),
+        period_start_mismatch=bool(period_repair.period_start_mismatch),
     )
 
     # --- Finalize output ---
@@ -592,6 +773,10 @@ def convert_to_actions(
     extra = ["original_event_id"] if preserve_native else None
     actions["shot_blocked"] = _blocked_flag(len(actions))
     actions["cross_blocked"] = _blocked_flag(len(actions))
+    # Base signal columns are pre-created on every part above (native <NA>; derived restarts carry real
+    # result_source / restart_evidence / type_source; goals reconciliation (Task 2.4) sets repair_kind).
+    # _ensure_base_signal_columns is the contract no-op guaranteeing presence before strict projection.
+    actions = _ensure_base_signal_columns(actions)
     actions = _finalize_output(actions, SKILLCORNER_SPADL_COLUMNS, extra_columns=extra)
 
     return actions, report

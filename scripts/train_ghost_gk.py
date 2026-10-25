@@ -81,6 +81,24 @@ _BIAS_COUNTERS = (
     "bias_b2k_undetected_n",
 )
 
+#: Provenance / keeper-split corpus counters (TF-46 Arm 1 Part 2, spec section 18.2.1; R4 / B-22). Summed over
+#: every extract unit like the bias counters. ``prov_censored_n`` = ghost-GK training frames dropped by the
+#: restart censor; ``ks_games`` = SkillCorner games seen (gates the report field: absent, not zero, elsewhere);
+#: the other ``ks_*`` are the undetected-keeper in-view / off-camera split over SkillCorner training frames.
+_PROVENANCE_COUNTERS = (
+    "prov_censored_n",
+    "ks_games",
+    "ks_undetected_n",
+    "ks_in_view",
+    "ks_off_camera",
+    "ks_unknown_view",
+)
+
+#: Provenance dimensions this trainer READS (spec section 18.2.1, CL-5): TIME only. Phase anchors (set pieces /
+#: goal kicks) and goal rows feed `_build_phase_lookup` / the score context; a mis-timed anchor censors its
+#: window (`ghost_restart_censor_mask`). No row is excluded and no frame is weighted on any other dimension.
+TRAINING_READS = frozenset({"time"})
+
 
 def _assert_no_column_collision(feature_columns) -> None:
     """Refuse to pack a feature whose name is indistinguishable from a label or a side column."""
@@ -419,7 +437,12 @@ def _extract_work(item, ctx):
     with NO mapped game is an exclusion, so the skip is reported in the stage summary."""
     from scripts._item_outcome import ItemExcluded
     from silly_kicks.tracking import prepare_ghost_gk_training_data
-    from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES, keeper_detection_mask
+    from silly_kicks.tracking._camera_footprint import keeper_undetected_split
+    from silly_kicks.tracking._ghost_gk import (
+        GHOST_GK_FEATURE_NAMES,
+        ghost_restart_censor_mask,
+        keeper_detection_mask,
+    )
 
     _assert_no_column_collision(GHOST_GK_FEATURE_NAMES)
     _ref, file_frames, actions = item
@@ -430,7 +453,7 @@ def _extract_work(item, ctx):
     actions_by_game = dict(list(actions.groupby("game_id"))) if actions is not None and len(actions) else {}
     prov = str(file_frames["source_provider"].iloc[0]) if "source_provider" in file_frames.columns else "unknown"
     _UNIT_BIAS.clear()
-    _UNIT_BIAS.update(dict.fromkeys(_BIAS_COUNTERS, 0.0))
+    _UNIT_BIAS.update(dict.fromkeys(_BIAS_COUNTERS + _PROVENANCE_COUNTERS, 0.0))
     totals = _UNIT_BIAS
     packs = []
     game_ids = sorted(file_frames["game_id"].unique())
@@ -457,6 +480,28 @@ def _extract_work(item, ctx):
         )
         if not len(feats):
             continue
+        # TF-46 Arm 1 Part 2 (spec section 18.2.1, CL-5): drop training frames whose phase/score anchor has an
+        # unvalidated time (a SkillCorner derived restart without a gated t_kick, or an unvalidated-time goal).
+        # Byte-identical for a native provider with no such rows (empty censor mask). Counted, not weighted.
+        _censor = ghost_restart_censor_mask(meta, game_frames, game_actions)
+        if _censor.any():
+            totals["prov_censored_n"] += float(int(_censor.sum()))
+            feats = feats[~_censor].reset_index(drop=True)
+            labs = labs[~_censor].reset_index(drop=True)
+            meta = meta[~_censor].reset_index(drop=True)
+            if not len(feats):
+                continue
+        # R4 / B-22: the undetected-keeper in-view vs off-camera split over ALL frames of each contributing
+        # SkillCorner game (not only the frames that became training samples: the undetected keeper frames are the
+        # ones ghost-GK excludes, so the split measures that whole population). Report only; CL-17 -- it never
+        # filters or weights a frame. The field is absent, not zero, for other providers.
+        if prov == "skillcorner" and "in_camera_view" in game_frames.columns:
+            _ks = keeper_undetected_split(game_frames)
+            totals["ks_games"] += 1.0
+            totals["ks_undetected_n"] += float(_ks["n_undetected_keeper_frames"])
+            totals["ks_in_view"] += float(_ks["in_view"])
+            totals["ks_off_camera"] += float(_ks["off_camera"])
+            totals["ks_unknown_view"] += float(_ks["unknown_view"])
         if prov == "skillcorner" and len(meta):
             _vis = keeper_detection_mask_or_none(meta["gk_visibility"])
             if _vis is not None:
@@ -831,6 +876,27 @@ def _assemble_work(key, ctx):
                 "Both bias axes are measured here: keeper depth AND ball-to-keeper distance "
                 "(goal-relative; detected frames are expected to show a SMALLER ball-to-keeper "
                 "distance, which IS the selection mechanism). See spec 4.3 rev 5."
+            ),
+        }
+    # TF-46 Arm 1 Part 2 (spec section 18.2.1): the restart censored-frame count (corpus-wide).
+    metrics["provenance_censored_frames"] = int(bias.get("prov_censored_n", 0.0))
+    # R4 / B-22: the undetected-keeper camera split, present ONLY when a SkillCorner game contributed (absent,
+    # not zero, on a non-SkillCorner corpus). Report only -- CL-17: it filters and weights nothing.
+    if bias.get("ks_games"):
+        _ks_n = bias.get("ks_undetected_n", 0.0)
+        metrics["keeper_undetected_split"] = {
+            "population": "all_frames_of_contributing_skillcorner_games",
+            "n_skillcorner_games": int(bias["ks_games"]),
+            "n_undetected_keeper_frames": int(_ks_n),
+            "in_view": int(bias.get("ks_in_view", 0.0)),
+            "off_camera": int(bias.get("ks_off_camera", 0.0)),
+            "unknown_view": int(bias.get("ks_unknown_view", 0.0)),
+            "in_view_share": _mean_from_counters(bias.get("ks_in_view", 0.0), _ks_n),
+            "off_camera_share": _mean_from_counters(bias.get("ks_off_camera", 0.0), _ks_n),
+            "note": (
+                "Among UNDETECTED keeper frames, the share inside vs outside the broadcast camera footprint "
+                "(in_camera_view). Report only -- in_camera_view is NOT wired into the GK detection gate (CL-17). "
+                "Evidence for a later owner decision; no rule in this cycle acts on it."
             ),
         }
     files = dict(fit.files)

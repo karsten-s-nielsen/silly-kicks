@@ -210,3 +210,183 @@ def test_match_ids_json_constrains_corpus_and_keys_generation(tmp_path, monkeypa
     with pytest.raises(_StopError):
         M.main()
     assert captured["token_inputs"]["roster_sha"] != sha_with
+
+
+def test_part2_extras_stage_the_skillcorner_native_footprint_and_profile(tmp_path, monkeypatch):
+    # TF-46 Part 2 staging (CL-8): the GI events, the camera footprint built with the match's OWN frames report
+    # (one orientation decision), and the profile record (season from the manifest date, opendata from the
+    # public visibility, the SkillCorner pitch length).
+    import json
+    import shutil
+    from pathlib import Path
+
+    import scripts._loader_pining as L
+
+    src = Path("tests/datasets/skillcorner/opendata")
+    shutil.copy(src / "1886347_match.json", tmp_path / "m.json")
+    shutil.copy(src / "1886347_events_slim.csv", tmp_path / "e.csv")
+    meta = json.loads((tmp_path / "m.json").read_text(encoding="utf-8"))
+    pids = [p["id"] for p in meta["players"]][:4]
+    corners = {
+        "x_top_left": -30.0,
+        "y_top_left": 20.0,
+        "x_top_right": 30.0,
+        "y_top_right": 20.0,
+        "x_bottom_right": 30.0,
+        "y_bottom_right": -20.0,
+        "x_bottom_left": -30.0,
+        "y_bottom_left": -20.0,
+    }
+    with (tmp_path / "t_tracking_extrapolated.jsonl").open("w", encoding="utf-8") as fh:
+        for f in range(1, 11):
+            fh.write(
+                json.dumps(
+                    {
+                        "period": 1,
+                        "frame": f,
+                        "timestamp": f"00:00:{f / 10:04.1f}",
+                        "player_data": [
+                            {"player_id": pid, "x": -10.0 + i, "y": 1.0 * i, "is_detected": True}
+                            for i, pid in enumerate(pids)
+                        ],
+                        "ball_data": {"x": 0.0, "y": 0.0, "z": 0.1, "is_detected": True},
+                        "image_corners_projection": corners,
+                    }
+                )
+                + "\n"
+            )
+    paths = {
+        "metadata": tmp_path / "m.json",
+        "events": tmp_path / "e.csv",
+        "tracking": tmp_path / "t_tracking_extrapolated.jsonl",
+    }
+    monkeypatch.setattr(L, "_download_artifacts", lambda *a, **k: paths)
+    monkeypatch.setattr(L, "_resolve_token", lambda t: "tok")
+    frames, report = L.build_skillcorner_frames(paths, "1886347", None, with_velocity=False)
+    ref = L.MatchRef("skillcorner", "1886347")
+    loaded = L.LoadedMatch("skillcorner", "1886347", pd.DataFrame(), frames, "h", None, report)
+    ex = L.part2_extras(
+        ref, loaded, cache_dir=tmp_path / "c", entry={"date": "2024-09-14", "visibility": "public"}, base_url="http://x"
+    )
+    assert len(ex["native"]) > 0 and len(ex["footprint"]) == 10
+    assert {"cam_tl_x", "cam_br_y"} <= set(ex["footprint"].columns)
+    prof = ex["profile"]
+    assert prof["competition_season"] == "2024/2025" and prof["is_opendata"] is True
+    assert prof["pitch_length"] == float(meta["pitch_length"]) and prof["tracking_release"] == "sc_jsonl"
+    over = L.part2_extras(
+        ref, loaded, cache_dir=tmp_path / "c", entry={}, overrides={"tracking_release": "v3"}, base_url="http://x"
+    )["profile"]
+    assert over["tracking_release"] == "v3" and over["is_opendata"] is False
+
+
+def test_part2_main_stamps_the_run_provenance_not_a_provider_name(tmp_path, monkeypatch):
+    # TF-46 Part 2 R.2 staging smoke (2026-10-23): the --part2 manifest loop reused the name `prov` and shadowed the
+    # git provenance, so `manifest_all.json` crashed at prov["commit"]. The run commit must reach the manifest.
+    import sys
+
+    import scripts.materialize_tc3_frames as M
+    from scripts import _loader_pining as LP
+
+    class _Res:
+        shard_keys: tuple = ()
+        shard_dir = tmp_path / "o" / "shards" / "gen"
+
+        def manifest(self):
+            return {}
+
+    monkeypatch.setattr(LP, "pining_source", lambda providers, **kw: ([], lambda ref: None))
+    monkeypatch.setattr(LP, "resolve_cache_dir", lambda d: d)
+    monkeypatch.setattr(LP, "_resolve_token", lambda t: "tok")
+    monkeypatch.setattr(LP, "_base_url", lambda: "http://x")
+    monkeypatch.setattr(LP, "_list_matches", lambda prov, tok, base: [{"id": "1"}])
+    monkeypatch.setattr(M, "for_each", lambda refs, **kw: _Res())
+    monkeypatch.setattr(M, "collect_home_team_map", lambda home_dir, keys: {})
+    monkeypatch.setattr(M, "git_provenance", lambda: {"commit": "deadbeef", "dirty": False})
+    monkeypatch.setattr(M, "require_clean_tree", lambda prov, allow_dirty=False: None)
+    out = tmp_path / "o"
+    argv = ["m.py", "--cache-dir", str(tmp_path), "--out", str(out), "--providers", "gradientsports", "--part2"]
+    monkeypatch.setattr(sys, "argv", argv)
+    M.main()
+    man = json.loads((out / "manifest_all.json").read_text(encoding="utf-8"))
+    assert man["run_commit"] == "deadbeef" and man["run_tree_dirty"] is False
+
+
+def test_part2_extras_profile_carries_pitch_dims_for_a_native_provider(tmp_path, monkeypatch):
+    # TF-46 Part 2 R.2 staging smoke: `pitch_width` was bound only on the SkillCorner branch, so IDSSE / GS units
+    # failed with an unbound local. A provider already on the SPADL frame records 105 x 68.
+    from scripts import _loader_pining as L
+
+    (tmp_path / "roster.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "events.json").write_text("[]", encoding="utf-8")
+    paths = {"roster": tmp_path / "roster.json", "events": tmp_path / "events.json"}
+    monkeypatch.setattr(L, "_download_artifacts", lambda *a, **k: paths)
+    monkeypatch.setattr(L, "_resolve_token", lambda t: "tok")
+    monkeypatch.setattr(L, "_gs_flatten_events", lambda events, roster: pd.DataFrame())  # the dims are under test
+    ref = L.MatchRef("gradientsports", "10502")
+    loaded = L.LoadedMatch("gradientsports", "10502", pd.DataFrame(), pd.DataFrame(), "h", None, None)
+    ex = L.part2_extras(ref, loaded, cache_dir=tmp_path / "c", entry={"date": "2024-09-14"}, base_url="http://x")
+    assert ex["profile"]["pitch_length"] == 105.0 and ex["profile"]["pitch_width"] == 68.0
+
+
+def test_worker_partitions_are_disjoint_and_complete():
+    from scripts.materialize_tc3_frames import in_worker_partition
+
+    keys = [("skillcorner", str(m)) for m in range(500)] + [("idsse", f"DFL-MAT-{m}") for m in range(7)]
+    for n in (1, 3, 16):
+        owners = [[i for i in range(n) if in_worker_partition(k, i, n)] for k in keys]
+        assert all(len(o) == 1 for o in owners)  # each unit in exactly one partition
+        if n > 1:
+            assert len({o[0] for o in owners}) == n  # every partition receives units
+
+
+def test_worker_mode_keeps_one_generation_and_defers_the_assembly(tmp_path, monkeypatch):
+    # --worker does not enter the token (N workers fill ONE generation); a worker writes no home_teams/manifest;
+    # the final pass without --worker sees every ref and assembles them.
+    import sys
+    from types import SimpleNamespace
+
+    import scripts.materialize_tc3_frames as M
+    from scripts import _loader_pining as LP
+
+    refs = [SimpleNamespace(provider="skillcorner", match_id=str(m), key=("skillcorner", str(m))) for m in range(40)]
+    seen: dict = {}
+
+    class _Res:
+        shard_keys: tuple = ()
+        shard_dir = tmp_path / "o" / "shards" / "gen"
+
+        def manifest(self):
+            return {}
+
+    def fake_for_each(items, **kw):
+        seen.setdefault("calls", []).append((list(items), kw["token_inputs"]))
+        return _Res()
+
+    monkeypatch.setattr(LP, "pining_source", lambda providers, **kw: (refs, lambda ref: None))
+    monkeypatch.setattr(LP, "resolve_cache_dir", lambda d: d)
+    monkeypatch.setattr(M, "for_each", fake_for_each)
+    monkeypatch.setattr(M, "collect_home_team_map", lambda home_dir, keys: {})
+    monkeypatch.setattr(M, "git_provenance", lambda: {"commit": "deadbeef", "dirty": False})
+    monkeypatch.setattr(M, "require_clean_tree", lambda prov, allow_dirty=False: None)
+    out = tmp_path / "o"
+    base = ["m.py", "--cache-dir", str(tmp_path), "--out", str(out), "--providers", "skillcorner"]
+    for i in range(4):
+        monkeypatch.setattr(sys, "argv", [*base, "--worker", f"{i}/4"])
+        M.main()
+    assert not (out / "home_teams.json").exists() and not (out / "manifest_all.json").exists()
+    monkeypatch.setattr(sys, "argv", base)
+    M.main()
+    calls = seen["calls"]
+    assert len({json.dumps(t, sort_keys=True) for _items, t in calls}) == 1  # ONE generation token for all
+    worker_units = [r.key for items, _t in calls[:4] for r in items]
+    assert sorted(worker_units) == sorted(r.key for r in refs) and len(set(worker_units)) == len(refs)
+    assert len(calls[4][0]) == len(refs)  # the final pass walks (resumes over) every unit
+    assert (out / "home_teams.json").exists() and (out / "manifest_all.json").exists()
+
+
+def test_worker_spec_is_validated():
+    from scripts.materialize_tc3_frames import parse_worker
+
+    for bad in ("4/4", "x/4", "3", "-1/4"):
+        with pytest.raises(SystemExit):
+            parse_worker(bad)

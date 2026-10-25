@@ -83,6 +83,24 @@ class RowGroups:
         return list(self._indices.keys())
 
 
+def column_position(df: pd.DataFrame, col: str) -> int:
+    """The integer position of the UNIQUE column ``col`` (for ``df.iat[row, column_position(df, col)]``).
+
+    ``Index.get_loc`` returns a slice or a boolean mask for a duplicated label; a positional write through
+    either would be silently wrong, so a non-unique (or missing) column raises instead.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> column_position(pd.DataFrame({"a": [1], "b": [2]}), "b")
+    1
+    """
+    loc = df.columns.get_loc(col)
+    if not isinstance(loc, int):
+        raise ValueError(f"column {col!r} is not unique in the frame")
+    return loc
+
+
 def group_rows(df: pd.DataFrame, by: str | tuple[str, ...]) -> RowGroups:
     """Build a :class:`RowGroups` O(1) lookup over ``df`` grouped by ``by``. See the module docstring."""
     return RowGroups(df, by)

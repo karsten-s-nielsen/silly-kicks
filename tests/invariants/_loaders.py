@@ -2,8 +2,8 @@
 
 Each loader returns ``(actions, home_team_id)`` for one match using the same
 converter that production code uses. Real fixtures where they exist (StatsBomb,
-Sportec bronze, Metrica bronze, kloppy-Sportec/Metrica synthetic XML/JSON, Gradient Sports
-synthetic). Wyscout + Opta have no real fixtures committed -- both use
+Sportec bronze, Metrica bronze, the kloppy-Sportec spliced real excerpt XML and the kloppy Metrica
+Sample Game 2 JSON, Gradient Sports synthetic). Wyscout + Opta have no real fixtures committed -- both use
 synthetic 2-team event sets that exercise per-team direction.
 
 The Wyscout 2-team fixture is in possession-perspective (each team's shot at

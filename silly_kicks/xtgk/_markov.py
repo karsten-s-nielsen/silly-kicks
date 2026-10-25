@@ -16,6 +16,7 @@ import numpy.typing as npt
 import pandas as pd
 from sklearn.exceptions import NotFittedError
 
+from silly_kicks.spadl._training_exclusion import training_exclusion_mask
 from silly_kicks.xtgk._moves import extended_move_actions, xtgk_action_prob, xtgk_transition_matrix
 from silly_kicks.xtgk._possession_value import DeltaV, PressureLevel, State
 from silly_kicks.xtgk._validate import validate_possession_value_input
@@ -29,6 +30,10 @@ if TYPE_CHECKING:
 
 Method = Literal["singh_counts", "kde_smoothed"]
 _LEVELS: tuple[PressureLevel, ...] = (1, 2, 3)
+
+#: Provenance dimensions this trainer READS (TF-46 Arm 1 Part 2, spec section 18.2.1): the result mask only;
+#: possession ORDER uses the guarded chronological sort, valid even for placeholder times.
+TRAINING_READS = frozenset({"result"})
 
 
 class MarkovPossessionValue:
@@ -55,6 +60,11 @@ class MarkovPossessionValue:
         diag = validate_possession_value_input(actions, xg_column=xg_column, pressure_column=pressure_column)
         if not diag.ok:
             raise ValueError("invalid fit input: " + "; ".join(diag.problems))
+        # TF-46 Arm 1 (decision B5/E, spec section 11.3): the empirical transition/action-prob surfaces read
+        # result_id over the extended move-set (goal kicks / throw-ins included), so drop rows with an
+        # inferred/stopgap result, a chain_ambiguous restart, or a repair_kind -- the K2 kept set-piece rows.
+        # Tolerant of a frame without the base signal columns (all-False mask).
+        actions = actions[~training_exclusion_mask(actions)]
         from silly_kicks.xtgk._pressure_levels import PressureLevels
 
         pl = pressure_levels or PressureLevels().fit(actions[pressure_column])

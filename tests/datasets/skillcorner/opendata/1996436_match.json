@@ -1,0 +1,245 @@
+{
+  "away_team": {
+    "id": 1804,
+    "name": "Macarthur FC"
+  },
+  "away_team_score": 1,
+  "home_team": {
+    "id": 4177,
+    "name": "Auckland FC"
+  },
+  "home_team_score": 2,
+  "id": 1996436,
+  "match_periods": [
+    {
+      "duration_frames": 30130,
+      "duration_minutes": 50.22,
+      "end_frame": 30140,
+      "name": "period_1",
+      "period": 1,
+      "start_frame": 10
+    },
+    {
+      "duration_frames": 30130,
+      "duration_minutes": 50.22,
+      "end_frame": 60280,
+      "name": "period_2",
+      "period": 2,
+      "start_frame": 30150
+    }
+  ],
+  "pitch_length": 104,
+  "pitch_width": 68,
+  "players": [
+    {
+      "goal": 0,
+      "id": 51717,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 966608,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 966118,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 966117,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 10623,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 51006,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 6871,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 51044,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 808580,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 51014,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 1,
+      "id": 51648,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 966116,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 970049,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 50980,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 582974,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 624628,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 23418,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 133495,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 51713,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 31147,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 1,
+      "id": 14736,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 4322,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 38673,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 133498,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 133501,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 1,
+      "id": 43829,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 163972,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 50951,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 33697,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 970048,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 818285,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 3443,
+      "own_goal": 0,
+      "team_id": 1804
+    },
+    {
+      "goal": 0,
+      "id": 14355,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 965685,
+      "own_goal": 0,
+      "team_id": 4177
+    },
+    {
+      "goal": 0,
+      "id": 285188,
+      "own_goal": 0,
+      "team_id": 4177
+    }
+  ]
+}

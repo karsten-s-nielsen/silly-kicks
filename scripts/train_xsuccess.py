@@ -239,6 +239,15 @@ def main() -> None:
     if not len(pooled):
         raise SystemExit("no on-ball rows collected from the corpus; nothing to fit")
 
+    # TF-46 Arm 1 Part 2 (spec section 18.2.1): the training-exclusion count on the fitted cohort (result OR
+    # location unvalidated), reported with the run (XSuccessModel.fit applies the same rule internally).
+    from silly_kicks.spadl._training_exclusion import provenance_masks
+
+    _non_action = spadlconfig.actiontype_id["non_action"]
+    _onball = pooled[pooled["type_id"] != _non_action]
+    _pm = provenance_masks(_onball)
+    n_excluded = int((_pm["result"] | _pm["location"]).sum())
+
     best_params = _hpo_params(pooled, args.hpo_trials) if args.family == "xgboost" else None
     metrics = cross_val_metrics(pooled, params=best_params, family=args.family)
     model = XSuccessModel().fit(pooled, family=args.family, params=best_params)
@@ -257,6 +266,7 @@ def main() -> None:
         **metrics,
         "n_rows": len(pooled),
         "n_matches": int(pooled["game_id"].nunique()),
+        "provenance_excluded_rows": n_excluded,
         "providers": corpus_label,
         "hpo_trials": args.hpo_trials,
         "hpo_best_params": best_params,

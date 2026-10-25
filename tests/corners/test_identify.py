@@ -81,10 +81,12 @@ def test_corner_id_is_per_game_chronological():
 def test_skillcorner_source_token():
     acts = _actions([{"type_id": _CORNER_CROSSED}])
     out = identify_corners(acts, provider="skillcorner")
-    assert out.iloc[0]["corner_source"] == "skillcorner_gi"
+    assert out.iloc[0]["corner_source"] == "skillcorner_marker"
 
 
-def test_gi_refinement_marks_unclear():
+def test_gi_param_deprecated_and_ignored():
+    import warnings as _w
+
     acts = _actions([{"type_id": _CORNER_CROSSED, "period_id": 1, "time_seconds": 100.0}])
     gi = pd.DataFrame(
         {
@@ -92,26 +94,38 @@ def test_gi_refinement_marks_unclear():
             "period_id": [1],
             "time_seconds": [100.0],
             "game_interruption_before": ["corner_for"],
-            "start_type": ["pass_reception"],  # not corner_reception/interception -> unclear
+            "start_type": ["pass_reception"],  # once marked "unclear"; the refinement is retired (B1)
         }
     )
-    out = identify_corners(acts, provider="skillcorner", gi=gi)
-    assert out.iloc[0]["corner_kind"] == "unclear"
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter("always")
+        out = identify_corners(acts, provider="skillcorner", gi=gi)
+    assert any(issubclass(x.category, DeprecationWarning) for x in caught)
+    assert out.iloc[0]["corner_kind"] != "unclear"  # gi ignored, never refines to unclear
 
 
-def test_gi_reception_stays_direct():
-    acts = _actions([{"type_id": _CORNER_CROSSED, "period_id": 1, "time_seconds": 100.0}])
-    gi = pd.DataFrame(
-        {
-            "game_id": ["g1"],
-            "period_id": [1],
-            "time_seconds": [100.0],
-            "game_interruption_before": ["corner_for"],
-            "start_type": ["corner_reception"],
-        }
+def test_nan_start_y_yields_nan_side():
+    # Non-vacuous: a NaN start_y was silently "right" before the section 9.4 fix.
+    acts = _actions([{"type_id": _CORNER_CROSSED, "start_x": 104.5, "start_y": float("nan")}])
+    out = identify_corners(acts, provider="sportec")
+    assert pd.isna(out.iloc[0]["corner_side"])
+
+
+def test_derived_corner_has_nan_kick_fields():
+    # A derived (events-only) corner carries a NaN start -> NaN t_kick/kick_x/kick_y/corner_side.
+    acts = _actions(
+        [{"type_id": _CORNER_CROSSED, "start_x": float("nan"), "start_y": float("nan"), "time_seconds": 100.0}]
     )
-    out = identify_corners(acts, provider="skillcorner", gi=gi)
-    assert out.iloc[0]["corner_kind"] == "direct"
+    row = identify_corners(acts, provider="skillcorner").iloc[0]
+    assert pd.isna(row["t_kick"]) and pd.isna(row["kick_x"]) and pd.isna(row["kick_y"])
+    assert pd.isna(row["corner_side"])
+
+
+def test_type_source_travels_from_actions():
+    acts = _actions([{"type_id": _CORNER_CROSSED, "start_x": 104.5, "start_y": 0.2}])
+    acts["type_source"] = "default"
+    out = identify_corners(acts, provider="skillcorner")
+    assert out.iloc[0]["type_source"] == "default"
 
 
 def test_no_corners_returns_empty_schema():
@@ -135,3 +149,29 @@ def test_pure_does_not_mutate_input():
     before = acts.copy(deep=True)
     identify_corners(acts, provider="sportec")
     pd.testing.assert_frame_equal(acts, before)
+
+
+def test_event_coded_first_touch_on_gradientsports_only():
+    # Spec 9.3: GS events code the first touch -> the next action by a DIFFERENT player within the 6 s window.
+    rows = [
+        {"type_id": _CORNER_CROSSED, "start_x": 104.5, "start_y": 0.2, "time_seconds": 100.0, "player_id": "pT"},
+        {"type_id": _PASS, "time_seconds": 100.4, "player_id": "pT", "team_id": "t1"},  # the taker again: skipped
+        {"type_id": _PASS, "time_seconds": 101.3, "player_id": "pD", "team_id": "t2"},
+        {"type_id": _PASS, "time_seconds": 101.9, "player_id": "pE", "team_id": "t1"},
+    ]
+    gs = identify_corners(_actions(rows), provider="gradientsports").iloc[0]
+    assert (gs["event_first_touch_time"], gs["event_first_touch_player_id"], gs["event_first_touch_team_id"]) == (
+        101.3,
+        "pD",
+        "t2",
+    )
+    sportec = identify_corners(_actions(rows), provider="sportec").iloc[0]
+    assert pd.isna(sportec["event_first_touch_time"]) and pd.isna(sportec["event_first_touch_player_id"])
+
+
+def test_event_coded_first_touch_outside_the_window_is_nan():
+    rows = [
+        {"type_id": _CORNER_CROSSED, "start_x": 104.5, "start_y": 0.2, "time_seconds": 100.0, "player_id": "pT"},
+        {"type_id": _PASS, "time_seconds": 106.5, "player_id": "pD", "team_id": "t2"},  # > t_kick + 6 s
+    ]
+    assert pd.isna(identify_corners(_actions(rows), provider="gradientsports").iloc[0]["event_first_touch_time"])
