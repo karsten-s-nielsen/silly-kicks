@@ -104,7 +104,7 @@ jobs:
       # (tests/tracking/_fixtures/das_golden/, checksummed with no library needed). The dev-only
       # `das-reference` extra (pinned accessible-space==2.0.15) is installed only where the oracle is
       # regenerated, where the corpus parity driver runs, and in the `das-reference-contract` job -- not here.
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
       - run: uv pip install -e ".[kloppy,xgboost,test]"
@@ -194,7 +194,7 @@ jobs:
         with:
           path: ${{ github.workspace }}/.numba_cache
           key: numba-ubuntu-latest-3.12-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py', 'silly_kicks/coordination/**/*_numba*.py') }}
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
       - run: uv pip install -e ".[kloppy,xgboost,test]"
@@ -270,7 +270,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
       - run: uv pip install -e ".[kloppy,xgboost,test]"
@@ -291,7 +291,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
       - run: uv pip install -e ".[test,das-reference]"
