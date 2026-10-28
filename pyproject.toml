@@ -109,7 +109,11 @@ calibration = [
     "numba>=0.59.0",
 ]
 test = [
-    "pytest>=7.4.2",
+    # Capped below 9.2: pytest 9.2.0 removed the private ``Function._nodeid`` that pytest-benchmark
+    # 5.x reads, so every benchmark errors with ``AttributeError: 'Function' object has no attribute
+    # '_nodeid'`` (CI float af03c4b went green 2026-10-22, red 2026-10-28 on a fresh resolve). Lift the
+    # cap once pytest-benchmark ships a pytest-9.2-compatible release.
+    "pytest>=7.4.2,<9.2",
     "pytest-mock>=3.11.1",
     "pytest-cov>=4.1.0",
     "pytest-benchmark>=4.0.0",

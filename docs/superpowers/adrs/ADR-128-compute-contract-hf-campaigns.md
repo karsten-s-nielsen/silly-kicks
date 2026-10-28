@@ -263,6 +263,102 @@ P1 and P2 correct approved spec TEXT.
 - The census runs on the contract and certifies by rebaseline (P15).
 - `ghost_gk` permutation importance keeps scikit-learn's joblib parallelism (P11).
 
+### Amendment 2026-10-27 (4.140.0): a run-dependent value leaves the fit artifact (D3)
+
+P3 strips `identity.PROVENANCE_KEYS` only in the across-commit compare; the same-commit compare is byte-for-byte,
+so a provenance value left in a fit artifact still breaks a main-vs-replica attestation. `training_platform` was
+that value: `_xshot_occurrence` / `_xcross_attempt` stamped the live `platform.platform()` (the node kernel) into
+`metadata.json`, so two HF nodes differed. The four tracking models no longer write it to `metadata.json`; the fit
+host's platform is RUN-HISTORY instead -- `_stages.run_unit` records it (`"platform"`) in each unit ledger, which
+is never shipped in the artifact and is not compared as artifact bytes. Determinism fix D3.
+
+### Amendment 2026-10-28 (compute-parallelism Cycle 1): opt-in multi-threaded fits (INV-2)
+
+INV-2 amended: every unit is single-threaded UNLESS its stage sets `thread_safe=True` behind a committed
+cross-thread-count byte-identity test (`tests/tracking/test_thread_identity.py`; the fail-closed registry
+`tests/scripts/test_thread_safe_registry.py`). A `thread_safe` worker runs at
+`thread_budget = max(1, vcpu // (workers·inner_workers))` threads so `threads × units_in_flight ≤ vcpu`
+(oversubscription-safe); the applied budget is stamped to the unit ledger. The budget is injected **per the
+stage's declared `thread_lever`, never a blanket override** — the default/shared/reduce/adapter env stays
+single-threaded (`deterministic_env`, every thread var `"1"`):
+
+- `thread_lever="omp"` (HistGB, e.g. ghost): the executor raises `OMP_NUM_THREADS` only; `OPENBLAS/MKL/VECLIB`
+  and `NUMBA_NUM_THREADS` stay `"1"`. HistGB is OpenMP `prange`; the ghost assemble's BLAS (`cho_factor`/
+  `einsum`) is an axis the determinism evidence (OMP varied only) never covered, so BLAS stays serial for P3.
+- `thread_lever="n_jobs"` (xgb): the worker env stays fully serial; the executor exports
+  `SILLY_KICKS_RUNTIME_THREADS=<budget>`, which the trainer reads TRAINER-SIDE (never inside the library `fit`,
+  no Hyrum hidden dependency) and passes as the runtime `n_jobs`. The serialized `metadata.json` `n_jobs` stays
+  the constant `1`, so the artifact is byte-identical across thread counts.
+
+Byte-identity (P3) is per host: the gate runs on x86 in CI, the HF `cpu-upgrade` production arch (INV-4, one
+prod flavor). Cross-host byte-equality is neither required nor achievable (P15, cross-host diffs are adopted
+environment deltas); the DGX is a possible backup, never a byte-identity benchmark. The dispatch budget
+(`dispatch_cap`) and the planner's per-stage shard ceiling (`shard_cap`) are decoupled `Constraints` fields:
+raising `dispatch_cap` (Cycle 1: 25) probes the HF account limit without re-sharding (`shard_cap` held at 20). A
+never-started-then-timed-out job is a dispatch overflow (the controller backs the live budget off toward
+`dispatch_floor`, re-derived each stateless step; it does NOT count toward `error_resumes`); a started job that
+times out counts as today. Past the floor plus `dispatch_halt_after` more, the instance halts and surfaces the
+real ceiling (owner ruling: surface, not degrade to slow waves). The observed max concurrency is written to the
+campaign summary (probe-first).
+
+### Amendment 2026-10-29 (HF full utilization): every job uses all 8 vCPU; 30 min is a sizing target
+
+This cycle makes the planner and controller drive the whole box, with no rebaseline (every artifact stays
+byte-identical, proven by the per-stage thread-identity gate and `test_thread_safe_registry`).
+
+- **`thread_safe` sizing is W=1.** A `thread_safe` non-inner stage plans one worker, so its single process
+  gets the full vCPU thread budget (`thread_budget(vcpu, 1, 1) = vcpu`); units fan across jobs by wall. The
+  `cv` stages opt in too (ghost HistGB via `omp`, xgb via `n_jobs`), each behind its OWN committed identity
+  arm (the registry is per-stage, not a one-off string grep).
+- **The study inner pool is sized to the fold width by the per-CHILD peak RSS.** `UnitCost` carries
+  `inner_child_peak_rss_bytes` (an `InnerPool` child records its own peak); `plan_stage` sizes the pool AND
+  its cap by the child peak, so `unit_peak + inner × child_peak × cap_factor` stays within the usable RAM.
+  Before any child RSS is recorded the plan falls back to the whole-unit clamp and surfaces
+  `study-unsized-pending-measurement`; a child RSS too large for the fold width records an `inner-ram-floor`,
+  never a silent 1.
+- **The schedule is a DAG, not a linear stage barrier.** The controller emits an action for EVERY ready stage
+  in one step, so independent stages dispatch concurrently.
+- **Timeouts are decoupled from the target.** The 30-minute target is a SIZING input to the planner, never a
+  kill threshold. A run job's timeout is `timeout_safety × wall_p99` (floored); the inline reduce adds the
+  measured `reduce_wall`, or the generous profile ceiling on a first run. A tiny/grouped job (`n_units ≤ 2`
+  plus any chained single-unit stages) runs its bundled stages sequentially, so its timeout is sized to that
+  summed work: `timeout_safety × (Σ n_units·p99 over the bundled stages + their inline reduce walls) +
+  startup_s`, floored, with the profile ceiling as the first-run fallback (owner-ratified 2026-10-29). A flat
+  ceiling would kill a heavy grouped chain whose wall exceeds it. The escalate job re-runs a memory-FAILED
+  unit, which has no committed wall, so it keeps the generous profile ceiling. A job that runs past 30 minutes
+  is NOT failed.
+- **The first run uses the HF-measured startup.** A committed bootstrap summary carries the ~15 s
+  `cpu-upgrade` startup (git clone + venv + `uv sync`), so `planning_constraints` budgets against the real box
+  from the first run, not the 300 s default.
+- **Slot-filling fans toward free dispatch slots**, bounded by `budget_floor` (minimum work per job, derived as
+  `10 × startup_s` so the startup is ~10% of a slot-filled job), the `shard_cap` and the unit count.
+- **A heavy reduce is sharded when it declares `shardable_reduce`.** When its recorded p99 exceeds the per-job
+  budget, the reduce is range-partitioned into `sub-reduce` jobs over sorted-key ranges (each an ordered
+  `combine_frames` concat written to `{gen}/_subreduce/`), then one final `reduce` concatenates the partials
+  in sorted order — byte-identical to the single reduce (`combine_frames` associativity + idempotent storable
+  ids), with the same `_summary.json`/`_inputs.json` provenance beside the output. The inline `try_reduce` is
+  disabled for a sharded stage. A final concat still over budget is an irreducible floor (surfaced, never
+  failed).
+- **The module CLI entry is `cli_main`, not `raise SystemExit(main(...))`.** Every migrated module's
+  `__main__` calls `scripts._stages.cli_main(PIPELINE)`. It runs `main`, then the registered Python atexit
+  handlers (so a worker's temp-dir rmtree still runs), flushes stdout/stderr (so `--plan` JSON survives), then
+  `os._exit(rc)` (which skips interpreter finalization, including `threading._shutdown` — no pool/thread join
+  runs through this exit; an `InnerPool` is joined by its own worker's `finally`). This stops a native-library
+  C++ teardown abort (observed: Arrow
+  `terminate called without an active exception`, SIGABRT at interpreter shutdown) from turning a CORRECT
+  job's exit code nonzero — the controller marks any nonzero rc as a failed job. Outputs are persisted by
+  atomic writes before `main` returns, so the hard exit loses nothing, and a raised acceptance gate still
+  exits nonzero as before. `cli_main` and the executor's reduce/worker child `__main__`
+  (`scripts/hf_jobs/executor.py`) share one `scripts._stages.hard_exit`; the reduce child does Arrow I/O and
+  `_subprocess` fails the inline reduce on any nonzero rc, so it has the same exposure.
+- **Preflight reuses the ~20–30 min `check_plans` toy train** by an input-keyed cache; the cheap checks and
+  `check_ref` always re-observe (see the preflight-reuse ADR).
+- **A per-stage utilization audit** is written to the campaign summary: each stage either saturates the vCPU
+  or records an irreducible floor (a study at its fold width records its idle cores).
+
+The four default/shared/reduce/adapter thread vars stay `"1"` (`deterministic_env`); the lever rules above are
+unchanged.
+
 ## Cycle 1 outcome (2026-10-21)
 
 **What ran.** Campaign `cycle1` (`scripts/hf_jobs/campaigns/cycle1.toml`) ran on real HF at the code commit:

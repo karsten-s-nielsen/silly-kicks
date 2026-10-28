@@ -2282,7 +2282,6 @@ class GhostGkModel:
             # only stamp the runtime version for a genuinely fresh fit (spec §4).
             "sklearn_version": self._sklearn_version or sklearn.__version__,
             "training_commit": self.training_commit,
-            "training_platform": self.training_platform,
             "corpus_provenance": self.corpus_provenance,
             "serve_estimator": SERVED_ESTIMATOR,
             "version": "1.3.0",

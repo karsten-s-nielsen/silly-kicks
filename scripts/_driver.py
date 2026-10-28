@@ -271,6 +271,48 @@ def _write_bytes_atomically(path: pathlib.Path, data: bytes) -> None:
     os.replace(tmp, path)  # the last attempt raises a persistent failure, never swallows it
 
 
+def _write_bytes_exclusively(path: pathlib.Path, data: bytes) -> bool:
+    """Create ``path`` with ``data`` only if it does not exist yet. Return True when this call created it, False
+    when another writer already holds the path.
+
+    Create-if-absent via ``O_CREAT | O_EXCL`` -- the D7 repair record must not clobber a real ``.ledger.json`` a
+    straggler wrote between the done-keys snapshot and the repair write (reviewer B B14). Direct, not the temp +
+    ``os.replace`` of ``_write_bytes_atomically``, because a rename overwrites and so cannot refuse an existing
+    target; a repair record is a sub-kilobyte JSON written in one call.
+
+    Scope of the guarantee (reviewer B B15): ``O_EXCL`` is atomic create-if-absent on a single POSIX filesystem,
+    which is all the tests exercise (``LocalStore`` over a temp dir). In production the race is ALWAYS between
+    two HF job containers -- a straggler's run job against the reduce job -- sharing the bucket MOUNT. Whether
+    that mount honours ``O_EXCL`` create atomically across containers is UNVERIFIED (a real-mount probe decides
+    it). So this is a best-effort improvement over an unconditional overwrite, not a proof for the mount; the
+    single-writer cases are safe regardless.
+
+    A kill mid-write leaves a partial file that would block a later repair, so an exception removes it -- but
+    ONLY if the path still refers to the file this call created (reviewer B B16): a straggler may have
+    ``os.replace``d the real ledger onto the path first, and that must never be deleted. A SIGKILL cannot run
+    the cleanup; a torn sub-kilobyte write is a far narrower window than the overwrite it replaces.
+    """
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    mine = os.fstat(fd)  # identity of the file THIS call created, captured before the write can fail
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+    except BaseException:
+        try:
+            if os.path.samestat(os.stat(path), mine):  # still our file -> remove our partial; a straggler's -> keep
+                os.unlink(path)
+        except OSError:
+            pass
+        raise
+    return True
+
+
 def shard_select(seq, index, n):
     """Disjoint-cover slice for shard ``I/N``: ``list(seq)[index::n]``.
 

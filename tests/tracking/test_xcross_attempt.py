@@ -337,6 +337,20 @@ def test_model_fit_predict_proba():
     assert ((p >= 0) & (p <= 1)).all()
 
 
+def test_metadata_is_platform_independent(tmp_path, monkeypatch):
+    # D3: the xCross artifact metadata must not depend on the live platform, so a main run and its replica
+    # produce byte-identical bytes; the fit host's platform is run-history (the unit ledger), not the artifact.
+    import json
+
+    m, _ = _fit_tiny_model()
+    monkeypatch.setattr("platform.platform", lambda: "Linux-6.12.110-x86_64")
+    m.save(tmp_path / "a")
+    monkeypatch.setattr("platform.platform", lambda: "Linux-6.12.111-x86_64")
+    m.save(tmp_path / "b")
+    assert "training_platform" not in json.loads((tmp_path / "a" / "metadata.json").read_text())
+    assert (tmp_path / "a" / "metadata.json").read_bytes() == (tmp_path / "b" / "metadata.json").read_bytes()
+
+
 def test_model_deterministic():
     rng = np.random.default_rng(1)
     X = pd.DataFrame(rng.normal(size=(150, 16)), columns=xc.XCROSS_FEATURE_NAMES_FAITHFUL)
@@ -515,3 +529,39 @@ def test_xfns_silent_nan_on_frames_none():
     result = fn(states, None)
     assert list(result.columns) == ["xcross_attempt_a0", "xcross_attempt_a1", "xcross_attempt_a2"]
     assert result.isna().all(axis=None)
+
+
+def test_fit_runtime_n_jobs_leaves_artifact_and_serialized_n_jobs_unchanged(tmp_path):
+    """T3: a runtime n_jobs changes neither the booster bytes nor metadata; serialized n_jobs stays 1."""
+    import json
+
+    cols = xc.XCROSS_FEATURE_NAMES_FAITHFUL
+    rng = np.random.default_rng(1)
+    X = pd.DataFrame(rng.standard_normal((200, len(cols))), columns=cols)
+    y = pd.Series((rng.random(200) < 0.3).astype(int))
+    a, b = tmp_path / "a", tmp_path / "b"
+    xc.XCrossAttemptModel().fit(X, y, runtime_n_jobs=1).save(a)
+    xc.XCrossAttemptModel().fit(X, y, runtime_n_jobs=8).save(b)
+    assert (a / "model.json").read_bytes() == (b / "model.json").read_bytes()
+    assert (a / "metadata.json").read_bytes() == (b / "metadata.json").read_bytes()
+    assert json.loads((a / "metadata.json").read_text())["params"]["n_jobs"] == 1
+
+
+def test_fit_passes_runtime_n_jobs_to_the_estimator(monkeypatch):
+    """B45 (kills mutant M6): runtime_n_jobs must reach the xgb estimator."""
+    import xgboost as xgb
+
+    captured: dict = {}
+    orig = xgb.XGBClassifier
+
+    def spy(**kwargs):
+        captured["n_jobs"] = kwargs.get("n_jobs")
+        return orig(**kwargs)
+
+    monkeypatch.setattr(xgb, "XGBClassifier", spy)
+    cols = xc.XCROSS_FEATURE_NAMES_FAITHFUL
+    rng = np.random.default_rng(1)
+    X = pd.DataFrame(rng.standard_normal((200, len(cols))), columns=cols)
+    y = pd.Series((rng.random(200) < 0.3).astype(int))
+    xc.XCrossAttemptModel().fit(X, y, runtime_n_jobs=7)
+    assert captured["n_jobs"] == 7

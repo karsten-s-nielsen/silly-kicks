@@ -244,6 +244,10 @@ default there, the flag only an override for a human-readable card label.
 stamped `training_platform="dgx-spark-aarch64"`. A comment cannot be the answer to "which machine
 produced this artifact", because it goes stale silently and the artifact is the thing you actually
 hold when a contract mismatch fires. **The stale premise is the finding, not the missing field.**
+*(Amended by D3, ADR-128 amendment 2026-10-27: the platform moved OUT of the fit artifact
+`metadata.json` -- a run-dependent value there broke a same-commit main-vs-replica byte-identity --
+into each unit ledger. The trade-off this ADR warned about now runs the other way: a cross-platform
+contract mismatch is diagnosed from the run ledger, not from the loaded artifact.)*
 
 **It also duplicated an existing instrument, which is worth recording as the near-miss it was.** The
 repair began from a hand-run ghost-only spot check; `scripts/measure_platform_probe.py` already

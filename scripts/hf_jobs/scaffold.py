@@ -27,7 +27,8 @@ _NAME = re.compile(r"^[a-z][a-z0-9_]*[a-z0-9]$")
 
 _MODULE = '''"""{title}: a born-ready ADR-128 {kind} (scaffolded by `python -m scripts.hf_jobs scaffold`).
 
-Follow docs/howto/compute-pipelines.md: units are keyed and single-threaded; every reduce combines in
+Follow docs/howto/compute-pipelines.md: units are keyed and single-threaded (a stage opts into its vCPU
+share only with `thread_safe=True` behind a byte-identity gate, ADR-128 amendment); every reduce combines in
 sorted key order; the module reads only staged datasets (the I1 gate). Replace the stage bodies; keep the
 contract (`PIPELINE`, the parity test, the registry entry, the toy input).
 """
@@ -39,7 +40,7 @@ import json
 import pandas as pd
 
 from scripts._driver_sources import dataset_dir, staged_flat_refs
-from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, main
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, cli_main
 
 _PARAMS = (Param("dataset", str, required=True, help="the staged flat dataset (scripts/hf_jobs/datasets.toml)"),)
 
@@ -103,7 +104,7 @@ PIPELINE = Pipeline(
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)
 '''
 
 _PARITY = '''"""ADR-128 W1N1-vs-W2N2 parity for `{module}` (scaffolded).

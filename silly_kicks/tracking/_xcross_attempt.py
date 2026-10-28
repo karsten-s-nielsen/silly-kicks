@@ -669,8 +669,14 @@ class XCrossAttemptModel:
         *,
         carrier_params: dict | None = None,
         horizon_seconds: float = 1.0,
+        runtime_n_jobs: int = 1,
     ) -> XCrossAttemptModel:
-        """Fit the classifier. Records ``carrier_params`` into the model (R3)."""
+        """Fit the classifier. Records ``carrier_params`` into the model (R3).
+
+        ``runtime_n_jobs`` sets xgboost's thread count for THIS fit only (ADR-128 Cycle-1 opt-in); the
+        serialized ``n_jobs`` stays the pinned ``1`` so the artifact is byte-identical across thread counts.
+        The budget is passed trainer-side (``SILLY_KICKS_RUNTIME_THREADS``), never read from the env in ``fit``.
+        """
         import xgboost as xgb
 
         if int(xgb.__version__.split(".")[0]) < 2:
@@ -679,6 +685,7 @@ class XCrossAttemptModel:
         self.horizon_seconds = horizon_seconds
         params = dict(self._params)
         params["base_score"] = float(np.asarray(labels, dtype=float).mean())  # calibrated intercept
+        params["n_jobs"] = int(runtime_n_jobs)  # runtime only; self._params (serialized) keeps n_jobs=1
         clf = xgb.XGBClassifier(**params)
         clf.fit(features.to_numpy(dtype=float), np.asarray(labels, dtype=int))  # M1: numpy
         booster = clf.get_booster()
@@ -699,8 +706,6 @@ class XCrossAttemptModel:
         """Serialize to booster JSON + metadata.json + SHA256SUMS (no pickle)."""
         if self._booster is None:
             raise RuntimeError("Model not fitted.")
-        import platform
-
         import xgboost as xgb
 
         path = Path(path)
@@ -724,7 +729,6 @@ class XCrossAttemptModel:
             "pitch_width": _geo.PITCH_WIDTH,
             "geometry_version": _geo.GEOMETRY_VERSION,
             "xgboost_version": xgb.__version__,
-            "training_platform": platform.platform(),
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),

@@ -37,8 +37,14 @@ def unit_cost(records: Iterable[Mapping]) -> UnitCost | None:
         return None
     walls = [float(r["wall_s"]) for r in done]
     peaks = [int(r["peak_rss_bytes"]) for r in done if r.get("peak_rss_bytes")]
+    child = [int(r["inner_child_peak_rss_bytes"]) for r in done if r.get("inner_child_peak_rss_bytes")]
     return UnitCost(
-        percentile(walls, 0.5), percentile(walls, 0.95), percentile(walls, 0.99), max(peaks) if peaks else 0, len(done)
+        percentile(walls, 0.5),
+        percentile(walls, 0.95),
+        percentile(walls, 0.99),
+        max(peaks) if peaks else 0,
+        len(done),
+        max(child) if child else None,  # HFU T11/B-19: the max per-child pool RSS, None before any was recorded
     )
 
 
@@ -109,11 +115,34 @@ def stage_workers(records: Iterable[Mapping]) -> tuple[int | None, int | None]:
     by_job: dict[str, set] = {}
     inner: list[int] = []
     for r in records:
+        if r.get("repaired"):  # a D7 repair record ran in no job: its null worker must not widen the count
+            continue
         by_job.setdefault(str(r.get("job_label")), set()).add(r.get("worker"))
         inner.append(int(r.get("inner_workers") or 1))
     if not by_job:
         return None, None
     return max(len(w) for w in by_job.values()), max(inner)
+
+
+#: The HF-measured per-job startup (git clone + venv + ``uv sync``) on the ``cpu-upgrade`` box, measured on
+#: the ``cccb702`` refit (``uv`` prepared 55 packages in 7.52 s, installed in 155 ms, inside a 24 s extract
+#: job): about 15 s, NOT the 300 s ``Constraints.startup_s`` default and NOT a local/DGX startup (HFU T10 /
+#: B-15). The committed bootstrap summary carries it so the FIRST planning run budgets against the real box.
+BOOTSTRAP_STARTUP_S: float = 15.0
+
+
+def write_bootstrap_summary(path: pathlib.Path, *, startup_s: float = BOOTSTRAP_STARTUP_S) -> None:
+    """Write a committed bootstrap summary that carries ONLY the HF-measured startup, so ``median_startup_s``
+    has a value before any campaign measured one. The single stage declares ``startup_s`` and nothing else --
+    no ``history_key`` and no ``unit_cost`` -- so it feeds ``median_startup_s`` alone and never the cost
+    history (``load_history``/``committed_history`` both skip it)."""
+    summary = {
+        "campaign": "_bootstrap",
+        "run_commit": None,
+        "run_tree_dirty": False,
+        "stages": [{"stage": "_bootstrap_startup", "startup_s": float(startup_s)}],
+    }
+    pathlib.Path(path).write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def median_startup_s(paths: Iterable[pathlib.Path]) -> float | None:
@@ -133,7 +162,14 @@ def median_startup_s(paths: Iterable[pathlib.Path]) -> float | None:
 
 
 def summarize(
-    *, campaign: str, campaign_sha256: str, prov: Mapping, stages: list[dict], jobs: list[dict], artifacts: list[dict]
+    *,
+    campaign: str,
+    campaign_sha256: str,
+    prov: Mapping,
+    stages: list[dict],
+    jobs: list[dict],
+    artifacts: list[dict],
+    observed_max_concurrency: int = 0,
 ) -> dict:
     return {
         "run_commit": prov["commit"],
@@ -141,6 +177,9 @@ def summarize(
         "campaign": campaign,
         "campaign_sha256": campaign_sha256,
         "env": prov.get("env"),
+        # The max job containers running at once this run (§D probe-first): the empirical HF concurrency the
+        # account actually granted, so the next cycle sizes dispatch_cap against a real ceiling.
+        "observed_max_concurrency": observed_max_concurrency,
         "stages": stages,
         "jobs": jobs,
         "artifacts": artifacts,

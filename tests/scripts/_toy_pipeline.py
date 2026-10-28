@@ -16,8 +16,8 @@ import time
 
 import pandas as pd
 
-from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, int_key, main, ordered_values
-from scripts._thread_pin import DETERMINISTIC_VARS
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, cli_main, int_key, ordered_values
+from scripts._thread_pin import DETERMINISTIC_VARS, RUNTIME_THREADS_VAR
 
 _VALUES = (1e16, 1.0, -1e16, 1.0)
 
@@ -73,6 +73,30 @@ def _env_work(key, ctx):
     return {v: os.environ.get(v) for v in sorted(DETERMINISTIC_VARS)}
 
 
+def _thread_env_work(key, ctx):
+    # the worker's thread env + the n_jobs-lever transport, for the thread_safe injection tests (T2)
+    keys = [*sorted(DETERMINISTIC_VARS), RUNTIME_THREADS_VAR]
+    return {v: os.environ.get(v) for v in keys}
+
+
+def _nfit_work(key, ctx):
+    # A deterministic OpenMP (HistGB) fit whose stored output must be byte-identical whatever per-worker
+    # thread budget the executor injects -- the EXECUTOR-level (W,N) thread-axis parity subject (B46).
+    import io
+
+    import numpy as np
+    from sklearn.ensemble import HistGradientBoostingRegressor
+
+    rng = np.random.default_rng(int(key))
+    X = rng.standard_normal((400, 12))
+    y = rng.standard_normal(400)
+    reg = HistGradientBoostingRegressor(max_iter=15, random_state=42).fit(X, y)
+    grid = np.random.default_rng(999).standard_normal((64, 12))
+    buf = io.BytesIO()
+    np.save(buf, reg.predict(grid).astype(np.float64))
+    return FileSet({"preds.npy": buf.getvalue()})
+
+
 def _strict_work(key, ctx):
     fail = str(ctx.params.get("fail_keys") or "")
     if fail == "*" or key in fail.split(","):
@@ -97,6 +121,7 @@ PIPELINE = Pipeline(
             reduce=_gen_reduce,
             params=("n_items",),
             max_failures=None,
+            shardable_reduce=(),  # HFU T8: a plain concat reduce (no id columns) -> shardable
         ),
         Stage(
             name="folds",
@@ -114,6 +139,21 @@ PIPELINE = Pipeline(
             reduce=lambda r, ctx: r["only"],
         ),
         Stage(name="env", units=lambda ctx: ["only"], work=_env_work),
+        Stage(name="env_omp", units=lambda ctx: ["only"], work=_thread_env_work, thread_safe=True, thread_lever="omp"),
+        Stage(
+            name="nfit",
+            units=lambda ctx: [int_key(i) for i in range(4)],
+            work=_nfit_work,
+            thread_safe=True,
+            thread_lever="omp",
+        ),
+        Stage(
+            name="env_njobs",
+            units=lambda ctx: ["only"],
+            work=_thread_env_work,
+            thread_safe=True,
+            thread_lever="n_jobs",
+        ),
         Stage(
             name="strict", units=lambda ctx: [int_key(i) for i in range(6)], work=_strict_work, params=("fail_keys",)
         ),
@@ -129,4 +169,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

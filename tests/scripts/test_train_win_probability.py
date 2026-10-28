@@ -12,7 +12,7 @@ from scripts.train_win_probability import (
     _games_frame,
     calibration_metrics,
     chronological_strength,
-    main,
+    cli_main,
     match_shard,
 )
 from silly_kicks.win_probability import (
@@ -31,7 +31,7 @@ FAIL = C.result_id["fail"]
 def test_module_imports_without_statsbombpy_and_main_is_argparse_guarded():
     # statsbombpy / _sb_open_data / _driver / _provenance are function-local imports, so the module
     # imports clean in CI (no network dep) and main() does not run on import.
-    assert callable(main)
+    assert callable(cli_main)
     assert callable(chronological_strength) and callable(match_shard)
 
 

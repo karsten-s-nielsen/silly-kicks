@@ -5,6 +5,122 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.140.0] — 2026-10-28 — HF compute parallelism Cycle 1 + bulk controller reads (PR-S204)
+
+> Two `silly_kicks/` (wheel) changes land here, so a NEW backward-compatible public keyword makes this a
+> SemVer **minor**: (1) `XShotOccurrenceModel.fit` / `XCrossAttemptModel.fit` gain a defaulted `runtime_n_jobs`
+> keyword (sets xgboost's thread count for that fit only; the serialized `metadata.json` `n_jobs` stays the
+> constant `1`, so the artifact is byte-identical across thread counts, no rebaseline), and (2) the fit-stage
+> `metadata.json` no longer records `training_platform` (D3, byte-identical across machines). The 2026-10-29
+> full-utilization amend adds one more wheel touch — a defaulted, PRIVATE `runtime_n_jobs` on
+> `silly_kicks.tracking._xcross_eval._cv_score_fold` (same mechanism, not a public surface, so the SemVer
+> minor is unchanged). Everything else is in `scripts/` (the executor, planner and controller) and the
+> ADR/docs. No weights are retrained here.
+
+### Added
+
+- **Opt-in multi-threaded fit stages (ADR-128 INV-2 amendment).** A `Stage`/`ItemStage` may set
+  `thread_safe=True` with a `thread_lever` (`"omp"` or `"n_jobs"`); the executor then launches that stage's
+  worker at `thread_budget = max(1, vcpu // (workers·inner_workers))` threads instead of pinned to 1, so a solo
+  fit uses its full vCPU share (`scripts/_thread_pin.py` `thread_budget` / `thread_safe_env` /
+  `runtime_n_jobs_from_env`; `scripts/hf_jobs/executor.py` `_dispatch`). The budget is injected PER THE LEVER,
+  never a blanket override: `"omp"` raises `OMP_NUM_THREADS` only and keeps BLAS (`OPENBLAS/MKL/VECLIB`) and
+  `NUMBA` at `"1"` — HistGB is OpenMP, and the ghost assemble's `cho_factor`/`einsum` is an axis the determinism
+  evidence never covered, so it stays serial for byte-identity; `"n_jobs"` keeps the env fully serial and
+  exports `SILLY_KICKS_RUNTIME_THREADS`, read trainer-side into the runtime `n_jobs`. The ghost (`train_ghost_gk`,
+  `train_ghost_outfield`) and xgb (`train_xshot_occurrence`, `train_xcross_attempt`) `fit` stages opt in behind a
+  committed cross-thread-count byte-identity gate (`tests/tracking/test_thread_identity.py`) and a fail-closed
+  registry (`tests/scripts/test_thread_safe_registry.py`). The applied budget is stamped to each unit ledger.
+- **Decoupled dispatch / shard caps.** `Constraints` and the campaign TOML split the single `concurrency_cap`
+  into `dispatch_cap` (jobs in flight at once — the probed HF account budget) and `shard_cap` (the planner's
+  per-stage shard ceiling); `shard_cap` omitted defaults to `dispatch_cap`, and a legacy `concurrency_cap` still
+  sets both. `cycle1.toml` now pins `dispatch_cap=25` / `shard_cap=20` (a gate, `test_cycle1_caps.py`, refuses a
+  missing `shard_cap`): the dispatch budget rises to 25 to probe the HF ceiling without re-sharding any stage.
+- **Dispatch-overflow handling (stateless, bounded).** A job whose container never started and then timed out is
+  a dispatch overflow — the controller backs the live budget off toward `dispatch_floor` (≥ `shard_cap`),
+  re-derived each step from job history, and does NOT count it toward `error_resumes`; a started job that times
+  out counts as before. Past the floor plus `dispatch_halt_after` more, the instance halts and names the real
+  ceiling (owner ruling: surface, not degrade to slow waves). A capacity reject mid-launch degrades; a
+  non-capacity or ambiguous reject fails loud. The observed max concurrency is written to the campaign summary.
+
+#### HF full utilization (2026-10-29 amend — ADR-128 amendment 2026-10-29, ADR-130; no rebaseline)
+
+The planner and controller now drive the whole box; 30 minutes is a SIZING target, not a kill threshold. Every
+artifact stays byte-identical (proven by the per-stage thread-identity gate and `test_thread_safe_registry`).
+
+- **W=1 sizing for `thread_safe` stages + `cv` opt-in.** A `thread_safe` non-inner stage plans one worker, so
+  its process gets the full vCPU thread budget; units fan across jobs. The `cv` stages opt in too
+  (ghost HistGB `omp`, xgb `n_jobs`), each behind its OWN committed identity arm — the registry is per-stage.
+  The xgb `cv` fold fits read the runtime `n_jobs` budget (`train_xshot_occurrence._cv_metrics_fold`;
+  `silly_kicks.tracking._xcross_eval._cv_score_fold` gains a defaulted, private `runtime_n_jobs`).
+- **Study inner pool sized to the fold width by the per-child peak RSS** (`UnitCost.inner_child_peak_rss_bytes`,
+  an `InnerPool` child records its own peak); the cap uses the child peak so the box holds the unit plus its
+  pool. First run (no child RSS yet) falls back to the whole-unit clamp and surfaces
+  `study-unsized-pending-measurement`; a child too large for the fold width records an `inner-ram-floor`.
+- **DAG schedule** — the controller emits an action for every ready stage in one step (no linear stage barrier).
+- **Timeouts decoupled from the target** — a run job's timeout is `timeout_safety × wall_p99` plus the measured
+  inline `reduce_wall` (or the generous profile ceiling on a first run); a job over 30 minutes is never failed.
+- **First-run startup from a committed bootstrap summary** (~15 s HF-measured) instead of the 300 s default.
+- **Slot-filling** fans toward free dispatch slots, bounded by `budget_floor`, `shard_cap` and the unit count.
+- **Byte-identical sharded reduce** — a stage that declares `shardable_reduce` (a plain `combine_frames` concat)
+  whose recorded p99 exceeds the per-job budget is range-partitioned into `sub-reduce` jobs over sorted-key
+  ranges, then one final ordered concat, byte-identical to the single reduce, with the same
+  `_summary.json`/`_inputs.json` provenance. Declared on the ghost_outfield / win_probability / xshot / xcross
+  extract reduces.
+- **Incremental preflight** (ADR-130) — the ~20–30 min `check_plans` toy train is cached by an input key; the
+  cheap checks and `check_ref` always re-observe.
+- **Per-stage utilization audit** in the campaign summary — each stage saturates the vCPU or records a floor.
+
+### Fixed
+
+- **Pipeline CLI entry hardened against a native teardown abort** (`scripts/_stages.py` `cli_main`, called by
+  every migrated module's `__main__` and emitted by the scaffold template, so `train_ghost_gk` /
+  `train_ghost_outfield` / `train_win_probability` / `train_xcross_attempt` / `train_xshot_occurrence` /
+  `train_receiver_model` / `build_territory_ranking_census`, `scripts/hf_jobs/adapter.py`, the toy pipeline and
+  every newly scaffolded module share it). A short `python -m <module>`
+  reduce/plan process can abort at interpreter shutdown (`terminate called without an active exception`,
+  SIGABRT) when Arrow tears down its C++ runtime, AFTER a correct `--subreduce` has already written its output.
+  The controller marks any nonzero rc as a failed job, so a correct job would fail spuriously. `cli_main` runs
+  `main`, then the shared `hard_exit` runs the registered Python atexit handlers (the worker-input temp-dir
+  rmtree is preserved), flushes the std streams (the `--plan` JSON on stdout is not lost), then `os._exit(rc)`
+  — a hard exit that skips interpreter finalization (the C++ static destructors that raise, and
+  `threading._shutdown`; no pool or thread join runs through this exit — an `InnerPool` is joined by its own
+  worker's `finally`). The executor's reduce/worker child `__main__` (`scripts/hf_jobs/executor.py`) shares
+  the same `hard_exit`: `_subprocess` fails the inline reduce on any nonzero rc, so the reduce child (Arrow
+  I/O) has the same teardown exposure (D1-IMPL-26). Covered by `tests/scripts/test_sharded_reduce.py`
+  `::test_cli_main_runs_atexit_and_flushes_before_a_hard_os_exit` and `::test_hard_exit_runs_atexit_and_flushes_before_os_exit`.
+- **Controller step reads each store once, in bulk** (`scripts/hf_jobs/store.py` `StoreSnapshot`,
+  `scripts/hf_jobs/campaign.py` `store_snapshots` / `read_plans` / `instance_views`): a step lists each distinct
+  store once (recursive), downloads a stage's unit ledgers in one batch instead of one API call per record, and
+  caches the bytes by xet hash across `--watch` steps. `--plan` runs 8 at a time and only for an instance whose
+  store listing or working tree changed. The TF-85 prototype measured the equivalent step at about 109 s cold /
+  10 s warm (down from 966.9 s on the prior code) over run 1's 42 recorded stores; the figure for THIS code comes
+  from the HF probe. The first step is expected to stay over the 60 s ceiling (R1-P1 open).
+- **D1**: the controller refuses to run on a dirty working tree (every `--plan` token would become
+  `dirty-<hash>` and miss the stores written under the committed tokens).
+- **D7**: `reduce_stage` repairs the `.ledger.json` of a finished unit whose record was lost to a kill between
+  the result write and the ledger write (`scripts/_stages.py` `repair_missing_ledgers`), so resume and the
+  summary count the unit. Its measured cost is not recovered: the repair record carries a null wall. The repair
+  write is create-only (`Store.write_if_absent`, `O_CREAT|O_EXCL`), so a straggler that writes the real ledger
+  keeps it: on a single POSIX filesystem the null-wall record never clobbers a measured one. In production the
+  race is between two job containers sharing the bucket mount, where `O_EXCL` create atomicity is UNVERIFIED
+  (a real-mount probe would confirm it); there this is best-effort, strictly better than the overwrite it
+  replaces, not a proof.
+- **D3**: the fit-stage artifact `metadata.json` no longer carries `training_platform`
+  (`silly_kicks/tracking/_xshot_occurrence.py`, `_xcross_attempt.py`, `_ghost_gk.py`, `_ghost_outfield.py`), so a
+  main run and its replica produce byte-identical metadata. The fit host's platform is run-history now:
+  `_stages.run_unit` records it in each unit ledger, never in the artifact.
+- **NF7**: the controller's per-generation cost-history cache is namespaced by run key, so a replica (a fresh
+  store with the same generation token) plans on its own measured costs, never the main run's.
+- **Cross-platform preflight gate**: the campaign sha256 (`load_campaign`) hashes line-ending-normalized bytes,
+  so a preflight on one OS gates a launch on another (a Windows CRLF working file no longer mismatches a Linux
+  LF launch). The sha256 gates preflight only — not run keys or generation tokens — so no store identity changes.
+
+### Notes
+
+- Byte-identity (ADR-128 P3) is proven PER HOST on x86 in CI — the HF `cpu-upgrade` production arch. There is no
+  aarch64/DGX gate: the DGX is a possible backup, never a byte-identity benchmark (P15).
+
 ## [4.139.1] — 2026-10-22 — pandas 3.1 compatibility fix + compute contract harness (ADR-128) (PR-S202)
 
 > **Why a patch release:** pandas 3.1.0 broke `add_gradientsports_player_ids` (see Fixed). The release also

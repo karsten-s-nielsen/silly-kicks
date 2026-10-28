@@ -31,7 +31,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
 
 from scripts._corpus_visibility import validate_corpus_visibility
-from scripts._stages import ItemStage, Param, Pipeline, Stage, int_key, main
+from scripts._stages import ItemStage, Param, Pipeline, Stage, cli_main, int_key
 
 
 def cache_token() -> str:
@@ -226,22 +226,6 @@ def keeper_detection_mask_or_none(visibility: pd.Series) -> pd.Series | None:
     return visibility.fillna(False).astype(bool)
 
 
-def resolve_training_platform(explicit: str | None, prov: dict) -> str:
-    """The platform to stamp: an explicit label if given, else the detected one.
-
-    Defaulting to `None` was the defect. `_xshot_occurrence` and `_xcross_attempt` both record
-    `platform.platform()` unconditionally, so ghost was the only trained artifact whose machine
-    identity depended on the operator remembering a flag -- and the flag was in fact forgotten,
-    leaving artifacts that could not say where they ran. Detection is the DEFAULT and the flag is now
-    only an override for a human-meaningful label ("dgx-spark-aarch64" reads better than
-    "Linux-6.11.0-aarch64-with-glibc2.39" in a model card).
-
-    Never returns None: an absent platform and an unknown platform are the same useless value
-    downstream, and `platform.platform()` always answers.
-    """
-    return explicit or prov["platform"]
-
-
 # ---- ADR-128 stage contract --------------------------------------------------------------------------
 #
 # validate (one unit) -> extract[match] -> cache (one unit) -> cv[fold] -> fit (one unit) ->
@@ -275,7 +259,6 @@ _PARAMS = (
     Param("carrier_gamma", float, None),
     Param("carrier_tolerance", float, None),
     Param("subsample_cap", int, None, help="cap total training samples (~36000 for the bundled 'default')"),
-    Param("training_platform", str, None, help="recorded in metadata (default: the detected platform)"),
     Param("skip_permutation_importance", flag=True),
     Param("perm_importance_sample", int, 150000),
     Param("keeper_grouped", flag=True),
@@ -645,7 +628,6 @@ def _fit_work(key, ctx):
         raise RuntimeError(f"BLOCKING parity gate FAILED (err={_par_err:.2e}, ncat={_par_ncat}); refusing to publish.")
     training_commit = None if ctx.prov["commit"] == "unknown" else ctx.prov["commit"]
     final_model.training_commit = training_commit
-    final_model.training_platform = resolve_training_platform(p["training_platform"], ctx.prov)
     # Aggregate corpus provenance (providers + counts ONLY; spec 2026-07-20 S6).
     final_model.corpus_provenance = {
         "providers": sorted({str(x) for x in provider_labels.tolist()}),
@@ -884,6 +866,8 @@ PIPELINE = Pipeline(
             needs=("cache",),
             reduce=lambda r, ctx: dict(r),
             declare=_model_declare,
+            thread_safe=True,  # HFU T11: each fold fits a HistGB; W=1 gets the full vCPU OMP budget
+            thread_lever="omp",  # HistGB OpenMP; BLAS stays serial (B38) -- identity test_cv_thread_identity_ghost_gk
         ),
         Stage(
             name="fit",
@@ -892,7 +876,8 @@ PIPELINE = Pipeline(
             needs=("cache",),
             reduce=lambda r, ctx: r["only"],
             declare=_model_declare,
-            params=("training_platform",),
+            thread_safe=True,  # ADR-128 INV-2 opt-in (test_thread_identity; test_thread_safe_registry)
+            thread_lever="omp",  # HistGB OpenMP; BLAS stays serial (B38)
         ),
         Stage(
             name="importance",
@@ -912,11 +897,11 @@ PIPELINE = Pipeline(
             needs=("extract", "cache", "cv", "fit", "importance"),
             reduce=lambda r, ctx: r["only"],
             declare=_model_declare,
-            params=("variant", "subsample_fps", "training_platform"),
+            params=("variant", "subsample_fps"),
         ),
     ),
     output="assemble",
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

@@ -6,8 +6,14 @@
 [campaign]
 name = "cycle1"
 bucket = "silly-kicks/hf-refit-scratch"
-target_minutes = 60
-concurrency_cap = 10
+# HFU full-utilization (R3): 30-minute SIZING target so the planner splits more aggressively. The job
+# timeout is decoupled from this (never 2*target_s); it derives from a measured wall or profile_timeout_s.
+target_minutes = 30
+# Cycle 1 decouples the caps (ADR-128): dispatch_cap probes the HF account limit; shard_cap stays 20 so no
+# stage re-shards (sharding is Cycle 2). shard_cap MUST be explicit here (test_cycle1_caps) — the default
+# shard_cap = dispatch_cap would re-shard every stage at 25.
+dispatch_cap = 25
+shard_cap = 20
 attempts = 3
 
 [[jobs]]

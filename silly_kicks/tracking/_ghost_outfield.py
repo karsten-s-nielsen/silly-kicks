@@ -767,7 +767,6 @@ class GhostOutfieldModel:
             "max_depth": self._max_depth,
             "sklearn_version": self._sklearn_version or sklearn.__version__,
             "training_commit": self.training_commit,
-            "training_platform": self.training_platform,
             "corpus_provenance": self.corpus_provenance,
             "serve_estimator": SERVED_ESTIMATOR,
             "version": "1.0.0",
