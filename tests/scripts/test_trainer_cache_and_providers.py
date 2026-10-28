@@ -268,8 +268,12 @@ def test_main_calls_validate_corpus_visibility_before_extraction():
 
     later = [st.name for st in t.PIPELINE.stages if _calls(st.work.__name__, _extracts_or_fits)]
     assert later, "expected keeper_detection_mask / .fit in the stage work functions"
-    assert {"extract", "cv", "fit"} <= set(later)
-    assert all(_needs_validate(n) for n in later), "validate_corpus_visibility must run BEFORE extraction/fit"
+    # spec r4 D18 (a): the keeper-detection filter runs in each variant's `select`, over the shared superset
+    # `extract` (which runs the per-frame extraction itself), so both must wait for `validate`.
+    assert {"select", "cv", "fit"} <= set(later)
+    assert all(_needs_validate(n) for n in [*later, "extract"]), (
+        "validate_corpus_visibility must run BEFORE extraction/fit"
+    )
 
 
 # ---------------------------------------------------------------------------

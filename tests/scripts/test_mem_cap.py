@@ -140,6 +140,17 @@ def test_an_inner_pool_child_over_the_cap_is_the_one_reported(tmp_path):
     assert _mem_cap.largest_rss(10, proc=proc) == (11, 500 * _mem_cap._page_size())
 
 
+def test_total_rss_sums_the_tree_where_largest_takes_the_max(tmp_path):
+    """Reviewer B D1-IMPL-18: an inner_parallel worker's pool shares the box, so its watched quantity is the
+    TREE TOTAL (the unit process PLUS its pool children) against the tree budget -- not the largest single
+    process. total_rss SUMS the tree; largest_rss takes the MAX. The root pid is reported for the kill message."""
+    proc = _fake_proc(tmp_path / "proc", {10: (1, 100), 11: (10, 90), 12: (10, 95), 13: (11, 30), 20: (1, 1000)})
+    page = _mem_cap._page_size()
+    assert _mem_cap.total_rss(10, proc=proc) == (10, (100 + 90 + 95 + 30) * page)  # the 315-page tree sum
+    assert _mem_cap.total_rss(11, proc=proc) == (11, (90 + 30) * page)  # subtree of 11 is {11, 13}
+    assert _mem_cap.total_rss(99, proc=proc) is None  # gone: nothing to measure
+
+
 def test_a_watched_caller_on_linux_without_systemd_gets_rss_not_rlimit(tmp_path, monkeypatch):
     proc = _fake_proc(tmp_path / "proc", {})
     monkeypatch.setattr(_mem_cap, "_systemd_run_available", lambda: False)

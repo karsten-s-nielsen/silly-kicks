@@ -31,14 +31,48 @@ def unit_records(store, generation: str) -> list[dict]:
     return out
 
 
+#: The ledger fields of a unit's upstream load (spec r3 D11 (b); written by `_stages.run_unit`).
+UPSTREAM_LOAD_FIELDS = ("upstream_fetch_s", "upstream_verify_s", "upstream_decode_s")
+
+
+def unit_load_s(rec: Mapping) -> float:
+    """The wall seconds a unit spent loading upstream results (0.0 for a unit that loaded none, and for a
+    pre-D11 ledger that did not record it)."""
+    return sum(float(rec.get(f) or 0.0) for f in UPSTREAM_LOAD_FIELDS)
+
+
+def compute_wall_s(rec: Mapping) -> float | None:
+    """A unit's wall WITHOUT its upstream load (spec r3 D11 (b)). A worker loads its upstream once, inside its
+    first unit; that load is a per-job overhead, so the per-unit cost the planner sizes and partitions with
+    excludes it. None for a record with an unknown wall (a D7 repair)."""
+    wall = rec.get("wall_s")
+    return None if wall is None else max(0.0, float(wall) - unit_load_s(rec))
+
+
+def upstream_load_s(records: Iterable[Mapping]) -> float | None:
+    """The stage's measured upstream load per worker (spec r3 D11 (b)): the median load of the units that loaded.
+    None when no unit recorded a load (every unit reused its worker's copy, or the ledgers predate D11)."""
+    loads = [unit_load_s(r) for r in records if int(r.get("upstream_loads") or 0) > 0]
+    return percentile(loads, 0.5) if loads else None
+
+
 def unit_cost(records: Iterable[Mapping]) -> UnitCost | None:
     done = [r for r in records if r.get("outcome") == "done" and r.get("wall_s") is not None]
     if not done:
         return None
-    walls = [float(r["wall_s"]) for r in done]
+    walls = [float(compute_wall_s(r) or 0.0) for r in done]
     peaks = [int(r["peak_rss_bytes"]) for r in done if r.get("peak_rss_bytes")]
+    child = [int(r["inner_child_peak_rss_bytes"]) for r in done if r.get("inner_child_peak_rss_bytes")]
+    # HFU plan R3-8 S3 item 5 (WIO): the unit CPU share, from the units that recorded their CPU
+    shares = [float(r["cpu_s"]) / float(r["wall_s"]) for r in done if r.get("cpu_s") is not None and r["wall_s"]]
     return UnitCost(
-        percentile(walls, 0.5), percentile(walls, 0.95), percentile(walls, 0.99), max(peaks) if peaks else 0, len(done)
+        percentile(walls, 0.5),
+        percentile(walls, 0.95),
+        percentile(walls, 0.99),
+        max(peaks) if peaks else 0,
+        len(done),
+        max(child) if child else None,  # HFU T11/B-19: the max per-child pool RSS, None before any was recorded
+        percentile(shares, 0.5) if shares else None,
     )
 
 
@@ -109,11 +143,34 @@ def stage_workers(records: Iterable[Mapping]) -> tuple[int | None, int | None]:
     by_job: dict[str, set] = {}
     inner: list[int] = []
     for r in records:
+        if r.get("repaired"):  # a D7 repair record ran in no job: its null worker must not widen the count
+            continue
         by_job.setdefault(str(r.get("job_label")), set()).add(r.get("worker"))
         inner.append(int(r.get("inner_workers") or 1))
     if not by_job:
         return None, None
     return max(len(w) for w in by_job.values()), max(inner)
+
+
+#: The HF-measured per-job startup (git clone + venv + ``uv sync``) on the ``cpu-upgrade`` box, measured on
+#: the ``cccb702`` refit (``uv`` prepared 55 packages in 7.52 s, installed in 155 ms, inside a 24 s extract
+#: job): about 15 s, NOT the 300 s ``Constraints.startup_s`` default and NOT a local/DGX startup (HFU T10 /
+#: B-15). The committed bootstrap summary carries it so the FIRST planning run budgets against the real box.
+BOOTSTRAP_STARTUP_S: float = 15.0
+
+
+def write_bootstrap_summary(path: pathlib.Path, *, startup_s: float = BOOTSTRAP_STARTUP_S) -> None:
+    """Write a committed bootstrap summary that carries ONLY the HF-measured startup, so ``median_startup_s``
+    has a value before any campaign measured one. The single stage declares ``startup_s`` and nothing else --
+    no ``history_key`` and no ``unit_cost`` -- so it feeds ``median_startup_s`` alone and never the cost
+    history (``load_history``/``committed_history`` both skip it)."""
+    summary = {
+        "campaign": "_bootstrap",
+        "run_commit": None,
+        "run_tree_dirty": False,
+        "stages": [{"stage": "_bootstrap_startup", "startup_s": float(startup_s)}],
+    }
+    pathlib.Path(path).write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def median_startup_s(paths: Iterable[pathlib.Path]) -> float | None:
@@ -133,7 +190,14 @@ def median_startup_s(paths: Iterable[pathlib.Path]) -> float | None:
 
 
 def summarize(
-    *, campaign: str, campaign_sha256: str, prov: Mapping, stages: list[dict], jobs: list[dict], artifacts: list[dict]
+    *,
+    campaign: str,
+    campaign_sha256: str,
+    prov: Mapping,
+    stages: list[dict],
+    jobs: list[dict],
+    artifacts: list[dict],
+    observed_max_concurrency: int = 0,
 ) -> dict:
     return {
         "run_commit": prov["commit"],
@@ -141,6 +205,9 @@ def summarize(
         "campaign": campaign,
         "campaign_sha256": campaign_sha256,
         "env": prov.get("env"),
+        # The max job containers running at once this run (§D probe-first): the empirical HF concurrency the
+        # account actually granted, so the next cycle sizes dispatch_cap against a real ceiling.
+        "observed_max_concurrency": observed_max_concurrency,
         "stages": stages,
         "jobs": jobs,
         "artifacts": artifacts,
@@ -154,10 +221,12 @@ def write_summary(path, summary: Mapping) -> None:
 
 
 def load_history(paths: Iterable[pathlib.Path]) -> dict[str, dict]:
-    """``{history_key: stage summary}`` from committed campaign summaries; later files win."""
+    """``{history_key: stage summary}`` from committed campaign summaries; later files win. A row that ``shared_with``
+    another instance (spec r4 D17: it launched no job of that generation) carries no job measurement, so it never
+    replaces its launcher's row."""
     hist: dict[str, dict] = {}
     for p in sorted(paths):
         for st in json.loads(pathlib.Path(p).read_text(encoding="utf-8")).get("stages", []):
-            if st.get("history_key"):
+            if st.get("history_key") and not st.get("shared_with"):
                 hist[st["history_key"]] = st
     return hist

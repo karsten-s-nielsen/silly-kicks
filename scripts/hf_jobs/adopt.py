@@ -1,7 +1,7 @@
 """Retrieve, verify, adopt and publish campaign artifacts (ADR-128 spec 5.7, decisions P3, P15, INV-9).
 
 ``retrieve`` copies each instance's reduced output FileSet out of the bucket store into a staging dir
-OUTSIDE the repo, with a record of what the job read (the token inputs it wrote, the extract counters).
+OUTSIDE the repo, with a record of what the job read (the token inputs it wrote, the stage counters).
 ``verify`` loads every artifact in ``.venv-hfjobs`` (SHA256SUMS, chirality, feature contract), checks the
 five declared expectations, certifies per the registry policy (`floor.certify`; `identity.compare` for a
 rebaseline driver) and runs the ADR-126 integrity gate for xShot/xCross. ``adopt`` turns a verified
@@ -89,16 +89,28 @@ def _artifact_dir(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
 # ---- retrieve --------------------------------------------------------------------------------------
 
 
-def _counters(store: Any, stage: Mapping[str, Any]) -> dict:
+def _tier_units(inst: Instance) -> frozenset[str] | None:
+    """The unit keys a visibility-gated instance's arms cover (spec r4 D18 (c): tiers that read one dataset share its
+    units, so a tier's counters are summed over its own arms only); None for an instance without arms."""
+    if "--arms-json" not in inst.args:
+        return None
+    from scripts.hf_jobs.arms import arm_keys, parse_arms
+
+    return arm_keys(parse_arms(inst.args[inst.args.index("--arms-json") + 1]))
+
+
+def _counters(store: Any, stage: Mapping[str, Any], keep: frozenset[str] | None = None) -> dict:
     """An ItemStage's per-unit counters merged in sorted key order (`_stages.item_counters`'s rule),
-    read from the store by the unit list the plan reports; ``n_counters_unrecorded`` counts the units
-    that are neither excluded nor carry a sidecar."""
+    read from the store by the unit list the plan reports (only ``keep``'s units when given: a tier's own arms);
+    ``n_counters_unrecorded`` counts the units that are neither excluded nor carry a sidecar."""
     from scripts._driver import _merge_counters
 
     totals: dict = {}
     missing = 0
     gen = stage["generation"]
     for key in sorted(stage.get("units") or []):
+        if keep is not None and key not in keep:
+            continue
         raw = store.read_bytes(f"{gen}/{key}.counters.json")
         if raw is None:
             if store.read_bytes(f"{gen}/{key}.excluded.json") is None:
@@ -118,9 +130,10 @@ def retrieve(
     plan_fn: Callable[..., dict] = read_plan,
     store_fn: Callable[[str], Any] | None = None,
 ) -> dict[str, pathlib.Path]:
-    """Copy every reduced instance output into ``<staging>/<run_key>/<variant>/`` (never into the repo),
-    with ``<instance>.record.json`` beside it: the job's recorded token inputs per stage and the extract
-    counters. An instance whose output stage is not reduced is skipped (and absent from the result)."""
+    """Copy every reduced instance output into ``<staging>/<run_key>/<tier>/<variant>/`` (never into the repo),
+    with ``<instance>.record.json`` beside it: the job's recorded token inputs per stage and the counters of every
+    counters-bearing ItemStage, by stage. An instance whose output stage is not reduced is skipped (and absent from
+    the result)."""
     from scripts._stages import FileSet, read_result
     from scripts.hf_jobs.store import BucketStore
 
@@ -157,7 +170,11 @@ def retrieve(
             "output": plan["output"],
             "code_identity": plan.get("code_identity"),
             "token_inputs": inputs,
-            "counters": _counters(store, stages["extract"]) if "extract" in stages else None,
+            # spec r4 D18 (a): every counters-bearing ItemStage's counters, by stage (ghost_gk's moved from `extract`
+            # to `select`; receiver_model's ride two stages)
+            "counters": {
+                name: _counters(store, s, keep=_tier_units(inst)) for name, s in stages.items() if s.get("counters")
+            },
         }
         p = _record_path(staging, inst.id)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -183,15 +200,16 @@ def expectation_violations(a: mf.Artifact, fresh: pathlib.Path, record: Mapping[
     bad: list[str] = []
     corpus = "digest" if a.corpus == "public_ids" else a.corpus
     bad += mf.violations(dataclasses.replace(a, training_commit=commit, corpus=corpus), read=_dir_reader(fresh))
-    if a.dataset is not None and a.dataset in _declared():
-        pinned = locked(a.dataset)["revision"]
+    read_ds = a.read_dataset or a.dataset  # spec r4 D18 (c): the dataset the job READ (its corpus identity: `dataset`)
+    if read_ds is not None and read_ds in _declared():
+        pinned = locked(read_ds)["revision"]
         read = {
             (ti or {}).get("dataset", {}).get("revision")
             for ti in (record.get("token_inputs") or {}).values()
-            if (ti or {}).get("dataset") and (ti or {})["dataset"].get("name") == a.dataset
+            if (ti or {}).get("dataset") and (ti or {})["dataset"].get("name") == read_ds
         }
         if read != {pinned}:
-            bad.append(f"{a.id}: the job read dataset {a.dataset} at {sorted(map(str, read))}, pinned {pinned}")
+            bad.append(f"{a.id}: the job read dataset {read_ds} at {sorted(map(str, read))}, pinned {pinned}")
     for fname in ("metadata.json", "metrics.json"):
         p = fresh / fname
         if p.is_file():
@@ -237,7 +255,7 @@ def _integrity(
     *,
     run: Callable[..., Any],
 ) -> dict:
-    counters = record.get("counters") or {}
+    counters = (record.get("counters") or {}).get("extract") or {}  # the integrity families' counters stage
     totals = counters.get("totals") or {}
     if counters.get("n_counters_unrecorded") or not totals.get("duration_s"):
         return {"go": False, "reason": "integrity inputs missing (extract counters unrecorded)"}

@@ -23,6 +23,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from tests.scripts.test_provenance_wiring import _cli_source, _is_stage_pipeline
+
 _SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
 _DRIVERS = ("train_pass_completion", "validate_territory_counterfactual")
 
@@ -59,12 +61,15 @@ def _shells_out_to_rev_parse(src: str) -> bool:
 
 @pytest.mark.parametrize("name", _DRIVERS)
 def test_driver_imports_the_shared_provenance_helper(name):
-    assert "_provenance" in _source(name), f"{name}.py must import scripts._provenance (rev-parse is not provenance)"
+    # An ADR-128 pipeline's CLI is scripts._stages.main's (HFU R3-10 moved train_pass_completion there).
+    assert "_provenance" in _cli_source(name), (
+        f"{name}.py must import scripts._provenance (rev-parse is not provenance)"
+    )
 
 
 @pytest.mark.parametrize("name", _DRIVERS)
 def test_driver_offers_an_allow_dirty_escape_hatch(name):
-    assert "--allow-dirty" in _source(name), f"{name}.py has no --allow-dirty flag"
+    assert "--allow-dirty" in _cli_source(name), f"{name}.py has no --allow-dirty flag"
 
 
 @pytest.mark.parametrize("name", _DRIVERS)
@@ -77,7 +82,7 @@ def test_driver_never_shells_out_to_rev_parse_directly(name):
 @pytest.mark.parametrize("name", _DRIVERS)
 def test_the_entry_point_enforces_the_clean_tree(name):
     """require_clean_tree must be called from main() -- the CLI entry point."""
-    main_fn = _function(_source(name), "main")
+    main_fn = _function(_cli_source(name), "main")
     assert main_fn is not None, f"{name}.py has no main()"
     assert _calls_in(main_fn, "require_clean_tree"), (
         f"{name}.py never calls require_clean_tree from main() -- a CLI run could write from a dirty tree."
@@ -86,10 +91,17 @@ def test_the_entry_point_enforces_the_clean_tree(name):
 
 @pytest.mark.parametrize("name", _DRIVERS)
 def test_the_guard_precedes_the_corpus_walk_within_main(name):
-    main_fn = _function(_source(name), "main")
+    main_fn = _function(_cli_source(name), "main")
     assert main_fn is not None
     guard = _calls_in(main_fn, "require_clean_tree")
     walk = _calls_in(main_fn, "load_matches") + _calls_in(main_fn, "for_each")
+    if _is_stage_pipeline(ast.parse(_source(name))):
+        # ADR-128: the stage CLI walks the corpus through the executor's `run_stage` (an attribute call).
+        walk = [
+            n.lineno
+            for n in ast.walk(main_fn)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "run_stage"
+        ]
     assert walk, f"{name}.py main() does not drive a corpus walk"
     assert min(guard) < min(walk), (
         f"{name}.py starts the corpus walk at line {min(walk)} before checking the tree at {min(guard)}."

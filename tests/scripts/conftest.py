@@ -19,6 +19,37 @@ if str(_SCRIPTS) not in sys.path:
 _GK = 22  # goalkick type_id
 
 
+@pytest.fixture(scope="session")
+def _pristine_open_data_paths():
+    """statsbombpy's ``config.OPEN_DATA_PATHS`` as imported, before any test pins it (None: not installed)."""
+    import importlib.util
+
+    if importlib.util.find_spec("statsbombpy") is None:
+        return None
+    from statsbombpy import config  # type: ignore[import-not-found]  # optional network dep
+
+    return dict(config.OPEN_DATA_PATHS)
+
+
+@pytest.fixture(autouse=True)
+def _restore_open_data_paths(_pristine_open_data_paths):
+    """Undo an in-process open-data pin after every test.
+
+    ``_sb_open_data.pin_open_data_revision`` edits ``config.OPEN_DATA_PATHS`` IN PLACE for the whole process
+    (``statsbombpy.public`` binds the same dict), and nothing undoes it: a toy-server pin made by one test
+    (``test_dataset_read_audit``'s in-process ``refs`` unit) made ``test_open_data_pin`` fail when it ran
+    later in the same session. The contents are restored in place, so the shared dict object stays bound.
+    """
+    yield
+    if _pristine_open_data_paths is None:
+        return
+    from statsbombpy import config  # type: ignore[import-not-found]
+
+    if dict(config.OPEN_DATA_PATHS) != _pristine_open_data_paths:
+        config.OPEN_DATA_PATHS.clear()
+        config.OPEN_DATA_PATHS.update(_pristine_open_data_paths)
+
+
 def _synthetic_skillcorner_match():
     """A tiny SkillCorner-shaped match exercising the GK-distribution domain (A1/A2, M3).
 

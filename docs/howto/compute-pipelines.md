@@ -20,7 +20,15 @@ module to read only staged datasets (the I1 gate, below).
 
 ## Units
 
-- One unit = one key, one result, one thread (INV-2). Parallelism comes only from units.
+- One unit = one key, one result, one thread (INV-2). Parallelism comes only from units — UNLESS the stage
+  opts in with `thread_safe=True` (ADR-128 amendments 2026-10-28 and 2026-10-29), behind a committed
+  PER-STAGE cross-thread-count byte-identity arm (a `cv` stage opts in separately from its `fit`). A
+  `thread_safe` worker runs at `thread_budget(vcpu, workers, inner_workers)` threads (`scripts/_thread_pin.py`:
+  `ceil(vcpu / n)` for n = workers·inner_workers <= 5, else `vcpu // n`; ADR-128 Amendment 2026-10-31) via its
+  declared `thread_lever`: `"omp"` raises `OMP_NUM_THREADS`; `"n_jobs"` raises `OMP_NUM_THREADS` too (XGBoost
+  caps `nthread` at it) and exports `SILLY_KICKS_RUNTIME_THREADS`, which the trainer reads trainer-side into the
+  runtime `n_jobs` (never an env read inside the library `fit`). BLAS and numba stay serial for both. Every
+  non-opted stage stays single-threaded.
 - Keys are deterministic and sortable: zero-pad numeric components with `int_key`; a key never starts with
   `_` (store names such as `_summary.json`, `_inputs.json`, `_output` are reserved).
 - A result is a DataFrame, a JSON-native value, or a `FileSet` (named files: a model artifact, or a
@@ -35,6 +43,19 @@ module to read only staged datasets (the I1 gate, below).
   (ADR-052): `refs(ctx)` returns cheap references; `load(ref, ctx)` loads one item (resume-before-load);
   `work(item, ctx)` returns a tidy DataFrame or None; `counters(item, frame)` records per-item counters
   (sidecars, never in a token); `ItemExcluded` excludes an item with a reason.
+- Reading an upstream's UNITS (spec r4 D19): `read_combined_units(ctx, name)` reads, in a pool, exactly the units
+  that stage's reduce combined (its sorted units minus the `excluded` and `failed_keys` of its `_summary.json`);
+  `read_upstream_unit(ctx, name, key)` reads one. A unit that fails its sha256 reopens the upstream stage (the
+  unit, the reduced output and the reduce record are deleted) and the job exits 0, so the controller relaunches
+  it. Never loop over `read_result` per key.
+- Read the store only through `ctx.upstream`, `read_combined_units`, `read_upstream_unit` or `ctx.store.read_bytes`
+  (ADR-128 Amendment 2026-10-31, the per-file read lock). `LocalStore.read_bytes` lets one process of a job read a
+  given file at a time: the HF bucket mount nearly hangs when several processes read one cold file at once (five
+  ghost_gk `cv` folds spent 455 of 527 s reading their upstream; with the lock, 5 s). Never open a store file
+  directly (`local_path` with `open` or `pd.read_parquet`).
+- One extraction per source (spec r4 D18): when variants differ only by columns or rows, extract ONE superset and
+  derive each variant in a downstream stage (`ghost_gk`'s `select`) or in its consumer (a `position_only`
+  projection); an identity test proves the derived output equals the per-variant extraction it replaces.
 - Declared inputs: `params` names the pipeline parameters the numbers depend on; `declare(params)` adds
   further declared inputs; `uses_dataset=True` keys the token on the dataset identity (`dataset_param` names
   a second dataset). A plain `Stage` with `uses_dataset=True` also declares `dataset_files(ctx)`: the
@@ -100,7 +121,29 @@ watchdog (`rss` backend; `RLIMIT_AS` bounds address space and failed every unit 
 worker's fair share of the usable RAM; a unit over it runs again alone, with the whole box. CPUs and RAM come
 from the cgroup (`available_cpus`, `available_ram_bytes`), never the container's host view. The
 job startup the planner subtracts from the target is the median that the committed campaign summaries
-measured (`docs/research/hf_campaigns/*.json`, field `startup_s`); before any summary exists it is 300 s.
+measured (`docs/research/hf_campaigns/*.json`, field `startup_s`); a committed bootstrap summary supplies the
+HF-measured ~15 s startup before any campaign summary exists.
+
+## Full utilization (ADR-128 amendment 2026-10-29, ADR-130)
+
+The planner and controller drive the whole box; 30 minutes is a SIZING target, never a kill threshold. No
+rebaseline — every artifact stays byte-identical.
+
+- A `thread_safe` non-inner stage plans one worker (W=1), so its process gets the full vCPU thread budget;
+  units fan across jobs. The `cv` stages opt in behind their own identity arms.
+- An `inner_parallel` study's pool is sized to its fold width by the per-CHILD peak RSS the `InnerPool`
+  children record (`UnitCost.inner_child_peak_rss_bytes`); before a child RSS is measured the plan surfaces
+  `study-unsized-pending-measurement`, and a child too large for the fold width records an `inner-ram-floor`.
+- The controller dispatches every ready stage in one step (a DAG, not a linear stage barrier).
+- A run job's timeout is the measured `timeout_safety × wall_p99` plus the measured inline `reduce_wall` (or
+  the generous profile ceiling on a first run); a job over 30 minutes is never failed.
+- Declare `shardable_reduce=(ids…)` on a plain `combine_frames` concat reduce to let a heavy reduce
+  (recorded p99 over the per-job budget) range-partition into `sub-reduce` jobs then a final ordered concat,
+  byte-identical to the single reduce.
+- Preflight caches the ~20–30 min `check_plans` toy train by its input key (ADR-130); the cheap checks and
+  `check_ref` always re-observe.
+- The campaign summary carries a per-stage utilization audit: each stage saturates the vCPU or records an
+  irreducible floor.
 
 ## Scaffold and register
 

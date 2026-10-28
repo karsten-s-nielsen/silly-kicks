@@ -57,9 +57,11 @@ _CONTRACT_VERSION = "feature-contract-1"
 #      generalise "elementwise, so portable" across all three extractors -- it is not true here.
 #   3. It measures the CONTRACT FINGERPRINT only, and says nothing about any model's own acceptance.
 #
-# The platform is now RECORDED on every artifact (via `git_provenance`) rather than assumed, so a
-# contract mismatch is diagnosable as "wrong machine" without re-deriving where the artifact came
-# from -- which is what the stale premise above cost.
+# The fit host's platform WAS recorded on every artifact (via `git_provenance`). D3 (ADR-128 amendment
+# 2026-10-27) moved it OUT of the artifact `metadata.json` -- a run-dependent value there broke a
+# same-commit main-vs-replica byte-identity -- into each unit ledger (run-history). The trade-off: a
+# cross-platform contract mismatch is now diagnosed from the run's ledger, not from the loaded artifact
+# alone. The committed bundles still carry the old stamp until they re-materialize at the next refit.
 _CONTRACT_ATOL = 1e-6
 _CONTRACT_RTOL = 0.0
 

@@ -42,6 +42,13 @@ def _rel(p: pathlib.Path) -> str:
 #: Committed artifacts deliberately without canonical top-level provenance, each with a reason.
 #: An entry is a decision on the record; an omission is an untraceable number.
 _UNPROVENANCED: dict[str, str] = {
+    "docs/research/hf_campaigns/_bootstrap_startup.json": (
+        "a committed MEASURED CONSTANT, not a campaign driver run (HFU T10 / ADR-128 amendment "
+        "2026-10-29): the HF-measured ~15 s cpu-upgrade job startup (git clone + venv + uv sync), so "
+        "`median_startup_s` has a value before any campaign measured one. It carries `startup_s` alone, has "
+        "no run of its own to stamp, and `run_commit` is honestly null (`run_tree_dirty` false). "
+        "`write_bootstrap_summary` reproduces it; a real campaign summary OVERRIDES it once one exists."
+    ),
     "docs/research/tf24_stage2_refresh/invalidation.json": (
         "an ANNOTATION about a historical artifact, not a driver output (combined-cycle C2, "
         "owner-approved spec rev 3). It classifies the TF-24 Stage-2 report's DAS-derived fields "

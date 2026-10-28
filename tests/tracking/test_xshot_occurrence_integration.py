@@ -256,10 +256,9 @@ def test_bundled_metadata_matches_training_intent():
         "pitch_width",
         "geometry_version",
         "xgboost_version",
-        "training_platform",
         "shipped_variant",
     ):
-        assert k in meta
+        assert k in meta  # D3: training_platform dropped from the required keys (fresh artifacts no longer carry it)
     assert meta["shipped_variant"] == "public" and meta["provider_list"] == ["idsse", "skillcorner"]
 
 

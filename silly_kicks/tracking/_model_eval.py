@@ -10,7 +10,10 @@ See NOTICE for full bibliographic citations.
 from __future__ import annotations
 
 import math
+import operator
 import warnings
+from collections.abc import Sequence
+from typing import SupportsIndex, overload
 
 import numpy as np
 import pandas as pd
@@ -121,20 +124,146 @@ def _moved_off_pitch(grp: pd.DataFrame, row_mask, moves: list[tuple[float, float
     return flags
 
 
-def _eligible_groups(frames: pd.DataFrame, model, arm: str, advance_m: float) -> list[tuple]:
+class _EligibleGroups(Sequence):
+    """The eligible frame groups as ``(grp, gk_team, goal_x, cpid)`` tuples, each group frame built when it is read.
+
+    The panel sampler reads a few hundred of tens of thousands, so building every group frame up front would repeat
+    the per-group cost the arrays remove (HFU plan R3-8 S3 item 8). ``grp`` is the group's rows in row order,
+    reset-indexed: the frame the per-frame ``groupby`` walk handed on."""
+
+    def __init__(self, poss: pd.DataFrame, items: list[tuple]) -> None:
+        self._poss = poss
+        self._items = items  # (row positions, defending team, goal x, carrier id)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    @overload
+    def __getitem__(self, i: SupportsIndex) -> tuple: ...
+
+    @overload
+    def __getitem__(self, i: slice) -> list[tuple]: ...
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return [self[k] for k in range(*i.indices(len(self)))]
+        rows, team, goal_x, cpid = self._items[operator.index(i)]
+        return (self._poss.iloc[rows].reset_index(drop=True), team, goal_x, cpid)
+
+
+def _eligible_groups(frames: pd.DataFrame, model, arm: str, advance_m: float) -> _EligibleGroups | list[tuple]:
     """Collect eligible (resolvable carrier + GK row + in-domain) frame groups deterministically.
 
     Moved line-for-line from ``_xcross_eval.gk_substitution_probe``; ``arm`` selects ONLY the
     ball-position domain gate (arm='xcross': wide-area; arm='xs': attacking third). Returns
-    (grp, gk_team, goal_x, cpid) tuples with grp reset-indexed."""
+    (grp, gk_team, goal_x, cpid) tuples with grp reset-indexed, in the per-frame walk's order.
+
+    Computed over arrays, not per frame (HFU plan R3-8 S3 item 8; the walk took 390 s of the HF probe): the frame
+    groups come from :func:`~silly_kicks._frame_index.ordered_group_rows` (the walk's keys and order), each test
+    reads the first qualifying row of a group with ``np.minimum.reduceat``, the possession, team and carrier values
+    are the objects the walk read, and the group frames are built on read (:class:`_EligibleGroups`). A frame with
+    a non-bool ``is_ball`` / ``is_goalkeeper`` column keeps the per-frame walk (`_eligible_groups_walk`)."""
     from silly_kicks.tracking._ball_carrier import derive_team_in_possession, infer_ball_carrier
     from silly_kicks.tracking._gk_resolve import resolve_defended_goals
-    from silly_kicks.tracking._xcross_attempt import _in_wide_area
 
     cp = dict(getattr(model, "carrier_params", None) or {})
     carrier = infer_ball_carrier(frames, **cp) if cp else infer_ball_carrier(frames)
     poss = derive_team_in_possession(frames, carrier)
     goal_map = resolve_defended_goals(frames)
+    if poss["is_ball"].dtype != np.dtype(bool) or poss["is_goalkeeper"].dtype != np.dtype(bool):
+        return _eligible_groups_walk(poss, goal_map, arm, advance_m)
+    return _eligible_groups_arrays(poss, goal_map, arm, advance_m)
+
+
+def _first_objects(series: pd.Series) -> tuple[np.ndarray, list]:
+    """``(codes, objects)``: each row's equality class (-1 for a missing value) and, per class, the value
+    ``series.iloc[row]`` reads at the class's first row (the object a walk's ``.iloc[0]`` reads)."""
+    codes, _ = pd.factorize(series, use_na_sentinel=True)
+    _, first = np.unique(codes, return_index=True)
+    present = first[codes[first] >= 0] if len(first) else first
+    return codes, [series.iloc[int(r)] for r in present]
+
+
+def _eligible_groups_arrays(poss: pd.DataFrame, goal_map, arm: str, advance_m: float) -> _EligibleGroups:
+    from silly_kicks._frame_index import ordered_group_rows
+    from silly_kicks.tracking._xcross_attempt import _in_wide_area
+
+    walk = ordered_group_rows(poss, ["game_id", "period_id", "frame_id"], sort=False)
+    if not walk:
+        return _EligibleGroups(poss, [])
+    order = np.concatenate([rows for _key, rows in walk])
+    sizes = np.fromiter((len(rows) for _key, rows in walk), dtype=np.int64, count=len(walk))
+    starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
+    big = len(order)
+    position = np.arange(big)
+
+    def first_in_group(mask_in_order: np.ndarray) -> np.ndarray:
+        """Per group, the position (in walk order) of its first row where the mask holds, else ``big``."""
+        return np.minimum.reduceat(np.where(mask_in_order, position, big), starts)
+
+    is_ball = poss["is_ball"].to_numpy()[order]
+    is_gk = poss["is_goalkeeper"].to_numpy()[order]
+    # Possession: the first non-missing `team_in_possession` of the group (`in_poss.iloc[0]`).
+    tip_codes, tip_objs = _first_objects(poss["team_in_possession"])
+    tip_o = tip_codes[order]
+    first_poss = first_in_group(tip_o >= 0)
+    has_poss = first_poss < big
+    poss_code = np.where(has_poss, tip_o[np.minimum(first_poss, big - 1)], -1)
+    # Defending team: the first non-ball, non-missing team (by first appearance) that `!=` the possession team.
+    # The team values are the objects `Series.unique()` iterates; the `!=` is the walk's, once per value pair.
+    team_codes, team_uniques = pd.factorize(poss["team_id"], use_na_sentinel=True)
+    team_objs = list(team_uniques)
+    differs = np.array([[bool(t != p) for p in tip_objs] for t in team_objs], dtype=bool).reshape(
+        len(team_objs), len(tip_objs)
+    )
+    team_o = team_codes[order]
+    poss_o = np.repeat(poss_code, sizes)
+    candidate = ~is_ball & (team_o >= 0) & (poss_o >= 0)
+    is_def = np.zeros(big, dtype=bool)
+    is_def[candidate] = differs[team_o[candidate], poss_o[candidate]]
+    first_def = first_in_group(is_def)
+    def_code = np.where(first_def < big, team_o[np.minimum(first_def, big - 1)], -1)
+    # The ball row, the carrier, and the defending GK.
+    first_ball = first_in_group(is_ball)
+    x_o = poss["x"].to_numpy(dtype="float64")[order]  # ADR-106: float32 storage, float64 compute (exact upcast)
+    y_o = poss["y"].to_numpy(dtype="float64")[order]
+    cp_codes, cp_objs = _first_objects(poss["ball_carrier_player_id"])
+    cp_o = cp_codes[order]
+    first_cp = first_in_group(cp_o >= 0)
+    def_o = np.repeat(def_code, sizes)
+    gk_any = np.maximum.reduceat((is_gk & (def_o >= 0) & (team_o == def_o)).astype(np.int8), starts) > 0
+
+    goal_x_of: dict = {}
+    items: list[tuple] = []
+    for g, (key, rows) in enumerate(walk):
+        if poss_code[g] < 0 or def_code[g] < 0:
+            continue
+        gid, pid = key[0], key[1]
+        team = team_objs[def_code[g]]
+        memo_key = (gid, pid, int(def_code[g]))
+        if memo_key not in goal_x_of:
+            goal_x_of[memo_key] = goal_map.get(gid, pid, team, allow_guess=True)
+        goal_x = goal_x_of[memo_key]
+        if goal_x is None:
+            continue
+        fb = first_ball[g]
+        bx = float(x_o[fb]) if fb < big else np.nan
+        by = float(y_o[fb]) if fb < big else np.nan
+        if arm == "xcross":
+            if not _in_wide_area(bx, by, goal_x, advance_m):
+                continue
+        else:  # arm == "xs": the `_ball_in_attacking_third` predicate from _xshot_occurrence.py
+            if not (abs(bx - goal_x) <= advance_m):  # NaN bx -> False -> skipped, like _in_wide_area
+                continue
+        if first_cp[g] >= big or not gk_any[g]:
+            continue
+        items.append((rows, team, goal_x, cp_objs[cp_o[first_cp[g]]]))
+    return _EligibleGroups(poss, items)
+
+
+def _eligible_groups_walk(poss: pd.DataFrame, goal_map, arm: str, advance_m: float) -> list[tuple]:
+    """The per-frame walk (the `2474b73` body), for flag columns outside the frame schema's bool dtype."""
+    from silly_kicks.tracking._xcross_attempt import _in_wide_area
 
     groups_list = []
     for (gid, pid, _fid), grp in poss.groupby(["game_id", "period_id", "frame_id"], sort=False):

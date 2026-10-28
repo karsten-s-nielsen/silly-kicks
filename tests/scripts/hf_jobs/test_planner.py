@@ -31,11 +31,21 @@ def test_measured_efficiency_reduces_effective_parallelism():
     assert poor.n_jobs > full.n_jobs
 
 
-def test_concurrency_cap_clips_n_and_the_plan_says_so():
-    p = plan_stage(
-        "x", KEYS, UnitCost(3000, 3000, 3000, 1 * GiB, 5), inner_parallel=False, c=Constraints(concurrency_cap=10)
-    )
-    assert p.n_jobs == 10 and p.predicted_job_wall_s > 3600
+def test_shard_cap_clips_n_jobs_and_dispatch_cap_does_not():
+    # shard_cap is the planner's per-stage shard ceiling; dispatch_cap is the campaign dispatch budget
+    # and must NOT raise the shard count (the Cycle-1 decouple: dispatch 25, shard 20 -> no re-shard).
+    c = Constraints(shard_cap=20, dispatch_cap=25)
+    p = plan_stage("x", KEYS, UnitCost(3000, 3000, 3000, 1 * GiB, 5), inner_parallel=False, c=c)
+    assert p.n_jobs == 20 and p.predicted_job_wall_s > 3600
+    hi = Constraints(shard_cap=20, dispatch_cap=99)
+    p_hi = plan_stage("x", KEYS, UnitCost(3000, 3000, 3000, 1 * GiB, 5), inner_parallel=False, c=hi)
+    assert p_hi.n_jobs == 20  # a higher dispatch_cap never re-shards
+
+
+def test_shard_cap_defaults_to_dispatch_cap():
+    # omitting shard_cap keeps a single effective cap (back-compat for callers that set one number)
+    assert Constraints(dispatch_cap=25).shard_cap == 25
+    assert Constraints(dispatch_cap=25, shard_cap=20).shard_cap == 20
 
 
 def test_a_unit_longer_than_the_target_is_the_irreducible_floor():
@@ -112,3 +122,221 @@ def test_an_inner_parallel_cap_shares_the_ram_with_the_unit_and_its_pool():
     c = Constraints()
     p = plan_stage("cv", ["0000", "0001"], UnitCost(300, 300, 300, 2 * GiB, 5), inner_parallel=True, n_inner=5, c=c)
     assert p.cap_bytes == max(int(2 * GiB * c.cap_factor), c.usable_bytes // (p.inner_workers + 1))
+
+
+def test_thread_safe_non_inner_stage_plans_one_worker(tmp_path):
+    """A thread_safe non-inner stage plans W=1 so its single worker gets the full vCPU thread budget
+    (ADR-128 full-utilization; HFU plan T1). The flags come from REAL plan() output, not a hand-built dict."""
+    from scripts._stages import LocalStore, make_context, plan
+    from tests.scripts import _toy_pipeline
+    from tests.scripts._stage_harness import PROV, params_from_args
+
+    pipeline = _toy_pipeline.PIPELINE
+    ctx = make_context(
+        pipeline,
+        params_from_args(pipeline, []),
+        PROV,
+        store=LocalStore(tmp_path / "s"),
+        data_root=tmp_path / "d",
+    )
+    nfit = next(s for s in plan(ctx)["stages"] if s["name"] == "nfit")
+    assert nfit["thread_safe"] and not nfit["inner_parallel"]  # the real stage flags, via plan()
+    p = plan_stage(
+        "nfit",
+        ["0000", "0001", "0002", "0003"],
+        UnitCost(2000, 2000, 2000, 1 * GiB, 4),
+        inner_parallel=nfit["inner_parallel"],
+        thread_safe=nfit["thread_safe"],
+    )
+    # HFU plan R3-8 S3 item 2 (THREADS): n <= 7 units run all at once in ONE job, W = n, the executor giving each
+    # worker ceil(vcpu / n) threads for n <= 5. This replaces the earlier W=1 x 8 threads in n jobs (A D-IMPL-04):
+    # on HF a fold at 8 threads used 2.65-4.31 cores, while 5 folds at W=5 x 2 threads saturated (S1d: 0.765 and
+    # 0.869 against 0.564 and 0.602 at W=5 x 1).
+    assert p.workers == 4
+    assert p.n_jobs == 1
+
+
+@pytest.mark.parametrize(("n", "workers", "n_jobs"), [(1, 1, 1), (3, 3, 1), (5, 5, 1), (7, 7, 1)])
+def test_a_thread_safe_stage_of_seven_units_or_fewer_runs_all_at_once_in_one_job(n, workers, n_jobs):
+    p = plan_stage("cv", KEYS[:n], UnitCost(200, 200, 200, 1 * GiB, 5), inner_parallel=False, thread_safe=True)
+    assert (p.workers, p.n_jobs) == (workers, n_jobs)
+    assert p.note is None
+
+
+def test_a_thread_safe_stage_of_more_than_seven_units_keeps_one_worker_per_job():
+    p = plan_stage("cv", KEYS[:9], UnitCost(2000, 2000, 2000, 1 * GiB, 9), inner_parallel=False, thread_safe=True)
+    assert p.workers == 1  # the full 8-thread budget per job, units across jobs (today's rule)
+
+
+def test_the_threads_shape_with_no_measured_peak_applies_no_ram_clamp():
+    """A record without a peak RSS (unit_cost reports 0) must not divide by zero: no measurement, no clamp."""
+    p = plan_stage("cv", KEYS[:5], UnitCost(200, 200, 200, 0, 5), inner_parallel=False, thread_safe=True)
+    assert (p.workers, p.n_jobs, p.note) == (5, 1, None)
+
+
+def test_the_threads_shape_respects_the_ram_and_surfaces_the_clamp():
+    c = Constraints()
+    big = UnitCost(200, 200, 200, 7 * GiB, 5)  # 1.3 x 7 GiB = 9.1 GiB per worker: only 3 fit in 30 GiB
+    p = plan_stage("cv", KEYS[:5], big, inner_parallel=False, thread_safe=True, c=c)
+    assert p.workers == 3 and p.n_jobs == 1
+    assert p.note == "threads-ram-floor:3of5"
+    assert p.cap_bytes is not None and p.workers * p.cap_bytes <= c.usable_bytes + c.headroom_bytes
+
+
+def test_budget_floor_s_tracks_the_current_startup_through_replace():
+    """HFU T7 / spec §G-2 (reviewer B D1-IMPL-10 rounds 1+2): the effective minimum work per slot-filled job is
+    the ``budget_floor_s`` PROPERTY -- 10 x startup_s unless an explicit budget_floor is set. It is read from the
+    CURRENT startup_s, so it tracks a dataclasses.replace(startup_s=...): a stored-derived field would be copied
+    from the pre-profile 300 s and pinned at 3000 (the r2 bug). An explicit budget_floor is respected."""
+    import dataclasses
+
+    assert Constraints(startup_s=300.0).budget_floor_s == 3000.0  # the placeholder before any measurement
+    # the production path: re-profiling via replace(startup_s=15) must give 150, NOT the pinned 3000
+    assert dataclasses.replace(Constraints(), startup_s=15.0).budget_floor_s == 150.0
+    assert Constraints(startup_s=15.0, budget_floor=1200.0).budget_floor_s == 1200.0  # explicit knob respected
+
+
+def test_slot_filling_fans_toward_free_slots_bounded_by_budget_floor():
+    """HFU T7: with free dispatch slots the planner fans n_jobs toward the share to shorten each job's wall,
+    never below budget_floor work per job; free_slots=0 (default) leaves the minimum untouched. Both branches."""
+    cost = UnitCost(600, 600, 600, 1 * GiB, 20)
+    keys = KEYS[:20]
+    base = Constraints(shard_cap=50)  # room to fan; free_slots=0 (default) -> slot-filling off whatever budget_floor
+    floored = Constraints(shard_cap=50, budget_floor=1200.0)  # >= 1200s (2 units) of work per job
+    for inner in (False, True):
+        p0 = plan_stage("x", keys, cost, inner_parallel=inner, n_inner=5, c=base)
+        p = plan_stage("x", keys, cost, inner_parallel=inner, n_inner=5, free_slots=40, c=floored)
+        assert p.n_jobs > p0.n_jobs  # free slots increased the fan
+        assert p.n_jobs <= 40  # never beyond the share
+        assert p.n_jobs <= (20 * 600) // 1200  # >= budget_floor work per job => <= 10 jobs
+
+
+# ---- HFU T11: size the study inner pool to the fold width by the per-child RSS (spec B / B-19 / B-21) -----
+
+
+def test_study_pool_sizes_to_fold_width_from_store_record():
+    """A study unit with a LARGE whole-unit peak but a SMALL per-child peak sizes the inner pool to the fold
+    width (5) when the child RSS is recorded -- the whole-unit clamp alone under-sizes it. Fallback (no child
+    field, first run): the whole-unit clamp + an unsized-pending note; a child RSS too big to fit 5 records a
+    RAM floor (surfaced), never a silent 1."""
+    big_unit = 10 * GiB  # _workers(10 GiB) == 2, so the whole-unit clamp alone under-sizes the pool
+    sized = plan_stage("study", ["s"], UnitCost(2400, 2600, 2700, big_unit, 1, 2 * GiB), inner_parallel=True, n_inner=5)
+    assert sized.inner_workers == 5 and sized.note is None  # fold width: the 2 GiB child RSS fits 5
+
+    first = plan_stage("study", ["s"], UnitCost(2400, 2600, 2700, big_unit, 1), inner_parallel=True, n_inner=5)
+    assert first.inner_workers == 2  # the whole-unit clamp, under-sized, before any child RSS is measured
+    assert first.note == "study-unsized-pending-measurement"
+
+    tight = plan_stage("study", ["s"], UnitCost(2400, 2600, 2700, big_unit, 1, 5 * GiB), inner_parallel=True, n_inner=5)
+    # (usable - floor_cap) // child_cap = (30 - 13) // 6.5 = 2: the pool is sized against the WORKER CAP, not the
+    # actual peak, so the tree budget stays within the box (reviewer B D1-IMPL-24). A surfaced floor, never a silent 1.
+    assert tight.inner_workers == 2
+    assert tight.note is not None and tight.note.startswith("inner-ram-floor")
+
+
+def test_child_sized_pool_cap_protects_the_box_AND_the_unit_worker():
+    """B-21 + reviewer B D1-IMPL-07: the inner branch gives the UNIT WORKER a cap >= its measured margin
+    (unit_peak * cap_factor), so a child-sized cap never starves the worker that runs the unit itself, and
+    the POOL CHILDREN a child-sized cap, so unit_peak + inner * child_cap stays within the usable RAM at the
+    fold width. cap_bytes is the worker's cap; inner_cap_bytes is the pool child's -- two distinct limits."""
+    c = Constraints()
+    unit_peak, child_peak = 10 * GiB, 2 * GiB
+    p = plan_stage(
+        "study", ["s"], UnitCost(2400, 2600, 2700, unit_peak, 1, child_peak), inner_parallel=True, n_inner=5, c=c
+    )
+    assert p.inner_workers == 5 and p.cap_bytes is not None and p.inner_cap_bytes is not None
+    assert p.cap_bytes >= int(unit_peak * c.cap_factor)  # the UNIT WORKER is not starved by the child-sized cap
+    assert p.inner_cap_bytes == int(child_peak * c.cap_factor)  # the pool children get the child-sized cap
+    assert unit_peak + p.inner_workers * p.inner_cap_bytes <= c.usable_bytes  # the box holds the unit plus its pool
+    # the TREE BUDGET the executor enforces (worker cap + pool caps) stays within the box (reviewer B D1-IMPL-24)
+    assert p.cap_bytes + p.inner_workers * p.inner_cap_bytes <= c.usable_bytes
+
+
+def test_the_inner_tree_budget_never_exceeds_the_box_for_a_heavy_unit():
+    """Reviewer B D1-IMPL-24: a heavy unit whose worker cap (1.3 x peak) dominates must still leave the pool
+    within the box. inner is sized against the WORKER CAP, not the actual peak, so the tree budget the executor
+    enforces -- cap_bytes + inner_workers * inner_cap_bytes -- never exceeds usable_bytes (it would overcommit a
+    32 GiB-class box otherwise: a 20 GiB unit with 2 GiB children once summed to 33.8 GiB)."""
+    c = Constraints()
+    cost = UnitCost(5000, 5200, 5400, 20 * GiB, 1, 2 * GiB)
+    p = plan_stage("study", ["s"], cost, inner_parallel=True, n_inner=5, c=c)
+    assert p.cap_bytes is not None and p.inner_cap_bytes is not None
+    assert p.cap_bytes >= int(20 * GiB * c.cap_factor)  # the worker keeps its 1.3 x peak margin
+    assert p.cap_bytes + p.inner_workers * p.inner_cap_bytes <= c.usable_bytes  # the tree budget is within the box
+
+
+def test_the_split_cost_bound_charges_the_measured_overhead_per_extra_job():
+    """Spec r3 D11: a stage's MEASURED per-job overhead (the prelude to the first unit plus the upstream load)
+    replaces the global startup in its plan. Each job's predicted wall carries it, and slot-filling never makes a
+    job carry less than 10x it in work (the §G-2 bound), so a costly reload splits a stage into fewer jobs."""
+    c = Constraints(startup_s=15.0, target_s=1800.0, dispatch_cap=20, shard_cap=20)
+    cost = UnitCost(60.0, 60.0, 60.0, 10**8, 10)
+    keys = [f"{i:04d}" for i in range(40)]
+    cheap = plan_stage("s", keys, cost, inner_parallel=False, free_slots=20, c=c)
+    costly = plan_stage("s", keys, cost, inner_parallel=False, free_slots=20, overhead_s=120.0, c=c)
+    assert cheap.n_jobs == 16  # 2400 s of work / (10 x 15 s)
+    assert costly.n_jobs == 2  # 2400 s of work / (10 x 120 s)
+    assert costly.predicted_job_wall_s == pytest.approx(120.0 + 20 * 60.0 / 8)  # overhead + the busiest job / W
+    assert plan_stage("s", keys, cost, inner_parallel=False, free_slots=20, overhead_s=15.0, c=c) == cheap
+
+
+# ---- HFU plan R3-8 S3 item 5: WIO, an item stage whose units wait on I/O runs above the vCPU (rows 33, 38) -------
+
+_WIO_PEAK = 360 * 10**6  # S1e: the win_probability extract units peak at about 0.36 GB
+
+
+def test_wio_a_unit_cpu_share_of_0_71_plans_twelve_workers():
+    """S1e and S1e2 (C03): the extract units use 0.32 s of CPU in 0.45 s of wall; W = ceil(8 / 0.71) = 12."""
+    p = plan_stage("extract", KEYS, UnitCost(0.45, 0.6, 0.8, _WIO_PEAK, 50, cpu_share=0.71), inner_parallel=False)
+    assert (p.workers, p.wio) == (12, True)
+
+
+@pytest.mark.parametrize("share", [1.0, 0.96, 0.85])
+def test_wio_a_cpu_bound_stage_keeps_the_vcpu_bound(share):
+    """1.0 is the plan's case; 0.96 is the receiver unit (S1i: W above 8 only burns CPU); a share at
+    SATURATION_FRACTION saturates the box at W = vcpu by the audit's own bar, so it is not WIO."""
+    p = plan_stage("extract", KEYS, UnitCost(0.45, 0.6, 0.8, _WIO_PEAK, 50, cpu_share=share), inner_parallel=False)
+    assert (p.workers, p.wio) == (8, False)
+
+
+def test_wio_the_ram_cap_still_binds():
+    """30 GiB usable / (1.3 x 2.3 GiB) = 10 workers, under the 12 the share asks for."""
+    peak = int(2.3 * 2**30)
+    p = plan_stage("extract", KEYS, UnitCost(0.45, 0.6, 0.8, peak, 50, cpu_share=0.71), inner_parallel=False)
+    assert (p.workers, p.wio) == (10, True)
+
+
+def test_wio_needs_a_measured_share_and_never_applies_to_a_thread_safe_or_inner_stage():
+    unmeasured = plan_stage("extract", KEYS, UnitCost(0.45, 0.6, 0.8, _WIO_PEAK, 50), inner_parallel=False)
+    assert (unmeasured.workers, unmeasured.wio) == (8, False)
+    cost = UnitCost(0.45, 0.6, 0.8, _WIO_PEAK, 50, cpu_share=0.71)
+    assert not plan_stage("cv", KEYS, cost, inner_parallel=False, thread_safe=True).wio
+    assert not plan_stage("study", KEYS, cost, inner_parallel=True).wio
+
+
+# ---- HFU plan R3-8 S3 item 6: MEM, the executor's memory gate replaces the 1.3 x max-peak W (row 2) --------------
+
+_GHOST_EXTRACT = UnitCost(60.0, 90.0, 120.0, 5_510_000_000, 179)  # S1: the largest unit peaks at 5.51 GB
+
+
+def test_mem_a_gated_stage_plans_the_vcpu_and_keeps_the_per_worker_cap():
+    """Today W = 30 GiB // (1.3 x 5.51 GB) = 4; with per-unit history the gate admits each claim, so W = 8. The
+    per-worker cap stays 1.3 x the stage maximum against one runaway unit."""
+    today = plan_stage("extract", KEYS, _GHOST_EXTRACT, inner_parallel=False)
+    gated = plan_stage("extract", KEYS, _GHOST_EXTRACT, inner_parallel=False, gated=True)
+    assert (today.workers, today.gated) == (4, False)
+    assert (gated.workers, gated.gated) == (8, True)
+    assert gated.cap_bytes == int(5_510_000_000 * 1.3)  # floor_cap; today's 4 workers each get usable // 4
+
+
+def test_mem_a_first_run_with_no_earlier_generation_plans_todays_w():
+    p = plan_stage("extract", KEYS, _GHOST_EXTRACT, inner_parallel=False, gated=False)
+    assert (p.workers, p.gated) == (4, False)
+
+
+def test_mem_a_gate_never_shapes_a_thread_safe_or_inner_stage_and_still_refuses_a_unit_that_cannot_fit():
+    assert not plan_stage("cv", KEYS, _GHOST_EXTRACT, inner_parallel=False, thread_safe=True, gated=True).gated
+    assert not plan_stage("study", KEYS, _GHOST_EXTRACT, inner_parallel=True, gated=True).gated
+    huge = UnitCost(60.0, 90.0, 120.0, 40 * 2**30, 10)
+    with pytest.raises(RefusalError):
+        plan_stage("extract", KEYS, huge, inner_parallel=False, gated=True)

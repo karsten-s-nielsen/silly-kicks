@@ -1,13 +1,24 @@
 # ADR-128 Cycle 1 campaign (spec 7.2): every migrated job, both xShot/xCross tiers, the census driver,
-# and the three adapter-launched public trainers. Run with:
+# and the three public trainers HFU R3-10 migrated to pipelines. Run with:
 #   .venv-hfjobs/Scripts/python -m scripts.hf_jobs campaign scripts/hf_jobs/campaigns/cycle1.toml <command>
 # The commit is HEAD at preflight (pushed, CI green). Run keys are derived; never hand-picked.
 
 [campaign]
 name = "cycle1"
 bucket = "silly-kicks/hf-refit-scratch"
-target_minutes = 60
-concurrency_cap = 10
+# HFU full-utilization (R3): 30-minute SIZING target so the planner splits more aggressively. The job
+# timeout is decoupled from this (never 2*target_s); it derives from a measured wall or profile_timeout_s.
+target_minutes = 30
+# The two caps are separate (ADR-128). dispatch_cap: how many jobs may run at once across the campaign (probed
+# against the HF account limit). shard_cap: the most jobs ONE stage may split into; the planner splits a stage
+# by its measured cost up to this ceiling. Owner ruling (HFU full utilization): shard_cap is 25 THIS cycle --
+# full-utilization sharding is NOT deferred, so a stage may split up to 25 shards. shard_cap MUST be explicit
+# here (test_cycle1_caps); it is a deliberate value, not the `= dispatch_cap` default. NOTE: dispatch_floor
+# defaults to shard_cap, so dispatch_cap = shard_cap = 25 leaves NO dispatch back-off range -- the campaign halts
+# at `dispatch_halt_after` (2) never-started timeouts (owner-accepted 2026-11-01; pinned by
+# test_shard_cap_equal_dispatch_cap_leaves_no_dispatch_backoff_range).
+dispatch_cap = 25
+shard_cap = 25
 attempts = 3
 
 [[jobs]]
@@ -25,7 +36,7 @@ variants = ["default", "position_only"]
 [[jobs]]
 job = "xshot_occurrence"
 tier = "public"
-dataset = "xshot17"
+dataset = "xshot115"  # spec r4 D18 (c): one store with sc_extended; the public arm = xshot17
 variants = ["default", "position_only"]
 
 [[jobs]]
@@ -37,7 +48,7 @@ variants = ["default", "position_only"]
 [[jobs]]
 job = "xcross_attempt"
 tier = "public"
-dataset = "xshot17"
+dataset = "xshot115"  # spec r4 D18 (c): one store with sc_extended; the public arm = xshot17
 probe_dataset = "xcross_probe"
 variants = ["default", "position_only"]
 

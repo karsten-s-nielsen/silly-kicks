@@ -3,10 +3,13 @@
 One image (digest-pinned, decision P1), one flavor (`cpu-upgrade`, INV-4), one in-job environment built
 with `uv sync --frozen` from the committed `uv.lock` (INV-6), and an exact-commit checkout verified with
 `git rev-parse` (the clone commit is the campaign commit; preflight proved it is pushed and green). Each
-job carries labels (`campaign`, `run_key`, `job`, `variant`, `stage`, `shard`, `commit`) so the stateless
-controller rebuilds state from `list_jobs(labels=...)`. Storage: the run's bucket prefix is mounted
-read-write at /scratch (the store; persists across `attempts`, so a retry resumes); each staged dataset is
-mounted read-only at /data/<name> at its pinned revision (or fetched per shard, `access = "download"`);
+job carries labels (`campaign`, `run_key`, `job`, `tier`, `variant`, `stage`, `gens`, `shard`, `commit`) so the
+stateless controller rebuilds state from `list_jobs(labels=...)`; `gens` names the generation of each stage the
+job runs, which keys in-flight work and history by generation, whoever launched it (spec r4 D17), and `tier`
+names the launching instance where tiers that read one dataset share its store (spec r4 D18 (c)). Storage: the
+run's bucket prefix is mounted read-write at /scratch (the store; persists across `attempts`, so a retry
+resumes); each staged dataset is mounted read-only at /data/<name> at its pinned revision (or fetched per shard,
+`access = "download"`);
 a mount's reads are bounded by the job-wide dataset read gate (`read_concurrency`, `scripts._dataset_reads`).
 The `hf` CLI stays a human tool; nothing here shells out to it.
 """
@@ -16,7 +19,7 @@ from __future__ import annotations
 import dataclasses
 import re
 import shlex
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from scripts._dataset_reads import READ_CAP_ENV
@@ -35,6 +38,10 @@ TERMINAL = frozenset({"COMPLETED", "CANCELED", "ERROR", "DELETED"})
 #: characters at labels.name`, then `Invalid string: must match pattern /^[a-zA-Z0-9_-]*$/ at labels.name`.
 LABEL_MAX: Final = 100
 LABEL_PATTERN: Final = re.compile(r"[a-zA-Z0-9_-]*")
+#: Spec r4 D17: the ``gens`` label holds, in stage order, the first GEN_PREFIX_LEN characters of each stage's
+#: generation token (hex), joined by GENS_SEP. Eight stages take 71 characters, under LABEL_MAX.
+GEN_PREFIX_LEN: Final = 8
+GENS_SEP: Final = "-"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -83,12 +90,40 @@ class JobSpec:
     shard_keys_path: str | None = None
     extra_env: Mapping[str, str] | None = None
     escalate: bool = False
+    #: HFU plan R3-8 S3 item 5: a WIO stage's job (`--wio`): the executor bounds W by the planned W, not nproc.
+    wio: bool = False
+    #: HFU plan R3-8 S3 item 6 (MEM): the staged per-unit peaks (`--unit-peaks`); the job runs under the memory gate.
+    unit_peaks_path: str | None = None
+    #: HFU T8 sharded reduce: a sub-reduce's shard index; the final reduce's partial count; a sharded run's
+    #: skip of the inline reduce.
+    subreduce_shard_id: int | None = None
+    subreduce_n_shards: int | None = None
+    from_partials: int | None = None
+    no_inline_reduce: bool = False
+    #: HFU T11 + reviewer B D1-IMPL-07: the inner_parallel pool CHILD cap, distinct from ``cap_bytes`` (the unit
+    #: worker's). None for a non-inner stage.
+    inner_cap_bytes: int | None = None
+    #: Spec r3 D5: the progress MARK of the job's FIRST stage at launch (`campaign.progress_mark_of`: a fingerprint
+    #: of its committed records and failed attempts; spec r4 D17: one generation's mark, so every instance that
+    #: shares that generation judges the same baseline), carried as the ``records`` LABEL so the stateless
+    #: controller's zero-progress guard has a baseline that survives a restart. None: no label.
+    records: str | None = None
+    #: Spec r3 D6(c): the action kind (``run`` / ``profile`` / ``reduce`` / ``subreduce``), carried as the ``kind``
+    #: LABEL so the controller can tell a completed RUN job (it should leave no unit pending) from a profile.
+    kind: str = "run"
+    #: Spec r4 D17: the generation of each of ``stages``, in the same order (each token's GEN_PREFIX_LEN prefix),
+    #: carried as the ``gens`` LABEL. ``labels_for`` refuses a job without one generation per stage.
+    gens: tuple[str, ...] = ()
+    #: Spec r4 D18 (c): the campaign tier of the instance that launched the job, carried as the ``tier`` LABEL. Tiers
+    #: that read one dataset share its run key, so (run_key, tier, variant) names the instance. Required.
+    tier: str = ""
 
 
 def label_of(labels: Mapping[str, str]) -> str:
     """The in-job label (`SILLY_KICKS_JOB_LABEL`, stamped on every unit ledger record) rebuilt from a job's
-    HF labels; the ledger joins unit records to their job by it."""
-    return f"{labels['job']}.{labels['variant']}.{labels['stage']}.{labels['shard']}"
+    HF labels; the ledger joins unit records to their job by it. It names the tier (spec r4 D18 (c)): two tiers
+    that share a store run the same variant, stage and shard."""
+    return f"{labels['job']}.{labels['tier']}.{labels['variant']}.{labels['stage']}.{labels['shard']}"
 
 
 def _label(spec: JobSpec) -> str:
@@ -96,18 +131,42 @@ def _label(spec: JobSpec) -> str:
 
 
 def labels_for(spec: JobSpec) -> dict[str, str]:
-    """The job labels; a value over the HF limit refuses here, before any job is launched."""
+    """The job labels; a value over the HF limit refuses here, before any job is launched, and so does a job that
+    does not carry one generation per stage (spec r4 D17)."""
+    if len(spec.gens) != len(spec.stages):
+        raise ValueError(
+            f"a job carries one generation per stage (spec r4 D17): stages={spec.stages}, gens={spec.gens}"
+        )
+    if not spec.tier:
+        raise ValueError("a campaign job carries its tier (spec r4 D18 (c): tiers that read one dataset share a store)")
     labels = {
         "campaign": spec.campaign,
         "run_key": spec.run_key,
         "job": spec.job,
+        "tier": spec.tier,
         "variant": spec.variant,
         "stage": "-".join(spec.stages),
+        "gens": GENS_SEP.join(spec.gens),
         "shard": f"{spec.shard[0]}of{spec.shard[1]}",
         "commit": spec.commit,
     }
+    if spec.records is not None:
+        labels["records"] = str(spec.records)
+    labels["kind"] = spec.kind
     _check_label_values(labels)
     return labels
+
+
+def gens_of(labels: Mapping[str, str], *, job: str = "?") -> tuple[str, ...]:
+    """The generations a job carries, in stage order (its ``gens`` label; spec r4 D17). A campaign job without one is
+    refused: the controller could not tell which work it runs, so it would launch that work a second time."""
+    raw = labels.get("gens")
+    if not raw:
+        raise RuntimeError(
+            f"job {job}: no 'gens' label; every campaign job carries the generation of each stage it runs (spec r4 "
+            "D17), so a job launched outside the controller must be cancelled before the controller steps again"
+        )
+    return tuple(raw.split(GENS_SEP))
 
 
 def _check_label_values(labels: Mapping[str, str]) -> None:
@@ -126,7 +185,8 @@ def job_name(spec: JobSpec) -> str:
     two jobs never share a truncated name."""
     import hashlib
 
-    full = "--".join((spec.run_key, spec.variant, "-".join(spec.stages), f"{spec.shard[0]}of{spec.shard[1]}"))
+    parts = (spec.run_key, spec.tier, spec.variant, "-".join(spec.stages), f"{spec.shard[0]}of{spec.shard[1]}")
+    full = "--".join(parts)  # spec r4 D18 (c): the tier, since tiers that read one dataset share the run key
     if len(full) > LABEL_MAX:
         digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:16]
         full = f"{full[: LABEL_MAX - len(digest) - 1]}-{digest}"
@@ -147,13 +207,21 @@ def job_env(spec: JobSpec) -> dict[str, str]:
             "HF_HUB_DISABLE_PROGRESS_BARS": "1",
         }
     )
-    for d in spec.datasets:
+    env.update(dataset_env(spec.datasets))
+    env.update(spec.extra_env or {})
+    return env
+
+
+def dataset_env(datasets: Sequence[DatasetMount]) -> dict[str, str]:
+    """What a job's datasets put in its environment: an `open` dataset's pinned revision, and ONE job-wide read
+    gate over every mount, the smallest declared cap (`scripts._dataset_reads`). Shared with measurement jobs."""
+    env: dict[str, str] = {}
+    for d in datasets:
         if d.access == "open":
             env["SILLY_KICKS_OPEN_DATA_REVISION"] = d.revision
-    caps = [d.read_concurrency for d in spec.datasets if d.access == "mount" and d.read_concurrency]
-    if caps:  # ONE job-wide gate over every mount: the smallest declared cap (`scripts._dataset_reads`)
+    caps = [d.read_concurrency for d in datasets if d.access == "mount" and d.read_concurrency]
+    if caps:
         env[READ_CAP_ENV] = str(min(caps))
-    env.update(spec.extra_env or {})
     return env
 
 
@@ -174,14 +242,26 @@ def _run_argv(spec: JobSpec) -> list[str]:
     argv += ["--workers", str(spec.workers), "--inner-workers", str(spec.inner_workers)]
     if spec.cap_bytes:
         argv += ["--cap-bytes", str(spec.cap_bytes)]
+    if spec.inner_cap_bytes:  # HFU T11: the inner_parallel pool child cap (distinct from the unit worker's)
+        argv += ["--inner-cap-bytes", str(spec.inner_cap_bytes)]
     if spec.peak_rss_bytes:
         argv += ["--peak-rss-bytes", str(spec.peak_rss_bytes)]
     if spec.profile:
         argv += ["--profile", str(spec.profile)]
     if spec.escalate:  # the memory escalation job also runs units deferred by a memory failure
         argv += ["--escalate"]
+    if spec.wio:  # S3 item 5: the executor bounds W by the planned W, not nproc
+        argv += ["--wio"]
+    if spec.unit_peaks_path:  # S3 item 6: the per-unit peaks the memory gate reserves against
+        argv += ["--unit-peaks", spec.unit_peaks_path]
     if spec.shard_keys_path:
         argv += ["--shard-keys", spec.shard_keys_path]
+    if spec.from_partials is not None:  # HFU T8: the final reduce over N sub-reduce partials
+        argv += ["--from-partials", str(spec.from_partials)]
+    if spec.subreduce_shard_id is not None:  # HFU T8: a sub-reduce; the worker computes its range from DONE units
+        argv += ["--subreduce", "--shard-id", str(spec.subreduce_shard_id), "--n-shards", str(spec.subreduce_n_shards)]
+    if spec.no_inline_reduce:  # HFU T8: a sharded stage's run job skips the inline reduce
+        argv += ["--no-inline-reduce"]
     return argv
 
 
@@ -234,10 +314,18 @@ def volumes_for(spec: JobSpec) -> list[Any]:
     from huggingface_hub import Volume
 
     vols = [Volume(type="bucket", source=spec.bucket, mount_path=BUCKET_MOUNT, read_only=False)]
-    for d in spec.datasets:
-        if d.access == "mount":
-            vols.append(Volume(type="dataset", source=d.repo, mount_path=d.path, revision=d.revision, read_only=True))
-    return vols
+    return vols + dataset_volumes(spec.datasets)
+
+
+def dataset_volumes(datasets: Sequence[DatasetMount]) -> list[Any]:
+    """Every mounted dataset, read-only at its pinned revision under /data/<name>. Shared with measurement jobs."""
+    from huggingface_hub import Volume
+
+    return [
+        Volume(type="dataset", source=d.repo, mount_path=d.path, revision=d.revision, read_only=True)
+        for d in datasets
+        if d.access == "mount"
+    ]
 
 
 def launch(spec: JobSpec, *, api: Any, token: str) -> str:

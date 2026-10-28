@@ -153,3 +153,33 @@ branch ships `ship_order[-1]`, the **broadest** arm present (`ship_order` is nar
 corpus ships `sc_extended` over all its rows — faithful to the committed single-candidate `sc_extended`
 run. Regression: `test_train_script_ships_broadest_arm_when_not_paired` (a 2-tier `--arms` → shipped
 `sc_extended`). Applies to `xshot_occurrence` and `xcross_attempt` identically.
+
+### Amendment B.2 (2026-10-30): the emitted key carries the unit's `source_provider`
+
+The HFU R4-10 identity run (HF, 2026-10-30) found that the arm keys missed the 7 public DFL matches. The staged
+locks name those shards `idsse__<game>` (the licensing identity), and the lock records their `source_provider` as
+`sportec` (the converter). The job keys a row `match_key(source_provider, "{provider}-{game}")`, which is
+`sportec__idsse-<game>`. `compute_arms` built the key from the stem alone, `idsse__idsse-<game>`, so that key named
+no row, and `np.isin` left the 7 matches outside every arm without an error. In the stored `2474b73` campaign
+units (HF probe job `6ae54142c78863f9c62ee234`), every xShot/xCross final fit (`X[arms[shipped]]`) omits them: the
+public xShot fit used 75,310 of 156,106 rows and the public xCross fit 47,944 of 91,999. Their CV estimates and
+`metrics.json` (`n_rows`, `providers`, `corpus_n_matches`) still count all 17 / 115 matches. The artifacts in the
+wheel and on the Hub (the 4.138.0 run `4095251`) record all 17 public match ids explicitly (`all_public`), which
+needs every row in the public arm, so their fits are not affected.
+
+**Decisions.**
+- `compute_arms` takes the locked units (`datasets.staged_units`: stem and `source_provider`) and builds each key
+  with the job's own functions, `match_key(source_provider, pergame_name(provider, game))`. The registry lookup
+  still uses the stem's provider.
+- The job fails closed: `arms.require_arm_keys_in` refuses an arm key that names no staged unit
+  (`ArmKeyMismatchError`) before any row is cut. Both trainers' `prep` and the xCross `probe_comparison` call it.
+- Tests: `test_every_arm_key_is_the_injob_key_of_a_locked_unit` (the campaign's own `--arms-json` against the real
+  locks; it failed before the fix), `test_a_unit_staged_under_its_identity_is_keyed_by_its_source_provider`,
+  `test_an_arm_key_naming_no_unit_of_the_dataset_is_refused`, and
+  `test_an_arm_key_that_names_no_unit_is_refused_before_any_row_is_cut` (both trainers).
+
+**Consequence (owner ruling, 2026-10-30).** This is a correctness fix, so it is not byte-identical to the
+`2474b73` baseline. The xShot/xCross arm masks (`arms/*.npy`, `is_public.npy`) now mark the DFL rows, and the 8
+final fits and their `metrics.json` gain the 7 matches. Every other output keeps the no-rebaseline guarantee: the
+HF identity run asserts that the `prep` inputs (X, y, groups, providers, match ids) are byte-identical to `2474b73`
+and that the masks differ exactly on the DFL rows.

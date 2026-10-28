@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from scripts._cover_shadow_thresholds import MIN_RECEIVER_MARGIN
-from scripts._stages import ItemStage, Param, Pipeline, Stage, main
+from scripts._stages import ItemStage, Param, Pipeline, Stage, cli_main
 from silly_kicks.id_compat import canonical_id, same_id
 from silly_kicks.spadl.config import actiontypes, results
 from silly_kicks.tracking import link_actions_to_frames
@@ -591,6 +591,29 @@ def _assemble_work(key, ctx):
     return FileSet(files)
 
 
+#: HFU plan R3-8 S3 item 12: the reviewed serial reasons of this pipeline's SERIAL stages, verbatim from the
+#: plan's SERIAL annex (owner ruling 2026-10-30, "too small to pay"); `scripts/hf_jobs/serial_reasons.py`
+#: holds the same texts and `tests/scripts/test_serial_reasons.py` holds the two equal.
+_SERIAL_REASONS = {
+    "extract": (
+        "Reviewed floor (owner ruling 2026-10-31, row 29): 30 per-match units at W=8 measured 0.844 and 0.845 of the "
+        "vCPU on HF (S1i), just under the 0.85 bar. A per-(match, period) split (90 units) gave the same bytes but "
+        "0.797 and 0.829 (S3 item 16 (c), job 6ae611200e0338d1bb7d327a), so the stage keeps per-match units."
+    ),
+    "pool": (
+        "Too small to pay (under 60 s of unit and reduce CPU, owner ruling 2026-10-30): in the campaign configuration "
+        "no pool dataset is passed, so the stage has no units and only an empty reduce; the job is 6.4 s. With a pool "
+        "dataset it has units and is measured like `extract` (S3 item 16)."
+    ),
+    "fit": ("Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 2 s of CPU."),
+    "deploy": (
+        "Too small to pay (under 60 s of unit and reduce CPU, owner ruling 2026-10-30): in the campaign configuration "
+        "no deployment dataset is passed, so the stage has no units and only an empty reduce; the job is 5.4 s."
+    ),
+    "assemble": ("Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, under 1 s of CPU."),
+}
+
+
 PIPELINE = Pipeline(
     name="receiver_model",
     module="scripts.train_receiver_model",
@@ -598,6 +621,7 @@ PIPELINE = Pipeline(
     stages=(
         ItemStage(
             name="extract",
+            serial_reason=_SERIAL_REASONS["extract"],  # owner ruling 2026-10-31, row 29
             refs=lambda ctx: _staged_refs(ctx, "dataset"),
             key=lambda ref: ref.stem,  # pre-migration key was the shard stem (match_id); _KEY_EXCEPTIONS
             load=lambda ref, ctx: _load_staged(ref, ctx, "dataset"),
@@ -612,6 +636,7 @@ PIPELINE = Pipeline(
         ),
         ItemStage(
             name="pool",
+            serial_reason=_SERIAL_REASONS["pool"],  # S3 item 12 (SERIAL annex)
             refs=lambda ctx: _staged_refs(ctx, "pool_dataset"),
             key=lambda ref: ref.stem,
             load=lambda ref, ctx: _load_staged(ref, ctx, "pool_dataset"),
@@ -629,6 +654,7 @@ PIPELINE = Pipeline(
         ),
         Stage(
             name="fit",
+            serial_reason=_SERIAL_REASONS["fit"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_fit_work,
             needs=("extract", "pool"),
@@ -646,6 +672,7 @@ PIPELINE = Pipeline(
         ),
         ItemStage(
             name="deploy",
+            serial_reason=_SERIAL_REASONS["deploy"],  # S3 item 12 (SERIAL annex)
             refs=_deploy_refs,
             key=lambda ref: ref.stem,  # pre-migration key was the match_id; _KEY_EXCEPTIONS
             load=lambda ref, ctx: _load_staged(ref, ctx, "deployment_dataset"),
@@ -662,6 +689,7 @@ PIPELINE = Pipeline(
         ),
         Stage(
             name="assemble",
+            serial_reason=_SERIAL_REASONS["assemble"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_assemble_work,
             needs=("fit", "deploy"),
@@ -672,4 +700,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

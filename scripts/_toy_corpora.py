@@ -352,7 +352,7 @@ def build_pergame_corpus(
 
 
 def build_ghost_corpus(
-    root: str | pathlib.Path, *, n_games: int = 6, n_frames: int = 40, heavy_frames: int = 400
+    root: str | pathlib.Path, *, n_games: int = 6, n_frames: int = 40, heavy_frames: int | None = 400
 ) -> pathlib.Path:
     """ONE toy flat ghost-GK dataset IN ``root``: games ``100..`` alternating a detection-aware
     ``skillcorner`` (keeper ``visibility`` flag, so the detected-only filter and the selection-bias counters
@@ -1114,6 +1114,12 @@ TOY_PARAMS: dict[str, tuple[str, ...]] = {
         "--fit-fraction",
         "0.4",
     ),
+    # the campaign's own build args: every open competition (the toy tree's one: 43/106)
+    "scripts.train_match_outcome_dependence": (),
+    # the campaign's own build args (registry base_args): WC2022, the toy tree's one competition
+    "scripts.train_pass_completion": ("--source", "open-data"),
+    # the campaign's own build args: WC2022 (the defaults; the toy tree's one competition), no HPO
+    "scripts.train_xsuccess": (),
     # --- scaffold: toys above ---
 }
 
@@ -1126,11 +1132,22 @@ TOY_BUILDERS: dict[str, Callable[[pathlib.Path], pathlib.Path]] = {
     "scripts.train_xshot_occurrence": _xshot_toy,
     "scripts.train_xcross_attempt": _xcross_toy,
     "scripts.build_territory_ranking_census": _census_toy,
+    "scripts.train_match_outcome_dependence": _open_data_toy,
+    "scripts.train_pass_completion": _open_data_toy,
+    "scripts.train_xsuccess": _open_data_toy,
     # --- scaffold: toy builders above ---
 }
 
 #: Modules whose toy input is a served open-data tree (``toy_session`` starts the server).
-TOY_OPEN_DATA: frozenset[str] = frozenset({"scripts.train_win_probability", "scripts.build_territory_ranking_census"})
+TOY_OPEN_DATA: frozenset[str] = frozenset(
+    {
+        "scripts.train_win_probability",
+        "scripts.build_territory_ranking_census",
+        "scripts.train_match_outcome_dependence",
+        "scripts.train_pass_completion",
+        "scripts.train_xsuccess",
+    }
+)
 
 
 @contextlib.contextmanager

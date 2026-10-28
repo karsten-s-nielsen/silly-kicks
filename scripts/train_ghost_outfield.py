@@ -8,9 +8,10 @@ Usage (ADR-128 stage contract; the uniform CLI from ``scripts._stages.main``)::
 
 Pipeline: ``extract[match]`` (an ``ItemStage`` over the staged flat dataset: ``shards/<gen>/`` frames,
 ``_actions/`` and ``home_teams.json``) -> ``cv[fold]`` -> ``fit`` -> ``assemble`` (the bundle). Each frames
-parquet must carry a ``team_in_possession`` column or a resolvable ball carrier. The extract token includes
-``feature_set`` (the 4.77.1 stale-shard rule: a position_only run drops 4 columns, so its shards are NOT
-interchangeable with a faithful run).
+parquet must carry a ``team_in_possession`` column or a resolvable ball carrier. Spec r4 D18 (b): ``extract``
+always holds the FAITHFUL columns, ONE extraction for both variants; ``_data`` (the one reader of its output)
+drops the 4 velocity columns for ``position_only``, and every stage after it declares ``variant`` (the 4.77.1
+rule: different columns never share a generation).
 
 Requires: silly-kicks[train].
 """
@@ -27,7 +28,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
 
-from scripts._stages import ItemStage, Param, Pipeline, Stage, main
+from scripts._stages import ItemStage, Param, Pipeline, Stage, cli_main
 
 _FeatureSet = Literal["faithful", "position_only"]
 
@@ -37,18 +38,22 @@ def feature_set_for_variant(variant: str) -> _FeatureSet:
     return "position_only" if variant == "position_only" else "faithful"
 
 
-def extraction_inputs(variant: str, subsample_fps: float | None = 1.0) -> dict:
+#: Spec r4 D18 (b): the extraction's one feature set, for both variants (`_extract_for` projects position_only).
+_EXTRACT_FEATURE_SET: _FeatureSet = "faithful"
+
+
+def extraction_inputs(subsample_fps: float | None = 1.0) -> dict:
     """DECLARED shard-generation inputs (the digest ``for_each`` keys shards on).
 
-    ``feature_set`` MUST be here (the 4.77.1 stale-shard rule): a position_only run drops the 4
-    velocity features, so its shards carry a different column set and are NOT interchangeable with a
-    faithful run's. ``subsample_fps`` MUST be here too: it changes the ROW SET (fewer, temporally
-    thinned frames), so a 1 fps shard is not interchangeable with a 25 fps one. Bumping the
-    extractor's output schema means bumping ``extractor`` here.
+    ``feature_set`` is the shards' constant (spec r4 D18 (b): always faithful, one extraction for both variants;
+    the 2474b73 default's token), so a change of the extracted columns still changes the generation (the 4.77.1
+    stale-shard rule). ``subsample_fps`` MUST be here too: it changes the ROW SET (fewer, temporally thinned
+    frames), so a 1 fps shard is not interchangeable with a 25 fps one. Bumping the extractor's output schema
+    means bumping ``extractor`` here.
     """
     return {
         "schema": "ghost-outfield-1",
-        "feature_set": feature_set_for_variant(variant),
+        "feature_set": _EXTRACT_FEATURE_SET,
         # v2 = possession-conditioned extraction (BOTH teams per frame, live team_in_possession); a v1
         # in-possession-only shard is NOT interchangeable, so the token change forces a fresh generation.
         "extractor": "ghost_outfield_v2",
@@ -306,7 +311,6 @@ _PARAMS = (
         1.0,
         help="Frames/sec to keep per (game, period) (default 1.0, mirroring train_ghost_gk); a large value keeps all",
     ),
-    Param("training_platform", str, None),
 )
 
 
@@ -343,7 +347,7 @@ def _extract_work(item, ctx):
     return extract_match(
         frames,
         _actions_for(p, ns),
-        feature_set_for_variant(ctx.params["variant"]),
+        _EXTRACT_FEATURE_SET,  # spec r4 D18 (b): one faithful extraction; `_extract_for` projects
         n_rearguard=ctx.params["n_rearguard"],
         home_team_id=_home_team_for(p, frames, _home_map(ctx)),
         subsample_fps=ctx.params["subsample_fps"],
@@ -362,12 +366,33 @@ def _extract_reduce(results, ctx):
 _DATA: dict = {}
 
 
+def _extract_for(ctx) -> pd.DataFrame:
+    """The extract output as this variant reads it (spec r4 D18 (b)): the shared faithful rows, minus the 4
+    velocity columns for `position_only` -- the old `position_only` extract output, column for column."""
+    from silly_kicks.tracking._ghost_outfield import (
+        GHOST_OUTFIELD_FEATURE_NAMES,
+        GHOST_OUTFIELD_FEATURE_NAMES_POSITION_ONLY,
+    )
+
+    data = ctx.upstream("extract")
+    if feature_set_for_variant(ctx.params["variant"]) == "position_only":
+        faithful_only = [c for c in GHOST_OUTFIELD_FEATURE_NAMES if c not in GHOST_OUTFIELD_FEATURE_NAMES_POSITION_ONLY]
+        data = data.drop(columns=faithful_only)
+    return data
+
+
 def _data(ctx) -> pd.DataFrame:
-    """The extract output, loaded ONCE per worker (keyed by the extract token)."""
-    tok = ctx.tokens["extract"]
+    """The variant's extract rows (`_extract_for`), loaded ONCE per worker. Keyed by the store, the extract token
+    AND the feature set: the extraction is shared by both variants (spec r4 D18 (b)), and one process may serve two
+    stores (the pass_completion `_pooled` precedent)."""
+    tok = (
+        str(getattr(ctx.store, "root", getattr(ctx.store, "prefix", ""))),
+        ctx.tokens["extract"],
+        feature_set_for_variant(ctx.params["variant"]),
+    )
     if tok not in _DATA:
         _DATA.clear()
-        _DATA[tok] = ctx.upstream("extract")
+        _DATA[tok] = _extract_for(ctx)
     return _DATA[tok]
 
 
@@ -421,7 +446,7 @@ def _fit_work(key, ctx):
 
     from scripts._stages import FileSet
     from scripts._train_guard import require_training_sklearn
-    from silly_kicks.tracking._ghost_outfield import GhostOutfieldModel, ghost_rearguard_coherence
+    from silly_kicks.tracking._ghost_outfield import GhostOutfieldModel
 
     require_training_sklearn()
     p = ctx.params
@@ -434,7 +459,6 @@ def _fit_work(key, ctx):
         data
     )
     final.training_commit = training_commit
-    final.training_platform = p["training_platform"]
     final.corpus_provenance = {
         "n_games": int(data["game_id"].astype(str).nunique()),
         "n_rows": len(data),
@@ -453,13 +477,64 @@ def _fit_work(key, ctx):
         if loaded._baseline_x != final._baseline_x:
             raise RuntimeError("round-trip verification: the baseline differs after save/load")
         files = {q.name: q.read_bytes() for q in sorted(artifact_dir.iterdir()) if q.is_file()}
-    # Coherence (reported, not gated -- spec 9): served ghost positions on the training rows.
-    served = data[["game_id", "period_id", "frame_id", "team_id", "slot_index"]].copy()
-    fpred = final.predict_mean(data)
-    served["ghost_gr_x"] = fpred[:, 0]
-    served["ghost_gr_y"] = fpred[:, 1]
-    files["coherence.json"] = json.dumps(ghost_rearguard_coherence(served)).encode("utf-8")
-    return FileSet(files)
+    return FileSet(files)  # S3 item 15 (b): the coherence is its own stage
+
+
+# ---- coherence: the served ghost positions on the training rows, in row chunks (HFU plan R3-8 S3 item 15 (b)) --
+#
+# The `fit` unit used to predict every training row with one thread after its fit (259 s of the walk on HF, S1).
+# The `coherence` stage predicts `COHERENCE_CHUNKS` equal row chunks in parallel with the SAVED model (its trees and
+# baselines equal the fitted ones; `_fit_work` asserts the round trip) and the reduce runs `ghost_rearguard_coherence`
+# on the chunks concatenated in key (= row) order. The walk is row-independent, so the coherence is byte-identical.
+COHERENCE_CHUNKS = 8
+_COHERENCE_KEYS = ["game_id", "period_id", "frame_id", "team_id", "slot_index"]
+_FIT_MODEL: dict = {}  # per worker: the saved model, loaded once (keyed by the fit token)
+
+
+def _fitted_model(ctx):
+    import atexit
+    import shutil
+    import tempfile
+
+    from scripts._stages import materialize_fileset
+    from silly_kicks.tracking._ghost_outfield import GhostOutfieldModel
+
+    tok = ctx.tokens["fit"]
+    if tok not in _FIT_MODEL:
+        _FIT_MODEL.clear()
+        base = tempfile.mkdtemp(prefix="ghost_outfield_fit_")
+        atexit.register(shutil.rmtree, base, ignore_errors=True)
+        _FIT_MODEL[tok] = GhostOutfieldModel.load(materialize_fileset(ctx, "fit", "_output", Path(base) / "model"))
+    return _FIT_MODEL[tok]
+
+
+def _coherence_units(ctx) -> list[str]:
+    from scripts._stages import int_key
+
+    return [int_key(i) for i in range(COHERENCE_CHUNKS)]
+
+
+def coherence_chunk(model, data: pd.DataFrame, chunk: int) -> pd.DataFrame:
+    """Chunk ``chunk`` of ``COHERENCE_CHUNKS`` equal row chunks (`np.array_split` of the row order): its served ghost
+    positions (``predict_mean``), with the keys `ghost_rearguard_coherence` groups by."""
+    rows = np.array_split(np.arange(len(data)), COHERENCE_CHUNKS)[chunk]
+    part = data.iloc[rows]
+    served = part[_COHERENCE_KEYS].reset_index(drop=True)
+    pred = model.predict_mean(part)
+    served["ghost_gr_x"] = pred[:, 0]
+    served["ghost_gr_y"] = pred[:, 1]
+    return served
+
+
+def _coherence_work(key, ctx) -> pd.DataFrame:
+    return coherence_chunk(_fitted_model(ctx), _data(ctx), int(key))
+
+
+def coherence_of_chunks(results) -> dict:
+    """`ghost_rearguard_coherence` over the chunks concatenated in key order (the training rows, in order)."""
+    from silly_kicks.tracking._ghost_outfield import ghost_rearguard_coherence
+
+    return ghost_rearguard_coherence(pd.concat([results[k] for k in sorted(results)], ignore_index=True))
 
 
 def _assemble_work(key, ctx):
@@ -469,7 +544,7 @@ def _assemble_work(key, ctx):
     data = _data(ctx)
     cv_mae, cv_mae_by_slot, cv_mae_by_provider, cv_mae_by_possession = ctx.upstream("cv")
     fit = ctx.upstream("fit")
-    coherence = json.loads(fit.files["coherence.json"])
+    coherence = ctx.upstream("coherence")  # S3 item 15 (b)
     metrics = {
         "variant": p["variant"],
         "feature_set": feature_set_for_variant(p["variant"]),
@@ -483,11 +558,23 @@ def _assemble_work(key, ctx):
         "coherence": coherence,
         "run_commit": None if ctx.prov["commit"] == "unknown" else ctx.prov["commit"],
         "run_tree_dirty": bool(ctx.prov["dirty"]),
-        "training_platform": p["training_platform"],
     }
+    # the `2474b73` bundle filter, kept: the fit FileSet no longer carries `coherence.json` (S3 item 15 (b)), but a
+    # bundle never ships one, whichever fit produced the files
     files = {name: data_ for name, data_ in fit.files.items() if name != "coherence.json"}
     files["metrics.json"] = json.dumps(metrics, indent=2).encode("utf-8")  # the legacy json.dump bytes
     return FileSet(files)
+
+
+#: HFU plan R3-8 S3 item 12: the reviewed serial reasons of this pipeline's SERIAL stages, verbatim from the
+#: plan's SERIAL annex (owner ruling 2026-10-30, "too small to pay"); `scripts/hf_jobs/serial_reasons.py`
+#: holds the same texts and `tests/scripts/test_serial_reasons.py` holds the two equal.
+_SERIAL_REASONS = {
+    "assemble": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit of 3.5 s, building the metrics "
+        "block and the bundle from the cv and fit results."
+    ),
+}
 
 
 PIPELINE = Pipeline(
@@ -502,10 +589,11 @@ PIPELINE = Pipeline(
             load=_extract_load,
             work=_extract_work,
             reduce=_extract_reduce,
+            shardable_reduce=("game_id", "player_id", "team_id"),  # HFU T8: a plain combine_frames concat
             # extraction_inputs is the legacy token; n_rearguard is declared too, so a changed rearguard
             # size can never reuse stale shards.
             params=("n_rearguard",),
-            declare=lambda p: extraction_inputs(p["variant"], p["subsample_fps"]),
+            declare=lambda p: extraction_inputs(p["subsample_fps"]),
             cross_commit_version="ghost-outfield-extract-1",
             uses_dataset=True,
             max_failures=None,  # legacy WARNs and continues
@@ -517,6 +605,8 @@ PIPELINE = Pipeline(
             needs=("extract",),
             reduce=_cv_reduce,
             params=("variant", "n_estimators", "max_depth", "cv_folds"),
+            thread_safe=True,  # HFU T11: each fold fits a HistGB; W=1 gets the full vCPU OMP budget
+            thread_lever="omp",  # HistGB OpenMP; BLAS stays serial (B38) -- identity test_cv_thread_identity_ghost
         ),
         Stage(
             name="fit",
@@ -524,19 +614,30 @@ PIPELINE = Pipeline(
             work=_fit_work,
             needs=("extract",),
             reduce=lambda r, ctx: r["only"],
-            params=("variant", "n_estimators", "max_depth", "training_platform"),
+            params=("variant", "n_estimators", "max_depth"),
+            thread_safe=True,  # ADR-128 INV-2 opt-in (test_thread_identity; test_thread_safe_registry)
+            thread_lever="omp",  # HistGB OpenMP; BLAS stays serial (B38)
+        ),
+        Stage(
+            name="coherence",
+            units=_coherence_units,
+            work=_coherence_work,
+            needs=("extract", "fit"),
+            reduce=lambda r, ctx: coherence_of_chunks(r),
+            params=("variant",),
         ),
         Stage(
             name="assemble",
+            serial_reason=_SERIAL_REASONS["assemble"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_assemble_work,
-            needs=("extract", "cv", "fit"),
+            needs=("extract", "cv", "fit", "coherence"),
             reduce=lambda r, ctx: r["only"],
-            params=("variant", "subsample_fps", "training_platform"),
+            params=("variant", "subsample_fps"),
         ),
     ),
     output="assemble",
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

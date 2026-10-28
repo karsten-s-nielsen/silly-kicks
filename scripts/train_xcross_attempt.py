@@ -34,7 +34,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
 
-from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, join_key, main
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, cli_main, join_key
 
 sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
@@ -121,6 +121,7 @@ def _hpo_once(
     seed=42,
     study_shard_dir=None,
     fold_map=None,
+    runtime_n_jobs=1,
 ) -> dict:
     """Run ruthless HPO once for one candidate; return the frozen best-params dict.
 
@@ -160,6 +161,7 @@ def _hpo_once(
         negative_subsample=negative_subsample,
         subsample_seed=seed,
         fold_map=fold_map,
+        runtime_n_jobs=runtime_n_jobs,  # HFU S3 item 9: the in-process folds at the worker's budget
     )
     cfg = OptunaConfig(
         kind="optuna",
@@ -472,16 +474,22 @@ _PARAMS = (
 )
 
 
+#: Spec r4 D18 (b), (d): `extract` and `probe` always extract the FAITHFUL columns (16), for both variants -- one
+#: extraction and one probe; `prep` (the extract's one consumer) projects `position_only` (15) and declares
+#: `feature_set`, so the 4.77.1 rule (different columns never share a generation) holds there. The probe keeps only
+#: matches with rows and their groups, which no feature set changes.
+_EXTRACT_FEATURE_SET = "faithful"
+
+
 def _extract_declare(p) -> dict:
-    """What determines a feature shard's CONTENT (the legacy `_extract` token inputs, unchanged). The probe
-    provider filters are NOT declared: they select which matches are copied into a cohort, not what a
-    feature row contains."""
+    """What determines a feature shard's CONTENT (the legacy `_extract` token inputs; the feature set is the shards'
+    constant, the 2474b73 default's). The probe provider filters are NOT declared: they select which matches are
+    copied into a cohort, not what a feature row contains."""
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
 
     return {
         "extractor": "prepare_xcross_training_data",
-        # feature_set changes the X columns (16 vs 15) -> MUST key the shard generation (4.77.1).
-        "feature_set": p["feature_set"],
+        "feature_set": _EXTRACT_FEATURE_SET,
         "horizon_seconds": p["horizon_seconds"],
         "wide_area_only": True,
         "carrier_params": dict(DEFAULT_CARRIER_PARAMS),
@@ -557,7 +565,7 @@ def _prepare(item, ctx):
         frames,
         actions,
         home_team_id=home,
-        feature_set=ctx.params["feature_set"],
+        feature_set=_EXTRACT_FEATURE_SET,  # spec r4 D18 (b), (d): one faithful extraction; `prep` projects
         horizon_seconds=ctx.params["horizon_seconds"],
         wide_area_only=True,
         carrier_params=DEFAULT_CARRIER_PARAMS,  # 4.7.0 values; shared constant (anti-drift)
@@ -661,18 +669,24 @@ def _probe_reduce(results, ctx) -> FileSet:
 def _probe_comparison_work(key, ctx) -> FileSet:
     """The reported-not-gated comparison cohort (M5): the first `PROBE_KEEP` TRAINING matches of a
     ``--probe-comparison-providers`` provider whose extraction yielded rows, in the legacy iteration order
-    (the legacy main pass captured it in-line). Read from the extract unit results, so nothing re-extracts."""
+    (the legacy main pass captured it in-line). Read from the extract unit results, so nothing re-extracts. Spec r4
+    D18 (c): only the matches of this tier's arms (two tiers share the extraction; without the restriction the
+    public tier's cohort could take a non-public match)."""
     from scripts._stages import read_result, sorted_units
+    from scripts.hf_jobs.arms import arm_keys, match_key, parse_arms, require_arm_keys_in
 
     st = ctx.pipeline.stage("extract")
     assert isinstance(st, ItemStage)  # noqa: S101 -- the pipeline declares it so
     gen = ctx.generation("extract")
     providers = _csv(ctx.params["probe_comparison_providers"])
+    armspec = parse_arms(ctx.params["arms_json"])
     refs = st.ref_map(ctx)
+    require_arm_keys_in(armspec, [match_key(ref.prov, ref.mid) for ref in refs.values()])  # HFU R4-10: fail closed
+    allowed = arm_keys(armspec)
     records = []
     for k in sorted(sorted_units(ctx, st), key=_mid_of):
         ref = refs[k]
-        if ref.prov not in providers or len(records) >= PROBE_KEEP:
+        if ref.prov not in providers or len(records) >= PROBE_KEEP or match_key(ref.prov, ref.mid) not in allowed:
             continue
         rows = read_result(ctx.store, f"{gen}/{k}")
         if not isinstance(rows, pd.DataFrame) or not len(rows):
@@ -685,6 +699,25 @@ def _feature_names(feature_set: str) -> list[str]:
     from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL, XCROSS_FEATURE_NAMES_POSITION_ONLY
 
     return list(XCROSS_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XCROSS_FEATURE_NAMES_FAITHFUL)
+
+
+def _extract_for(ctx) -> pd.DataFrame:
+    """The extract output as this variant's consumer reads it (spec r4 D18 (b)): the shared faithful rows, minus the
+    faithful-only columns for `position_only` -- the old `position_only` extract output, column for column."""
+    combined = ctx.upstream("extract")
+    if ctx.params["feature_set"] == "position_only":
+        faithful_only = [c for c in _feature_names("faithful") if c not in _feature_names("position_only")]
+        combined = combined.drop(columns=faithful_only)
+    return combined
+
+
+def _unit_match_keys(ctx) -> list[str]:
+    """The in-job match key of every staged unit of the dataset: the keys an arm may name (HFU R4-10)."""
+    from scripts.hf_jobs.arms import match_key
+
+    st = ctx.pipeline.stage("extract")
+    assert isinstance(st, ItemStage)  # noqa: S101 -- the pipeline declares it so
+    return [match_key(ref.prov, ref.mid) for ref in st.ref_map(ctx).values()]
 
 
 def _cv_n_splits(groups) -> int:
@@ -718,19 +751,21 @@ def _prep_work(key, ctx):
     import tempfile
 
     from scripts._study_shared import persist_study_inputs
-    from scripts.hf_jobs.arms import match_key, parse_arms
+    from scripts.hf_jobs.arms import match_key, parse_arms, require_arm_keys_in, restrict_to_arms
 
     p = ctx.params
     if set(_csv(p["probe_providers"])) & set(_csv(p["probe_comparison_providers"])):
         raise ValueError("--probe-providers and --probe-comparison-providers must be disjoint.")
-    combined = ctx.upstream("extract")
+    armspec = parse_arms(p["arms_json"])
+    require_arm_keys_in(armspec, _unit_match_keys(ctx))  # HFU R4-10: fail closed before any row is cut
+    # spec r4 D18 (c): tiers that read one dataset share its extraction -- this tier's arm rows first
+    combined = restrict_to_arms(_extract_for(ctx), armspec)
     X = combined[_feature_names(p["feature_set"])]
     y = combined["_y"].to_numpy(int)
     groups = np.asarray(combined["_group"].to_numpy()).astype(str)
     providers = combined["_provider"].to_numpy()
     match_ids = combined["_match_id"].to_numpy()
     sd_probe = _sd_range_probe(X)
-    armspec = parse_arms(p["arms_json"])
     match_keys = np.array([match_key(str(pv), str(m)) for pv, m in zip(providers, match_ids, strict=True)])
     arms = _build_candidate_masks(match_keys, armspec)
     is_public = arms.get("public", np.zeros(len(match_keys), dtype=bool))
@@ -847,7 +882,19 @@ def _study_fold_task(corpus_dir, rows_path, plan_path, fold_i, params, ns, seed)
         _FOLD_PLAN[str(plan_path)] = {i: (z[f"arr_{2 * i}"], z[f"arr_{2 * i + 1}"]) for i in range(len(z.files) // 2)}
     Xr, yr = _FOLD_DATA[dkey]
     tr, te = _FOLD_PLAN[str(plan_path)][fold_i]
-    return eval_fold(Xr, yr, fold_i, tr, te, params, negative_subsample=ns, subsample_seed=seed)
+    from scripts._thread_pin import runtime_n_jobs_from_env
+
+    return eval_fold(
+        Xr,
+        yr,
+        fold_i,
+        tr,
+        te,
+        params,
+        negative_subsample=ns,
+        subsample_seed=seed,
+        runtime_n_jobs=runtime_n_jobs_from_env(),  # HFU S3 item 9: the child budget, ceil(vcpu / inner)
+    )
 
 
 def _study_work(tag, ctx) -> dict:
@@ -856,6 +903,7 @@ def _study_work(tag, ctx) -> dict:
     import tempfile
 
     from scripts._stages import int_key
+    from scripts._thread_pin import runtime_n_jobs_from_env
     from silly_kicks.tracking._xcross_attempt_objective import cv_fold_plan
 
     root, inp = _inputs(ctx)
@@ -895,6 +943,7 @@ def _study_work(tag, ctx) -> dict:
             negative_subsample=ns,
             seed=seed,
             fold_map=fold_map,
+            runtime_n_jobs=runtime_n_jobs_from_env(),  # HFU S3 item 9: the n_jobs-lever budget (B38)
         )
     return {"params": params, "n_trials": cfg["n_trials"]}
 
@@ -923,8 +972,18 @@ def _cv_work(key, ctx) -> dict:
     _i, tr, te = ev._cv_score_plan(y, groups)[fold_i]
     cfg = inp.config
     params = ctx.upstream("study")[arm]["params"]
+    from scripts._thread_pin import runtime_n_jobs_from_env
+
     res = ev._cv_score_fold(
-        X, y, fold_i, tr, te, params, seed=cfg["seed"], negative_subsample=cfg["negative_subsample"]
+        X,
+        y,
+        fold_i,
+        tr,
+        te,
+        params,
+        seed=cfg["seed"],
+        negative_subsample=cfg["negative_subsample"],
+        runtime_n_jobs=runtime_n_jobs_from_env(),  # HFU T11/B-06: the n_jobs-lever budget into the cv fold fit
     )
     return {"fold": res, "positive_rate": float(np.asarray(y, dtype=int).mean())}
 
@@ -1019,6 +1078,7 @@ def _fit_work(key, ctx):
     failed gate writes the legacy ``metrics_FAILED.json`` payload beside the unit and raises."""
     import tempfile
 
+    from scripts._thread_pin import runtime_n_jobs_from_env
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
     from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
     from silly_kicks.tracking._xshot_occurrence import subsample_negatives
@@ -1048,7 +1108,13 @@ def _fit_work(key, ctx):
     model.shipped_variant = shipped
     model.provider_list = candidates[shipped]["providers"]
     model.training_commit = cfg["run_prov"]["commit"]
-    model.fit(Xfit, pd.Series(yfit), carrier_params=DEFAULT_CARRIER_PARAMS, horizon_seconds=cfg["horizon_seconds"])
+    model.fit(
+        Xfit,
+        pd.Series(yfit),
+        carrier_params=DEFAULT_CARRIER_PARAMS,
+        horizon_seconds=cfg["horizon_seconds"],
+        runtime_n_jobs=runtime_n_jobs_from_env(),  # the n_jobs-lever budget, read trainer-side (B27/B38)
+    )
     with tempfile.TemporaryDirectory() as tmp:
         art = Path(tmp) / "xcross_attempt_v1"
         model.save(art)
@@ -1060,25 +1126,239 @@ def _fit_work(key, ctx):
     return FileSet(files)
 
 
-def _tf19_block(ctx, inp, model, shipped, candidates) -> dict:
-    """The headline GK validations on the SHIPPED candidate (PR-B; legacy assemble `run_probe`): the GK-block
-    ablation, the CV-held-out permutation importance and the TF-19 substitution probe on the held-out cohort."""
+# ---- the TF-19 block as units (HFU plan R3-8 S3 item 8; row 28, owner ruling 2026-10-30) ----------------------
+#
+# The serial `_tf19_block` ran the GK-block ablation, the CV-held-out permutation importance and the substitution
+# probe in ONE unit. Each part is now its own stage: `tf19_ablation` (one unit per (arm, fold)), `tf19_perm_fit`
+# (one per fold: the fold model), `tf19_perm` (one per (fold, column): sklearn's permutation of that column on the
+# fold's test rows, `scripts._permutation_units`) and `tf19_probe` (one). `assemble` combines them (`_tf19_combine`)
+# in the serial key order; the block JSON is byte-identical (`tests/scripts/test_xcross_tf19_units.py`, with the
+# `2474b73` bodies verbatim as the oracles). The shipped arm has at most 5 folds (`_cv_n_splits`), so each stage has
+# 5 fold slots without reading the corpus; a slot past the arm's fold count returns the absent marker.
+TF19_FOLDS = 5
+TF19_ABLATION_ARMS = ("with", "without")
+TF19_PERM_REPEATS = 10  # `_tf19_block`: `permutation_importance_report(..., n_repeats=10)`
+TF19_PERM_SCORING = "average_precision"
+_ABSENT = "absent"
+_SKIPPED = "skipped"
+
+
+def tf19_ablation_fold(
+    X, y, groups, params: dict, arm: str, fold: int, *, seed: int, negative_subsample, runtime_n_jobs: int = 1
+) -> dict:
+    """One fold of one arm of `_xcross_eval.gk_block_ablation` on the shipped arm's rows: ``{"fold": (log_loss,
+    brier, pr_auc | None) | None}`` (None: a fold `_cv_score` skips), or ``{"absent": True}`` past the fold count.
+    ``runtime_n_jobs`` is the LEVER budget of the fold's xgb fit (thread-count invariant, item 8 (f))."""
+    from silly_kicks.tracking import _xcross_eval as ev
+    from silly_kicks.tracking._xcross_attempt import XCROSS_GK_BLOCK
+
+    plan = ev._cv_score_plan(y, groups)
+    if fold >= len(plan):
+        return {_ABSENT: True}
+    feature_cols = list(X.columns)
+    cols = feature_cols if arm == "with" else [c for c in feature_cols if c not in XCROSS_GK_BLOCK]
+    i, tr, te = plan[fold]
+    res = ev._cv_score_fold(
+        X[cols], y, i, tr, te, params, seed=seed, negative_subsample=negative_subsample, runtime_n_jobs=runtime_n_jobs
+    )
+    return {"fold": res}
+
+
+def tf19_ablation_report(results) -> dict:
+    """`gk_block_ablation`'s dict from the (arm, fold) units, each arm's folds in FOLD order."""
+    from silly_kicks.tracking import _xcross_eval as ev
+
+    folds: dict[str, list] = {arm: [] for arm in TF19_ABLATION_ARMS}
+    for key in sorted(results):
+        arm, _, _fold = key.rpartition("__")
+        if not results[key].get(_ABSENT):
+            folds[arm].append(results[key]["fold"])
+    return ev._gk_ablation_report(ev._cv_score_combine(folds["with"]), ev._cv_score_combine(folds["without"]))
+
+
+def tf19_perm_fold_fit(X, y, groups, params: dict, fold: int, *, seed: int, runtime_n_jobs: int = 1) -> FileSet:
+    """Fold ``fold``'s model of `permutation_importance_report` (fit on the fold's train rows) as xgboost JSON, or
+    the absent or skipped marker (a fold with one class on either side, which the serial loop skips)."""
+    import tempfile
+
+    import xgboost as xgb
+
+    from silly_kicks.tracking import _xcross_eval as ev
+    from silly_kicks.tracking._xcross_attempt import _pinned_params
+
+    y = np.asarray(y, dtype=int)
+    plan = ev._permutation_plan(X, y, groups, seed)
+    if fold >= len(plan):
+        return FileSet({_ABSENT: b"1"})
+    tr, te = plan[fold]
+    if not ev._permutation_fold_usable(y, tr, te):
+        return FileSet({_SKIPPED: b"1"})
+    p_ = dict(_pinned_params(params))
+    p_["base_score"] = float(y[tr].mean())
+    p_["n_jobs"] = int(runtime_n_jobs)  # the LEVER budget for THIS fit (item 8 (f)); the model is thread-invariant
+    clf = xgb.XGBClassifier(**p_)
+    clf.fit(X.iloc[tr].to_numpy(float), y[tr])
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "model.json"
+        clf.save_model(path)
+        return FileSet({"model.json": path.read_bytes()})
+
+
+def tf19_perm_column(fit: FileSet, X, y, groups, fold: int, col: int, *, seed: int) -> dict:
+    """Column ``col`` permuted on fold ``fold``'s test rows with the fold model: ``{"baseline": score, "scores":
+    [one per repeat]}``, as `permutation_importance(..., scoring="average_precision", n_repeats=10,
+    random_state=seed)` computes them (`scripts._permutation_units`); the fold's marker when it has no model."""
+    import tempfile
+
+    import xgboost as xgb
+
+    from scripts import _permutation_units as perm_units
+    from silly_kicks.tracking import _xcross_eval as ev
+
+    if "model.json" not in fit.files:
+        return {_ABSENT: True} if _ABSENT in fit.files else {_SKIPPED: True}
+    y = np.asarray(y, dtype=int)
+    _tr, te = ev._permutation_plan(X, y, groups, seed)[fold]
+    clf = xgb.XGBClassifier()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "model.json"
+        path.write_bytes(fit.files["model.json"])
+        clf.load_model(path)
+    Xte, yte = X.iloc[te].to_numpy(float), y[te]
+    return {
+        "baseline": perm_units.baseline(clf, Xte, yte, scoring=TF19_PERM_SCORING),
+        "scores": perm_units.column_scores(
+            clf, Xte, yte, col, scoring=TF19_PERM_SCORING, random_state=seed, n_repeats=TF19_PERM_REPEATS
+        ),
+    }
+
+
+def tf19_coverage(X) -> float:
+    """`permutation_importance_report`'s ``score_differential`` coverage (non-NaN fraction of the shipped rows)."""
+    return float(X["score_differential"].notna().mean())
+
+
+def tf19_perm_report(results, feature_cols: list, coverage: float) -> dict:
+    """`permutation_importance_report`'s dict from the (fold, column) units: per usable fold the
+    ``importances_mean`` over the columns in order, then the mean over the folds."""
+    from scripts import _permutation_units as perm_units
+    from scripts._stages import int_key
+    from silly_kicks.tracking import _xcross_eval as ev
+
+    per_fold = []
+    for f in range(TF19_FOLDS):
+        cells = [results[join_key((int_key(f), int_key(c)))] for c in range(len(feature_cols))]
+        if cells[0].get(_ABSENT) or cells[0].get(_SKIPPED):
+            continue
+        per_fold.append(np.mean(perm_units.importances(cells[0]["baseline"], [c["scores"] for c in cells]), axis=1))
+    return ev._permutation_report(per_fold, feature_cols, coverage, TF19_PERM_REPEATS)
+
+
+def _tf19_rows(ctx):
+    """The shipped arm's rows (`_tf19_block`'s ``X[ship_mask]``), its params and the run config."""
+    _root, inp = _inputs(ctx)
+    sel = ctx.upstream("select")
+    shipped = sel["shipped"]
+    ship_mask = inp.arms[shipped]
+    return inp.X[ship_mask], inp.y[ship_mask], inp.groups[ship_mask], sel["candidates"][shipped]["params"], inp.config
+
+
+def _tf19_ablation_units(ctx) -> list[str]:
+    from scripts._stages import int_key
+
+    return [join_key((arm, int_key(f))) for arm in TF19_ABLATION_ARMS for f in range(TF19_FOLDS)]
+
+
+def _tf19_ablation_work(key, ctx) -> dict:
+    from scripts._thread_pin import runtime_n_jobs_from_env
+
+    X, y, groups, params, cfg = _tf19_rows(ctx)
+    arm, _, fold = key.rpartition("__")
+    return tf19_ablation_fold(
+        X,
+        y,
+        groups,
+        params,
+        arm,
+        int(fold),
+        seed=cfg["seed"],
+        negative_subsample=cfg["negative_subsample"],
+        runtime_n_jobs=runtime_n_jobs_from_env(),  # 1: a pinned stage (S3B-04); the env stays the single source
+    )
+
+
+def _tf19_perm_fit_units(ctx) -> list[str]:
+    from scripts._stages import int_key
+
+    return [int_key(f) for f in range(TF19_FOLDS)]
+
+
+def _tf19_perm_fit_work(key, ctx) -> FileSet:
+    from scripts._thread_pin import runtime_n_jobs_from_env
+
+    X, y, groups, params, cfg = _tf19_rows(ctx)
+    fit = tf19_perm_fold_fit(X, y, groups, params, int(key), seed=cfg["seed"], runtime_n_jobs=runtime_n_jobs_from_env())
+    # the coverage rides on every fold, so the `tf19_perm` reduce never reloads the design matrix
+    return FileSet({**fit.files, "coverage.json": json.dumps(tf19_coverage(X)).encode("utf-8")})
+
+
+def _tf19_perm_fit_reduce(results, ctx) -> dict:
+    """The coverage (the `tf19_perm` units read each fold's model through `read_upstream_unit`)."""
+    return {"coverage": json.loads(results[sorted(results)[0]].files["coverage.json"])}
+
+
+def _tf19_perm_units(ctx) -> list[str]:
+    from scripts._stages import int_key
+
+    n_cols = len(_feature_names(ctx.params["feature_set"]))
+    return [join_key((int_key(f), int_key(c))) for f in range(TF19_FOLDS) for c in range(n_cols)]
+
+
+def _tf19_perm_work(key, ctx) -> dict:
+    from scripts._stages import read_upstream_unit
+
+    X, y, groups, _params, cfg = _tf19_rows(ctx)
+    fold, _, col = key.rpartition("__")
+    fit = read_upstream_unit(ctx, "tf19_perm_fit", fold)
+    return tf19_perm_column(fit, X, y, groups, int(fold), int(col), seed=cfg["seed"])
+
+
+def _tf19_perm_reduce(results, ctx) -> dict:
+    # `prep` selects the design matrix by `_feature_names(feature_set)`, so this is `list(X.columns)`, in order
+    cols = _feature_names(ctx.params["feature_set"])
+    return tf19_perm_report(results, cols, ctx.upstream("tf19_perm_fit")["coverage"])
+
+
+def _shipped_model(ctx):
+    """The shipped artifact itself, loaded from the `fit` FileSet (bit-identical predictions)."""
+    import tempfile
+
+    from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
+
+    with tempfile.TemporaryDirectory() as tmp:
+        art = Path(tmp) / "xcross_attempt_v1"
+        art.mkdir()
+        for name, data in ctx.upstream("fit").files.items():
+            (art / name).write_bytes(data)
+        return XCrossAttemptModel.load(art)
+
+
+def _tf19_probe_work(key, ctx) -> dict:
+    """The TF-19 substitution probe on the held-out cohort with the shipped model: `_tf19_block`'s probe part,
+    unchanged."""
     import tempfile
 
     from scripts._stages import materialize_fileset
     from silly_kicks.tracking import _xcross_eval as ev
 
+    _root, inp = _inputs(ctx)
     cfg = inp.config
-    ns, seed = cfg["negative_subsample"], cfg["seed"]
-    X, y, groups = inp.X, inp.y, inp.groups
+    seed = cfg["seed"]
+    groups = inp.groups
+    sel = ctx.upstream("select")
+    shipped, candidates = sel["shipped"], sel["candidates"]
     ship_mask = inp.arms[shipped]
-    shipped_params = candidates[shipped]["params"]
-    gk_ablation = ev.gk_block_ablation(
-        X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, seed=seed, negative_subsample=ns
-    )
-    perm_imp = ev.permutation_importance_report(
-        X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, n_repeats=10, seed=seed
-    )
+    model = _shipped_model(ctx)
     with tempfile.TemporaryDirectory() as tmp:
         ps = materialize_fileset(ctx, "probe", "_output", Path(tmp) / "_probe_sample")
         if not (ps / "frames.parquet").exists():
@@ -1127,10 +1407,7 @@ def _tf19_block(ctx, inp, model, shipped, candidates) -> dict:
             file=sys.stderr,
         )
     return {
-        "gk_block_ablation": gk_ablation,
         "gk_substitution_probe": probe,
-        "permutation_importance": perm_imp,
-        "score_differential_range_probe": cfg["score_differential_range_probe"],
         "probe_sample_matches": probe_matches,
         "probe_sample_in_training_folds": in_training,
         "probe_gated_on_held_out": bool(admitted),
@@ -1138,12 +1415,24 @@ def _tf19_block(ctx, inp, model, shipped, candidates) -> dict:
     }
 
 
-def _assemble_work(key, ctx):
-    """The legacy metrics block + the TF-19 block, and the bundle FileSet."""
-    import tempfile
+def _tf19_combine(ctx, cfg) -> dict:
+    """The TF-19 block from its stages, in the serial `_tf19_block`'s key order (byte-identical JSON)."""
+    probe = ctx.upstream("tf19_probe")
+    return {
+        "gk_block_ablation": ctx.upstream("tf19_ablation"),
+        "gk_substitution_probe": probe["gk_substitution_probe"],
+        "permutation_importance": ctx.upstream("tf19_perm"),
+        "score_differential_range_probe": cfg["score_differential_range_probe"],
+        "probe_sample_matches": probe["probe_sample_matches"],
+        "probe_sample_in_training_folds": probe["probe_sample_in_training_folds"],
+        "probe_gated_on_held_out": probe["probe_gated_on_held_out"],
+        "tf19_ready": probe["tf19_ready"],
+    }
 
+
+def _assemble_work(key, ctx):
+    """The legacy metrics block + the TF-19 block (combined from its stages), and the bundle FileSet."""
     from scripts._corpus_identity import canonical_providers, corpus_identity, reproducibility
-    from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
 
     _root, inp = _inputs(ctx)
     cfg = inp.config
@@ -1168,17 +1457,53 @@ def _assemble_work(key, ctx):
         "estimates_are_cv_not_shipped_fit": True,
         "artifact_size_bytes": sum(len(b) for b in fit.files.values()),
     }
-    with tempfile.TemporaryDirectory() as tmp:
-        art = Path(tmp) / "xcross_attempt_v1"
-        art.mkdir()
-        for name, data in fit.files.items():
-            (art / name).write_bytes(data)
-        model = XCrossAttemptModel.load(art)  # the shipped artifact itself: bit-identical predictions
-    metrics.update(_tf19_block(ctx, inp, model, shipped, candidates))
+    metrics.update(_tf19_combine(ctx, cfg))  # S3 item 8: the TF-19 block, combined from its units
     files = dict(fit.files)
     files["metrics.json"] = json.dumps(metrics, indent=2).encode("utf-8")  # the legacy json.dump bytes
     print(f"Wrote artifact + metrics ({sorted(files)})")
     return FileSet(files)
+
+
+#: HFU plan R3-8 S3 item 12: the reviewed serial reasons of this pipeline's SERIAL stages, verbatim from the
+#: plan's SERIAL annex (owner ruling 2026-10-30, "too small to pay"); `scripts/hf_jobs/serial_reasons.py`
+#: holds the same texts and `tests/scripts/test_serial_reasons.py` holds the two equal.
+_SERIAL_REASONS = {
+    "probe": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): two units, one probe-match extraction "
+        "each, 45 s of CPU in all and a 24 s span at W=2."
+    ),
+    "probe_comparison": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 4 s of CPU, comparing the two "
+        "probe extractions."
+    ),
+    "prep": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 4 s of CPU, the arm-restricted "
+        "design matrix from the extract results."
+    ),
+    "fit": (
+        "Too small to pay (under 60 s of unit and reduce CPU, owner ruling 2026-10-30): one xgb fit, 15 s of CPU at one"
+        " core with the dead lever (S1); with the lever fixed the job is 9.3 s at 3.77 cores, half of it start-up "
+        "(S1d)."
+    ),
+    "select": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 1 s of CPU, choosing the "
+        "parameters from the study and cv results."
+    ),
+    # HFU S3 review S3B-04 (owner rulings 2026-10-31): measured on HF
+    "tf19_ablation": (
+        "Reviewed floor (owner ruling 2026-10-31, S3B-04): 10 single-thread xgb fits of 8-19 s; the longest "
+        "unit bounds the wall. On HF every parallel shape took 30.6-32.3 s (W=8 x 1: 32.3 s, 162 CPU-s, 0.66; "
+        "W=10 x 1: 0.78-0.81; W=5 x 2: 0.79; job 6ae62901c78863f9c62f3a63), so the stage runs pinned at W=8, "
+        "the least CPU. The n_jobs-lever shape (W=1 x 8) took 58.8 s and 327 CPU-s (job "
+        "6ae6254b0e0338d1bb7d3760)."
+    ),
+    "tf19_probe": (
+        "Reviewed floor (owner ruling 2026-10-31, S3B-04): one single-thread unit, the TF-19 substitution "
+        "probe, 68-81 s of CPU on HF (job 6ae629e00e0338d1bb7d3825). It cannot split inside one stage: one "
+        "sequential RNG draws the frame sample and then each frame's placebo picks, so a split needs a second "
+        "stage and its job start-up for about 60 s of gain."
+    ),
+}
 
 
 PIPELINE = Pipeline(
@@ -1194,6 +1519,7 @@ PIPELINE = Pipeline(
             work=_extract_work,
             counters=_extract_counters,
             reduce=_extract_reduce,
+            shardable_reduce=("_group",),  # HFU T8: a plain combine_frames concat (raises only when ALL parts empty)
             reduce_order=_mid_of,
             declare=_extract_declare,
             cross_commit_version="xcross-extract-1",
@@ -1202,6 +1528,7 @@ PIPELINE = Pipeline(
         ),
         ItemStage(
             name="probe",
+            serial_reason=_SERIAL_REASONS["probe"],  # S3 item 12 (SERIAL annex)
             refs=_probe_refs,
             key=_source_key,
             load=_load_match,
@@ -1217,14 +1544,16 @@ PIPELINE = Pipeline(
         ),
         Stage(
             name="probe_comparison",
+            serial_reason=_SERIAL_REASONS["probe_comparison"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_probe_comparison_work,
             needs=("extract",),
             reduce=lambda r, ctx: r["only"],
-            params=("probe_comparison_providers",),
+            params=("probe_comparison_providers", "arms_json"),  # spec r4 D18 (c): one cohort per tier
         ),
         Stage(
             name="prep",
+            serial_reason=_SERIAL_REASONS["prep"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_prep_work,
             needs=("extract",),
@@ -1249,10 +1578,22 @@ PIPELINE = Pipeline(
             reduce=lambda r, ctx: dict(r),
             inner_parallel=True,
             inner_width=5,
+            # HFU S3 item 9, owner ruling 2026-10-31: NOT thread_safe. On HF the xCross study at child budget 2 ran 22%
+            # slower than at 1 (90.6 s against 74.5 s) and failed the floor bar (0.9 cores a child), so its children
+            # stay at one thread; the study is a floor at its fold width. The xShot study keeps budget 2.
         ),
-        Stage(name="cv", units=_cv_units, work=_cv_work, needs=("prep", "study"), reduce=_cv_reduce),
+        Stage(
+            name="cv",
+            units=_cv_units,
+            work=_cv_work,
+            needs=("prep", "study"),
+            reduce=_cv_reduce,
+            thread_safe=True,  # HFU T11: each fold fits an xgb classifier; W=1 gets the full vCPU budget
+            thread_lever="n_jobs",  # xgb runtime n_jobs, env serial (B38); arm test_cv_thread_identity_xcross
+        ),
         Stage(
             name="select",
+            serial_reason=_SERIAL_REASONS["select"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_select_work,
             needs=("prep", "study", "cv"),
@@ -1260,16 +1601,54 @@ PIPELINE = Pipeline(
         ),
         Stage(
             name="fit",
+            serial_reason=_SERIAL_REASONS["fit"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_fit_work,
             needs=("prep", "select"),
+            reduce=lambda r, ctx: r["only"],
+            thread_safe=True,  # ADR-128 INV-2 opt-in (test_thread_identity; test_thread_safe_registry)
+            thread_lever="n_jobs",  # xgb: runtime n_jobs + OMP_NUM_THREADS at the budget; BLAS, numba stay 1 (item 1)
+        ),
+        # S3 item 8: the TF-19 block as units. `tf19_perm_fit` takes the n_jobs LEVER (item 8 (f)); `tf19_ablation`
+        # runs pinned (owner ruling 2026-10-31, S3B-04: W=8 x 1 beat the lever shape W=1 x 8 on HF, 32.3 s against
+        # 58.8 s at half the CPU), so its worker env keeps one thread and `runtime_n_jobs_from_env()` reads 1.
+        Stage(
+            name="tf19_ablation",
+            serial_reason=_SERIAL_REASONS["tf19_ablation"],  # S3B-04 (owner ruling 2026-10-31)
+            units=_tf19_ablation_units,
+            work=_tf19_ablation_work,
+            needs=("prep", "select"),
+            reduce=lambda r, ctx: tf19_ablation_report(r),
+        ),
+        Stage(
+            name="tf19_perm_fit",
+            units=_tf19_perm_fit_units,
+            work=_tf19_perm_fit_work,
+            needs=("prep", "select"),
+            reduce=_tf19_perm_fit_reduce,
+            thread_safe=True,  # ADR-128 INV-2 opt-in (test_thread_identity; test_thread_safe_registry)
+            thread_lever="n_jobs",  # xgb: runtime n_jobs + OMP_NUM_THREADS at the budget; BLAS, numba stay 1 (item 1)
+        ),
+        Stage(
+            name="tf19_perm",
+            units=_tf19_perm_units,
+            work=_tf19_perm_work,
+            needs=("prep", "select", "tf19_perm_fit"),
+            reduce=_tf19_perm_reduce,
+        ),
+        Stage(
+            name="tf19_probe",
+            serial_reason=_SERIAL_REASONS["tf19_probe"],  # S3B-04 (owner ruling 2026-10-31)
+            units=lambda ctx: ["only"],
+            work=_tf19_probe_work,
+            needs=("prep", "select", "fit", "probe"),
             reduce=lambda r, ctx: r["only"],
         ),
         Stage(
             name="assemble",
             units=lambda ctx: ["only"],
             work=_assemble_work,
-            needs=("prep", "select", "fit", "probe", "probe_comparison"),
+            needs=("prep", "select", "fit", "probe", "probe_comparison", "tf19_ablation", "tf19_perm", "tf19_probe"),
             reduce=lambda r, ctx: r["only"],
         ),
     ),
@@ -1277,4 +1656,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

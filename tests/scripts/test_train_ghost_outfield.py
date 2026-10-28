@@ -61,18 +61,22 @@ def test_variant_arg_choices_and_feature_set_mapping():
     assert feature_set_for_variant("default") == "faithful"
 
 
-def test_extraction_inputs_feature_set_keys_the_shard_generation():
-    """Stale-shard rule (4.77.1): a position_only run drops 4 columns, so its shard token MUST differ."""
-    assert extraction_inputs("default") != extraction_inputs("position_only")
-    assert extraction_inputs("position_only")["feature_set"] == "position_only"
-    assert extraction_inputs("default")["feature_set"] == "faithful"
+def test_the_extraction_is_faithful_and_the_variant_keys_every_later_stage():
+    """Stale-shard rule (4.77.1), spec r4 D18 (b): the extraction holds the faithful columns for BOTH variants (one
+    generation), so the rule moves to the readers of its output: every stage after `extract` declares `variant`
+    (position_only drops 4 columns there), and its token differs between the variants."""
+    from scripts.train_ghost_outfield import PIPELINE
+
+    assert extraction_inputs()["feature_set"] == "faithful"
+    later = [st for st in PIPELINE.stages if st.name != "extract"]
+    assert later and all("variant" in st.params for st in later)
 
 
 def test_extraction_inputs_subsample_fps_keys_the_shard_generation():
     """Stale-shard rule: a different fps thins the frames to a different ROW SET, so 1 fps and 25 fps
     shards are NOT interchangeable and the token MUST differ."""
-    assert extraction_inputs("default", 1.0) != extraction_inputs("default", 25.0)
-    assert extraction_inputs("default", 1.0)["subsample_fps"] == 1.0
+    assert extraction_inputs(1.0) != extraction_inputs(25.0)
+    assert extraction_inputs(1.0)["subsample_fps"] == 1.0
 
 
 def test_subsample_frames_thins_by_fps():

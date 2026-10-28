@@ -70,6 +70,7 @@ def eval_fold(
     *,
     negative_subsample: float | None = None,
     subsample_seed: int = 42,
+    runtime_n_jobs: int = 1,
 ) -> tuple[float, float | None, float] | None:
     """One fold of `_cv_logloss`: ``(log_loss, pr_auc | None, brier)``, or None for a skipped fold.
 
@@ -86,7 +87,11 @@ def eval_fold(
         Xtr, ytr, _ = subsample_negatives(Xtr, ytr, ytr, fraction=negative_subsample, seed=subsample_seed + fold_i)
         if len(np.unique(ytr)) < 2:
             return None
-    clf = xgb.XGBClassifier(**_pinned_params(params))
+    p_ = dict(_pinned_params(params))
+    # HFU S3 item 9: the n_jobs-lever budget for THIS fit (thread-count invariant, the study identity arms); the
+    # pinned params stay 1
+    p_["n_jobs"] = int(runtime_n_jobs)
+    clf = xgb.XGBClassifier(**p_)
     clf.fit(Xtr.to_numpy(dtype=float), ytr)
     p = clf.predict_proba(X.iloc[te].to_numpy(dtype=float))[:, 1]
     pr = float(average_precision_score(y[te], p)) if len(np.unique(y[te])) == 2 else None
@@ -114,6 +119,7 @@ def _cv_logloss(
     *,
     negative_subsample: float | None = None,
     subsample_seed: int = 42,
+    runtime_n_jobs: int = 1,
 ) -> tuple[float, float, float]:
     """Label-stratified, match-grouped CV -> (mean log-loss, mean PR-AUC, mean Brier).
 
@@ -123,7 +129,17 @@ def _cv_logloss(
     """
     return combine_folds(
         [
-            eval_fold(X, y, i, tr, te, params, negative_subsample=negative_subsample, subsample_seed=subsample_seed)
+            eval_fold(
+                X,
+                y,
+                i,
+                tr,
+                te,
+                params,
+                negative_subsample=negative_subsample,
+                subsample_seed=subsample_seed,
+                runtime_n_jobs=runtime_n_jobs,
+            )
             for i, tr, te in cv_fold_plan(y, groups)
         ]
     )
@@ -141,6 +157,7 @@ class XCrossAttemptObjective:
         negative_subsample: float | None = None,
         subsample_seed: int = 42,
         fold_map: Callable[[dict], dict[str, tuple | None]] | None = None,
+        runtime_n_jobs: int = 1,
     ) -> None:
         self._fold = fold
         # ADR-128 ruling 4: ``fold_map(params) -> {int_key(fold_i): eval_fold result}`` evaluates the
@@ -148,6 +165,9 @@ class XCrossAttemptObjective:
         self._fold_map = fold_map
         self._negative_subsample = negative_subsample
         self._subsample_seed = subsample_seed
+        # HFU S3 item 9: the fold fits' thread budget on the in-process path (a W=1 study runs its folds in the
+        # worker); a pool child reads its own budget in the trainer's fold task
+        self._runtime_n_jobs = int(runtime_n_jobs)
 
     def prepare(self) -> _Invariant:
         """Build the trial-independent (X, y, groups) invariant once."""
@@ -179,6 +199,7 @@ class XCrossAttemptObjective:
                 self._params(candidate),
                 negative_subsample=self._negative_subsample,
                 subsample_seed=self._subsample_seed,
+                runtime_n_jobs=self._runtime_n_jobs,
             )
         return {"logloss": ll, "pr_auc": pr, "brier": br}
 
@@ -192,5 +213,6 @@ class XCrossAttemptObjective:
             self._params(candidate),
             negative_subsample=self._negative_subsample,
             subsample_seed=self._subsample_seed,
+            runtime_n_jobs=self._runtime_n_jobs,
         )
         return {"logloss": ll, "pr_auc": pr, "brier": br}

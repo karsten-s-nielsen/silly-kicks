@@ -50,9 +50,12 @@ def _cv_score_fold(
     *,
     seed: int = 42,
     negative_subsample: float | None = None,
+    runtime_n_jobs: int = 1,
 ) -> tuple[float, float, float | None] | None:
     """One fold of `_cv_score`: ``(log_loss, brier, pr_auc | None)``, or None for a skipped fold.
-    ``seed`` drives ONLY ``negative_subsample`` (``seed + fold_i``), exactly as `_cv_score` does."""
+    ``seed`` drives ONLY ``negative_subsample`` (``seed + fold_i``), exactly as `_cv_score` does.
+    ``runtime_n_jobs`` sets xgboost's thread count for THIS fit only (HFU T11 n_jobs lever); the serialized
+    ``n_jobs`` stays the pinned ``1`` because the result is byte-identical across thread counts (xgb ``hist``)."""
     import xgboost as xgb
     from sklearn.metrics import average_precision_score, brier_score_loss, log_loss
 
@@ -68,6 +71,7 @@ def _cv_score_fold(
             return None
     p_ = dict(_pinned_params(params))
     p_["base_score"] = float(ytr.mean())
+    p_["n_jobs"] = int(runtime_n_jobs)  # HFU T11: the n_jobs-lever budget for THIS fit; serialized params untouched
     clf = xgb.XGBClassifier(**p_)
     clf.fit(Xtr.to_numpy(float), ytr)
     p = clf.predict_proba(X.iloc[te].to_numpy(float))[:, 1]
@@ -128,6 +132,12 @@ def gk_block_ablation(
     with_ = _cv_score(X[feature_cols], y, groups, params, seed=seed, negative_subsample=negative_subsample)
     base_cols = [c for c in feature_cols if c not in XCROSS_GK_BLOCK]
     wo_ = _cv_score(X[base_cols], y, groups, params, seed=seed, negative_subsample=negative_subsample)
+    return _gk_ablation_report(with_, wo_)
+
+
+def _gk_ablation_report(with_: dict, wo_: dict) -> dict:
+    """`gk_block_ablation`'s report from the two arms' `_cv_score` results (single-sourced: the xcross trainer's
+    `tf19_ablation` units combine their folds into the same dict; HFU plan R3-8 S3 item 8)."""
     return {
         "with_gk_pr_auc": with_["pr_auc"],
         "without_gk_pr_auc": wo_["pr_auc"],
@@ -254,20 +264,16 @@ def permutation_importance_report(
     score_differential coverage (non-NaN fraction over the full matrix, B2)."""
     import xgboost as xgb
     from sklearn.inspection import permutation_importance
-    from sklearn.model_selection import StratifiedGroupKFold
     from sklearn.utils import Bunch
 
     # Feature-set-agnostic (see gk_block_ablation): derive columns from X, never hardcode FAITHFUL.
     feature_cols = list(X.columns)
     X = X[feature_cols]
     y = np.asarray(y, dtype=int)
-    groups = np.asarray(groups).astype(str)
-    n_splits = max(2, min(5, len(np.unique(groups))))
-    skf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 
     per_fold: list[np.ndarray] = []
-    for tr, te in skf.split(X, y, groups):
-        if len(np.unique(y[tr])) < 2 or len(np.unique(y[te])) < 2:
+    for tr, te in _permutation_plan(X, y, groups, seed):
+        if not _permutation_fold_usable(y, tr, te):
             continue
         p_ = dict(_pinned_params(params))
         p_["base_score"] = float(y[tr].mean())
@@ -281,13 +287,34 @@ def permutation_importance_report(
         bunch = r if isinstance(r, Bunch) else next(iter(r.values()))
         per_fold.append(bunch.importances_mean)
 
+    return _permutation_report(per_fold, feature_cols, float(X["score_differential"].notna().mean()), n_repeats)
+
+
+def _permutation_plan(X, y, groups, seed: int) -> list[tuple[np.ndarray, np.ndarray]]:
+    """`permutation_importance_report`'s folds (``StratifiedGroupKFold`` at ``random_state=seed``), single-sourced so
+    the xcross trainer's `tf19_perm_fit` units walk the SAME folds (HFU plan R3-8 S3 item 8)."""
+    from sklearn.model_selection import StratifiedGroupKFold
+
+    groups = np.asarray(groups).astype(str)
+    n_splits = max(2, min(5, len(np.unique(groups))))
+    skf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    return list(skf.split(X, np.asarray(y, dtype=int), groups))
+
+
+def _permutation_fold_usable(y, tr: np.ndarray, te: np.ndarray) -> bool:
+    """A fold scores only with both classes on both sides (otherwise the report skips it)."""
+    y = np.asarray(y, dtype=int)
+    return len(np.unique(y[tr])) >= 2 and len(np.unique(y[te])) >= 2
+
+
+def _permutation_report(per_fold: list, feature_cols: list, coverage: float, n_repeats: int) -> dict:
+    """`permutation_importance_report`'s report from the usable folds' ``importances_mean`` (in fold order)."""
     if per_fold:
         mean_imp = np.mean(np.vstack(per_fold), axis=0)
         importances = {f: float(v) for f, v in zip(feature_cols, mean_imp, strict=True)}
     else:
         importances = {f: float("nan") for f in feature_cols}
 
-    coverage = float(X["score_differential"].notna().mean())
     return {
         "importances": importances,
         "score_differential_importance": importances["score_differential"],

@@ -1,22 +1,28 @@
-"""Task 9: the pass-completion trainer's ``--all-competitions`` full-corpus re-fit mode.
+"""The pass-completion trainer as a stage-contract pipeline (HFU R3-10 / D12), and its pining cross-check.
 
-Smoke-level (``not e2e``): ``all_open_competitions`` + ``load_open_data_matches`` are monkeypatched to
-a tiny in-memory fixture, so no network and no real StatsBomb corpus is touched. The single-competition
-default path stays byte-identical; the all-competitions path resolves to a DIFFERENT ``for_each``
-shard generation (the 4.77.1 stale-shard rule -- a corpus change must invalidate the generation).
-The owner-tier ``--source pining`` cross-check runs only through ``scripts/_pass_completion_pining.py``
-(the I1 severance, ADR-123 Amendment B); its loaders are monkeypatched the same way.
+Smoke-level (``not e2e``): the open-data listing and loading are monkeypatched to a tiny in-memory fixture and
+the pipeline runs IN PROCESS (``_stage_harness.run_in_process``: the real ``run_unit`` / ``reduce_stage``), so
+no network and no real StatsBomb corpus is touched. ``--all-competitions`` resolves to a DIFFERENT extract
+generation than the single-competition default (the 4.77.1 stale-shard rule). The owner-tier ``--source pining``
+cross-check runs only through ``scripts/_pass_completion_pining.py`` (the I1 severance, ADR-123 Amendment B),
+which owns the legacy ``for_each`` flow; its loaders are monkeypatched the same way. The byte identity with the
+legacy CLI is ``test_adapter_migration_identity.py`` (the verbatim oracle, open-data toy tree).
 """
 
 from __future__ import annotations
 
 import json
 
+import numpy as np
 import pandas as pd
 import pytest
 
 import scripts.train_pass_completion as TPC
+from scripts._driver_sources import LoadedMatch
+from scripts._sb_open_data import OpenDataRef
+from scripts._stages import StageIncompleteError
 from silly_kicks.spadl import config as spadlconfig
+from tests.scripts._stage_harness import export, failure_of, run_in_process
 
 _ACT_COLS = [
     "action_id",
@@ -34,7 +40,11 @@ _ACT_COLS = [
 ]
 
 
-def _match(game_id: int, *, complete: bool):
+#: One synthetic match as `LoadedMatch` takes its first five fields (provider, id, actions, frames, home team).
+_Match = tuple[str, str, pd.DataFrame, pd.DataFrame, int]
+
+
+def _match(game_id: int, *, complete: bool) -> _Match:
     """One match with a couple of finite-coordinate pass rows -- one completed, one failed -- so the
     pooled fit has both label classes and enough rows to fit the logistic model."""
     P = spadlconfig.actiontype_id["pass"]
@@ -50,110 +60,139 @@ def _match(game_id: int, *, complete: bool):
     return ("statsbomb", str(game_id), actions, pd.DataFrame(), 1)
 
 
-def _fake_open_data_source_factory(order=None):
-    """An ``open_data_source`` stand-in (Task 8.5): returns ``(refs, load)`` for 2 tiny matches per
-    (competition, season). ``order``, if given, records ``"load"`` the first time the loader runs
-    (the guard-order test asserts the public-only guard precedes the first match load)."""
-    from _fake_corpus import make_ref
+def _patch_open_data(monkeypatch, *, comps, order=None):
+    """Two tiny matches per (competition, season): the listing and the loader the pipeline's ``refs`` and
+    ``extract`` stages call. ``order`` records ``"all_open_competitions"``, ``"guard"`` and the first
+    ``"load"``."""
+    import scripts._sb_open_data as sbod
 
-    def _source(comps, *, match_ids=None, max_matches=None, preserve_native=(), cache_dir=None):
-        refs, by_id = [], {}
-        for competition_id, season_id in comps:
+    by_id: dict[str, _Match] = {}
+
+    def _guard():
+        if order is not None:
+            order.append("guard")
+
+    def _all():
+        if order is not None:
+            order.append("all_open_competitions")
+        return list(comps)
+
+    def _list(competitions, *, match_ids=None, max_matches=None):
+        refs = []
+        for competition_id, season_id in competitions:
             base = competition_id * 1000 + season_id
             for gid, complete in ((base + 1, True), (base + 2, False)):
-                refs.append(make_ref("statsbomb", str(gid)))
                 by_id[str(gid)] = _match(gid, complete=complete)
+                refs.append(OpenDataRef(int(competition_id), int(season_id), str(gid), 1, ""))
+        return refs if max_matches is None else refs[:max_matches]  # the GLOBAL cap, as the real walk
 
-        def _load(ref):
-            if order is not None and "load" not in order:
-                order.append("load")
-            return by_id[ref.match_id]
+    def _load(ref, *, preserve_native=(), cache_dir=None):
+        if order is not None and "load" not in order:
+            order.append("load")
+        return LoadedMatch(*by_id[ref.match_id], None, None)
 
-        return refs, _load
+    monkeypatch.setattr(sbod, "assert_statsbomb_open_data_mode", _guard)
+    monkeypatch.setattr(sbod, "all_open_competitions", _all)
+    monkeypatch.setattr(sbod, "list_open_data_refs", _list)
+    monkeypatch.setattr(sbod, "load_open_data_match", _load)
 
-    return _source
+
+def _run(tmp_path, args, name="s"):
+    return run_in_process(TPC.PIPELINE, args, store=tmp_path / name, data_root=tmp_path / "data")
 
 
 def test_all_competitions_trains_full_corpus_bundle(tmp_path, monkeypatch):
-    """``--all-competitions`` iterates every open competition, shards each's matches, and records
-    ``n_competitions`` + the competition list; the card notes the full public open-data corpus."""
+    """``--all-competitions`` lists every open competition, shards each match, and records
+    ``n_competitions`` + the competition list; the card notes the full public open-data corpus and names
+    the pipeline command (owner ruling 2026-10-30)."""
     comps = [(43, 106), (11, 90)]
-    monkeypatch.setattr("scripts._sb_open_data.all_open_competitions", lambda: list(comps))
-    monkeypatch.setattr("scripts._sb_open_data.open_data_source", _fake_open_data_source_factory())
-    monkeypatch.setattr("scripts._sb_open_data.assert_statsbomb_open_data_mode", lambda: None)
+    _patch_open_data(monkeypatch, comps=comps)
+    out = export(_run(tmp_path, ["--all-competitions"]), tmp_path / "out")
 
-    out = tmp_path / "out"
-    TPC.main(["--all-competitions", "--out", str(out), "--allow-dirty"])
-
-    assert (out / "weights" / "model.json").is_file()
-    assert (out / "weights" / "MODEL_CARD.md").is_file()
+    # one FLAT bundle (adopt refuses a nested path) that ships metrics.json (owner ruling 2026-10-30)
+    assert sorted(p.name for p in out.iterdir()) == ["MODEL_CARD.md", "SHA256SUMS", "metrics.json", "model.json"]
     metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-    assert metrics["n_competitions"] == 2
+    assert metrics["n_competitions"] == 2 and metrics["n_matches"] == 4
     assert sorted(tuple(c) for c in metrics["competitions"]) == sorted(comps)
-    card = (out / "weights" / "MODEL_CARD.md").read_text(encoding="utf-8")
+    card = (out / "MODEL_CARD.md").read_text(encoding="utf-8")
     assert "full public open-data corpus" in card
-    assert "`python scripts/train_pass_completion.py --out <DIR>\n--all-competitions`" in card
-    # the bundle loads back through the ADR-011 integrity path
+    assert "`python -m scripts.train_pass_completion --store <DIR> --run-all --out <DIR>\n--all-competitions`" in card
     from silly_kicks.expected_passing import PassCompletionModel
 
-    PassCompletionModel.load(out / "weights")
+    PassCompletionModel.load(out)  # the bundle loads back through the ADR-011 integrity path
 
 
-def test_all_competitions_calls_the_public_only_guard_before_load(tmp_path, monkeypatch):
-    """Fail-closed: ``assert_statsbomb_open_data_mode`` runs before any corpus load."""
+def test_the_public_only_guard_runs_before_the_listing_and_any_load(tmp_path, monkeypatch):
+    """Fail-closed: ``assert_statsbomb_open_data_mode`` runs before the manifest walk and any corpus load."""
     order: list[str] = []
-
-    def _guard():
-        order.append("guard")
-
-    def _all():
-        order.append("all_open_competitions")
-        return [(43, 106)]
-
-    monkeypatch.setattr("scripts._sb_open_data.assert_statsbomb_open_data_mode", _guard)
-    monkeypatch.setattr("scripts._sb_open_data.all_open_competitions", _all)
-    monkeypatch.setattr("scripts._sb_open_data.open_data_source", _fake_open_data_source_factory(order))
-
-    TPC.main(["--all-competitions", "--out", str(tmp_path / "out"), "--allow-dirty"])
+    _patch_open_data(monkeypatch, comps=[(43, 106)], order=order)
+    _run(tmp_path, ["--all-competitions"])
     assert order[0] == "guard"
-    assert order.index("guard") < order.index("load")
+    assert order.index("guard") < order.index("all_open_competitions") < order.index("load")
 
 
-def test_all_competitions_token_DIFFERS_from_single_competition(tmp_path, monkeypatch):
-    """4.77.1 stale-shard rule: a different corpus MUST resolve to a different shard generation, so
-    a re-run on the same ``--out`` cannot silently reuse the single-competition (WC2022) shards."""
-    comps = [(43, 106), (11, 90)]
-    monkeypatch.setattr("scripts._sb_open_data.all_open_competitions", lambda: list(comps))
-    monkeypatch.setattr("scripts._sb_open_data.open_data_source", _fake_open_data_source_factory())
-    monkeypatch.setattr("scripts._sb_open_data.assert_statsbomb_open_data_mode", lambda: None)
-
-    single_root = tmp_path / "single" / "shards"
-    all_root = tmp_path / "all" / "shards"
-    TPC.main(["--out", str(tmp_path / "single"), "--allow-dirty"])
-    TPC.main(["--all-competitions", "--out", str(tmp_path / "all"), "--allow-dirty"])
-
-    single_gens = {p.name for p in single_root.iterdir() if p.is_dir()}
-    all_gens = {p.name for p in all_root.iterdir() if p.is_dir()}
-    assert single_gens and all_gens
-    assert single_gens.isdisjoint(all_gens), (
-        f"all-competitions shard generation {all_gens} collides with the single-competition "
-        f"generation {single_gens}: a corpus change did not invalidate the shard generation"
-    )
+def test_all_competitions_extract_generation_DIFFERS_from_single_competition(tmp_path, monkeypatch):
+    """4.77.1 stale-shard rule: a different corpus MUST resolve to a different extract generation, so a re-run
+    on the same store cannot silently reuse the single-competition (WC2022) shards."""
+    _patch_open_data(monkeypatch, comps=[(43, 106), (11, 90)])
+    single = _run(tmp_path, [], "single")
+    every = _run(tmp_path, ["--all-competitions"], "all")
+    assert single.generation("extract").rsplit("/", 1)[-1] != every.generation("extract").rsplit("/", 1)[-1]
 
 
-def test_source_pining_is_refused_on_the_hf_module(tmp_path, capsys):
+def test_the_cv_stage_reproduces_the_pooled_out_of_fold_metrics(tmp_path, monkeypatch):
+    """The fold units + the reduce give exactly ``cross_val_metrics`` on the same pooled rows (the arithmetic
+    the legacy reduce ran in one process)."""
+    _patch_open_data(monkeypatch, comps=[(43, 106), (11, 90), (55, 43)])
+    ctx = _run(tmp_path, ["--all-competitions"])
+    want = TPC.cross_val_metrics(ctx.upstream("extract"))
+    assert json.dumps(ctx.upstream("cv"), sort_keys=True) == json.dumps(want, sort_keys=True)
+    assert len(TPC.cv_folds(ctx.upstream("extract")) or []) == 5  # 6 matches: the 5-fold path
+
+
+def test_fewer_than_two_matches_take_the_single_fit_path(tmp_path, monkeypatch):
+    """One group: ``cv_folds`` is None and the out-of-fold array is the single in-sample fit, as before."""
+    _patch_open_data(monkeypatch, comps=[(43, 106)])
+    ctx = _run(tmp_path, ["--max-per-provider", "1"])
+    pooled = ctx.upstream("extract")
+    assert TPC.cv_folds(pooled) is None
+    assert json.dumps(ctx.upstream("cv"), sort_keys=True) == json.dumps(TPC.cross_val_metrics(pooled), sort_keys=True)
+    assert np.isfinite(ctx.upstream("cv")["brier"])
+
+
+def test_source_pining_is_refused_on_the_hf_module(tmp_path, monkeypatch):
     """I1 severance (ADR-123 Amendment B): this module runs on HF and never imports the pining client, so
-    ``--source pining`` without the injected source fails loud, names the owner entry, and does no work."""
-    with pytest.raises(SystemExit):
-        TPC.main(["--source", "pining", "--out", str(tmp_path / "out"), "--allow-dirty"])
-    assert "scripts/_pass_completion_pining.py" in capsys.readouterr().err
-    assert not (tmp_path / "out").exists()
+    ``--source pining`` fails loud in ``refs``, names the owner entry, and loads nothing."""
+    order: list[str] = []
+    _patch_open_data(monkeypatch, comps=[(43, 106)], order=order)
+    with pytest.raises(StageIncompleteError):
+        _run(tmp_path, ["--source", "pining"])
+    from scripts._stages import LocalStore, make_context
+    from tests.scripts._stage_harness import PROV, params_from_args
+
+    ctx = make_context(
+        TPC.PIPELINE,
+        params_from_args(TPC.PIPELINE, ["--source", "pining"]),
+        PROV,
+        store=LocalStore(tmp_path / "s"),
+        data_root=tmp_path / "data",
+    )
+    assert "scripts/_pass_completion_pining.py" in failure_of(ctx, "refs")
+    assert "load" not in order
 
 
-def test_the_pining_entry_trains_through_the_injected_source(tmp_path, monkeypatch):
-    """The owner entry injects the events-only pining source; the fit, metrics and card are the trainer's
-    own. The IMPL-05 warning still fires, and the card reproduces through the entry with the bare
-    ``--providers`` list (the corpus label carries a ``pining:`` prefix)."""
+@pytest.mark.parametrize(("flag", "value"), [("--competition-id", "11"), ("--season-id", "106")])
+def test_all_competitions_is_mutually_exclusive_with_single_competition_flags(tmp_path, monkeypatch, flag, value):
+    """``--all-competitions`` with an explicit ``--competition-id`` OR ``--season-id`` is a contradiction and
+    must fail -- BOTH flags need coverage (a season-only override would silently slip past)."""
+    _patch_open_data(monkeypatch, comps=[(43, 106)])
+    with pytest.raises(StageIncompleteError):
+        _run(tmp_path, ["--all-competitions", flag, value])
+
+
+def test_the_pining_entry_trains_through_its_own_flow(tmp_path, monkeypatch):
+    """The owner entry owns the legacy ``for_each`` flow over the trainer's pure functions; the IMPL-05
+    warning still fires, and the card reproduces through the entry with the bare ``--providers`` list."""
     from _fake_corpus import make_ref
 
     import scripts._pass_completion_pining as PCP
@@ -180,21 +219,3 @@ def test_the_pining_entry_trains_through_the_injected_source(tmp_path, monkeypat
     assert metrics["providers"] == "pining:statsbomb" and metrics["n_matches"] == 2
     card = (out / "weights" / "MODEL_CARD.md").read_text(encoding="utf-8")
     assert "`python scripts/_pass_completion_pining.py --out <DIR>\n--source pining --providers statsbomb`" in card
-
-
-@pytest.mark.parametrize(("flag", "value"), [("--competition-id", "11"), ("--season-id", "106")])
-def test_all_competitions_is_mutually_exclusive_with_single_competition_flags(tmp_path, flag, value):
-    """``--all-competitions`` with an explicit ``--competition-id`` OR ``--season-id`` is a contradiction
-    and must abort -- the guard is ``args.competition_id is not None or args.season_id is not None``, so
-    BOTH flags need coverage (a season-only override would silently slip past a competition-only test)."""
-    with pytest.raises(SystemExit):
-        TPC.main(
-            [
-                "--all-competitions",
-                flag,
-                value,
-                "--out",
-                str(tmp_path / "out"),
-                "--allow-dirty",
-            ]
-        )

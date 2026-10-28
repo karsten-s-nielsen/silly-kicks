@@ -1,0 +1,99 @@
+# HFU rung 5: the canary campaign (spec docs/superpowers/specs/2026-10-31-hfu-rung5-canary-design.md; owner ruling
+# 2026-10-31: 13 instances plus the halt arm). Each entry is a cycle1.toml computation (same job, tier, dataset and
+# variant arguments), so every stage's history_key equals the full campaign's and rung 6 finds this run's MEM and
+# planner history; "small" means fewer instances, not smaller data. Same bucket and caps as cycle1.toml: the MEM
+# history search reads only the campaign bucket. Run with (each behind its owner gate):
+#   .venv-hfjobs/Scripts/python -m scripts.hf_jobs campaign scripts/hf_jobs/campaigns/canary.toml launch --watch \
+#       --reports D:/Temp/hfu/rung5/reports.jsonl
+#   .venv-hfjobs/Scripts/python -m scripts.hf_jobs campaign scripts/hf_jobs/campaigns/canary.toml canary-check \
+#       --reports D:/Temp/hfu/rung5/reports.jsonl
+
+[campaign]
+name = "canary"
+bucket = "silly-kicks/hf-refit-scratch"
+target_minutes = 30
+dispatch_cap = 25
+shard_cap = 25
+attempts = 3
+
+[[jobs]]
+job = "ghost_gk"
+tier = "owner"
+dataset = "tc3"
+variants = ["default", "position_only"]  # the variant pair sharing one run key
+
+[[jobs]]
+job = "ghost_outfield"
+tier = "owner"
+dataset = "tc3"
+variants = ["default"]
+
+[[jobs]]
+job = "xshot_occurrence"
+tier = "public"
+dataset = "xshot115"
+variants = ["default"]
+
+[[jobs]]
+job = "xshot_occurrence"
+tier = "sc_extended"
+dataset = "xshot115"
+variants = ["default"]
+
+[[jobs]]
+job = "xcross_attempt"
+tier = "public"
+dataset = "xshot115"
+probe_dataset = "xcross_probe"
+variants = ["default"]
+
+[[jobs]]
+job = "xcross_attempt"
+tier = "sc_extended"
+dataset = "xshot115"
+probe_dataset = "xcross_probe"
+variants = ["default"]
+
+[[jobs]]
+job = "receiver_model"
+tier = "owner"
+dataset = "sb360"
+variants = ["default"]
+
+[[jobs]]
+job = "win_probability"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+
+[[jobs]]
+job = "build_territory_ranking_census"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+
+[[jobs]]
+job = "match_outcome_dependence"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+
+[[jobs]]
+job = "pass_completion"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+
+[[jobs]]
+job = "xsuccess"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+
+# The forced-halt arm (C3): the toy pipeline, canary-only. Its `strict` stage fails unit 0000 with zero tolerance, so
+# the controller halts the instance by name and cancels its `hold` job; `--watch` then exits non-zero.
+[[jobs]]
+job = "canary_halt"
+tier = "canary"
+dataset = "none"
+variants = ["default"]

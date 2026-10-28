@@ -1,12 +1,11 @@
 """Single source of truth for how each trainer runs as a stage-contract pipeline and how it is certified.
 
-ADR-128: a migrated trainer runs as ``python -m <pipeline>`` (the uniform stage CLI, one ``--out``); an
-unmigrated public trainer runs its own CLI through the one-unit adapter (``adapter``). Every module runs as
+ADR-128: every trainer runs as ``python -m <pipeline>`` (the uniform stage CLI, one ``--out``, a flat bundle;
+HFU R3-10 migrated the last three public trainers and removed the one-unit adapter). Every module runs as
 ``python -m`` -- the file form raises ``ModuleNotFoundError: No module named 'scripts'`` (there is no
 ``scripts/__init__.py``). The per-variant ``run_args`` are pinned from each committed variant's
-``metadata.json``; ``fresh_subdir`` is where the artifact lands inside ``--out`` (``""`` for a pipeline).
-The flavor is ONE constant (``launch.FLAVOR``, INV-4); job size and timeout are the planner's (spec 5.4);
-the corpus shape is the dataset's (``datasets.toml``). The campaign controller consumes this.
+``metadata.json``. The flavor is ONE constant (``launch.FLAVOR``, INV-4); job size and timeout are the planner's
+(spec 5.4); the corpus shape is the dataset's (``datasets.toml``). The campaign controller consumes this.
 """
 
 from __future__ import annotations
@@ -20,14 +19,13 @@ class VariantBuild:
 
     ``run_args`` are the variant-only trainer args (pinned from the committed variant's metadata);
     ``committed_path`` is the repo dir (under ``silly_kicks/``) holding the committed variant that the
-    head-to-head loads as the baseline; ``fresh_subdir`` is where THIS run writes the fresh weights
-    under its own output dir (so the head-to-head's ``--fresh-dir`` is ``{out}/{variant}/{fresh_subdir}``).
+    head-to-head loads as the baseline. The fresh bundle is the instance's flat pipeline output (the
+    head-to-head's ``--fresh-dir`` is the retrieved artifact dir itself).
     """
 
     variant: str
     run_args: tuple[str, ...]
     committed_path: str
-    fresh_subdir: str
     #: The feature vintage this variant was fit at. The head-to-head eval extracts features at THIS
     #: set so a velocity-free (position_only) booster is scored on a matching frame -- xgboost
     #: predict_proba is strict on feature_names (the floor-crash fix, ADR-123 / spec §5). Default
@@ -62,9 +60,8 @@ class TrainerSpec:
     certification: str = "owner"
     tier_certification: dict[str, str] | None = None
     #: ADR-128: the dotted module path whose ``PIPELINE`` the campaign launches; ``""`` until the module is
-    #: migrated, and for an ``adapter`` trainer (its unmigrated CLI runs as ONE unit, spec 5.6).
+    #: migrated (a ``BLOCKED`` trainer).
     pipeline: str = ""
-    adapter: bool = False
     #: ADR-128 owner certification (CV parity): the dotted path of the CV metric in BOTH the fresh and the
     #: committed ``metrics.json`` (``{shipped_variant}`` is filled from that file); ``""`` = not CV-certified.
     cv_metric: str = ""
@@ -95,7 +92,7 @@ class DriverSpec:
 
 # ``primary_metric`` is the metric name the head-to-head scorer (scripts/hf_jobs/headtohead.py) computes
 # IDENTICALLY for both the committed and the fresh model on the same held-out split -- NOT a key read from
-# any committed metrics.json (3 public trainers ship none). The floor gates EVERY variant (no silent
+# any committed metrics.json (not every committed public bundle ships one). The floor gates EVERY variant (no silent
 # regression on a non-default variant). ``delta`` is the pinned per-trainer tolerance; OWNER-RATIFIED,
 # FAIL-CLOSED (missing/NaN blocks). A noisier trainer needs a LARGER delta; tightened by the owner after
 # the first head-to-head deltas, never loosened silently.
@@ -106,7 +103,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         extras=("statsbombpy",),
         base_args=(),
         # ADR-128: `--run-all --out` writes the bundle files directly (no weights/ subdir).
-        builds=(VariantBuild("default", ("--all-competitions",), "win_probability/weights", ""),),
+        builds=(VariantBuild("default", ("--all-competitions",), "win_probability/weights"),),
         primary_metric="ece",
         metric_direction="lower_better",
         delta=0.01,
@@ -118,37 +115,42 @@ REGISTRY: dict[str, TrainerSpec] = {
         module="scripts.train_pass_completion",
         extras=("statsbombpy",),
         base_args=("--source", "open-data"),
-        builds=(VariantBuild("default", (), "expected_passing/weights", "weights"),),
+        # HFU R3-10: a stage-contract pipeline (refs -> extract[match] -> cv[fold] -> fit); `--run-all --out` writes
+        # the flat bundle directly (no weights/ subdir), with metrics.json (owner ruling 2026-10-30).
+        builds=(VariantBuild("default", (), "expected_passing/weights"),),
         certification="public",
-        adapter=True,  # ADR-128 spec 5.6: runs via the one-unit adapter stage until Cycle 2
         primary_metric="ece",
         metric_direction="lower_better",
         delta=0.01,
+        pipeline="scripts.train_pass_completion",
     ),
     "match_outcome_dependence": TrainerSpec(
         name="match_outcome_dependence",
         module="scripts.train_match_outcome_dependence",
         extras=("statsbombpy",),
         base_args=(),
-        # match_outcome writes the artifact DIRECTLY to --out (no weights/ subdir) -- verified.
-        builds=(VariantBuild("default", (), "match_outcome/weights", ""),),
+        # ADR-128: `--run-all --out` writes model.json + SHA256SUMS directly (no weights/ subdir), as the legacy
+        # CLI did. HFU R3-10: a stage-contract pipeline (refs -> extract[match] -> fit), no adapter.
+        builds=(VariantBuild("default", (), "match_outcome/weights"),),
         certification="public",
-        adapter=True,  # ADR-128 spec 5.6: runs via the one-unit adapter stage until Cycle 2
         primary_metric="log_loss",
         metric_direction="lower_better",
         delta=0.01,
+        pipeline="scripts.train_match_outcome_dependence",
     ),
     "xsuccess": TrainerSpec(
         name="xsuccess",
         module="scripts.train_xsuccess",
         extras=("statsbombpy",),
         base_args=(),
-        builds=(VariantBuild("default", (), "xsuccess/weights", "weights"),),
+        # HFU R3-10: a stage-contract pipeline (refs -> extract[match] -> study -> cv[fold] -> fit); `--run-all --out`
+        # writes the flat bundle directly (no weights/ subdir), with metrics.json (owner ruling 2026-10-30).
+        builds=(VariantBuild("default", (), "xsuccess/weights"),),
         certification="public",
-        adapter=True,  # ADR-128 spec 5.6: runs via the one-unit adapter stage until Cycle 2
         primary_metric="ece",
         metric_direction="lower_better",
         delta=0.01,
+        pipeline="scripts.train_xsuccess",
     ),
     "ghost_gk": TrainerSpec(
         name="ghost_gk",
@@ -166,31 +168,27 @@ REGISTRY: dict[str, TrainerSpec] = {
                 "default",
                 ("--feature-set", "faithful", "--variant", "default"),
                 "tracking/_ghost_gk_weights/default",
-                "",
             ),
             # P10 applies here too: the committed position_only bundle ALSO records "variant": "default".
             VariantBuild(
                 "position_only",
                 ("--feature-set", "position_only", "--variant", "default"),
                 "tracking/_ghost_gk_weights/position_only",
-                "",
                 feature_set="position_only",
             ),
             VariantBuild(
                 "sweeper",
                 ("--feature-set", "faithful", "--grid-x-max", "52.5", "--variant", "sweeper"),
                 "tracking/_ghost_gk_weights/sweeper",
-                "",
             ),
             VariantBuild(
                 "sweeper_position_only",
                 ("--feature-set", "position_only", "--grid-x-max", "52.5", "--variant", "sweeper_position_only"),
                 "tracking/_ghost_gk_weights/sweeper_position_only",
-                "",
                 feature_set="position_only",
             ),
             # Hub-only (silly-kicks/ghost-gk-v1): no wheel dir; the artifact manifest names its destination.
-            VariantBuild("full", ("--feature-set", "faithful", "--variant", "full"), "", ""),
+            VariantBuild("full", ("--feature-set", "faithful", "--variant", "full"), ""),
         ),
         pipeline="scripts.train_ghost_gk",
         cv_metric="cv_mae_euclidean_mean",
@@ -205,12 +203,11 @@ REGISTRY: dict[str, TrainerSpec] = {
         base_args=(),
         builds=(
             # ADR-128: `--run-all --out` writes the bundle files directly (no <variant>/ subdir).
-            VariantBuild("default", ("--variant", "default"), "tracking/_ghost_outfield_weights/default", ""),
+            VariantBuild("default", ("--variant", "default"), "tracking/_ghost_outfield_weights/default"),
             VariantBuild(
                 "position_only",
                 ("--variant", "position_only"),
                 "tracking/_ghost_outfield_weights/position_only",
-                "",
                 feature_set="position_only",
             ),
         ),
@@ -229,12 +226,11 @@ REGISTRY: dict[str, TrainerSpec] = {
         # ADR-128: `--run-all --out` writes the bundle files directly (no xshot_occurrence_v1/ subdir); the
         # controller adds `--dataset` and `--arms-json` (the off-HF arm policy).
         builds=(
-            VariantBuild("default", ("--feature-set", "faithful"), "tracking/_xshot_weights/default", ""),
+            VariantBuild("default", ("--feature-set", "faithful"), "tracking/_xshot_weights/default"),
             VariantBuild(
                 "position_only",
                 ("--feature-set", "position_only"),
                 "tracking/_xshot_weights/position_only",
-                "",
                 feature_set="position_only",
             ),
         ),
@@ -255,12 +251,11 @@ REGISTRY: dict[str, TrainerSpec] = {
         # ADR-128: `--run-all --out` writes the bundle files directly (no xcross_attempt_v1/ subdir); the
         # controller adds `--dataset`, `--probe-dataset` and `--arms-json` (the off-HF arm policy).
         builds=(
-            VariantBuild("default", ("--feature-set", "faithful"), "tracking/_xcross_weights/default", ""),
+            VariantBuild("default", ("--feature-set", "faithful"), "tracking/_xcross_weights/default"),
             VariantBuild(
                 "position_only",
                 ("--feature-set", "position_only"),
                 "tracking/_xcross_weights/position_only",
-                "",
                 feature_set="position_only",
             ),
         ),
@@ -280,7 +275,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         # --provider still selects the labeling strategy; --feature-set public is the shipped variant.
         base_args=("--provider", "statsbomb", "--feature-set", "public"),
         # ADR-128: `--run-all --out` writes the bundle files directly (no model/ subdir).
-        builds=(VariantBuild("default", (), "tracking/_receiver_weights/default", ""),),
+        builds=(VariantBuild("default", (), "tracking/_receiver_weights/default"),),
         pipeline="scripts.train_receiver_model",
         cv_metric="top1_cv",
         primary_metric="top1",
@@ -296,7 +291,7 @@ BLOCKED: dict[str, TrainerSpec] = {
         module="scripts.train_gk_retention",
         extras=(),
         base_args=(),
-        builds=(VariantBuild("default", (), "xtgk/_retention_weights/default", "model"),),
+        builds=(VariantBuild("default", (), "xtgk/_retention_weights/default"),),
         primary_metric="ece",
         metric_direction="lower_better",
         delta=0.01,
@@ -315,6 +310,33 @@ DRIVERS: dict[str, DriverSpec] = {
     ),
     # --- scaffold: drivers above ---
 }
+
+
+@dataclass(frozen=True)
+class CanarySpec:
+    """A canary-only campaign job (HFU rung 5; spec `2026-10-31-hfu-rung5-canary-design.md` C3): a fixture pipeline
+    that a campaign named ``canary*`` runs to prove the controller's halt path. It ships no artifact, reads no
+    dataset, and `campaign.load_campaign` refuses it in any other campaign."""
+
+    name: str
+    module: str
+    base_args: tuple[str, ...]
+
+
+#: The rung-5 forced-halt arm: the toy pipeline's zero-tolerance `strict` stage fails unit 0000, so the controller
+#: halts the instance, and its independent `hold` stage keeps a sibling job running for the halt to cancel.
+CANARY: dict[str, CanarySpec] = {
+    "canary_halt": CanarySpec(
+        "canary_halt",
+        "tests.scripts._toy_pipeline",
+        ("--n-items", "16", "--fail-keys", "0000", "--hold-s", "3600"),
+    ),
+}
+
+
+def canary_spec(name: str) -> CanarySpec | None:
+    """The canary-only spec for a campaign job name, or None for a real trainer or driver."""
+    return CANARY.get(name)
 
 
 def spec_for(name: str) -> TrainerSpec | DriverSpec:

@@ -13,11 +13,12 @@ import json
 import math
 import warnings
 from pathlib import Path
-from typing import Literal, overload
+from typing import Literal, NamedTuple, overload
 
 import numpy as np
 import pandas as pd
 
+from silly_kicks._frame_index import ordered_group_rows
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.id_compat import align_join_keys, canonical_id, canonical_id_series, same_id
 from silly_kicks.spadl import config as _spc
@@ -27,6 +28,7 @@ from silly_kicks.tracking._ball_carrier import (
     derive_team_in_possession,
     infer_ball_carrier,
 )
+from silly_kicks.tracking._frame_arrays import NONE_OTHER, FrameArrays, first_other
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking._velocity_availability import (
@@ -164,76 +166,109 @@ def _dominant_region_area(carrier_xy, all_xy, *, res: float = 3.0) -> float:
     return frac * _geo.PITCH_LENGTH * _geo.PITCH_WIDTH
 
 
+class _XCrossRowArrays(NamedTuple):
+    """The per-frame reads of the xCross row, applied ONCE to the whole columns (spec r4 D20). Each read is
+    element-wise, so a frame's slice is the read the per-frame body made."""
+
+    is_ball: np.ndarray
+    is_gk: np.ndarray
+    team: np.ndarray
+    pid: np.ndarray
+    x: np.ndarray
+    y: np.ndarray
+
+
+class _XCrossFrames:
+    """A frame set for the xCross row (spec r4 D20): ``cols`` reads the raw columns once each, ``row_arrays()``
+    builds the row's whole-column reads on first use, in the order the per-frame body read them."""
+
+    def __init__(self, frames: pd.DataFrame) -> None:
+        self.cols = FrameArrays(frames)
+        self._frames = frames
+        self._row_arrays: _XCrossRowArrays | None = None
+
+    def row_arrays(self) -> _XCrossRowArrays:
+        if self._row_arrays is None:
+            f = self._frames
+            # CANONICAL id arrays (ADR-019): a nullable-Int64 id column (GradientSports) -> .to_numpy()
+            # upcasts to float64, so a naive ``.astype(str)`` yields "366.0" and never matches the clean-int
+            # carrier id "366" -> carrier_mask all-False -> every carrier-anchored feature (and the
+            # carrier-gated GK block) silently NaN. canonical_id_series collapses 366/366.0/Int64(366)/"366"
+            # -> "366"; the sentinel fill keeps NA (ball rows) out of the comparisons. Genuine-string
+            # providers (kloppy) are unchanged, so the trained public model needs no retrain.
+            na_fill = "\x00"  # sentinel: no canonical id equals it, so NA (ball) rows never match
+            is_ball = f["is_ball"].to_numpy(dtype=bool)
+            is_gk = f["is_goalkeeper"].to_numpy(dtype=bool)
+            team = canonical_id_series(f["team_id"]).fillna(na_fill).to_numpy()
+            pid = canonical_id_series(f["player_id"]).fillna(na_fill).to_numpy()
+            x = f["x"].to_numpy(dtype="float64")
+            y = f["y"].to_numpy(dtype=float)
+            self._row_arrays = _XCrossRowArrays(is_ball=is_ball, is_gk=is_gk, team=team, pid=pid, x=x, y=y)
+        return self._row_arrays
+
+
 @overload
-def extract_xcross_features(
-    frame_data: pd.DataFrame,
+def _xcross_feature_row(
+    frame: _XCrossFrames,
+    rows: np.ndarray,
     *,
     gk_team_id,
     goal_x: float,
     carrier_player_id,
-    feature_set: XCrossFeatureSet = ...,
-    score_differential: float = ...,
-    return_box_detail: Literal[False] = ...,
+    feature_set: XCrossFeatureSet,
+    score_differential: float,
+    return_box_detail: Literal[False],
 ) -> pd.DataFrame: ...
 
 
 @overload
-def extract_xcross_features(
-    frame_data: pd.DataFrame,
+def _xcross_feature_row(
+    frame: _XCrossFrames,
+    rows: np.ndarray,
     *,
     gk_team_id,
     goal_x: float,
     carrier_player_id,
-    feature_set: XCrossFeatureSet = ...,
-    score_differential: float = ...,
+    feature_set: XCrossFeatureSet,
+    score_differential: float,
     return_box_detail: Literal[True],
 ) -> tuple[pd.DataFrame, dict]: ...
 
 
-def extract_xcross_features(
-    frame_data: pd.DataFrame,
+def _xcross_feature_row(
+    frame: _XCrossFrames,
+    rows: np.ndarray,
     *,
     gk_team_id,
     goal_x: float,
     carrier_player_id,
-    feature_set: XCrossFeatureSet = "faithful",
-    score_differential: float = np.nan,
-    return_box_detail: bool = False,
+    feature_set: XCrossFeatureSet,
+    score_differential: float,
+    return_box_detail: bool,
 ) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
-    """Extract the faithful xCross feature row for a single (game, period, frame) snapshot.
+    """The array core of :func:`extract_xcross_features`: ONE frame's feature row (spec r4 D20).
 
-    ``return_box_detail=True`` (default False, so every existing caller and the serve path are
-    byte-identical) additionally returns the behind-line box detail used by the keeper-box gr_x
-    measurement -- computed from the SAME ``in_box``/``gr_x``/``team`` arrays that build
-    ``box_off_def_ratio``, so the descriptive split cannot drift from the feature it explains.
-
-    All spatial features are in goal-relative coordinates (attacked goal at gr_x = 0). The GK block
-    is the contiguous tail (``XCROSS_GK_BLOCK``). ``score_differential`` is supplied by the caller
-    (prepare/compute build it from match-context actions; NaN when unavailable). NaN-tolerant.
+    The frame arrives as row positions into ``frame``, in the frame's row order. Every value comes from the scalar
+    code of the per-frame pandas body this replaced, in its order and on its argument types; only the column reads
+    moved to ``frame``, which makes each one once for the whole frame set.
     """
     if feature_set == "extended":
         raise NotImplementedError(
             "xCrossAttempt feature_set='extended' is a deferred extension point; "
             "only 'faithful' and 'position_only' are implemented. See the design spec."
         )
-    f = frame_data
-    is_ball = f["is_ball"].to_numpy(dtype=bool)
-    is_gk = f["is_goalkeeper"].to_numpy(dtype=bool)
-    # CANONICAL id arrays (ADR-019): a nullable-Int64 id column (GradientSports) -> .to_numpy()
-    # upcasts to float64, so a naive ``.astype(str)`` yields "366.0" and never matches the clean-int
-    # carrier id "366" -> carrier_mask all-False -> every carrier-anchored feature (and the
-    # carrier-gated GK block) silently NaN. canonical_id_series collapses 366/366.0/Int64(366)/"366"
-    # -> "366"; the sentinel fill keeps NA (ball rows) out of the comparisons. Genuine-string
-    # providers (kloppy) are unchanged, so the trained public model needs no retrain.
-    na_fill = "\x00"  # sentinel: no canonical id equals it, so NA (ball) rows never match
-    team = canonical_id_series(f["team_id"]).fillna(na_fill).to_numpy()
-    pid = canonical_id_series(f["player_id"]).fillna(na_fill).to_numpy()
-    gr_x = np.array([_geo.to_goal_relative_x(x, goal_x=goal_x) for x in f["x"].to_numpy(dtype="float64")])
+    arrays = frame.row_arrays()
+    is_ball = arrays.is_ball[rows]
+    is_gk = arrays.is_gk[rows]
+    team = arrays.team[rows]
+    pid = arrays.pid[rows]
+    n = len(rows)
+    gr_x = np.array([_geo.to_goal_relative_x(x, goal_x=goal_x) for x in arrays.x[rows]])
     # y is GOAL-RELATIVE from here down (PR 5). Paired with gr_x this is the 180-degree point
     # reflection; before PR 5 y rode through untransformed, so `atan2(y - GOAL_Y, gr_x)` negated
     # every bearing between the two goal ends while every radial stayed byte-identical. The local
     # name is kept because every consumer below already reads `y`.
-    y = np.array([_geo.to_goal_relative_y(v, goal_x=goal_x) for v in f["y"].to_numpy(dtype=float)])
+    y = np.array([_geo.to_goal_relative_y(v, goal_x=goal_x) for v in arrays.y[rows]])
 
     out: dict[str, float] = {name: np.nan for name in XCROSS_FEATURE_NAMES_FAITHFUL}
     box_detail: dict = {
@@ -255,15 +290,16 @@ def extract_xcross_features(
         # `speed_source` -- died on `KeyError: 'vx'`. A zero-fill would be worse than either: a
         # fabricated stationary ball fed to a trained feature. The POSITIONAL ball features above
         # are deliberately computed first, since they do not depend on velocity.
-        if "vx" in f.columns and "vy" in f.columns:
-            bvx = float(f.loc[is_ball, "vx"].to_numpy()[0])
-            bvy = float(f.loc[is_ball, "vy"].to_numpy()[0])
+        if frame.cols.has("vx") and frame.cols.has("vy"):
+            ball_row = rows[is_ball][0]
+            bvx = float(frame.cols["vx"][ball_row])
+            bvy = float(frame.cols["vy"][ball_row])
             out["ball_speed"] = math.hypot(bvx, bvy)
 
     # Carrier-anchored geometry. Match the carrier by CANONICAL id (pid is already canonical above),
     # so it works whether the frame player_id is native string (kloppy/sportec/skillcorner/metrica)
     # OR nullable Int64 (gradientsports) -- see the canonical-id comment above.
-    carrier_mask = np.zeros(len(f), dtype=bool)
+    carrier_mask = np.zeros(n, dtype=bool)
     has_carrier = carrier_player_id is not None and not (
         isinstance(carrier_player_id, float) and math.isnan(carrier_player_id)
     )
@@ -274,13 +310,11 @@ def extract_xcross_features(
     if carrier_mask.any():
         cx, cy = float(gr_x[carrier_mask][0]), float(y[carrier_mask][0])
         carrier_team = team[carrier_mask][0]
-        opp = [(gr_x[i], y[i]) for i in range(len(f)) if not is_ball[i] and team[i] != carrier_team]
+        opp = [(gr_x[i], y[i]) for i in range(n) if not is_ball[i] and team[i] != carrier_team]
         mate = [
-            (gr_x[i], y[i])
-            for i in range(len(f))
-            if not is_ball[i] and team[i] == carrier_team and pid[i] != carrier_key
+            (gr_x[i], y[i]) for i in range(n) if not is_ball[i] and team[i] == carrier_team and pid[i] != carrier_key
         ]
-        all_xy = [(gr_x[i], y[i]) for i in range(len(f)) if not is_ball[i]]
+        all_xy = [(gr_x[i], y[i]) for i in range(n) if not is_ball[i]]
         out["dist_nearest_def"] = _nearest_dist((cx, cy), opp)
         out["dist_nearest_teammate"] = _nearest_dist((cx, cy), mate)
         out["dist_endline"] = float(cx)  # C1: attacked goal at gr_x=0 -> distance to endline IS cx
@@ -338,8 +372,8 @@ def extract_xcross_features(
     # time_seconds = frame.timestamp.total_seconds() and kloppy timestamps are period-relative
     # (sportec native expects the same contract). ET periods (3/4/5) get 0 by design (the paper's
     # feature is "final 10 min of a half"). Locked by test_ten_minute_warning_period2_early_is_zero.
-    t = float(f["time_seconds"].iloc[0])
-    period = int(f["period_id"].iloc[0])
+    t = float(frame.cols["time_seconds"][rows[0]])
+    period = int(frame.cols["period_id"][rows[0]])
     out["ten_minute_warning"] = 1 if period in (1, 2) and t >= 35 * 60 else 0
 
     # Feature-set-driven final assembly of ONE computation (DRY): position_only selects `out` minus
@@ -347,6 +381,65 @@ def extract_xcross_features(
     _names = XCROSS_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XCROSS_FEATURE_NAMES_FAITHFUL
     features = pd.DataFrame([out], columns=_names)
     return (features, box_detail) if return_box_detail else features
+
+
+@overload
+def extract_xcross_features(
+    frame_data: pd.DataFrame,
+    *,
+    gk_team_id,
+    goal_x: float,
+    carrier_player_id,
+    feature_set: XCrossFeatureSet = ...,
+    score_differential: float = ...,
+    return_box_detail: Literal[False] = ...,
+) -> pd.DataFrame: ...
+
+
+@overload
+def extract_xcross_features(
+    frame_data: pd.DataFrame,
+    *,
+    gk_team_id,
+    goal_x: float,
+    carrier_player_id,
+    feature_set: XCrossFeatureSet = ...,
+    score_differential: float = ...,
+    return_box_detail: Literal[True],
+) -> tuple[pd.DataFrame, dict]: ...
+
+
+def extract_xcross_features(
+    frame_data: pd.DataFrame,
+    *,
+    gk_team_id,
+    goal_x: float,
+    carrier_player_id,
+    feature_set: XCrossFeatureSet = "faithful",
+    score_differential: float = np.nan,
+    return_box_detail: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
+    """Extract the faithful xCross feature row for a single (game, period, frame) snapshot.
+
+    ``return_box_detail=True`` (default False, so every existing caller and the serve path are
+    byte-identical) additionally returns the behind-line box detail used by the keeper-box gr_x
+    measurement -- computed from the SAME ``in_box``/``gr_x``/``team`` arrays that build
+    ``box_off_def_ratio``, so the descriptive split cannot drift from the feature it explains.
+
+    All spatial features are in goal-relative coordinates (attacked goal at gr_x = 0). The GK block
+    is the contiguous tail (``XCROSS_GK_BLOCK``). ``score_differential`` is supplied by the caller
+    (prepare/compute build it from match-context actions; NaN when unavailable). NaN-tolerant.
+    """
+    return _xcross_feature_row(
+        _XCrossFrames(frame_data),
+        np.arange(len(frame_data)),
+        gk_team_id=gk_team_id,
+        goal_x=goal_x,
+        carrier_player_id=carrier_player_id,
+        feature_set=feature_set,
+        score_differential=score_differential,
+        return_box_detail=return_box_detail,
+    )
 
 
 def build_xcross_labels(
@@ -451,75 +544,92 @@ def prepare_xcross_training_data(
     frame_index_rows: list[dict] = []
     meta_details: list[dict] = []
     coverage = {"in_domain": 0, "carrier_resolved": 0}  # L-2 carrier-coverage log
-    for (gid, pid, fid), grp in poss.groupby(["game_id", "period_id", "frame_id"], sort=False):
-        if has_ball_state:
-            ball_row = grp[grp["is_ball"]]
-            # M3: judge ball_state on the ball row (row-level), not .all() over every player row
-            if len(ball_row) and str(ball_row["ball_state"].iloc[0]) == "dead":
-                continue
-        in_poss = grp["team_in_possession"].dropna()
-        if in_poss.empty:
-            continue
-        poss_team = in_poss.iloc[0]
-        # Defending team = the OTHER team's non-ball players. Filter by is_ball + dropna so a real
-        # frame whose team_id column carries pd.NA (e.g. the ball row, or an unresolved GS jersey)
-        # does not (a) hit "t not in (poss_team, 'ball')" -> "boolean value of NA is ambiguous", or
-        # (b) be mistaken for a defending team. Mirrors compute_xcross_attempt's dropna()+!= pattern.
-        non_ball = grp[~grp["is_ball"].astype(bool)]
-        defending = [t for t in non_ball["team_id"].dropna().unique() if t != poss_team]
-        if not defending:
-            continue
-        goal_x = goal_map.get(gid, pid, defending[0], allow_guess=True)
-        if goal_x is None:
-            continue
-        ball = grp[grp["is_ball"]]
-        bx = float(ball["x"].iloc[0]) if len(ball) else np.nan
-        by = float(ball["y"].iloc[0]) if len(ball) else np.nan
-        if wide_area_only and not _in_wide_area(bx, by, goal_x, advance_m):
-            continue
-        coverage["in_domain"] += 1
-        carrier_pid_s = grp["ball_carrier_player_id"].dropna()
-        carrier_pid = carrier_pid_s.iloc[0] if not carrier_pid_s.empty else None
-        if carrier_pid is not None:
-            coverage["carrier_resolved"] += 1
-        sd = np.nan  # PA-H1: score differential from the POSSESSING team's perspective
-        if score_fn is not None:
-            raw = score_fn(gid, float(grp["time_seconds"].iloc[0]))  # home_score - away_score
-            # ADR-019: a naive str()==str() renders a float-backed id as "5.0" against a
-            # scalar "5", so the compare is ALWAYS False and every row's sign flips.
-            sd = raw if same_id(poss_team, home_team_id) else -raw
-        if return_meta:
-            _feat, _detail = extract_xcross_features(
-                grp,
-                gk_team_id=defending[0],
-                goal_x=goal_x,
-                carrier_player_id=carrier_pid,
-                feature_set=feature_set,
-                score_differential=sd,
-                return_box_detail=True,
+    # Spec r4 D20: the groupby's own walk as row positions, over columns read once (no DataFrame per frame).
+    walk = ordered_group_rows(poss, ["game_id", "period_id", "frame_id"], sort=False)
+    if walk:
+        frame = _XCrossFrames(poss)
+        cols = frame.cols
+        if poss["is_ball"].isna().any():
+            # The per-frame code masked each frame with the raw column (`grp[grp["is_ball"]]`), and pandas refuses
+            # a mask that holds a missing value. Refuse it once, for the whole frame set.
+            raise ValueError(
+                "prepare_xcross_training_data: frames['is_ball'] holds a missing value; "
+                "the tracking-frame schema declares it bool"
             )
-            feat_rows.append(_feat)
-            meta_details.append(_detail)
-        else:
-            feat_rows.append(
-                extract_xcross_features(
-                    grp,
-                    gk_team_id=defending[0],
+        is_ball = poss["is_ball"].to_numpy(dtype=bool)
+        has_tip = poss["team_in_possession"].notna().to_numpy()
+        has_team = poss["team_id"].notna().to_numpy()
+        has_carrier = poss["ball_carrier_player_id"].notna().to_numpy()
+        for (gid, pid, fid), rows in walk:
+            ball_rows = rows[is_ball[rows]]
+            if has_ball_state:
+                # M3: judge ball_state on the ball row (row-level), not .all() over every player row
+                if len(ball_rows) and str(cols.cells("ball_state")[ball_rows[0]]) == "dead":
+                    continue
+            tip_rows = rows[has_tip[rows]]
+            if len(tip_rows) == 0:
+                continue
+            poss_team = cols.cells("team_in_possession")[tip_rows[0]]
+            # Defending team = the OTHER team's non-ball players. Filter by is_ball + dropna so a real
+            # frame whose team_id column carries pd.NA (e.g. the ball row, or an unresolved GS jersey)
+            # does not (a) hit "t not in (poss_team, 'ball')" -> "boolean value of NA is ambiguous", or
+            # (b) be mistaken for a defending team. Mirrors compute_xcross_attempt's dropna()+!= pattern.
+            def_team = first_other(cols.cells("team_id"), rows[~is_ball[rows] & has_team[rows]], poss_team)
+            if def_team is NONE_OTHER:
+                continue
+            goal_x = goal_map.get(gid, pid, def_team, allow_guess=True)
+            if goal_x is None:
+                continue
+            bx = float(cols["x"][ball_rows[0]]) if len(ball_rows) else np.nan
+            by = float(cols["y"][ball_rows[0]]) if len(ball_rows) else np.nan
+            if wide_area_only and not _in_wide_area(bx, by, goal_x, advance_m):
+                continue
+            coverage["in_domain"] += 1
+            carrier_rows = rows[has_carrier[rows]]
+            carrier_pid = cols.cells("ball_carrier_player_id")[carrier_rows[0]] if len(carrier_rows) else None
+            if carrier_pid is not None:
+                coverage["carrier_resolved"] += 1
+            sd = np.nan  # PA-H1: score differential from the POSSESSING team's perspective
+            if score_fn is not None:
+                raw = score_fn(gid, float(cols["time_seconds"][rows[0]]))  # home_score - away_score
+                # ADR-019: a naive str()==str() renders a float-backed id as "5.0" against a
+                # scalar "5", so the compare is ALWAYS False and every row's sign flips.
+                sd = raw if same_id(poss_team, home_team_id) else -raw
+            if return_meta:
+                _feat, _detail = _xcross_feature_row(
+                    frame,
+                    rows,
+                    gk_team_id=def_team,
                     goal_x=goal_x,
                     carrier_player_id=carrier_pid,
                     feature_set=feature_set,
                     score_differential=sd,
+                    return_box_detail=True,
+                )
+                feat_rows.append(_feat)
+                meta_details.append(_detail)
+            else:
+                feat_rows.append(
+                    _xcross_feature_row(
+                        frame,
+                        rows,
+                        gk_team_id=def_team,
+                        goal_x=goal_x,
+                        carrier_player_id=carrier_pid,
+                        feature_set=feature_set,
+                        score_differential=sd,
+                        return_box_detail=False,
+                    )
+                )
+            frame_index_rows.append(
+                dict(
+                    game_id=gid,
+                    period_id=pid,
+                    frame_id=fid,
+                    time_seconds=cols.cells("time_seconds")[rows[0]],
+                    team_in_possession=poss_team,
                 )
             )
-        frame_index_rows.append(
-            dict(
-                game_id=gid,
-                period_id=pid,
-                frame_id=fid,
-                time_seconds=grp["time_seconds"].iloc[0],
-                team_in_possession=poss_team,
-            )
-        )
 
     if coverage["in_domain"]:
         rate = coverage["carrier_resolved"] / coverage["in_domain"]
@@ -669,8 +779,14 @@ class XCrossAttemptModel:
         *,
         carrier_params: dict | None = None,
         horizon_seconds: float = 1.0,
+        runtime_n_jobs: int = 1,
     ) -> XCrossAttemptModel:
-        """Fit the classifier. Records ``carrier_params`` into the model (R3)."""
+        """Fit the classifier. Records ``carrier_params`` into the model (R3).
+
+        ``runtime_n_jobs`` sets xgboost's thread count for THIS fit only (ADR-128 Cycle-1 opt-in); the
+        serialized ``n_jobs`` stays the pinned ``1`` so the artifact is byte-identical across thread counts.
+        The budget is passed trainer-side (``SILLY_KICKS_RUNTIME_THREADS``), never read from the env in ``fit``.
+        """
         import xgboost as xgb
 
         if int(xgb.__version__.split(".")[0]) < 2:
@@ -679,6 +795,7 @@ class XCrossAttemptModel:
         self.horizon_seconds = horizon_seconds
         params = dict(self._params)
         params["base_score"] = float(np.asarray(labels, dtype=float).mean())  # calibrated intercept
+        params["n_jobs"] = int(runtime_n_jobs)  # runtime only; self._params (serialized) keeps n_jobs=1
         clf = xgb.XGBClassifier(**params)
         clf.fit(features.to_numpy(dtype=float), np.asarray(labels, dtype=int))  # M1: numpy
         booster = clf.get_booster()
@@ -699,8 +816,6 @@ class XCrossAttemptModel:
         """Serialize to booster JSON + metadata.json + SHA256SUMS (no pickle)."""
         if self._booster is None:
             raise RuntimeError("Model not fitted.")
-        import platform
-
         import xgboost as xgb
 
         path = Path(path)
@@ -724,7 +839,6 @@ class XCrossAttemptModel:
             "pitch_width": _geo.PITCH_WIDTH,
             "geometry_version": _geo.GEOMETRY_VERSION,
             "xgboost_version": xgb.__version__,
-            "training_platform": platform.platform(),
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),
@@ -942,38 +1056,48 @@ def compute_xcross_attempt(
 
     feat_rows: list[pd.DataFrame] = []
     keys: list[tuple] = []  # (gid, pid, frame_id, team_in_possession)
-    for (gid, pid, frame_id), grp in poss.groupby(["game_id", "period_id", "frame_id"], dropna=False):
-        if link_frame_ids is not None and int(str(frame_id)) not in link_frame_ids:
-            continue
-        tip = grp["team_in_possession"].iloc[0]
-        if pd.isna(tip):
-            continue
-        outfield = grp[~grp["is_ball"].astype(bool)]
-        teams = [t for t in outfield["team_id"].dropna().unique() if t != tip]
-        if not teams:
-            continue
-        def_team = teams[0]
-        goal_x = goal_map.get(gid, pid, def_team, allow_guess=True)
-        if goal_x is None:
-            continue
-        carrier_pid_s = grp["ball_carrier_player_id"].dropna()
-        carrier_pid = carrier_pid_s.iloc[0] if not carrier_pid_s.empty else None
-        sd = np.nan
-        if score_fn is not None:
-            raw = score_fn(gid, float(grp["time_seconds"].iloc[0]))
-            # ADR-019: see the sibling site above -- a naive str compare flips every sign.
-            sd = raw if same_id(tip, home_team_id) else -raw
-        feat_rows.append(
-            extract_xcross_features(
-                grp,
-                gk_team_id=def_team,
-                goal_x=goal_x,
-                carrier_player_id=carrier_pid,
-                score_differential=sd,
-                feature_set=m.feature_set,
+    # Spec r4 D20: the groupby's own walk as row positions, over columns read once (no DataFrame per frame).
+    walk = ordered_group_rows(poss, ["game_id", "period_id", "frame_id"], sort=True, dropna=False)
+    if walk:
+        frame = _XCrossFrames(poss)
+        cols = frame.cols
+        is_ball: np.ndarray | None = None
+        has_team = poss["team_id"].notna().to_numpy()
+        has_carrier = poss["ball_carrier_player_id"].notna().to_numpy()
+        for (gid, pid, frame_id), rows in walk:
+            if link_frame_ids is not None and int(str(frame_id)) not in link_frame_ids:
+                continue
+            tip = cols.cells("team_in_possession")[rows[0]]
+            if pd.isna(tip):
+                continue
+            if is_ball is None:  # first read where the per-frame code first read it
+                is_ball = poss["is_ball"].astype(bool).to_numpy()
+            def_team = first_other(cols.cells("team_id"), rows[~is_ball[rows] & has_team[rows]], tip)
+            if def_team is NONE_OTHER:
+                continue
+            goal_x = goal_map.get(gid, pid, def_team, allow_guess=True)
+            if goal_x is None:
+                continue
+            carrier_rows = rows[has_carrier[rows]]
+            carrier_pid = cols.cells("ball_carrier_player_id")[carrier_rows[0]] if len(carrier_rows) else None
+            sd = np.nan
+            if score_fn is not None:
+                raw = score_fn(gid, float(cols["time_seconds"][rows[0]]))
+                # ADR-019: see the sibling site above -- a naive str compare flips every sign.
+                sd = raw if same_id(tip, home_team_id) else -raw
+            feat_rows.append(
+                _xcross_feature_row(
+                    frame,
+                    rows,
+                    gk_team_id=def_team,
+                    goal_x=goal_x,
+                    carrier_player_id=carrier_pid,
+                    score_differential=sd,
+                    feature_set=m.feature_set,
+                    return_box_detail=False,
+                )
             )
-        )
-        keys.append((gid, pid, frame_id, tip))
+            keys.append((gid, pid, frame_id, tip))
 
     if not feat_rows:
         return out

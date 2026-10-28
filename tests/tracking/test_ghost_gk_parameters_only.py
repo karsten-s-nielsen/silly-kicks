@@ -34,6 +34,15 @@ def test_metadata_marks_parameters_only(tmp_path, bundled):
     assert meta["stores_training_data"] is False
 
 
+def test_metadata_omits_training_platform(tmp_path, bundled):
+    """D3/B09: the saved ghost-GK metadata must not carry `training_platform` (the live kernel string), so a
+    main run and its replica produce byte-identical metadata. The fit host's platform is run-history in the
+    unit ledger now. Restoring the key would reintroduce the cross-platform byte difference (reviewer B B09)."""
+    bundled.save(tmp_path / "m")
+    meta = json.loads((tmp_path / "m" / "metadata.json").read_text())
+    assert "training_platform" not in meta
+
+
 def test_predict_mean_byte_identical_after_strip(tmp_path, bundled):
     """The served position is unchanged by dropping the arrays."""
     golden = np.load("tests/tracking/fixtures/ghost_gk_kde_golden.npz", allow_pickle=True)

@@ -407,7 +407,7 @@ def test_fit_does_not_reweight():
     assert all(abs(float(v) - 1.0) < 1e-9 for v in found), f"model reweights: {found}"
 
 
-def test_metadata_records_pitch_and_platform(tmp_path):
+def test_metadata_records_pitch_and_versions(tmp_path):
     import json
 
     X, y = _toy_xy()
@@ -415,8 +415,22 @@ def test_metadata_records_pitch_and_platform(tmp_path):
     m.save(tmp_path / "v1")
     meta = json.loads((tmp_path / "v1" / "metadata.json").read_text())
     assert meta["pitch_length"] == 105.0 and meta["pitch_width"] == 68.0
-    for k in ("geometry_version", "xgboost_version", "training_platform"):
+    for k in ("geometry_version", "xgboost_version"):
         assert k in meta
+    assert "training_platform" not in meta  # D3: the live platform is run-history, never the artifact metadata
+
+
+def test_metadata_is_platform_independent(tmp_path, monkeypatch):
+    # D3: the saved artifact must not depend on the live platform, so two machines (a main run and its
+    # replica) produce byte-identical metadata; the platform provenance lives in the run's unit ledger
+    # (`_stages.run_unit`), never in metrics.json (reviewer B B03).
+    X, y = _toy_xy()
+    m = xs.XShotOccurrenceModel().fit(X, y)
+    monkeypatch.setattr("platform.platform", lambda: "Linux-6.12.110-x86_64")
+    m.save(tmp_path / "a")
+    monkeypatch.setattr("platform.platform", lambda: "Linux-6.12.111-x86_64")
+    m.save(tmp_path / "b")
+    assert (tmp_path / "a" / "metadata.json").read_bytes() == (tmp_path / "b" / "metadata.json").read_bytes()
 
 
 def test_load_raises_on_pitch_dimension_mismatch(tmp_path, monkeypatch):
@@ -888,3 +902,43 @@ def test_build_xshot_labels_bit_identical_after_refactor():
     y = build_xshot_labels(frames_index, shots, horizon_seconds=1.0)
     np.testing.assert_array_equal(np.asarray(y), np.array([0, 1, 1, 0, 0]))  # GOLDEN (frozen pre-refactor)
     assert np.asarray(y).dtype == np.dtype(int)
+
+
+def test_fit_runtime_n_jobs_leaves_artifact_and_serialized_n_jobs_unchanged(tmp_path):
+    """T3: a runtime n_jobs changes neither the booster bytes nor metadata; serialized n_jobs stays 1."""
+    import json
+
+    import pandas as pd
+
+    cols = xs.XSHOT_FEATURE_NAMES_FAITHFUL
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame(rng.standard_normal((200, len(cols))), columns=cols)
+    y = pd.Series((rng.random(200) < 0.3).astype(int))
+    a, b = tmp_path / "a", tmp_path / "b"
+    xs.XShotOccurrenceModel().fit(X, y, runtime_n_jobs=1).save(a)
+    xs.XShotOccurrenceModel().fit(X, y, runtime_n_jobs=8).save(b)
+    assert (a / "model.json").read_bytes() == (b / "model.json").read_bytes()
+    assert (a / "metadata.json").read_bytes() == (b / "metadata.json").read_bytes()
+    assert json.loads((a / "metadata.json").read_text())["params"]["n_jobs"] == 1
+
+
+def test_fit_passes_runtime_n_jobs_to_the_estimator(monkeypatch):
+    """B45 (kills mutant M6): runtime_n_jobs must reach the xgb estimator. The artifact is byte-identical
+    across n_jobs, so only observing the estimator's n_jobs catches a fit that ignores the kwarg."""
+    import pandas as pd
+    import xgboost as xgb
+
+    captured: dict = {}
+    orig = xgb.XGBClassifier
+
+    def spy(**kwargs):
+        captured["n_jobs"] = kwargs.get("n_jobs")
+        return orig(**kwargs)
+
+    monkeypatch.setattr(xgb, "XGBClassifier", spy)
+    cols = xs.XSHOT_FEATURE_NAMES_FAITHFUL
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame(rng.standard_normal((200, len(cols))), columns=cols)
+    y = pd.Series((rng.random(200) < 0.3).astype(int))
+    xs.XShotOccurrenceModel().fit(X, y, runtime_n_jobs=7)
+    assert captured["n_jobs"] == 7

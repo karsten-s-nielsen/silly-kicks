@@ -1,7 +1,9 @@
-"""Decision P11: importance at W=2 is byte-identical to W=1 and really ran on >= 2 worker processes."""
+"""Spec r3 D10 (supersedes decision P11): the ghost_gk importance stage runs one unit per column, so its table at
+W=2 is byte-identical to W=1 and its units really ran in >= 2 worker processes."""
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -33,19 +35,20 @@ def test_importance_w1_equals_w2_and_uses_two_processes(tmp_path):
     data = build_toy_for(MODULE, tmp_path / "data")
     log = tmp_path / "pids.log"
     env = {**os.environ, "SILLY_KICKS_IMPORTANCE_PID_LOG": str(log)}
-    for name, inner in (("a", "1"), ("b", "2")):
+    for name, workers in (("a", "1"), ("b", "2")):
         cli(
             MODULE,
             tmp_path / name,
             data,
             ARGS,
             "--run-all",
-            "--inner-workers",
-            inner,
-            env=env if inner == "2" else None,
+            "--workers",
+            workers,
+            env=env if workers == "2" else None,
         )
     gen = {s["name"]: s["generation"] for s in plan(MODULE, tmp_path / "a", data, ARGS)["stages"]}["importance"]
-    a = (tmp_path / "a" / gen / "only.json").read_bytes()
-    b = (tmp_path / "b" / gen / "only.json").read_bytes()
+    a = (tmp_path / "a" / gen / "_output.json").read_bytes()
+    b = (tmp_path / "b" / gen / "_output.json").read_bytes()
     assert a == b
+    assert json.loads(a)["skipped"] is False and json.loads(a)["top"]  # non-vacuity: a real table
     assert len(set(log.read_text().split())) >= 2

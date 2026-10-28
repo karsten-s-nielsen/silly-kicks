@@ -15,8 +15,10 @@ import os
 import pathlib
 import subprocess
 import sys
+from typing import Literal
 
-VOLATILE = (".ledger.json", ".failed.json", "_profile.json")
+VOLATILE = (".ledger.json", ".failed.json", "_profile.json", "_reduce.json", ".job.json")  # spec r3 D8: job records
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def cli(module, store, data_root, args, *extra, check=True, env=None):
@@ -88,6 +90,118 @@ def run_fanned(module, store, data_root, args, out, *, jobs=2, workers=2, env=No
     cli(module, store, data_root, args, "--run-all", "--out", str(out), env=env)  # nothing pending: exports
 
 
+def run_sharded_reduce(module, store, data_root, args, *, stage="gen", n_ranges=3, env=None) -> int:
+    """Reduce ONE shardable stage the way the controller dispatches it (HFU T8). Run the stage's units with the
+    inline reduce DISABLED, then dispatch N ``--subreduce`` processes (each owns its contiguous range of DONE
+    units in reduce_order, from ``--shard-id``/``--n-shards`` -- the controller passes only the COUNT, reviewer B
+    D1-IMPL-08), then concatenate the partials in the final ``--from-partials`` process. Return the sub-reduce
+    count, which is at least 2 (non-vacuity: the stage really sharded)."""
+    st = next(s for s in plan(module, store, data_root, args, env)["stages"] if s["name"] == stage)
+    assert st.get("shardable_reduce") is not None, f"{stage} is not shardable"
+    cli(module, store, data_root, args, "--stages", stage, "--no-inline-reduce", env=env)  # units only, no reduce
+    n = max(2, min(int(n_ranges), max(2, len(st.get("units") or []))))  # the controller's shard count
+    assert n >= 2  # non-vacuity: at least two sub-reduces
+    for i in range(n):
+        cli(
+            module,
+            store,
+            data_root,
+            args,
+            "--stages",
+            stage,
+            "--subreduce",
+            "--shard-id",
+            str(i),
+            "--n-shards",
+            str(n),
+            env=env,
+        )
+    cli(module, store, data_root, args, "--stages", stage, "--from-partials", str(n), env=env)
+    return n
+
+
+def assert_thread_axis_identical(
+    fit_and_save, *, thread_counts, tmp_root, lever: Literal["omp", "n_jobs"]
+) -> dict[str, str]:
+    """The (W,N) parity gate's THREAD axis (B28) at the model level: a ``thread_safe`` fit's saved artifact is
+    byte-identical across EVERY thread count in ``thread_counts`` (the production range {1,2,4,8}, applied
+    regardless of the box's core count via ``threadpoolctl`` logical limits -- B44). ``fit_and_save(out_dir,
+    threads)`` fits and saves into ``out_dir``.
+
+    For the ``"omp"`` lever the OpenMP runtime is limited to ``threads`` AND BLAS is pinned to 1 (B38/B53), so
+    the in-process env matches production (HistGB OpenMP varied, BLAS serial). For ``"n_jobs"`` the env stays
+    serial and ``threads`` is passed as the runtime arg. Compares every saved file's bytes across all counts;
+    returns the shared hash map."""
+    import threadpoolctl
+
+    counts = list(thread_counts)
+    hashes: dict[int, dict[str, str]] = {}
+    for n in counts:
+        out = pathlib.Path(tmp_root) / f"threads_{n}"
+        if lever == "omp":
+            with (
+                threadpoolctl.threadpool_limits(limits=n, user_api="openmp"),
+                threadpoolctl.threadpool_limits(limits=1, user_api="blas"),  # BLAS serial in-process (B53)
+            ):
+                fit_and_save(out, n)
+        elif lever == "n_jobs":
+            # The in-process n_jobs arm never saw production's OpenMP cap (XGBoost caps nthread at
+            # omp_get_max_threads(); S1 measured the lever dead). It runs in the production env instead.
+            raise ValueError("the n_jobs lever runs in its production env: use assert_thread_axis_identical_in_env")
+        else:
+            raise ValueError(f"unknown lever {lever!r} (expected 'omp' or 'n_jobs')")
+        hashes[n] = artifact(out)
+    ref = hashes[counts[0]]
+    for n in counts[1:]:
+        assert hashes[n] == ref, f"thread-axis byte mismatch at {n} threads (lever={lever}): {hashes[n]} != {ref}"
+    return ref
+
+
+def assert_thread_axis_identical_in_env(
+    target: str, *, thread_counts, tmp_root, lever: Literal["omp", "n_jobs"]
+) -> dict[str, str]:
+    """The THREAD axis in the PRODUCTION worker env (HFU plan R3-8 S3 item 1 (c)): each thread count runs
+    ``target`` (``"module:function"``, called as ``function(out_dir, threads)``) in a fresh process started with
+    ``thread_safe_env(lever, threads)``, the env an HF worker of that stage gets. So OpenMP, BLAS, numba and the
+    runtime-threads variable are exactly the production values, which the in-process arm could not show. The
+    child also refuses to run unless every OpenMP library it loaded runs at ``threads`` and every BLAS library at
+    1. Compares every output file's bytes across all counts; returns the shared hash map."""
+    from scripts._thread_pin import thread_safe_env
+
+    counts = list(thread_counts)
+    hashes: dict[int, dict[str, str]] = {}
+    for n in counts:
+        out = pathlib.Path(tmp_root) / f"threads_{n}"
+        env = thread_safe_env(lever, n)
+        env["PYTHONPATH"] = str(REPO_ROOT)
+        code = f"from tests.scripts._parity import run_thread_target; run_thread_target({target!r}, {str(out)!r}, {n})"
+        proc = subprocess.run(  # noqa: S603 -- fixed argv: this interpreter and a code string built here
+            [sys.executable, "-c", code], cwd=REPO_ROOT, env=env, capture_output=True, text=True
+        )
+        assert proc.returncode == 0, f"{target} at {n} threads failed:\n{proc.stderr[-3000:]}"
+        hashes[n] = artifact(out)
+    ref = hashes[counts[0]]
+    for n in counts[1:]:
+        assert hashes[n] == ref, f"thread-axis byte mismatch at {n} threads (lever={lever}): {hashes[n]} != {ref}"
+    return ref
+
+
+def run_thread_target(target: str, out: str, threads: int) -> None:
+    """The child side of `assert_thread_axis_identical_in_env`: run the target, then check the process's thread
+    pools (the libraries load on first use, so the check follows the run and fails the arm when a pool differs)."""
+    import importlib
+
+    import threadpoolctl
+
+    module, name = target.split(":")
+    getattr(importlib.import_module(module), name)(pathlib.Path(out), threads)
+    pools = threadpoolctl.threadpool_info()
+    openmp = [p["num_threads"] for p in pools if p["user_api"] == "openmp"]
+    blas = [p["num_threads"] for p in pools if p["user_api"] == "blas"]
+    assert openmp and openmp == [threads] * len(openmp), f"OpenMP pools {openmp} != {threads}: {pools}"
+    assert blas == [1] * len(blas), f"BLAS pools {blas} != 1: {pools}"
+
+
 def outputs(store) -> dict[str, str]:
     root = pathlib.Path(store)
     return {
@@ -120,6 +234,23 @@ def fanned_jobs(store, generation: str) -> int:
     """How many distinct jobs ran the units of ``generation`` (the N > 1 fan-out really happened)."""
     recs = [json.loads(p.read_text()) for p in (pathlib.Path(store) / generation).glob("*.ledger.json")]
     return len({r.get("job_label") for r in recs if r.get("job_label")})
+
+
+def cross_stage_overlap(records) -> bool:
+    """HFU T12: True when two jobs of DIFFERENT stages ran with overlapping wall intervals -- the DAG schedule
+    dispatched independent stages concurrently, not behind the linear stage barrier. RED (False) when the
+    stages run serially, which is the non-vacuity the overlap arm needs. ``records`` carry ``stage``,
+    ``started_ns`` and ``finished_ns``."""
+    recs = [r for r in records if r.get("started_ns") is not None and r.get("finished_ns") is not None]
+    for i, a in enumerate(recs):
+        for b in recs[i + 1 :]:
+            if (
+                a.get("stage") != b.get("stage")
+                and a["started_ns"] < b["finished_ns"]
+                and b["started_ns"] < a["finished_ns"]
+            ):
+                return True
+    return False
 
 
 def inner_out_of_order(store, generation: str) -> bool:

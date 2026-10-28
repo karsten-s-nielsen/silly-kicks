@@ -1,0 +1,11 @@
+{
+  "campaign": "_bootstrap",
+  "run_commit": null,
+  "run_tree_dirty": false,
+  "stages": [
+    {
+      "stage": "_bootstrap_startup",
+      "startup_s": 15.0
+    }
+  ]
+}

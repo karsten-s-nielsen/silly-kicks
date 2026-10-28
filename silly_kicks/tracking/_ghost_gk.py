@@ -29,12 +29,14 @@ import pandas as pd
 from scipy.spatial import ConvexHull, QhullError
 from scipy.stats import gaussian_kde
 
+from silly_kicks._frame_index import ordered_group_rows
 from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as spadlconfig
 
 from . import _geometry as _geo
 from . import _provider_visibility as _pv
 from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
+from ._frame_arrays import FrameArrays
 from ._gk_resolve import GoalMap, resolve_defended_goals
 from ._velocity_availability import (
     variant_key_for_velocity as _variant_key_for_velocity,
@@ -698,6 +700,212 @@ def _build_phase_lookup(
 # ---------------------------------------------------------------------------
 
 
+class _KeeperCells:
+    """The cells of ``frames``' rows at ``rows`` as ``frames.iterrows()`` yields them, without a Series per row.
+
+    ``iterrows`` reads ``DataFrame.values``, which first converts every column to the frame's common dtype. For
+    tracking frames that is object (their bool and float columns share no other), so a keeper's ``team_id`` is the
+    ``astype(object)`` element, not the column's own scalar. The extract hands that cell on as a dict key, a
+    goal-map key, a callback argument and a meta cell, so its type is part of the output (spec r4 D20). Each
+    column converts once, on first use.
+    """
+
+    def __init__(self, frames: pd.DataFrame, rows: np.ndarray) -> None:
+        self._frames = frames
+        self._rows = rows
+        self._common = frames.iloc[:0].to_numpy().dtype
+        self._cells: dict[str, np.ndarray] = {}
+
+    def __getitem__(self, name: str) -> np.ndarray:
+        cells = self._cells.get(name)
+        if cells is None:
+            column = self._frames[name].iloc[self._rows]
+            if self._common == np.dtype("object"):
+                cells = column.astype(object).to_numpy()
+            else:
+                cells = column.to_numpy(dtype=self._common)
+            self._cells[name] = cells
+        return cells
+
+    def get(self, name: str) -> np.ndarray | None:
+        """``Series.get``: ``None`` for a column the frames do not have."""
+        return self[name] if name in self._frames.columns else None
+
+
+def _gr_elementwise(values: np.ndarray, to_gr: Callable[[float, bool], float], flip: bool) -> np.ndarray:
+    """``Series.apply(lambda v: to_gr(v, flip)).values`` without the Series (spec r4 D20).
+
+    The same function runs on the same Python scalars (``tolist`` yields what ``apply``'s ``astype(object)``
+    yields), and the results collect into the array ``apply`` inferred (float64 for floats).
+    """
+    return np.asarray([to_gr(v, flip) for v in values.tolist()])
+
+
+def _ghost_gk_feature_row(
+    arrays: FrameArrays,
+    *,
+    first: int,
+    ball: int | None,
+    defending: np.ndarray,
+    attacking: np.ndarray,
+    keeper: int | None,
+    gk_team_id: float | int | str,
+    goal_x: float,
+    score_diff: float,
+    phase: int,
+    ball_carrier_team_id: float | int | str | None,
+    prev_defensive_line_x: float | None,
+    prev_defending_centroid_x: float | None,
+    dt: float,
+    feature_set: GhostFeatureSet,
+) -> pd.DataFrame:
+    """The array core of :func:`extract_ghost_gk_features`: ONE frame's feature row (spec r4 D20).
+
+    The frame arrives as row positions into ``arrays``, in the frame's row order: ``first`` (its first row),
+    ``ball`` (its first ball row), ``defending`` and ``attacking`` (the outfield rows of the keeper's team and of
+    the other teams) and ``keeper`` (the first keeper row of the keeper's team). Every value comes from the scalar
+    code of the per-frame pandas body this replaced, in its order and on its argument types: ``_to_gr_x`` /
+    ``_to_gr_y`` per element on the Python floats ``Series.apply`` passed, and the back-line width from the same
+    NaN-skipping ``Series.max`` / ``Series.min``. Only the row selection moved to the caller.
+    """
+    # --- Coordinate transform (ADR-089 both-axes; helpers are module-level, shared with serve) ---
+    flip = goal_x > 50.0
+
+    # --- Ball ---
+    if ball is not None:
+        bx_raw = float(arrays["x"][ball])
+        by_raw = float(arrays["y"][ball])
+        bvx_raw = float(arrays["vx"][ball]) if arrays.has("vx") else np.nan
+        bvy_raw = float(arrays["vy"][ball]) if arrays.has("vy") else np.nan
+    else:
+        bx_raw = by_raw = bvx_raw = bvy_raw = np.nan
+
+    ball_x = _to_gr_x(bx_raw, flip)
+    ball_y = _to_gr_y(by_raw, flip)
+    ball_vx = _to_gr_vx(bvx_raw, flip)
+    ball_vy = _to_gr_vy(bvy_raw, flip)
+    ball_speed = float(np.sqrt(bvx_raw**2 + bvy_raw**2)) if not np.isnan(bvx_raw) else np.nan
+    ball_dist = float(np.sqrt(ball_x**2 + (ball_y - _GOAL_Y) ** 2)) if not np.isnan(ball_x) else np.nan
+
+    # --- Defensive line ---
+    def_xs = _gr_elementwise(arrays["x"][defending], _to_gr_x, flip) if len(defending) > 0 else np.empty(0)
+    if len(defending) > 0:
+        sorted_xs = np.sort(def_xs)
+        n_back = min(4, len(sorted_xs))
+        defensive_line_x = float(np.median(sorted_xs[:n_back]))
+        deepest_defender_x = float(sorted_xs[0])
+        # pandas' NaN-skipping max/min on the storage dtype, as the old `defending["y"]` computed it.
+        def_y = pd.Series(arrays["y"][defending])
+        defensive_line_width = float(def_y.max() - def_y.min())
+    else:
+        defensive_line_x = deepest_defender_x = defensive_line_width = np.nan
+
+    if keeper is not None and not np.isnan(defensive_line_x):
+        gk_x_gr = _to_gr_x(float(arrays["x"][keeper]), flip)
+        defensive_line_depth = abs(defensive_line_x - gk_x_gr)
+    else:
+        defensive_line_depth = np.nan
+
+    # --- Attacking players ---
+    if len(attacking) > 0:
+        atk_xs = _gr_elementwise(arrays["x"][attacking], _to_gr_x, flip)
+        atk_ys = _gr_elementwise(arrays["y"][attacking], _to_gr_y, flip)
+        nearest_atk_x = float(np.min(atk_xs))
+        atk_cx = float(np.mean(atk_xs))
+        atk_cy = float(np.mean(atk_ys))
+        # atk_xs/atk_ys are goal-relative (both axes, ADR-089), which is what the helper expects.
+        in_box = _geo.in_penalty_area_goal_relative_array(atk_xs, atk_ys)
+        attackers_in_box = int(np.sum(in_box))
+    else:
+        atk_xs = atk_ys = np.empty(0)
+        nearest_atk_x = atk_cx = atk_cy = np.nan
+        attackers_in_box = 0
+
+    # --- Defenders behind ball ---
+    if len(defending) > 0 and not np.isnan(ball_x):
+        defenders_behind_ball = int(np.sum(def_xs < ball_x))
+    else:
+        defenders_behind_ball = 0
+
+    # --- Spatial geometry ---
+    ball_to_goal_angle = float(np.arctan2(ball_y - _GOAL_Y, ball_x)) if not np.isnan(ball_x) else np.nan
+
+    if len(attacking) > 0 and not np.isnan(ball_x):
+        dists = np.sqrt((atk_xs - ball_x) ** 2 + (atk_ys - ball_y) ** 2)
+        ball_to_nearest_atk = float(np.min(dists))
+    else:
+        ball_to_nearest_atk = np.nan
+
+    if len(defending) >= 3:
+        coords = np.column_stack([def_xs, _gr_elementwise(arrays["y"][defending], _to_gr_y, flip)])
+        try:
+            hull = ConvexHull(coords)
+            compactness = float(hull.volume)
+        except QhullError:
+            compactness = np.nan
+    else:
+        compactness = np.nan
+
+    ball_in_own_half = 1.0 if (not np.isnan(ball_x) and ball_x < _FIELD_LENGTH / 2) else 0.0
+    # ADR-019 scalar-vs-scalar seam. `ball_carrier_team_id` may reach here from the public
+    # `carrier=` cache kwarg with a dtype the frames do not share, in which case a raw
+    # compare pins team_in_possession to 0 for every row. `same_id` also subsumes the
+    # try/except this replaced: it returns False for None/pd.NA/NaN on either side rather
+    # than raising (the fence's stated reason -- "pd.NA comparison raises TypeError" -- is
+    # handled inside `_canonical`), so the None/NA/NaN behaviour is unchanged.
+    team_in_poss = 1.0 if same_id(ball_carrier_team_id, gk_team_id) else 0.0
+    period_clamped = min(int(arrays["period_id"][first]), 2)
+    time_s = float(arrays["time_seconds"][first]) if arrays.has("time_seconds") else 0.0
+
+    # --- Velocity (actual dt from consecutive frames) ---
+    if prev_defensive_line_x is not None and not np.isnan(defensive_line_x):
+        def_line_speed = (defensive_line_x - prev_defensive_line_x) / dt
+    else:
+        def_line_speed = np.nan
+
+    if prev_defending_centroid_x is not None and len(defending) > 0:
+        def_cx = float(np.mean(def_xs))
+        def_centroid_vx = (def_cx - prev_defending_centroid_x) / dt
+    else:
+        def_centroid_vx = np.nan
+
+    row = [
+        ball_x,
+        ball_y,
+        ball_vx,
+        ball_vy,
+        ball_dist,
+        defensive_line_x,
+        defensive_line_depth,
+        defensive_line_width,
+        attackers_in_box,
+        nearest_atk_x,
+        atk_cx,
+        atk_cy,
+        defenders_behind_ball,
+        deepest_defender_x,
+        phase,
+        team_in_poss,
+        score_diff,
+        time_s,
+        period_clamped,
+        ball_to_goal_angle,
+        ball_to_nearest_atk,
+        compactness,
+        ball_in_own_half,
+        ball_speed,
+        def_line_speed,
+        def_centroid_vx,
+    ]
+    # Feature-set-driven final assembly of ONE computation (DRY): position_only selects the same
+    # values minus the 5 velocity features. On a lone freeze frame the dropped velocity features would
+    # be NaN (no vx/vy, no predecessor for the cross-frame derivatives) -- but they are not selected,
+    # so the 21-vector is finite (the single-frame obligation).
+    _values = dict(zip(GHOST_GK_FEATURE_NAMES, row, strict=True))
+    _names = GHOST_GK_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else GHOST_GK_FEATURE_NAMES
+    return pd.DataFrame([[_values[c] for c in _names]], columns=_names)
+
+
 def extract_ghost_gk_features(
     frame_data: pd.DataFrame,
     *,
@@ -714,8 +922,9 @@ def extract_ghost_gk_features(
     """Extract 26 ghost-GK features from frame data in goal-relative coords.
 
     Accepts a single frame (one game_id/period_id/frame_id group) and
-    returns a single-row DataFrame. Called in a vectorized batch by
-    compute_ghost_gk.
+    returns a single-row DataFrame. The batch extract behind compute_ghost_gk
+    and prepare_ghost_gk_training_data computes its rows through the same
+    array core that this function wraps.
 
     Input frames MUST be in LTR-normalized convention (home attacks right
     in all periods). The goal_x parameter specifies which end the GK
@@ -760,28 +969,9 @@ def extract_ghost_gk_features(
         features = extract_ghost_gk_features(frame, gk_team_id=1, goal_x=0.0)
         features.shape  # (1, 26)
     """
-    # --- Coordinate transform (ADR-089 both-axes; helpers are module-level, shared with serve) ---
-    flip = goal_x > 50.0
-
-    # --- Ball ---
-    ball = frame_data[frame_data["is_ball"].astype(bool)]
-    if len(ball) > 0:
-        bx_raw = float(ball["x"].iloc[0])
-        by_raw = float(ball["y"].iloc[0])
-        bvx_raw = float(ball["vx"].iloc[0]) if "vx" in ball.columns else np.nan
-        bvy_raw = float(ball["vy"].iloc[0]) if "vy" in ball.columns else np.nan
-    else:
-        bx_raw = by_raw = bvx_raw = bvy_raw = np.nan
-
-    ball_x = _to_gr_x(bx_raw, flip)
-    ball_y = _to_gr_y(by_raw, flip)
-    ball_vx = _to_gr_vx(bvx_raw, flip)
-    ball_vy = _to_gr_vy(bvy_raw, flip)
-    ball_speed = float(np.sqrt(bvx_raw**2 + bvy_raw**2)) if not np.isnan(bvx_raw) else np.nan
-    ball_dist = float(np.sqrt(ball_x**2 + (ball_y - _GOAL_Y) ** 2)) if not np.isnan(ball_x) else np.nan
-
-    # --- Player splits ---
-    players = frame_data[~frame_data["is_ball"].astype(bool)]
+    # --- Player splits (the array core computes the row from them; spec r4 D20) ---
+    is_ball = frame_data["is_ball"].astype(bool).to_numpy()
+    players = frame_data[~is_ball]
     # ADR-019: gk_team_id is a caller-supplied scalar and need NOT share the frames'
     # team_id dtype (GS emits nullable Int64; sportec/kloppy carry object strings). A raw
     # compare is silently all-False across dtypes -> an EMPTY defending split and a corrupt
@@ -791,134 +981,28 @@ def extract_ghost_gk_features(
     # present, so it would move an NA-team player out of `attacking` (where the original
     # `!=` put it) into neither split. `~ids_match` reproduces the original NA semantics
     # exactly -- for an NA player team_id AND for an NA gk_team_id.
-    _is_gk_team = ids_match(players["team_id"], gk_team_id)
-    _is_gk_flag = players["is_goalkeeper"].astype(bool)
-    defending = players[_is_gk_team & ~_is_gk_flag]
-    attacking = players[~_is_gk_team & ~_is_gk_flag]
-    gk_rows = players[_is_gk_team & _is_gk_flag]
-
-    # --- Defensive line ---
-    if len(defending) > 0:
-        def_xs = np.asarray(defending["x"].apply(lambda v: _to_gr_x(v, flip)).values)
-        sorted_xs = np.sort(def_xs)
-        n_back = min(4, len(sorted_xs))
-        defensive_line_x = float(np.median(sorted_xs[:n_back]))
-        deepest_defender_x = float(sorted_xs[0])
-        defensive_line_width = float(defending["y"].max() - defending["y"].min())
-    else:
-        defensive_line_x = deepest_defender_x = defensive_line_width = np.nan
-
-    if len(gk_rows) > 0 and not np.isnan(defensive_line_x):
-        gk_x_gr = _to_gr_x(float(gk_rows["x"].iloc[0]), flip)
-        defensive_line_depth = abs(defensive_line_x - gk_x_gr)
-    else:
-        defensive_line_depth = np.nan
-
-    # --- Attacking players ---
-    if len(attacking) > 0:
-        atk_xs = np.asarray(attacking["x"].apply(lambda v: _to_gr_x(v, flip)).values)
-        atk_ys = np.asarray(attacking["y"].apply(lambda v: _to_gr_y(v, flip)).values)
-        nearest_atk_x = float(np.min(atk_xs))
-        atk_cx = float(np.mean(atk_xs))
-        atk_cy = float(np.mean(atk_ys))
-        # atk_xs/atk_ys are goal-relative (both axes, ADR-089), which is what the helper expects.
-        in_box = _geo.in_penalty_area_goal_relative_array(atk_xs, atk_ys)
-        attackers_in_box = int(np.sum(in_box))
-    else:
-        nearest_atk_x = atk_cx = atk_cy = np.nan
-        attackers_in_box = 0
-
-    # --- Defenders behind ball ---
-    if len(defending) > 0 and not np.isnan(ball_x):
-        def_xs_arr = np.asarray(defending["x"].apply(lambda v: _to_gr_x(v, flip)).values)
-        defenders_behind_ball = int(np.sum(def_xs_arr < ball_x))
-    else:
-        defenders_behind_ball = 0
-
-    # --- Spatial geometry ---
-    ball_to_goal_angle = float(np.arctan2(ball_y - _GOAL_Y, ball_x)) if not np.isnan(ball_x) else np.nan
-
-    if len(attacking) > 0 and not np.isnan(ball_x):
-        atk_xs_rel = np.asarray(attacking["x"].apply(lambda v: _to_gr_x(v, flip)).values)
-        atk_ys_rel = np.asarray(attacking["y"].apply(lambda v: _to_gr_y(v, flip)).values)
-        dists = np.sqrt((atk_xs_rel - ball_x) ** 2 + (atk_ys_rel - ball_y) ** 2)
-        ball_to_nearest_atk = float(np.min(dists))
-    else:
-        ball_to_nearest_atk = np.nan
-
-    if len(defending) >= 3:
-        coords = np.column_stack(
-            [
-                np.asarray(defending["x"].apply(lambda v: _to_gr_x(v, flip)).values),
-                np.asarray(defending["y"].apply(lambda v: _to_gr_y(v, flip)).values),
-            ]
-        )
-        try:
-            hull = ConvexHull(coords)
-            compactness = float(hull.volume)
-        except QhullError:
-            compactness = np.nan
-    else:
-        compactness = np.nan
-
-    ball_in_own_half = 1.0 if (not np.isnan(ball_x) and ball_x < _FIELD_LENGTH / 2) else 0.0
-    # ADR-019 scalar-vs-scalar seam. `ball_carrier_team_id` may reach here from the public
-    # `carrier=` cache kwarg with a dtype the frames do not share, in which case a raw
-    # compare pins team_in_possession to 0 for every row. `same_id` also subsumes the
-    # try/except this replaced: it returns False for None/pd.NA/NaN on either side rather
-    # than raising (the fence's stated reason -- "pd.NA comparison raises TypeError" -- is
-    # handled inside `_canonical`), so the None/NA/NaN behaviour is unchanged.
-    team_in_poss = 1.0 if same_id(ball_carrier_team_id, gk_team_id) else 0.0
-    period_clamped = min(int(frame_data["period_id"].iloc[0]), 2)
-    time_s = float(frame_data["time_seconds"].iloc[0]) if "time_seconds" in frame_data.columns else 0.0
-
-    # --- Velocity (actual dt from consecutive frames) ---
-    if prev_defensive_line_x is not None and not np.isnan(defensive_line_x):
-        def_line_speed = (defensive_line_x - prev_defensive_line_x) / dt
-    else:
-        def_line_speed = np.nan
-
-    if prev_defending_centroid_x is not None and len(defending) > 0:
-        def_cx = float(np.mean(np.asarray(defending["x"].apply(lambda v: _to_gr_x(v, flip)).values)))
-        def_centroid_vx = (def_cx - prev_defending_centroid_x) / dt
-    else:
-        def_centroid_vx = np.nan
-
-    row = [
-        ball_x,
-        ball_y,
-        ball_vx,
-        ball_vy,
-        ball_dist,
-        defensive_line_x,
-        defensive_line_depth,
-        defensive_line_width,
-        attackers_in_box,
-        nearest_atk_x,
-        atk_cx,
-        atk_cy,
-        defenders_behind_ball,
-        deepest_defender_x,
-        phase,
-        team_in_poss,
-        score_diff,
-        time_s,
-        period_clamped,
-        ball_to_goal_angle,
-        ball_to_nearest_atk,
-        compactness,
-        ball_in_own_half,
-        ball_speed,
-        def_line_speed,
-        def_centroid_vx,
-    ]
-    # Feature-set-driven final assembly of ONE computation (DRY): position_only selects the same
-    # values minus the 5 velocity features. On a lone freeze frame the dropped velocity features would
-    # be NaN (no vx/vy, no predecessor for the cross-frame derivatives) -- but they are not selected,
-    # so the 21-vector is finite (the single-frame obligation).
-    _values = dict(zip(GHOST_GK_FEATURE_NAMES, row, strict=True))
-    _names = GHOST_GK_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else GHOST_GK_FEATURE_NAMES
-    return pd.DataFrame([[_values[c] for c in _names]], columns=_names)
+    _is_gk_team = ids_match(players["team_id"], gk_team_id).to_numpy()
+    _is_gk_flag = players["is_goalkeeper"].astype(bool).to_numpy()
+    player_rows = np.flatnonzero(~is_ball)
+    ball_rows = np.flatnonzero(is_ball)
+    keeper_rows = player_rows[_is_gk_team & _is_gk_flag]
+    return _ghost_gk_feature_row(
+        FrameArrays(frame_data),
+        first=0,
+        ball=int(ball_rows[0]) if len(ball_rows) > 0 else None,
+        defending=player_rows[_is_gk_team & ~_is_gk_flag],
+        attacking=player_rows[~_is_gk_team & ~_is_gk_flag],
+        keeper=int(keeper_rows[0]) if len(keeper_rows) > 0 else None,
+        gk_team_id=gk_team_id,
+        goal_x=goal_x,
+        score_diff=score_diff,
+        phase=phase,
+        ball_carrier_team_id=ball_carrier_team_id,
+        prev_defensive_line_x=prev_defensive_line_x,
+        prev_defending_centroid_x=prev_defending_centroid_x,
+        dt=dt,
+        feature_set=feature_set,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -997,8 +1081,15 @@ def _extract_all_ghost_gk_features(
 
     # --- Pre-index carrier for O(1) lookup ---
     carrier_idx: pd.Series | None = None
+    carrier_at: dict | None = None
     if carrier is not None and "ball_carrier_team_id" in carrier.columns:
         carrier_idx = carrier.set_index(["game_id", "period_id", "frame_id"])["ball_carrier_team_id"]
+        if carrier_idx.index.is_unique:
+            # Spec r4 D20: one dict, not a MultiIndex lookup per frame. On a unique index `carrier_idx[key]` is
+            # the value at the key's position (`Series.array[i]`), so the dict holds the same objects. A
+            # duplicated key keeps the per-frame lookup below: there `carrier_idx[key]` returns rows, not a value.
+            values = carrier_idx.array
+            carrier_at = {key: values[i] for i, key in enumerate(carrier_idx.index)}
 
     # --- Subsample ---
     work = frames
@@ -1024,125 +1115,154 @@ def _extract_all_ghost_gk_features(
     # `subsample_fps` is set.
     _goal_map = resolve_defended_goals(work)
 
-    # --- Group and iterate ---
+    # --- Group and iterate (spec r4 D20: the columns become arrays ONCE, each frame is a slice) ---
+    # The groupby's own walk as row positions: the frames the old loop walked, in its order and with its keys,
+    # without a DataFrame per frame.
     group_keys = ["game_id", "period_id", "frame_id"]
-    grouped = list(work.groupby(group_keys, sort=True))
+    frame_rows = ordered_group_rows(work, group_keys, sort=True)
 
     feature_rows: list[pd.DataFrame] = []
     meta_rows: list[dict] = []
     prev_state: dict[tuple, tuple[float, float]] = {}
     prev_timestamps: dict[tuple, float] = {}
 
-    for (gid, pid, fid), frame_data in grouped:
-        gk_rows = frame_data[frame_data["is_goalkeeper"].astype(bool) & ~frame_data["is_ball"].astype(bool)]
-        time_s = float(frame_data["time_seconds"].iloc[0]) if "time_seconds" in frame_data.columns else 0.0
+    if frame_rows:
+        arrays = FrameArrays(work)
+        is_ball = work["is_ball"].astype(bool).to_numpy()
+        is_gk = work["is_goalkeeper"].astype(bool).to_numpy()
+        is_keeper = is_gk & ~is_ball
+        is_outfield = ~is_gk & ~is_ball
+        keeper_rows = np.flatnonzero(is_keeper)
+        cells = _KeeperCells(work, keeper_rows)
+        keeper_cell = np.full(len(work), -1, dtype=np.int64)
+        keeper_cell[keeper_rows] = np.arange(len(keeper_rows))
+        has_time = "time_seconds" in work.columns
+        # ADR-019 identity, ONE whole-column `ids_match` per keeper team. `ids_match` answers element by element
+        # (its object-column probe can change the path, never an element's answer), so each frame's slice of the
+        # whole-column mask is the mask the per-frame call computed.
+        on_team_by_id: dict[tuple[type, Any], np.ndarray] = {}
 
-        # PR-S66 §5: when link_frame_ids is set, build a feature row only for
-        # linked frames, but ALWAYS walk every frame below to update the velocity
-        # state so a linked frame's predecessor is its true (cross-period) neighbour
-        # rather than the previous *linked* frame.
-        # fid is the groupby key (int/np.int); membership in the int set matches
-        # by value regardless of numpy-vs-python int, so no explicit cast needed.
-        fid_linked = link_frame_ids is None or fid in link_frame_ids
+        for (gid, pid, fid), rows in frame_rows:
+            time_s = float(arrays["time_seconds"][rows[0]]) if has_time else 0.0
 
-        for _, gk_row in gk_rows.iterrows():
-            gk_team = gk_row["team_id"]
-            goal_x = _goal_map.get(gid, pid, gk_team, allow_guess=True)
-            if goal_x is None:
-                # No usable end -> no ghost. The former fallback was
-                # `0.0 if same_id(gk_team, home_team_id) else 105.0`, a CONSTANT 105.0 for any
-                # NA-team keeper -- wrong for half the possible cases, and silently, because the
-                # feature vector is then computed in the mirrored goal-relative frame.
-                continue
-            flip = goal_x > 50.0
+            # PR-S66 §5: when link_frame_ids is set, build a feature row only for
+            # linked frames, but ALWAYS walk every frame below to update the velocity
+            # state so a linked frame's predecessor is its true (cross-period) neighbour
+            # rather than the previous *linked* frame.
+            # fid is the groupby key (int/np.int); membership in the int set matches
+            # by value regardless of numpy-vs-python int, so no explicit cast needed.
+            fid_linked = link_frame_ids is None or fid in link_frame_ids
 
-            # Cheap defensive-line-x + centroid in goal-relative coords, computed
-            # for EVERY frame to drive the velocity state. These mirror exactly
-            # extract_ghost_gk_features' defensive_line_x and the stored centroid
-            # (median of the back-4 goal-relative x; mean goal-relative x) — see
-            # TestExtractionRestriction golden which guards bit-identical velocity.
-            # ADR-019: must use the SAME id-identity rule as extract_ghost_gk_features'
-            # defending split -- the TestExtractionRestriction golden guards that the
-            # velocity state computed here is bit-identical to the extractor's.
-            defending = frame_data[
-                ids_match(frame_data["team_id"], gk_team)
-                & ~frame_data["is_goalkeeper"].astype(bool)
-                & ~frame_data["is_ball"].astype(bool)
-            ]
-            if len(defending) > 0:
-                _dxs = defending["x"].to_numpy(dtype="float64")
-                _gr = (_FIELD_LENGTH - _dxs) if flip else _dxs
-                _sorted_xs = np.sort(_gr)
-                _n_back = min(4, len(_sorted_xs))
-                dl_x = float(np.median(_sorted_xs[:_n_back]))
-                def_cx = float(np.mean(_gr))
-            else:
-                dl_x = np.nan
-                def_cx = np.nan
+            for row in rows[is_keeper[rows]]:
+                cell = int(keeper_cell[row])
+                gk_team = cells["team_id"][cell]
+                goal_x = _goal_map.get(gid, pid, gk_team, allow_guess=True)
+                if goal_x is None:
+                    # No usable end -> no ghost. The former fallback was
+                    # `0.0 if same_id(gk_team, home_team_id) else 105.0`, a CONSTANT 105.0 for any
+                    # NA-team keeper -- wrong for half the possible cases, and silently, because the
+                    # feature vector is then computed in the mirrored goal-relative frame.
+                    continue
+                flip = goal_x > 50.0
 
-            # Velocity state (true predecessor regardless of restriction)
-            state_key = (gid, gk_team)
-            prev_dl_x, prev_dc_x = prev_state.get(state_key, (None, None))
-            prev_ts = prev_timestamps.get(state_key)
-            actual_dt = (time_s - prev_ts) if prev_ts is not None and time_s > prev_ts else _VELOCITY_WINDOW_S
-
-            if fid_linked:
-                # Score: callback returns home perspective, negate for away
-                if score_at_time is not None:
-                    sd = score_at_time(gid, time_s)
-                    if not same_id(gk_team, home_team_id):
-                        sd = -sd
+                # Cheap defensive-line-x + centroid in goal-relative coords, computed
+                # for EVERY frame to drive the velocity state. These mirror exactly
+                # extract_ghost_gk_features' defensive_line_x and the stored centroid
+                # (median of the back-4 goal-relative x; mean goal-relative x) — see
+                # TestExtractionRestriction golden which guards bit-identical velocity.
+                # ADR-019: must use the SAME id-identity rule as extract_ghost_gk_features'
+                # defending split -- the TestExtractionRestriction golden guards that the
+                # velocity state computed here is bit-identical to the extractor's.
+                team_key = (type(gk_team), gk_team)
+                on_team = on_team_by_id.get(team_key)
+                if on_team is None:
+                    on_team = on_team_by_id[team_key] = ids_match(work["team_id"], gk_team).to_numpy()
+                frame_on_team = on_team[rows]
+                defending = rows[frame_on_team & is_outfield[rows]]
+                if len(defending) > 0:
+                    _dxs = np.asarray(arrays["x"][defending], dtype="float64")
+                    _gr = (_FIELD_LENGTH - _dxs) if flip else _dxs
+                    _sorted_xs = np.sort(_gr)
+                    _n_back = min(4, len(_sorted_xs))
+                    dl_x = float(np.median(_sorted_xs[:_n_back]))
+                    def_cx = float(np.mean(_gr))
                 else:
-                    sd = 0.0
+                    dl_x = np.nan
+                    def_cx = np.nan
 
-                # Phase
-                ph = phase_at_time(gid, time_s) if phase_at_time is not None else 0
+                # Velocity state (true predecessor regardless of restriction)
+                state_key = (gid, gk_team)
+                prev_dl_x, prev_dc_x = prev_state.get(state_key, (None, None))
+                prev_ts = prev_timestamps.get(state_key)
+                actual_dt = (time_s - prev_ts) if prev_ts is not None and time_s > prev_ts else _VELOCITY_WINDOW_S
 
-                # Carrier
-                carrier_team = None
-                if carrier_idx is not None:
-                    key = (gid, pid, fid)
-                    if key in carrier_idx.index:
-                        carrier_team = carrier_idx[key]  # type: ignore[call-overload]
+                if fid_linked:
+                    # Score: callback returns home perspective, negate for away
+                    if score_at_time is not None:
+                        sd = score_at_time(gid, time_s)
+                        if not same_id(gk_team, home_team_id):
+                            sd = -sd
+                    else:
+                        sd = 0.0
 
-                feat = extract_ghost_gk_features(
-                    frame_data,
-                    gk_team_id=gk_team,
-                    goal_x=goal_x,
-                    score_diff=sd,
-                    phase=ph,
-                    ball_carrier_team_id=carrier_team,
-                    prev_defensive_line_x=prev_dl_x,
-                    prev_defending_centroid_x=prev_dc_x,
-                    dt=actual_dt,
-                    feature_set=feature_set,
-                )
-                feature_rows.append(feat)
+                    # Phase
+                    ph = phase_at_time(gid, time_s) if phase_at_time is not None else 0
 
-                # GK position in goal-relative coords for labels (ADR-089: both axes flip,
-                # so the target matches the both-axes features and serve_ghost_gk_positions'
-                # inverse).
-                gk_x_raw = float(gk_row["x"])
-                gk_y_raw = float(gk_row["y"])
-                gk_x_gr = _to_gr_x(gk_x_raw, flip)
-                gk_y_gr = _to_gr_y(gk_y_raw, flip)
+                    # Carrier
+                    carrier_team = None
+                    if carrier_at is not None:
+                        carrier_team = carrier_at.get((gid, pid, fid))
+                    elif carrier_idx is not None:
+                        key = (gid, pid, fid)
+                        if key in carrier_idx.index:
+                            carrier_team = carrier_idx[key]  # type: ignore[call-overload]
 
-                meta_rows.append(
-                    {
-                        "game_id": gid,
-                        "period_id": pid,
-                        "frame_id": fid,
-                        "gk_team_id": gk_team,
-                        "gk_x_gr": gk_x_gr,
-                        "gk_y_gr": gk_y_gr,
-                        "gk_player_id": gk_row["player_id"],
-                        "gk_visibility": gk_row.get("visibility"),
-                    }
-                )
+                    ball = rows[is_ball[rows]]
+                    keepers = rows[frame_on_team & is_keeper[rows]]
+                    feat = _ghost_gk_feature_row(
+                        arrays,
+                        first=int(rows[0]),
+                        ball=int(ball[0]) if len(ball) > 0 else None,
+                        defending=defending,
+                        attacking=rows[~frame_on_team & is_outfield[rows]],
+                        keeper=int(keepers[0]) if len(keepers) > 0 else None,
+                        gk_team_id=gk_team,
+                        goal_x=goal_x,
+                        score_diff=sd,
+                        phase=ph,
+                        ball_carrier_team_id=carrier_team,
+                        prev_defensive_line_x=prev_dl_x,
+                        prev_defending_centroid_x=prev_dc_x,
+                        dt=actual_dt,
+                        feature_set=feature_set,
+                    )
+                    feature_rows.append(feat)
 
-            # Update velocity state (every frame, linked or not)
-            prev_state[state_key] = (dl_x, def_cx)
-            prev_timestamps[state_key] = time_s
+                    # GK position in goal-relative coords for labels (ADR-089: both axes flip,
+                    # so the target matches the both-axes features and serve_ghost_gk_positions'
+                    # inverse).
+                    gk_x_raw = float(arrays["x"][row])
+                    gk_y_raw = float(arrays["y"][row])
+                    gk_x_gr = _to_gr_x(gk_x_raw, flip)
+                    gk_y_gr = _to_gr_y(gk_y_raw, flip)
+
+                    visibility = cells.get("visibility")
+                    meta_rows.append(
+                        {
+                            "game_id": gid,
+                            "period_id": pid,
+                            "frame_id": fid,
+                            "gk_team_id": gk_team,
+                            "gk_x_gr": gk_x_gr,
+                            "gk_y_gr": gk_y_gr,
+                            "gk_player_id": cells["player_id"][cell],
+                            "gk_visibility": visibility[cell] if visibility is not None else None,
+                        }
+                    )
+
+                # Update velocity state (every frame, linked or not)
+                prev_state[state_key] = (dl_x, def_cx)
+                prev_timestamps[state_key] = time_s
 
     if not feature_rows:
         # feature_set-appropriate empty columns, matching the non-empty concat below (a hardcoded
@@ -1388,6 +1508,67 @@ def _flatten_trees(nodes_list: list[np.ndarray]) -> _FlatTrees:
     )
 
 
+#: Rows per chunk of the numpy leaf walk (spec r3 D16). Rows are independent, so the chunking never changes a value;
+#: a chunk's working arrays stay cache-sized.
+_LEAF_WALK_CHUNK = 32_768
+
+
+def _walk_rows(flat: _FlatTrees, X: np.ndarray, *, values: bool) -> np.ndarray:
+    """Walk every tree for the rows of ``X`` over the flat node arrays (spec r3 D16).
+
+    Per tree, level by level, only the rows not yet at a leaf advance, with the comparisons of the numpy reference
+    body this replaced (``x <= num_threshold``; a NaN goes to ``missing_go_to_left``) and its 100-step depth bound.
+    ``values``: each row's reached-leaf values summed tree by tree IN TREE ORDER -- the reference body's float
+    additions in its order, so the result is bit-identical -- raising past the depth bound. Otherwise the
+    (rows, trees) LOCAL leaf indices; a row past the depth bound keeps the index it reached (no raise, ADR-076).
+    """
+    m = X.shape[0]
+    n_trees = len(flat.offsets) - 1
+    out = np.zeros(m, dtype=np.float64) if values else np.zeros((m, n_trees), dtype=np.intp)
+    rows = np.arange(m)
+    for t in range(n_trees):
+        base = flat.offsets[t]
+        cur = np.zeros(m, dtype=np.intp)
+        active = rows
+        for _ in range(100):  # depth bound
+            node = base + cur[active]
+            internal = flat.left[node] != 0
+            if not internal.any():
+                break
+            active = active[internal]
+            node = node[internal]
+            feat_vals = X[active, flat.feat[node]]
+            go_left = np.where(np.isnan(feat_vals), flat.miss[node] != 0, feat_vals <= flat.thr[node])
+            cur[active] = np.where(go_left, flat.left[node], flat.right[node])
+        if values:
+            reached = base + cur
+            # Convergence guard (raise, NOT assert — `python -O` strips asserts): a tree
+            # deeper than the cap would otherwise read an internal node's `value` (garbage).
+            if (flat.left[reached] != 0).any():
+                msg = "leaf traversal did not converge within depth cap"
+                raise RuntimeError(msg)
+            out += flat.val[reached]
+        else:
+            out[:, t] = cur
+    return out
+
+
+def _leaf_walk(nodes_list: list[np.ndarray], X: np.ndarray, flat: _FlatTrees | None, *, values: bool) -> np.ndarray:
+    """The numpy leaf walk (spec r3 D16): `_walk_rows` over row chunks of ``_LEAF_WALK_CHUNK``, serially. Each chunk
+    writes its own disjoint slice, so the chunking never changes a value. A thread pool over the chunks was measured
+    on HF hardware and REJECTED: the walk is GIL-bound there (8 threads used 2.8-3.2 cores; the ghost_outfield
+    fold predict took 66 s against 52 s serial), so training parallelism comes from its units instead."""
+    if flat is None:
+        flat = _flatten_trees(nodes_list)
+    n = X.shape[0]
+    n_trees = len(flat.offsets) - 1
+    out = np.zeros(n, dtype=np.float64) if values else np.zeros((n, n_trees), dtype=np.intp)
+    for lo in range(0, n, _LEAF_WALK_CHUNK):
+        hi = min(lo + _LEAF_WALK_CHUNK, n)
+        out[lo:hi] = _walk_rows(flat, X[lo:hi], values=values)
+    return out
+
+
 def _vectorized_leaf_indices(
     nodes_list: list[np.ndarray], X: np.ndarray, *, flat: _FlatTrees | None = None
 ) -> np.ndarray:
@@ -1404,7 +1585,7 @@ def _vectorized_leaf_indices(
         Pre-flattened form of ``nodes_list`` (see :func:`_flatten_trees`). When supplied AND
         the ``[numba]`` extra is installed (and ``SILLY_KICKS_GHOST_FORCE_NUMPY`` is unset),
         the traversal dispatches to the bit-identical ``@njit`` adapter. Otherwise the numpy
-        body below runs (the reference + fallback).
+        walk (:func:`_leaf_walk`) runs; it flattens ``nodes_list`` itself when ``flat`` is None.
 
     Returns
     -------
@@ -1413,42 +1594,7 @@ def _vectorized_leaf_indices(
     """
     if flat is not None and _use_ghost_numba():
         return _leaf_indices_numba(flat.left, flat.right, flat.feat, flat.thr, flat.miss, flat.val, flat.offsets, X)
-
-    n_samples = X.shape[0]
-    n_trees = len(nodes_list)
-    leaves = np.zeros((n_samples, n_trees), dtype=np.intp)
-
-    for t_idx, nodes in enumerate(nodes_list):
-        current = np.zeros(n_samples, dtype=np.intp)
-
-        for _ in range(100):  # depth bound
-            node_data = nodes[current]
-            is_leaf = node_data["left"] == 0
-            if np.all(is_leaf):
-                break
-
-            feature_idx = node_data["feature_idx"]
-            thresholds = node_data["num_threshold"]
-            go_left_missing = node_data["missing_go_to_left"]
-
-            # Gather feature values for each sample's current split feature
-            feat_vals = X[np.arange(n_samples), feature_idx]
-
-            # Decision: NaN handling + threshold comparison
-            is_nan = np.isnan(feat_vals)
-            go_left = np.where(
-                is_nan,
-                go_left_missing.astype(bool),
-                feat_vals <= thresholds,
-            )
-
-            # Advance non-leaf samples
-            next_node = np.where(go_left, node_data["left"], node_data["right"])
-            current = np.where(is_leaf, current, next_node)
-
-        leaves[:, t_idx] = current
-
-    return leaves
+    return _leaf_walk(nodes_list, X, flat, values=False)
 
 
 def _vectorized_leaf_values(
@@ -1479,7 +1625,8 @@ def _vectorized_leaf_values(
         Pre-flattened form of ``nodes_list`` (see :func:`_flatten_trees`). When supplied AND
         the ``[numba]`` extra is installed (and ``SILLY_KICKS_GHOST_FORCE_NUMPY`` is unset),
         the traversal dispatches to the bit-identical ``@njit`` adapter. Otherwise the numpy
-        body below runs (the reference + fallback). Bit-identical either way (``np.array_equal``).
+        walk (:func:`_leaf_walk`) runs; it flattens ``nodes_list`` itself when ``flat`` is None.
+        Bit-identical either way (``np.array_equal``).
 
     Returns
     -------
@@ -1493,36 +1640,7 @@ def _vectorized_leaf_values(
     """
     if flat is not None and _use_ghost_numba():
         return _leaf_values_numba(flat.left, flat.right, flat.feat, flat.thr, flat.miss, flat.val, flat.offsets, X)
-
-    n_samples = X.shape[0]
-    total = np.zeros(n_samples, dtype=np.float64)
-
-    for nodes in nodes_list:
-        current = np.zeros(n_samples, dtype=np.intp)
-
-        for _ in range(100):  # depth bound
-            node_data = nodes[current]
-            is_leaf = node_data["left"] == 0
-            if np.all(is_leaf):
-                break
-
-            feat_vals = X[np.arange(n_samples), node_data["feature_idx"]]
-            go_left = np.where(
-                np.isnan(feat_vals),
-                node_data["missing_go_to_left"].astype(bool),
-                feat_vals <= node_data["num_threshold"],
-            )
-            next_node = np.where(go_left, node_data["left"], node_data["right"])
-            current = np.where(is_leaf, current, next_node)
-
-        # Convergence guard (raise, NOT assert — `python -O` strips asserts): a tree
-        # deeper than the cap would otherwise read an internal node's `value` (garbage).
-        if not np.all(nodes[current]["left"] == 0):
-            msg = "leaf traversal did not converge within depth cap"
-            raise RuntimeError(msg)
-        total += nodes[current]["value"]
-
-    return total
+    return _leaf_walk(nodes_list, X, flat, values=True)
 
 
 def _leaf_match_weights(
@@ -1897,7 +2015,10 @@ class GhostGkModel:
         self._baseline_y: float | None = None
         self._training_gk_x: np.ndarray | None = None
         self._training_gk_y: np.ndarray | None = None
-        self._training_leaves: np.ndarray | None = None
+        # The training rows' leaf indices for predict_density, computed on their first read from the
+        # fit-time matrix (the `_training_leaves` property; HFU plan R3-8 S3 item 14).
+        self._training_leaves_cache: np.ndarray | None = None
+        self._training_X: np.ndarray | None = None
         # Recorded training-time sklearn version (preserved across load->save so a
         # parameters-only migration does not launder provenance; spec 2026-07-20 §4).
         self._sklearn_version: str | None = None
@@ -1915,6 +2036,28 @@ class GhostGkModel:
         self.carrier_params: dict = dict(DEFAULT_CARRIER_PARAMS)
         self.training_commit: str | None = None
         self.training_platform: str | None = None
+
+    @property
+    def _training_leaves(self) -> np.ndarray | None:
+        """The training rows' leaf indices, shape (n_train, n_trees), for :meth:`predict_density`.
+
+        Computed on the FIRST read from the fit-time matrix that :meth:`fit` keeps, with the same function and
+        the same arrays the eager walk in ``fit`` used, so the leaves are bit-identical to it; the matrix is
+        then released. ``fit`` never walks the training rows itself: no trainer reads the leaves and
+        :meth:`save` never persists them (HF: 44.6 s of a 101 s ghost_gk cv fold; HFU plan R3-8 S3 item 14).
+        None on an unfitted model and on a parameters-only artifact.
+        """
+        if self._training_leaves_cache is None and self._training_X is not None and self._tree_nodes is not None:
+            self._training_leaves_cache = _vectorized_leaf_indices(
+                self._tree_nodes, self._training_X, flat=self._flat_trees
+            )
+            self._training_X = None
+        return self._training_leaves_cache
+
+    @_training_leaves.setter
+    def _training_leaves(self, value: np.ndarray | None) -> None:
+        self._training_leaves_cache = value
+        self._training_X = None
 
     def _feature_names(self) -> list[str]:
         """The model's feature columns for its ``feature_set`` (26 faithful / 21 position_only).
@@ -2003,9 +2146,12 @@ class GhostGkModel:
         self._baseline_x = float(regressor._baseline_prediction.item())
         self._baseline_y = float(regressor_y._baseline_prediction.item())
 
-        # Keep training leaves + labels — the KDE / predict_density still needs them
-        # (the gk_x leaf partition + the joint (gk_x, gk_y) labels for the density/mode/spread).
-        self._training_leaves = _vectorized_leaf_indices(self._tree_nodes, X, flat=self._flat_trees)
+        # Keep the training matrix + labels — the KDE / predict_density still needs the training leaves
+        # (the gk_x leaf partition) and the joint (gk_x, gk_y) labels for the density/mode/spread. The
+        # leaves are computed on their first read (`_training_leaves`), never here: no trainer reads them
+        # and save() never persists them (HFU plan R3-8 S3 item 14). `X` is this fit's own float64 copy.
+        self._training_leaves = None
+        self._training_X = X
         self._training_gk_x = np.array(y_x, copy=True)
         self._training_gk_y = np.asarray(y_y, dtype=np.float64).copy()
 
@@ -2282,7 +2428,6 @@ class GhostGkModel:
             # only stamp the runtime version for a genuinely fresh fit (spec §4).
             "sklearn_version": self._sklearn_version or sklearn.__version__,
             "training_commit": self.training_commit,
-            "training_platform": self.training_platform,
             "corpus_provenance": self.corpus_provenance,
             "serve_estimator": SERVED_ESTIMATOR,
             "version": "1.3.0",

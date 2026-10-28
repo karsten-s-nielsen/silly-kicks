@@ -66,8 +66,8 @@ def _banned_hits(path: Path) -> set[str]:
 
 
 def _hf_job_entries() -> list[str]:
-    """Every module an HF campaign launches: each registry trainer's pipeline module (or its module, for
-    an adapter-launched trainer: the adapter runs its CLI in-job) and every driver (spec 5.8 item 4)."""
+    """Every module an HF campaign launches: each registry trainer's pipeline module (its module when no
+    pipeline is set, as `campaign.instances` launches it) and every driver (spec 5.8 item 4)."""
     from scripts.hf_jobs.registry import DRIVERS, REGISTRY
 
     mods = {s.pipeline or s.module for s in REGISTRY.values()} | {d.module for d in DRIVERS.values()}
@@ -111,7 +111,7 @@ def test_adr052_seam_is_traversed_not_exempted():
 
 
 def test_the_pass_completion_pining_cross_check_is_severed_not_exempted():
-    """Severance anti-rot (ADR-123 Amendment B, ADR-128): ``train_pass_completion`` runs on HF via the adapter,
+    """Severance anti-rot (ADR-123 Amendment B, ADR-128): ``train_pass_completion`` runs on HF as a pipeline,
     so its owner-tier ``--source pining`` cross-check lives in ``_pass_completion_pining``, which injects its
     source. The HF closure must not reach that module or the pining client. The owner closure DOES reach the
     pining client, so the cross-check keeps its source and a re-merge into the trainer fails the gate above."""

@@ -190,7 +190,10 @@ def test_predict_mean_uses_the_numba_kernel_on_the_default_path(monkeypatch):
     """Regression guard: a silent revert to the numpy path (e.g. dropping flat=) is caught."""
     from silly_kicks.tracking import _ghost_gk as G
 
-    m, X = _fit()  # fit() triggers the lazy numba bind, so G._leaf_values_numba is the real kernel
+    m, X = _fit()
+    # Bind the lazy numba kernels so G._leaf_values_numba is the real kernel. fit() no longer binds them: it
+    # walks no training rows (HFU plan R3-8 S3 item 14), so the first numba call can come after the spy.
+    G._use_ghost_numba()
     calls = {"n": 0}
     real = G._leaf_values_numba
 
@@ -296,7 +299,11 @@ def test_predict_density_uses_the_indices_numba_kernel_on_the_default_path(monke
     leaf-match (a perf regression bit-identity output cannot detect) is caught here (spec §5.5)."""
     from silly_kicks.tracking import _ghost_gk as G
 
-    m, X = _fit()  # fit() triggers the lazy numba bind AND builds _flat_trees
+    m, X = _fit()  # fit() builds _flat_trees
+    G._use_ghost_numba()  # bind the lazy kernels before the spy (fit() no longer walks; S3 item 14)
+    # The training leaves are computed on their first read; read them now, so the spy counts only the
+    # query leaf-match (the first predict_density would otherwise also walk the training rows).
+    assert m._training_leaves is not None
     calls = {"n": 0}
     real = G._leaf_indices_numba
 

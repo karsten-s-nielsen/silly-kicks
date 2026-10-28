@@ -98,3 +98,62 @@ def test_group_rows_category_key_is_observed_only_no_phantom_groups():
     assert set(g._indices) == {"a", "b"}  # NOT "z" -- the zero-row category is not a phantom group
     assert g.get("z").empty  # a genuinely-absent key still misses (empty frame)
     assert len(g.get("a")) == 2
+
+
+def _same_key_part(a, b) -> bool:
+    if type(a) is not type(b):
+        return False
+    if pd.isna(a) or pd.isna(b):
+        return bool(pd.isna(a) and pd.isna(b))
+    return bool(a == b)
+
+
+@pytest.mark.parametrize("sort", [True, False])
+@pytest.mark.parametrize("dropna", [True, False])
+@pytest.mark.parametrize("kind", ["int", "str", "Int64", "float_nan", "object_none", "object_mixed_none"])
+def test_ordered_group_rows_is_the_groupby_walk(kind, sort, dropna):
+    """Spec r4 D20: the extract loops walk ``groupby`` by positions. The walk must be the iteration's own:
+    the same key objects (type and value, NA keys included), the same rows, in the same group order."""
+    from silly_kicks._frame_index import ordered_group_rows
+
+    rng = np.random.default_rng(3)
+    n = 200
+    df = pd.DataFrame(
+        {
+            "game_id": rng.integers(1, 3, n),
+            "period_id": rng.integers(1, 3, n),
+            "frame_id": rng.integers(0, 15, n),
+            "x": rng.random(n),
+        }
+    )
+    if kind == "str":
+        df["game_id"] = df["game_id"].map({1: "g1", 2: "g2"}).astype(object)
+    elif kind == "Int64":
+        df["game_id"] = df["game_id"].astype("Int64")
+        df.loc[df.index[::17], "game_id"] = pd.NA
+    elif kind == "float_nan":
+        df["frame_id"] = df["frame_id"].astype(float)
+        df.loc[df.index[::13], "frame_id"] = np.nan
+    elif kind in ("object_none", "object_mixed_none"):  # an object key with a missing value (B review R4I-04)
+        values = {1: "g1", 2: "g2"} if kind == "object_none" else {1: 1, 2: "1"}
+        df["game_id"] = df["game_id"].map(values).astype(object)
+        df.loc[df.index[::11], "game_id"] = None
+    df = df.sample(frac=1.0, random_state=5)  # shuffled index labels: the walk is positional
+    by = ["game_id", "period_id", "frame_id"]
+    marked = df.assign(__pos=np.arange(len(df)))
+    expected = [(key, group["__pos"].to_numpy()) for key, group in marked.groupby(by, sort=sort, dropna=dropna)]
+    got = ordered_group_rows(df, by, sort=sort, dropna=dropna)
+    assert len(got) == len(expected) > 0
+    for (key, rows), (want_key, want_rows) in zip(got, expected, strict=True):
+        assert isinstance(key, tuple) and len(key) == len(want_key)
+        assert all(_same_key_part(a, b) for a, b in zip(key, want_key, strict=True)), (key, want_key)
+        assert np.array_equal(rows, want_rows)
+
+
+def test_ordered_group_rows_refuses_one_key_column():
+    """A one-column groupby iterates its keys as Python scalars, which ``indices`` does not hold: refuse rather than
+    hand on keys of another type."""
+    from silly_kicks._frame_index import ordered_group_rows
+
+    with pytest.raises(ValueError, match="two or more key columns"):
+        ordered_group_rows(_frames(), ["frame_id"])

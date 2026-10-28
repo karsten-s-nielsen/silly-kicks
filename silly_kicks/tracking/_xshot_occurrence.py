@@ -16,11 +16,12 @@ import json
 import math
 import warnings
 from pathlib import Path
-from typing import Literal, overload
+from typing import Any, Literal, overload
 
 import numpy as np
 import pandas as pd
 
+from silly_kicks._frame_index import ordered_group_rows
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.id_compat import align_join_keys, ids_match
 from silly_kicks.spadl import config as _spc
@@ -30,6 +31,7 @@ from silly_kicks.tracking._ball_carrier import (
     derive_team_in_possession,
     infer_ball_carrier,
 )
+from silly_kicks.tracking._frame_arrays import NONE_OTHER, FrameArrays, first_other
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking._velocity_availability import (
     variant_key_for_velocity as _variant_key_for_velocity,
@@ -163,28 +165,52 @@ def _nearest_k(ball_xy: tuple[float, float], pts: np.ndarray, k: int = 5):
     return dist, ang
 
 
-def extract_xshot_features(
-    frame_data: pd.DataFrame,
+class _XShotFrames:
+    """A frame set for the xShot row (spec r4 D20): ``cols`` reads each column once; ``is_ball``/``is_gk`` are the
+    ``astype(bool)`` reads the per-frame body made, applied to the whole columns; ``on_team`` is ONE whole-column
+    ``ids_match`` per defending team. Each read is element-wise, so a frame's slice is the old per-frame read."""
+
+    def __init__(self, frames: pd.DataFrame) -> None:
+        self.cols = FrameArrays(frames)
+        self._frames = frames
+        self._is_ball: np.ndarray | None = None
+        self._is_gk: np.ndarray | None = None
+        self._on_team: dict[tuple[type, Any], np.ndarray] = {}
+
+    def is_ball(self) -> np.ndarray:
+        if self._is_ball is None:
+            self._is_ball = self._frames["is_ball"].astype(bool).to_numpy()
+        return self._is_ball
+
+    def is_gk(self) -> np.ndarray:
+        if self._is_gk is None:
+            self._is_gk = self._frames["is_goalkeeper"].astype(bool).to_numpy()
+        return self._is_gk
+
+    def on_team(self, team) -> np.ndarray:
+        # ADR-019: `ids_match` answers element by element (its object-column probe can change the path, never an
+        # element's answer), so the whole-column mask sliced to a frame's players is the per-frame mask.
+        key = (type(team), team)
+        mask = self._on_team.get(key)
+        if mask is None:
+            mask = self._on_team[key] = ids_match(self._frames["team_id"], team).to_numpy()
+        return mask
+
+
+def _xshot_feature_row(
+    frame: _XShotFrames,
+    rows: np.ndarray,
     *,
     gk_team_id: int | str,
     goal_x: float,
-    feature_set: XShotFeatureSet = "faithful",
+    feature_set: XShotFeatureSet,
 ) -> pd.DataFrame:
-    """Extract xS features from one frame (goal-relative). Returns a 1-row frame.
+    """The array core of :func:`extract_xshot_features`: ONE frame's feature row (spec r4 D20).
 
-    The defending team is ``gk_team_id`` (the team whose goal is being attacked);
-    ``goal_x`` is the absolute x of that defended goal (0.0 or 105.0).
-
-    ``feature_set="extended"`` is not implemented in PR-S75 (raises
-    NotImplementedError) --- only ``"faithful"`` (the paper's 27 features) ships
-    here; see the TF-16 spec.
-
-    Examples
-    --------
-    >>> # row = extract_xshot_features(frame, gk_team_id=1, goal_x=0.0)
-    >>> # row.shape == (1, 27)
-
-    See NOTICE for full bibliographic citations.
+    The frame arrives as row positions into ``frame``, in the frame's row order. Every value comes from the scalar
+    code of the per-frame pandas body this replaced, in its order and on its argument types: the goal-relative
+    transform runs ``_geo.to_goal_relative_*`` per element on the Python floats ``Series.map`` passed. Only the
+    column reads moved to ``frame``, which makes each one once for the whole frame set.
     """
     if feature_set == "extended":
         raise NotImplementedError(
@@ -198,25 +224,24 @@ def extract_xshot_features(
     # per-site helper. `gx` was x-only while y was read at FOUR independent sites (ball, defenders,
     # attackers, keeper), so before PR 5 every bearing negated between the two goal ends while every
     # radial stayed byte-identical -- and a per-site fix leaves "no call site can be missed" an
-    # assertion rather than a property. `assign` returns a NEW frame (ADR-033: never mutate the
-    # caller's).
-    fd = frame_data.assign(
-        x=frame_data["x"].map(lambda v: _geo.to_goal_relative_x(float(v), goal_x=goal_x)),
-        y=frame_data["y"].map(lambda v: _geo.to_goal_relative_y(float(v), goal_x=goal_x)),
-    )
+    # assertion rather than a property. (spec r4 D20: `Series.map` passed each value as a Python scalar; the
+    # same function now runs on the same scalars, collected into the float64 array `map` inferred.)
+    cols = frame.cols
+    gx = np.asarray([_geo.to_goal_relative_x(float(v), goal_x=goal_x) for v in cols["x"][rows].tolist()])
+    gy = np.asarray([_geo.to_goal_relative_y(float(v), goal_x=goal_x) for v in cols["y"][rows].tolist()])
 
-    is_ball = fd["is_ball"].astype(bool)
-    is_gk = fd["is_goalkeeper"].astype(bool)
-    ball = fd[is_ball]
-    players = fd[~is_ball]
-    players_is_gk = is_gk[~is_ball]
+    is_ball = frame.is_ball()[rows]
+    is_gk = frame.is_gk()[rows]
+    players = ~is_ball
+    ball = np.flatnonzero(is_ball)
 
     if len(ball) > 0:
-        bx = float(ball["x"].iloc[0])
-        by = float(ball["y"].iloc[0])
-        bvx = float(ball["vx"].iloc[0]) if "vx" in ball.columns else np.nan
-        bvy = float(ball["vy"].iloc[0]) if "vy" in ball.columns else np.nan
-        bz = float(ball["z"].iloc[0]) if "z" in ball.columns else np.nan
+        first_ball = ball[0]
+        bx = float(gx[first_ball])
+        by = float(gy[first_ball])
+        bvx = float(cols["vx"][rows[first_ball]]) if cols.has("vx") else np.nan
+        bvy = float(cols["vy"][rows[first_ball]]) if cols.has("vy") else np.nan
+        bz = float(cols["z"][rows[first_ball]]) if cols.has("z") else np.nan
     else:
         bx = by = bvx = bvy = bz = np.nan
 
@@ -227,37 +252,19 @@ def extract_xshot_features(
     # ADR-019: dtype-safe team-id identity (Int64(2) vs "2" must match). One computed
     # mask, three consumers; ids_match resolves NA to False, so NaN-team rows land in
     # ``attacking`` via the plain complement -- byte-matching the legacy ``!=``.
-    is_gk_team = ids_match(players["team_id"], gk_team_id)
-    defending = players[is_gk_team & (~players_is_gk)]
-    attacking = players[~is_gk_team]
-    gk_rows = players[is_gk_team & players_is_gk]
+    on_team = frame.on_team(gk_team_id)[rows]
+    defending = np.flatnonzero(players & on_team & ~is_gk)
+    attacking = np.flatnonzero(players & ~on_team)
+    gk_rows = np.flatnonzero(players & on_team & is_gk)
 
-    def_xy = (
-        np.column_stack(
-            [
-                defending["x"].to_numpy(dtype=float),
-                defending["y"].to_numpy(dtype=float),
-            ]
-        )
-        if len(defending)
-        else np.empty((0, 2))
-    )
-    atk_xy = (
-        np.column_stack(
-            [
-                attacking["x"].to_numpy(dtype=float),
-                attacking["y"].to_numpy(dtype=float),
-            ]
-        )
-        if len(attacking)
-        else np.empty((0, 2))
-    )
+    def_xy = np.column_stack([gx[defending], gy[defending]]) if len(defending) else np.empty((0, 2))
+    atk_xy = np.column_stack([gx[attacking], gy[attacking]]) if len(attacking) else np.empty((0, 2))
 
     open_goal = _open_goal_fraction((bx, by), def_xy)
 
     if len(gk_rows) > 0:
-        gkx = float(gk_rows["x"].iloc[0])
-        gky = float(gk_rows["y"].iloc[0])
+        gkx = float(gx[gk_rows[0]])
+        gky = float(gy[gk_rows[0]])
         gk_r = math.hypot(gkx, gky - _geo.GOAL_Y)
         gk_theta = math.atan2(gky - _geo.GOAL_Y, gkx)
     else:
@@ -285,6 +292,38 @@ def extract_xshot_features(
     # `values` minus `speed`; a velocity-less frame leaves `speed` NaN but it is simply not selected.
     names = XSHOT_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XSHOT_FEATURE_NAMES_FAITHFUL
     return pd.DataFrame([[values[c] for c in names]], columns=names)
+
+
+def extract_xshot_features(
+    frame_data: pd.DataFrame,
+    *,
+    gk_team_id: int | str,
+    goal_x: float,
+    feature_set: XShotFeatureSet = "faithful",
+) -> pd.DataFrame:
+    """Extract xS features from one frame (goal-relative). Returns a 1-row frame.
+
+    The defending team is ``gk_team_id`` (the team whose goal is being attacked);
+    ``goal_x`` is the absolute x of that defended goal (0.0 or 105.0).
+
+    ``feature_set="extended"`` is not implemented in PR-S75 (raises
+    NotImplementedError) --- only ``"faithful"`` (the paper's 27 features) ships
+    here; see the TF-16 spec.
+
+    Examples
+    --------
+    >>> # row = extract_xshot_features(frame, gk_team_id=1, goal_x=0.0)
+    >>> # row.shape == (1, 27)
+
+    See NOTICE for full bibliographic citations.
+    """
+    return _xshot_feature_row(
+        _XShotFrames(frame_data),
+        np.arange(len(frame_data)),
+        gk_team_id=gk_team_id,
+        goal_x=goal_x,
+        feature_set=feature_set,
+    )
 
 
 #: SPADL action types that count as a shot occurrence (ADR-126). Defined above
@@ -476,8 +515,14 @@ class XShotOccurrenceModel:
         *,
         carrier_params: dict | None = None,
         horizon_seconds: float = 1.0,
+        runtime_n_jobs: int = 1,
     ) -> XShotOccurrenceModel:
         """Fit the classifier. Records ``carrier_params`` into the model (R3).
+
+        ``runtime_n_jobs`` sets xgboost's thread count for THIS fit only (ADR-128 Cycle-1 opt-in): the
+        serialized ``n_jobs`` stays the pinned ``1`` (``self._params`` is untouched), so the artifact is
+        byte-identical across thread counts (proven) while a ``thread_safe`` trainer can use its vCPU share.
+        The budget reaches here trainer-side (``SILLY_KICKS_RUNTIME_THREADS``), never an env read in ``fit``.
 
         Examples
         --------
@@ -494,6 +539,7 @@ class XShotOccurrenceModel:
         # P(shot) calibrated without scale_pos_weight" claim does not silently depend on xgboost's
         # auto-intercept behaviour surviving a future pin move.
         params["base_score"] = float(np.asarray(labels, dtype=float).mean())
+        params["n_jobs"] = int(runtime_n_jobs)  # runtime only; self._params (serialized) keeps n_jobs=1
         clf = xgb.XGBClassifier(**params)
         clf.fit(features.to_numpy(dtype=float), labels.to_numpy(dtype=int))
         booster = clf.get_booster()
@@ -524,8 +570,6 @@ class XShotOccurrenceModel:
         """
         if self._booster is None:
             raise RuntimeError("Model not fitted.")
-        import platform
-
         import xgboost as xgb
 
         path = Path(path)
@@ -550,7 +594,6 @@ class XShotOccurrenceModel:
             "pitch_width": _geo.PITCH_WIDTH,
             "geometry_version": _geo.GEOMETRY_VERSION,
             "xgboost_version": xgb.__version__,
-            "training_platform": platform.platform(),
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),
@@ -884,34 +927,41 @@ def prepare_xshot_training_data(
     feat_rows: list[pd.DataFrame] = []
     labels_idx: list[dict] = []
     key_rows: list[dict] = []  # ADDITIVE (return_keys): (game_id, period_id, frame_id) per selected row
-    for (gid, pid, fid), grp in poss.groupby(["game_id", "period_id", "frame_id"], dropna=False):
-        tip = grp["team_in_possession"].iloc[0]
-        if pd.isna(tip):
-            continue
-        outfield = grp[~grp["is_ball"].astype(bool)]
-        others = [t for t in outfield["team_id"].dropna().unique() if t != tip]
-        if not others:
-            continue
-        def_team = others[0]
-        goal_x = goal_map.get(gid, pid, def_team, allow_guess=True)
-        if goal_x is None:
-            continue
-        if attacking_third_only:
-            ball = grp[grp["is_ball"].astype(bool)]
-            ball_x = float(ball["x"].iloc[0]) if len(ball) else float("nan")
-            if not _ball_in_attacking_third(ball_x, goal_x):
+    # Spec r4 D20: the groupby's own walk as row positions, over columns read once (no DataFrame per frame).
+    walk = ordered_group_rows(poss, ["game_id", "period_id", "frame_id"], sort=True, dropna=False)
+    if walk:
+        frame = _XShotFrames(poss)
+        cols = frame.cols
+        has_team = poss["team_id"].notna().to_numpy()
+        for (gid, pid, fid), rows in walk:
+            tip = cols.cells("team_in_possession")[rows[0]]
+            if pd.isna(tip):
                 continue
-        feat_rows.append(extract_xshot_features(grp, gk_team_id=def_team, goal_x=goal_x, feature_set=feature_set))
-        labels_idx.append(
-            {
-                "game_id": gid,
-                "period_id": pid,
-                "time_seconds": float(grp["time_seconds"].iloc[0]),
-                "team_in_possession": tip,
-            }
-        )
-        if return_keys:
-            key_rows.append({"game_id": gid, "period_id": pid, "frame_id": fid})
+            is_ball = frame.is_ball()
+            def_team = first_other(cols.cells("team_id"), rows[~is_ball[rows] & has_team[rows]], tip)
+            if def_team is NONE_OTHER:
+                continue
+            goal_x = goal_map.get(gid, pid, def_team, allow_guess=True)
+            if goal_x is None:
+                continue
+            if attacking_third_only:
+                ball_rows = rows[is_ball[rows]]
+                ball_x = float(cols["x"][ball_rows[0]]) if len(ball_rows) else float("nan")
+                if not _ball_in_attacking_third(ball_x, goal_x):
+                    continue
+            feat_rows.append(
+                _xshot_feature_row(frame, rows, gk_team_id=def_team, goal_x=goal_x, feature_set=feature_set)
+            )
+            labels_idx.append(
+                {
+                    "game_id": gid,
+                    "period_id": pid,
+                    "time_seconds": float(cols["time_seconds"][rows[0]]),
+                    "team_in_possession": tip,
+                }
+            )
+            if return_keys:
+                key_rows.append({"game_id": gid, "period_id": pid, "frame_id": fid})
 
     # feature_set-appropriate column set -- "extended" is guarded out above, so this is
     # faithful/position_only. Single-sourced so the empty-path and the concat-select cannot drift
@@ -1052,26 +1102,33 @@ def compute_xshot_occurrence(
     keys: list[tuple] = []  # (gid, pid, frame_id, team_in_possession)
     n_groups = 0
     n_skipped_goal = 0  # N1: count frames dropped for a missing goal map entry
-    for (gid, pid, frame_id), grp in poss.groupby(["game_id", "period_id", "frame_id"], dropna=False):
-        if link_frame_ids is not None and int(str(frame_id)) not in link_frame_ids:
-            continue
-        n_groups += 1
-        tip = grp["team_in_possession"].iloc[0]
-        if pd.isna(tip):
-            continue
-        # Defending team = a non-ball team that is NOT in possession. Exclude the
-        # ball row (sentinel team_id) so it is never mistaken for a defending team.
-        outfield = grp[~grp["is_ball"].astype(bool)]
-        teams = [t for t in outfield["team_id"].dropna().unique() if t != tip]
-        if not teams:
-            continue
-        def_team = teams[0]
-        goal_x = goal_map.get(gid, pid, def_team, allow_guess=True)
-        if goal_x is None:
-            n_skipped_goal += 1
-            continue
-        feat_rows.append(extract_xshot_features(grp, gk_team_id=def_team, goal_x=goal_x, feature_set=m.feature_set))
-        keys.append((gid, pid, frame_id, tip))
+    # Spec r4 D20: the groupby's own walk as row positions, over columns read once (no DataFrame per frame).
+    walk = ordered_group_rows(poss, ["game_id", "period_id", "frame_id"], sort=True, dropna=False)
+    if walk:
+        frame = _XShotFrames(poss)
+        cols = frame.cols
+        has_team = poss["team_id"].notna().to_numpy()
+        for (gid, pid, frame_id), rows in walk:
+            if link_frame_ids is not None and int(str(frame_id)) not in link_frame_ids:
+                continue
+            n_groups += 1
+            tip = cols.cells("team_in_possession")[rows[0]]
+            if pd.isna(tip):
+                continue
+            # Defending team = a non-ball team that is NOT in possession. Exclude the
+            # ball row (sentinel team_id) so it is never mistaken for a defending team.
+            is_ball = frame.is_ball()
+            def_team = first_other(cols.cells("team_id"), rows[~is_ball[rows] & has_team[rows]], tip)
+            if def_team is NONE_OTHER:
+                continue
+            goal_x = goal_map.get(gid, pid, def_team, allow_guess=True)
+            if goal_x is None:
+                n_skipped_goal += 1
+                continue
+            feat_rows.append(
+                _xshot_feature_row(frame, rows, gk_team_id=def_team, goal_x=goal_x, feature_set=m.feature_set)
+            )
+            keys.append((gid, pid, frame_id, tip))
 
     # N1: surface coverage loss rather than dropping silently.
     if n_skipped_goal and n_groups and n_skipped_goal / n_groups > 0.05:

@@ -83,10 +83,12 @@ def git_provenance() -> dict:
 
     ``platform``/``machine`` answer WHERE, which the commit cannot. Added when ghost was re-fit on
     DGX Spark (aarch64) while `_feature_contract`'s tolerance note still asserted that every
-    fingerprinted artifact was produced on x86 -- a claim that had silently become false. A contract
-    mismatch on a cross-platform artifact must be diagnosable from the artifact itself. It belongs
+    fingerprinted artifact was produced on x86 -- a claim that had silently become false. It belongs
     HERE, not in each trainer, for the same reason the commit does: this is the one seam every
-    artifact driver already calls, so no driver can forget it.
+    artifact driver already calls, so no driver can forget it. Since D3 (ADR-128 amendment 2026-10-27)
+    the platform is recorded in each UNIT LEDGER (`_stages.run_unit`), not in the artifact: a
+    run-dependent value in a fit artifact broke a same-commit main-vs-replica byte-identity. A
+    cross-platform contract mismatch is now diagnosed from the run ledger, not the loaded artifact.
 
     ``tree_state`` is ``"clean"``, ``"dirty"`` or ``"unknown"``. ``dirty`` is the ORIGINAL boolean,
     unchanged: ``True`` for BOTH ``dirty`` and ``unknown``, because unknown provenance is treated as

@@ -7,12 +7,15 @@ import hashlib
 import json
 import shutil
 import subprocess
+import types
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from scripts.hf_jobs import adopt as A
 from scripts.hf_jobs import manifest as M
+from scripts.hf_jobs.campaign import Campaign
 from scripts.hf_jobs.datasets import expected_identity, locked
 from scripts.hf_jobs.identity import artifact_identity
 
@@ -38,12 +41,149 @@ def _public_xshot(d: Path, *, commit: str = C, tier: str = "public", digest: dic
     return d
 
 
+# ---- retrieve: the counters of every counters-bearing stage (spec r4 D18 (a)) -------------------------
+
+
+class _Store:
+    """A dict-backed store at one run key (`read_bytes` only)."""
+
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = files
+
+    def read_bytes(self, rel: str) -> bytes | None:
+        return self.files.get(rel)
+
+
+class _WStore(_Store):
+    """`_Store` with writes: the whole `scripts._stages.Store` protocol over the dict."""
+
+    def write_bytes(self, rel: str, data: bytes) -> None:
+        self.files[rel] = data
+
+    def write_if_absent(self, rel: str, data: bytes) -> bool:
+        if rel in self.files:
+            return False
+        self.files[rel] = data
+        return True
+
+    def names(self, rel_dir: str) -> set[str]:
+        prefix = rel_dir.rstrip("/") + "/"
+        return {k[len(prefix) :].split("/", 1)[0] for k in self.files if k.startswith(prefix)}
+
+    def delete(self, rel: str) -> None:
+        self.files.pop(rel, None)
+
+    def local_path(self, rel: str) -> Path | None:
+        return None
+
+
+def test_retrieve_records_the_counters_of_every_counters_bearing_stage(tmp_path, monkeypatch):
+    """Spec r4 D18 (a): `ghost_gk`'s bias counters moved from `extract` to `select`, and `receiver_model` carries
+    counters on two stages, so the record holds every counters-bearing ItemStage's counters BY STAGE (the plan's
+    `counters` flag), never only the stage named `extract`. `verify`'s integrity gate reads its families' `extract`."""
+    from scripts._stages import FileSet, write_result
+
+    inst = A.Instance("ghost_gk", "owner", "default", "scripts.train_ghost_gk", (), (), "rk")
+    monkeypatch.setattr(A, "instances", lambda c, commit, replica=None: [inst])
+    files: dict[str, bytes] = {}
+
+    store = _WStore(files)
+    write_result(store, "g/assemble/t/_output", FileSet({"model.json": b"{}"}))
+    files["g/select/s/u1.counters.json"] = json.dumps({"bias_depth_detected_n": 3}).encode()
+    files["g/select/s/u2.counters.json"] = json.dumps({"bias_depth_detected_n": 4}).encode()
+    plan = {
+        "output": "assemble",
+        "stages": [
+            {"name": "extract", "generation": "g/extract/e", "units": ["u1", "u2"], "counters": False, "reduced": True},
+            {"name": "select", "generation": "g/select/s", "units": ["u1", "u2"], "counters": True, "reduced": True},
+            {"name": "assemble", "generation": "g/assemble/t", "units": ["only"], "counters": False, "reduced": True},
+        ],
+    }
+    camp = cast("Campaign", types.SimpleNamespace(bucket="b/x"))  # `retrieve` reads only `bucket`
+    out = A.retrieve(
+        camp, C, staging=tmp_path / "staging", plan_fn=lambda inst, bucket: plan, store_fn=lambda uri: store
+    )
+    record = json.loads((tmp_path / "staging" / f"{inst.id}.record.json").read_text(encoding="utf-8"))
+    assert list(out) == [inst.id]
+    assert record["counters"] == {"select": {"totals": {"bias_depth_detected_n": 7}, "n_counters_unrecorded": 0}}
+
+
+def test_retrieve_restricts_the_counters_to_the_tiers_arm_units(tmp_path, monkeypatch):
+    """Spec r4 D18 (c): the public tier reads the SHARED dataset, so its `extract` counters (the ADR-126 integrity
+    inputs) are summed over the units of its own arms only -- never over the other tier's matches."""
+    from scripts._stages import FileSet, write_result
+
+    arms = json.dumps({"arms": {"public": ["u1", "u2"]}, "ship_order": ["public"]})
+    inst = A.Instance("xshot_occurrence", "public", "default", "m", ("--arms-json", arms), (), "rk")
+    monkeypatch.setattr(A, "instances", lambda c, commit, replica=None: [inst])
+    files: dict[str, bytes] = {}
+
+    store = _WStore(files)
+    write_result(store, "g/assemble/t/_output", FileSet({"model.json": b"{}"}))
+    for i, n in ((1, 2), (2, 3), (3, 50), (4, 70)):
+        files[f"g/extract/e/u{i}.counters.json"] = json.dumps({"n_events": n}).encode()
+    plan = {
+        "output": "assemble",
+        "stages": [
+            {"name": "extract", "generation": "g/extract/e", "units": ["u1", "u2", "u3", "u4"], "counters": True},
+            {"name": "assemble", "generation": "g/assemble/t", "units": ["only"], "counters": False, "reduced": True},
+        ],
+    }
+    camp = cast("Campaign", types.SimpleNamespace(bucket="b/x"))  # `retrieve` reads only `bucket`
+    A.retrieve(camp, C, staging=tmp_path / "st", plan_fn=lambda inst, bucket: plan, store_fn=lambda uri: store)
+    record = json.loads((tmp_path / "st" / f"{inst.id}.record.json").read_text(encoding="utf-8"))
+    assert record["counters"]["extract"] == {"totals": {"n_events": 5}, "n_counters_unrecorded": 0}
+
+
+def test_the_dataset_check_reads_the_dataset_the_job_read(tmp_path):
+    """Spec r4 D18 (c): the public xShot tier READS `xshot115` (`read_dataset`); the corpus identity it records stays
+    `xshot17`'s (its public arm is exactly that corpus). The revision check names the dataset the job read."""
+    a = MAN.artifacts["xshot_default"]
+    assert (a.dataset, a.read_dataset) == ("xshot17", "xshot115")
+    fresh = _public_xshot(tmp_path / "x")
+    assert A.expectation_violations(a, fresh, _record("xshot115"), C) == []
+    assert any("read dataset xshot115" in v for v in A.expectation_violations(a, fresh, _record("xshot17"), C))
+
+
+def test_every_read_dataset_holds_its_artifacts_corpus_as_its_tier_arm():
+    """Spec r4 D18 (c): an artifact that reads a dataset other than its corpus does so only where its tier's arm of
+    that dataset IS the corpus, match for match (computed off-HF from the lock, as the launcher computes it)."""
+    from scripts.hf_jobs import arm_policy
+    from scripts.hf_jobs.datasets import staged_units
+
+    readers = [a for a in MAN.artifacts.values() if a.read_dataset]
+    assert readers  # non-vacuous: the public xShot / xCross artifacts
+    for a in readers:
+        assert a.read_dataset is not None and a.dataset is not None
+        tier_arm = arm_policy.compute_arms(staged_units(a.read_dataset))["arms"][a.tier]
+        corpus = arm_policy.compute_arms(staged_units(a.dataset))["arms"]
+        assert sorted(tier_arm) == sorted({k for keys in corpus.values() for k in keys}), a.id
+
+
+def test_the_integrity_gate_reads_the_extract_counters_of_its_families(tmp_path):
+    """Spec r4 D18 (a): with counters by stage, the ADR-126 integrity gate reads the `extract` counters of xShot /
+    xCross -- and refuses, named, when that stage recorded none."""
+    a = MAN.artifacts[next(k for k, v in MAN.artifacts.items() if v.job == "xshot_occurrence")]
+    calls: list[list[str]] = []
+
+    def run(argv, **_kw):
+        calls.append(argv)
+        Path(argv[argv.index("--out") + 1]).write_text(json.dumps({"go": True, "verdict": "GO"}), encoding="utf-8")
+        return types.SimpleNamespace(returncode=0, stderr="")
+
+    extract = {"totals": {"duration_s": 10.0, "n_frames": 250, "n_events": 4}, "n_counters_unrecorded": 0}
+    got = A._integrity(a, tmp_path, {"counters": {"extract": extract}}, {}, tmp_path, run=run)
+    assert got["go"] is True and calls[0][calls[0].index("--n-events") + 1] == "4"
+    refused = A._integrity(a, tmp_path, {"counters": {"select": extract}}, {}, tmp_path, run=run)
+    assert refused == {"go": False, "reason": "integrity inputs missing (extract counters unrecorded)"}
+
+
 # ---- step 4: exactly the five expectations ----------------------------------------------------------
 
 
 def test_a_compliant_public_artifact_has_no_violation(tmp_path):
     assert (
-        A.expectation_violations(MAN.artifacts["xshot_default"], _public_xshot(tmp_path / "f"), _record("xshot17"), C)
+        A.expectation_violations(MAN.artifacts["xshot_default"], _public_xshot(tmp_path / "f"), _record("xshot115"), C)
         == []
     )
 
@@ -57,9 +197,9 @@ def test_refuses_a_training_commit_other_than_the_campaign_commit(tmp_path):
 
 def test_refuses_a_dataset_revision_other_than_the_pinned_one(tmp_path):
     bad = A.expectation_violations(
-        MAN.artifacts["xshot_default"], _public_xshot(tmp_path / "f"), _record("xshot17", "0" * 40), C
+        MAN.artifacts["xshot_default"], _public_xshot(tmp_path / "f"), _record("xshot115", "0" * 40), C
     )
-    assert any("read dataset xshot17" in v for v in bad)
+    assert any("read dataset xshot115" in v for v in bad)  # spec r4 D18 (c): the dataset the job READ
 
 
 def test_refuses_a_corpus_digest_or_n_other_than_the_staging_record(tmp_path):

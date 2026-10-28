@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
-from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, main
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, cli_main
 
 _SHOT_IDS = [spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")]
 _SUCCESS = spadlconfig.result_id["success"]
@@ -171,38 +171,58 @@ def calibration_metrics(pooled: pd.DataFrame, games: pd.DataFrame, params) -> di
 
     Returns ece, reliability_slope (OLS of win-indicator on p_win), brier, n_oof. base_strength is a
     pre-match feature (leakage-free by DATE), so it is the SAME column in every fold -- only the GLM is
-    refit per fold.
+    refit per fold. HFU S3 item 7 (b): the folds are `calibration_fold` (the pipeline's `cv` units) and the metrics
+    `metrics_from_cv` over them in fold order; the `2474b73` serial body is the test oracle.
     """
+    folds = [calibration_fold(pooled, games, params, i) for i in range(CV_FOLDS)]
+    return metrics_from_cv(pd.concat(folds, ignore_index=True))
+
+
+#: HFU plan R3-8 S3 item 7 (b): the calibration's GroupKFold folds, one `cv` unit each (`calibration_metrics` uses
+#: ``min(5, matches)`` folds; a unit past that returns no rows).
+CV_FOLDS = 5
+
+
+def calibration_fold(pooled: pd.DataFrame, games: pd.DataFrame, params, fold: int) -> pd.DataFrame:
+    """Fold ``fold`` of `calibration_metrics`' GroupKFold-by-match loop, with the loop body's own code: that fold's
+    OOF ``p_win`` (``p``) and win targets (``y``), in the order the loop appends them. No rows when the fold does not
+    exist (fewer than 2 matches, or ``fold >= min(5, matches)``). `metrics_from_cv` over the folds concatenated in
+    fold order equals `calibration_metrics` byte for byte."""
+    import itertools
+
     from sklearn.model_selection import GroupKFold
 
-    from silly_kicks._calibration_metrics import ece
     from silly_kicks.win_probability import WinProbabilityModel, compute_win_probability
 
-    win = _actual_win(pooled)
     game_ids = pd.unique(pooled["game_id"])
+    n_splits = min(CV_FOLDS, len(game_ids))
+    if n_splits < 2 or fold >= n_splits:
+        return pd.DataFrame({"p": np.array([], dtype=float), "y": np.array([], dtype=float)})
+    win = _actual_win(pooled)
     groups = pooled["game_id"].to_numpy()
-    n_splits = min(5, len(game_ids))
-    if n_splits < 2:
-        return {"ece": float("nan"), "reliability_slope": float("nan"), "brier": float("nan"), "n_oof": 0}
-
+    idx = np.arange(len(pooled))
+    tr, te = next(itertools.islice(GroupKFold(n_splits=n_splits).split(idx, groups=groups), fold, None))
     preds: list[float] = []
     targets: list[float] = []
-    gkf = GroupKFold(n_splits=n_splits)
-    idx = np.arange(len(pooled))
-    for tr, te in gkf.split(idx, groups=groups):
-        train_games = set(pd.unique(pooled.iloc[tr]["game_id"]))
-        tr_pool = pooled[pooled["game_id"].isin(train_games)]
-        m = WinProbabilityModel(params=params).fit(tr_pool, games=games, strength_column="base_strength")
-        te_games = set(pd.unique(pooled.iloc[te]["game_id"]))
-        te_pool = pooled[pooled["game_id"].isin(te_games)]
-        samples, _ = compute_win_probability(te_pool, model=m, games=games, strength_column="base_strength")
-        s = samples.dropna(subset=["p_win"])
-        for gid, t, pw in zip(s["game_id"], s["team_id"], s["p_win"], strict=False):
-            preds.append(float(pw))
-            targets.append(win.get((gid, t), 0.0))
+    train_games = set(pd.unique(pooled.iloc[tr]["game_id"]))
+    tr_pool = pooled[pooled["game_id"].isin(train_games)]
+    m = WinProbabilityModel(params=params).fit(tr_pool, games=games, strength_column="base_strength")
+    te_games = set(pd.unique(pooled.iloc[te]["game_id"]))
+    te_pool = pooled[pooled["game_id"].isin(te_games)]
+    samples, _ = compute_win_probability(te_pool, model=m, games=games, strength_column="base_strength")
+    s = samples.dropna(subset=["p_win"])
+    for gid, t, pw in zip(s["game_id"], s["team_id"], s["p_win"], strict=False):
+        preds.append(float(pw))
+        targets.append(win.get((gid, t), 0.0))
+    return pd.DataFrame({"p": np.asarray(preds, dtype=float), "y": np.asarray(targets, dtype=float)})
 
-    p = np.asarray(preds)
-    y = np.asarray(targets)
+
+def metrics_from_cv(cv: pd.DataFrame) -> dict:
+    """`calibration_metrics`' tail over the `cv` stage output (the folds' ``p`` and ``y`` in fold order)."""
+    from silly_kicks._calibration_metrics import ece
+
+    p = cv["p"].to_numpy(dtype=float, copy=True)
+    y = cv["y"].to_numpy(dtype=float, copy=True)
     if not len(p):
         return {"ece": float("nan"), "reliability_slope": float("nan"), "brier": float("nan"), "n_oof": 0}
     slope = float(np.polyfit(p, y, 1)[0]) if np.std(p) > 1e-9 else float("nan")
@@ -312,22 +332,41 @@ def _extract_reduce(results, ctx):
     return combine_frames(frames, ids=("game_id",)) if frames else pd.DataFrame(columns=_SHARD_COLUMNS)
 
 
+def _prepared(ctx) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The pooled rows with their leakage-free ``base_strength``, and the games frame: what the `cv` folds and the
+    final fit share. A pure function of the `extract` output, so every unit derives the same frames."""
+    pooled = ctx.upstream("extract")
+    if not len(pooled):
+        raise RuntimeError("no action rows collected from the corpus; nothing to fit")
+    strength = chronological_strength(pooled)
+    pooled = _attach_strength(pooled, strength)
+    return pooled, _games_frame(pooled)
+
+
+def _cv_work(key, ctx) -> pd.DataFrame:
+    """S3 item 7 (b): one calibration fold's OOF predictions (`calibration_fold`)."""
+    from silly_kicks.win_probability import WinProbabilityParams
+
+    pooled, games = _prepared(ctx)
+    return calibration_fold(pooled, games, WinProbabilityParams.default(), int(key))
+
+
+def _cv_reduce(results, ctx) -> pd.DataFrame:
+    """The folds' predictions concatenated in FOLD order (the order `calibration_metrics` appends them)."""
+    return pd.concat([results[k] for k in sorted(results, key=int)], ignore_index=True)
+
+
 def _fit_work(key, ctx) -> FileSet:
     import tempfile
 
     from silly_kicks.win_probability import WinProbabilityModel, WinProbabilityParams
 
-    pooled = ctx.upstream("extract")
-    if not len(pooled):
-        raise RuntimeError("no action rows collected from the corpus; nothing to fit")
+    pooled, games = _prepared(ctx)
     comps = [tuple(c) for c in ctx.upstream("refs")["competitions"]]
     params = WinProbabilityParams.default()
 
-    strength = chronological_strength(pooled)
-    pooled = _attach_strength(pooled, strength)
-    games = _games_frame(pooled)
-
-    metrics = calibration_metrics(pooled, games, params)
+    # S3 item 7 (b): the calibration folds ran as `cv` units; the metrics are `calibration_metrics` byte for byte.
+    metrics = metrics_from_cv(ctx.upstream("cv"))
     # v1 ships the BASE GLM+chain (model._isotonic stays None -> identity serve). The metrics.json ece is
     # the HONEST base-model OOF calibration, consistent with what serves. The isotonic layer is reserved
     # in the model infra (spec sec. 5.1); if the full-corpus base OOF ece exceeds ece_max it is fit then,
@@ -389,6 +428,24 @@ def _fit_work(key, ctx) -> FileSet:
     return FileSet(files)
 
 
+#: HFU plan R3-8 S3 item 12: the reviewed serial reasons of this pipeline's SERIAL stages, verbatim from the
+#: plan's SERIAL annex (owner ruling 2026-10-30, "too small to pay"); `scripts/hf_jobs/serial_reasons.py`
+#: holds the same texts and `tests/scripts/test_serial_reasons.py` holds the two equal.
+_SERIAL_REASONS = {
+    "refs": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 3 s of CPU in a 6 s wall, "
+        "listing the match references."
+    ),
+    # HFU S3 review S3B-04 (owner ruling 2026-10-31): measured on HF
+    "cv": (
+        "Reviewed floor (owner ruling 2026-10-31, S3B-04): the 5 GroupKFold folds of the calibration (fixed at "
+        "5), each a single-threaded GLM fit on its training matches and a serve of its held-out matches. On HF "
+        "the stage took 85 s, 395 CPU-s and 4.64 cores (0.58) at W=5 (job 6ae624e7c78863f9c62f3947); a finer "
+        "split re-fits a fold model per chunk or adds a second stage."
+    ),
+}
+
+
 PIPELINE = Pipeline(
     name="win_probability",
     module="scripts.train_win_probability",
@@ -396,6 +453,7 @@ PIPELINE = Pipeline(
     stages=(
         Stage(
             name="refs",
+            serial_reason=_SERIAL_REASONS["refs"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_refs_work,
             reduce=lambda r, ctx: r["only"],
@@ -411,16 +469,25 @@ PIPELINE = Pipeline(
             work=_extract_work,
             needs=("refs",),
             reduce=_extract_reduce,
+            shardable_reduce=("game_id",),  # HFU T8: a plain combine_frames concat (the reduce that timed out)
             declare=lambda p: {"model": "WinProbabilityModel", "cols": list(_SHARD_COLUMNS)},
             cross_commit_version="win-probability-shard-1",
             uses_dataset=True,
             max_failures=None,  # legacy for_each recorded failures and fit over the rest
         ),
         Stage(
+            name="cv",
+            serial_reason=_SERIAL_REASONS["cv"],  # S3B-04 (owner ruling 2026-10-31)
+            units=lambda ctx: [str(i) for i in range(CV_FOLDS)],
+            work=_cv_work,
+            needs=("extract",),
+            reduce=_cv_reduce,
+        ),
+        Stage(
             name="fit",
             units=lambda ctx: ["only"],
             work=_fit_work,
-            needs=("refs", "extract"),
+            needs=("refs", "extract", "cv"),
             reduce=lambda r, ctx: r["only"],
         ),
     ),
@@ -428,4 +495,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

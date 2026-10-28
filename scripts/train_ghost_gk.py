@@ -9,7 +9,7 @@ Usage (ADR-128 stage contract; the uniform CLI from ``scripts._stages.main``)::
 Pipeline: ``validate`` (provider + visibility + schema fail-fast, before any extraction) ->
 ``extract[match]`` (an ``ItemStage`` over the staged flat dataset: ``shards/<gen>/`` frames, ``_actions/``
 and ``home_teams.json``) -> ``cache`` (the whole-corpus matrix) -> ``cv[fold]`` -> ``fit`` (final fit +
-the BLOCKING parity gate) -> ``importance`` (metrics-only; one ``inner_parallel`` unit) -> ``assemble``
+the BLOCKING parity gate) -> ``importance[column]`` (metrics-only; spec r3 D10) -> ``assemble``
 (the bundle). The tc3 / ``--data-dir`` / ``--actions-dir`` / ``--home-teams`` modes are gone (decision
 P17): a corpus is staged first (``scripts/hf_jobs/datasets.toml``).
 
@@ -31,7 +31,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
 
 from scripts._corpus_visibility import validate_corpus_visibility
-from scripts._stages import ItemStage, Param, Pipeline, Stage, int_key, main
+from scripts._stages import ItemStage, Param, Pipeline, Stage, cli_main, int_key
 
 
 def cache_token() -> str:
@@ -81,10 +81,21 @@ _BIAS_COUNTERS = (
     "bias_b2k_undetected_n",
 )
 
+#: Spec r4 D18 (a): ONE extraction per unit that every variant selects from -- the faithful features over the widest
+#: variant grid, every row kept BEFORE the keeper-detection filter, with the keeper visibility beside it. The 2474b73
+#: campaign extracted the same games four times (one generation per feature set and grid), 420 job-minutes.
+_SUPERSET_FEATURE_SET = "faithful"
+_SUPERSET_GRID_X_MAX = 52.5
+#: The superset's schema marker: a new schema is a new extract generation, so no older shard is ever reused.
+_SUPERSET_SCHEMA = "ghost-gk-superset-1"
+#: The superset's per-row keeper detection flag (nullable ``boolean``); `select` applies the detected-only filter.
+_VISIBILITY_COL = "_gk_visibility"
+
 
 def _assert_no_column_collision(feature_columns) -> None:
     """Refuse to pack a feature whose name is indistinguishable from a label or a side column."""
-    bad = sorted(c for c in feature_columns if c in _SIDE_COLS or str(c).startswith(_LABEL_PREFIX))
+    reserved = {*_SIDE_COLS, _VISIBILITY_COL}
+    bad = sorted(c for c in feature_columns if c in reserved or str(c).startswith(_LABEL_PREFIX))
     if bad:
         raise ValueError(
             f"feature column(s) {bad} collide with the shard's reserved names "
@@ -177,25 +188,48 @@ def grid_spec_from_args(grid_x_max):
     )
 
 
-def build_extraction_inputs(*, feature_set, grid_x_max, subsample_fps, carrier_params, with_actions):
-    """The DECLARED shard-generation inputs (the digest `for_each`/`generation_dir` keys shards on).
-
-    Extracted from `main()` so the stale-shard-token behavior is BEHAVIOURALLY testable without a full
-    training run (TF-60 PR3): `grid_x_max` changes the shard's label ROWS (which keepers survive the
-    domain filter), so it MUST key the generation or a re-run with a lifted ceiling silently reuses the
-    stale <=30 m shards (the 4.77.1 trap; `feature_set` is here for the same reason -- 26 vs 21 cols).
-    `geometry` is `cache_token()` (the penalty-area constants). main() no longer builds the dict inline.
-    """
+def build_extraction_inputs(*, subsample_fps, carrier_params, with_actions):
+    """The DECLARED inputs of the SHARED superset extraction (the digest `for_each`/`generation_dir` keys its shards
+    on; spec r4 D18 (a)). The superset's fixed choices -- the faithful feature set, the widest grid, the rows kept
+    before the keeper filter -- are constants here with a schema marker, so every variant shares ONE generation and
+    no shard of another schema is reused. The variant's `feature_set` and `grid_x_max` key `select`
+    (`build_selection_inputs`). `geometry` is `cache_token()` (the penalty-area constants)."""
     return {
         "extractor": "prepare_ghost_gk_training_data",
-        "feature_set": feature_set,
-        "grid_x_max": grid_x_max,
+        "schema": _SUPERSET_SCHEMA,
+        "feature_set": _SUPERSET_FEATURE_SET,
+        "grid_x_max": _SUPERSET_GRID_X_MAX,
         "geometry": cache_token(),
         "subsample_fps": subsample_fps,
         "carrier_params": dict(carrier_params),
         "with_actions": with_actions,
+        "detected_targets_only": False,  # the keeper-detection filter is `select`'s
+    }
+
+
+def build_selection_inputs(*, feature_set, grid_x_max):
+    """The DECLARED inputs of a variant's `select` (spec r4 D18 (a)), BEHAVIOURALLY testable without a training run
+    (TF-60 PR3): `grid_x_max` changes the selected label ROWS (which keepers survive the domain filter) and
+    `feature_set` the COLUMNS (26 vs 21), so both MUST key the generation, or a re-run with a lifted ceiling silently
+    reuses the stale <=30 m selection (the 4.77.1 trap)."""
+    return {
+        "selector": "ghost-gk-select-1",
+        "feature_set": feature_set,
+        "grid_x_max": grid_x_max,
         "detected_targets_only": True,
     }
+
+
+def check_variant_grid(grid) -> None:
+    """Refuse a variant grid the superset extraction does not contain (spec r4 D18 (a)): its rows would be missing."""
+    sup = grid_spec_from_args(_SUPERSET_GRID_X_MAX)
+    if not (
+        sup.x_min <= grid.x_min and grid.x_max <= sup.x_max and sup.y_min <= grid.y_min and grid.y_max <= sup.y_max
+    ):
+        raise ValueError(
+            f"the variant grid {grid} lies outside the ghost_gk superset extraction grid {sup}; widen "
+            f"`_SUPERSET_GRID_X_MAX` (a new superset generation) before training a variant beyond it"
+        )
 
 
 def validate_corpus_providers(providers: list[str]) -> None:
@@ -226,30 +260,15 @@ def keeper_detection_mask_or_none(visibility: pd.Series) -> pd.Series | None:
     return visibility.fillna(False).astype(bool)
 
 
-def resolve_training_platform(explicit: str | None, prov: dict) -> str:
-    """The platform to stamp: an explicit label if given, else the detected one.
-
-    Defaulting to `None` was the defect. `_xshot_occurrence` and `_xcross_attempt` both record
-    `platform.platform()` unconditionally, so ghost was the only trained artifact whose machine
-    identity depended on the operator remembering a flag -- and the flag was in fact forgotten,
-    leaving artifacts that could not say where they ran. Detection is the DEFAULT and the flag is now
-    only an override for a human-meaningful label ("dgx-spark-aarch64" reads better than
-    "Linux-6.11.0-aarch64-with-glibc2.39" in a model card).
-
-    Never returns None: an absent platform and an unknown platform are the same useless value
-    downstream, and `platform.platform()` always answers.
-    """
-    return explicit or prov["platform"]
-
-
 # ---- ADR-128 stage contract --------------------------------------------------------------------------
 #
-# validate (one unit) -> extract[match] -> cache (one unit) -> cv[fold] -> fit (one unit) ->
-# importance (one inner_parallel unit) -> assemble (one unit, the bundle).
+# validate (one unit) -> extract[match] -> select[match] -> cache (one unit) -> cv[fold] -> fit (one unit) ->
+# importance[baseline + one unit per corpus column] -> assemble (one unit, the bundle).
 #
-# Variant sharing (evidence E11): extract/cache declare only the extraction inputs, so `default` and
-# `full` share them; cv/fit/importance declare the model inputs but NOT `variant`, so those two also share
-# CV and the final fit. Only `assemble` (the `variant` label in metrics.json) differs.
+# Variant sharing: `extract` is ONE superset extraction for all five variants (spec r4 D18 (a)); `select`
+# declares the variant's feature set and grid, so `default` and `full` share it and `cache` (evidence E11);
+# cv/fit/importance declare the model inputs but NOT `variant`, so those two also share CV and the final fit.
+# Only `assemble` (the `variant` label in metrics.json) differs.
 
 
 def _to_bool(text: str) -> bool:
@@ -275,7 +294,6 @@ _PARAMS = (
     Param("carrier_gamma", float, None),
     Param("carrier_tolerance", float, None),
     Param("subsample_cap", int, None, help="cap total training samples (~36000 for the bundled 'default')"),
-    Param("training_platform", str, None, help="recorded in metadata (default: the detected platform)"),
     Param("skip_permutation_importance", flag=True),
     Param("perm_importance_sample", int, 150000),
     Param("keeper_grouped", flag=True),
@@ -302,12 +320,16 @@ def _carrier(p) -> dict:
 
 def _extraction_declare(p) -> dict:
     return build_extraction_inputs(
-        feature_set=p["feature_set"],
-        grid_x_max=grid_spec_from_args(p["grid_x_max"]).x_max,
         subsample_fps=p["subsample_fps"],
         carrier_params=_carrier(p),
         with_actions=bool(p["with_actions"]),
     )
+
+
+def _selection_declare(p) -> dict:
+    grid = grid_spec_from_args(p["grid_x_max"])
+    check_variant_grid(grid)
+    return build_selection_inputs(feature_set=p["feature_set"], grid_x_max=grid.x_max)
 
 
 def _model_declare(p) -> dict:
@@ -406,32 +428,32 @@ def _extract_load(ref, ctx):
     return ref, frames, actions
 
 
-#: The per-unit selection-bias sums `counters` reads (ADR-052: replayed from the sidecar on resume). Zeroed
-#: at the start of every unit, so a unit that contributes nothing reports explicit 0s, never a stale sum.
+#: The per-unit selection-bias sums `select`'s `counters` reads (ADR-052: replayed from the sidecar on resume).
+#: Zeroed at the start of every unit, so a unit that contributes nothing reports explicit 0s, never a stale sum.
 _UNIT_BIAS: dict[str, float] = {}
 
 
 def _extract_work(item, ctx):
-    """The legacy per-game ``_work`` for every game in the unit's file (sorted), packs concatenated.
+    """The SHARED superset extraction of one unit (spec r4 D18 (a)): for every mapped game in the unit's file
+    (sorted), `prepare_ghost_gk_training_data` with the faithful features over the superset grid, EVERY row kept
+    (before the keeper-detection filter), packed with its keeper visibility; packs concatenated.
 
-    The bias counters are summed over the file's games (one game per staged flat file, so the sums are
-    the legacy per-game sums). A game with no home-team mapping is skipped, as the legacy did; a unit
-    with NO mapped game is an exclusion, so the skip is reported in the stage summary."""
+    A game with no home-team mapping is skipped, as the legacy did; a unit with NO mapped game is an exclusion, so
+    the skip is reported in the stage summary. A game with no row adds nothing, and a unit with no row returns no
+    result. Everything that depends on the variant -- its grid, the selection-bias sums, the keeper filter, the
+    feature set -- is `_select_work`'s, from these rows."""
     from scripts._item_outcome import ItemExcluded
     from silly_kicks.tracking import prepare_ghost_gk_training_data
-    from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES, keeper_detection_mask
+    from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES
 
     _assert_no_column_collision(GHOST_GK_FEATURE_NAMES)
     _ref, file_frames, actions = item
     p = ctx.params
     cp = _carrier(p)
-    grid_spec = grid_spec_from_args(p["grid_x_max"])
+    grid_spec = grid_spec_from_args(_SUPERSET_GRID_X_MAX)
     home_map = _home_map(ctx)
     actions_by_game = dict(list(actions.groupby("game_id"))) if actions is not None and len(actions) else {}
     prov = str(file_frames["source_provider"].iloc[0]) if "source_provider" in file_frames.columns else "unknown"
-    _UNIT_BIAS.clear()
-    _UNIT_BIAS.update(dict.fromkeys(_BIAS_COUNTERS, 0.0))
-    totals = _UNIT_BIAS
     packs = []
     game_ids = sorted(file_frames["game_id"].unique())
     unmapped = [g for g in game_ids if home_map.get(str(g)) is None]
@@ -451,19 +473,79 @@ def _extract_work(item, ctx):
             actions=game_actions,
             subsample_fps=p["subsample_fps"],
             carrier_params=cp,
-            feature_set=p["feature_set"],
+            feature_set=_SUPERSET_FEATURE_SET,
             grid_spec=grid_spec,
             return_meta=True,
         )
         if not len(feats):
             continue
-        if prov == "skillcorner" and len(meta):
-            _vis = keeper_detection_mask_or_none(meta["gk_visibility"])
+        pack = _pack(feats, labs, game_id=game_id, provider=prov, keepers=meta["gk_player_id"].astype(str))
+        packs.append(pack.assign(**{_VISIBILITY_COL: pd.array(meta["gk_visibility"].tolist(), dtype="boolean")}))
+    return pd.concat(packs, ignore_index=True) if packs else None
+
+
+def _select_load(ref, ctx):
+    """The superset `extract` unit of ``ref`` as `select`'s item (spec r4 D18 (a)), read back from the store and
+    verified -- or the SAME exclusion `extract` recorded for it, reason and details. A missing or corrupt superset unit
+    reopens `extract` (spec r4 D19; B r3 R4S-r3-02), so no variant ever selects from a smaller corpus."""
+    from scripts._driver import join_key
+    from scripts._item_outcome import ItemExcluded
+    from scripts._stages import read_upstream_unit
+
+    key = join_key(ref.stem)
+    raw = ctx.store.read_bytes(f"{ctx.generation('extract')}/{key}.excluded.json")
+    if raw is not None:
+        marker = json.loads(raw)
+        raise ItemExcluded(marker["reason"], details=dict(marker.get("details") or {}))
+    return ref, read_upstream_unit(ctx, "extract", key)
+
+
+def _select_work(item, ctx):
+    """One variant's training rows from the superset unit (spec r4 D18 (a)): per game in the extraction order, the
+    `2474b73` per-variant extract's tail, step for step -- the variant grid filter (`prepare_ghost_gk_training_data`'s
+    own bounds test on the same labels; a game left with no row is skipped BEFORE the bias sums and the keeper
+    mask); the SkillCorner selection-bias sums; the keeper-detection filter (fail-closed on an all-null
+    visibility); a game with no detected-keeper frame is skipped; the `position_only` projection (the same values
+    minus the velocity columns, one computation upstream); `_pack`. No packed game: no result. The bias counters are
+    summed over the unit's games, as before."""
+    from silly_kicks.tracking._ghost_gk import (
+        GHOST_GK_FEATURE_NAMES,
+        GHOST_GK_FEATURE_NAMES_POSITION_ONLY,
+        keeper_detection_mask,
+    )
+
+    _ref, superset = item
+    p = ctx.params
+    grid = grid_spec_from_args(p["grid_x_max"])
+    names = GHOST_GK_FEATURE_NAMES_POSITION_ONLY if p["feature_set"] == "position_only" else GHOST_GK_FEATURE_NAMES
+    lab_x, lab_y = f"{_LABEL_PREFIX}gk_x", f"{_LABEL_PREFIX}gk_y"
+    _UNIT_BIAS.clear()
+    _UNIT_BIAS.update(dict.fromkeys(_BIAS_COUNTERS, 0.0))
+    totals = _UNIT_BIAS
+    packs = []
+    if superset is None or not len(superset):
+        return None
+    for game_id, rows in superset.groupby("_game_id", sort=False):  # the extraction order: sorted games
+        in_domain = (
+            (rows[lab_x] >= grid.x_min)
+            & (rows[lab_x] <= grid.x_max)
+            & (rows[lab_y] >= grid.y_min)
+            & (rows[lab_y] <= grid.y_max)
+        )
+        rows = rows[in_domain.values].reset_index(drop=True)
+        if not len(rows):
+            continue
+        prov = str(rows["_provider"].iloc[0])
+        feats = rows[list(GHOST_GK_FEATURE_NAMES)]
+        labs = rows[[lab_x, lab_y]].rename(columns={lab_x: "gk_x", lab_y: "gk_y"})
+        visibility = rows[_VISIBILITY_COL]
+        if prov == "skillcorner":
+            _vis = keeper_detection_mask_or_none(visibility)
             if _vis is not None:
-                _depth = meta["gk_x_gr"].to_numpy(dtype=float)
+                _depth = labs["gk_x"].to_numpy(dtype=float)
                 _b2k = np.hypot(
-                    feats["ball_x"].to_numpy() - meta["gk_x_gr"].to_numpy(),
-                    feats["ball_y"].to_numpy() - meta["gk_y_gr"].to_numpy(),
+                    feats["ball_x"].to_numpy() - labs["gk_x"].to_numpy(),
+                    feats["ball_y"].to_numpy() - labs["gk_y"].to_numpy(),
                 )
                 _vm = _vis.to_numpy()
                 for k, v in {
@@ -477,26 +559,27 @@ def _extract_work(item, ctx):
                     "bias_b2k_undetected_n": int((~np.isnan(_b2k[~_vm])).sum()),
                 }.items():
                     totals[k] += v
-        keep = keeper_detection_mask(meta["gk_visibility"], provider=prov)
+        keep = keeper_detection_mask(visibility, provider=prov)
         feats = feats[keep].reset_index(drop=True)
         labs = labs[keep].reset_index(drop=True)
-        meta = meta[keep].reset_index(drop=True)
+        keepers = rows["_keeper"][keep].reset_index(drop=True)
         if not len(feats):
             print(f"  SKIP {prov}/{game_id}: no detected-keeper frames")
             continue
-        packs.append(_pack(feats, labs, game_id=game_id, provider=prov, keepers=meta["gk_player_id"].astype(str)))
+        packs.append(_pack(feats[names], labs, game_id=game_id, provider=prov, keepers=keepers))
     return pd.concat(packs, ignore_index=True) if packs else None
 
 
 def _cache_work(key, ctx) -> pd.DataFrame:
-    """The whole-corpus combined table: every non-empty extract shard in sorted key order (the legacy
-    `res.keys` order: sorted files, then games). Downstream stages `_unpack` it."""
-    from scripts._stages import read_result, sorted_units, unit_states
+    """The whole-corpus combined table: every non-empty `select` shard in sorted key order (the legacy
+    `res.keys` order: sorted files, then games). Downstream stages `_unpack` it.
 
-    st = ctx.pipeline.stage("extract")
-    gen = ctx.generation("extract")
-    done = [k for k, v in unit_states(ctx, st, sorted_units(ctx, st), verify=False).items() if v == "done"]
-    parts = [f for f in (read_result(ctx.store, f"{gen}/{k}") for k in done) if len(f)]
+    Spec r4 D19: the shards are every unit the `select` reduce combined, read through the pooled reader (the
+    `2474b73` stage read its 179 shards one by one on one core, 26.5-28.6 min per variant); a missing or corrupt
+    shard reopens `select` instead of training on a smaller corpus. Same bytes as the serial read."""
+    from scripts._stages import read_combined_units
+
+    parts = [f for f in read_combined_units(ctx, "select").values() if len(f)]
     if not parts:
         raise RuntimeError("no training samples extracted")
     return _combine_packs(parts)
@@ -645,7 +728,6 @@ def _fit_work(key, ctx):
         raise RuntimeError(f"BLOCKING parity gate FAILED (err={_par_err:.2e}, ncat={_par_ncat}); refusing to publish.")
     training_commit = None if ctx.prov["commit"] == "unknown" else ctx.prov["commit"]
     final_model.training_commit = training_commit
-    final_model.training_platform = resolve_training_platform(p["training_platform"], ctx.prov)
     # Aggregate corpus provenance (providers + counts ONLY; spec 2026-07-20 S6).
     final_model.corpus_provenance = {
         "providers": sorted({str(x) for x in provider_labels.tolist()}),
@@ -667,32 +749,63 @@ def _fit_work(key, ctx):
     return FileSet(files)
 
 
-def _importance_work(key, ctx) -> dict:
-    """Permutation importance (metrics-only: printed, never in metrics.json). ONE inner_parallel unit that
-    calls scikit-learn with ``n_jobs = ctx.pool.workers`` (decision P11), so scikit-learn's own seed
-    stream is unchanged; the model is the fit stage's saved artifact (bit-identical predictions)."""
-    import tempfile
+# ---- importance: split by column (spec r3 D10) ----------------------------------------------------------------
+#
+# One unit per corpus column and a `baseline` unit, through `scripts._permutation_units` (sklearn's private
+# `_calculate_permutation_scores`, its seed rule and `_create_importances_bunch`'s arithmetic; the module docstring
+# says why each column is an independent unit). The table is byte-identical to the single call
+# (`test_importance_split_table_is_byte_identical_to_the_single_unit_table`).
+_IMPORTANCE_REPEATS = 5
+_IMPORTANCE_RANDOM_STATE = 42
+_IMPORTANCE_SCORING = "neg_mean_absolute_error"
+_IMPORTANCE_BASELINE = "baseline"  # the unit that scores the unpermuted rows
+_IMPORTANCE_SKIPPED = "skipped"  # the one unit of a `--skip-permutation-importance` run
+_IMPORTANCE_INPUTS: dict = {}  # per worker: the model and the sampled rows, loaded once (keyed by the tokens)
 
-    from scripts._stages import materialize_fileset
-    from scripts._train_guard import require_training_sklearn
-    from silly_kicks.tracking._ghost_gk import GhostGkModel
+
+def _importance_feature_names(feature_set: str) -> list[str]:
+    """The corpus feature columns for ``feature_set``: the extraction width follows it (26 faithful, 21
+    position_only; `build_extraction_inputs`), so the plan derives the units without reading the corpus."""
+    from typing import cast
+
+    from silly_kicks.tracking._ghost_gk import GhostFeatureSet, GhostGkModel
+
+    if feature_set not in ("faithful", "position_only"):
+        raise ValueError(f"importance: unknown feature_set {feature_set!r}")
+    return list(GhostGkModel(feature_set=cast(GhostFeatureSet, feature_set))._feature_names())
+
+
+def _check_importance_width(columns, feature_set: str) -> None:
+    """A per-column unit indexes the corpus by POSITION; refuse a corpus whose width disagrees with the units the
+    plan derived (an extractor that widened), rather than permute the wrong column or skip one silently."""
+    want = _importance_feature_names(feature_set)
+    if len(columns) != len(want) or set(map(str, columns)) != set(want):
+        raise RuntimeError(
+            f"importance: the corpus has {len(columns)} feature columns but feature_set={feature_set!r} derives "
+            f"{len(want)} units; update `_importance_units` with the extractor (columns {list(map(str, columns))})"
+        )
+
+
+def _importance_units(ctx) -> list[str]:
+    """The `baseline` unit plus one unit per corpus column; the single `skipped` unit when importance is off."""
+    from scripts._stages import int_key
 
     p = ctx.params
     if p["skip_permutation_importance"]:
-        print("Skipping permutation importance (--skip-permutation-importance).")
-        return {"skipped": True, "top": []}
-    require_training_sklearn()
-    from sklearn.base import BaseEstimator, RegressorMixin
-    from sklearn.inspection import permutation_importance
+        return [_IMPORTANCE_SKIPPED]
+    return [_IMPORTANCE_BASELINE, *(int_key(i) for i in range(len(_importance_feature_names(p["feature_set"]))))]
 
-    features, labels, _groups, _provs, _keepers = _corpus(ctx)
-    with tempfile.TemporaryDirectory() as tmp:
-        model = GhostGkModel.load(materialize_fileset(ctx, "fit", "_output", Path(tmp)))
-    columns = features.columns
-    pid_log = os.environ.get("SILLY_KICKS_IMPORTANCE_PID_LOG")  # test hook (decision P11); never set in a job
+
+def _importance_estimator(model, columns):
+    """The sklearn estimator the importance scores: the fitted model's served ``gk_x`` estimate (``predict_mean``
+    on the corpus columns). ``SILLY_KICKS_IMPORTANCE_PID_LOG`` is a test hook (never set in a job): every predict
+    appends its process id, so a test can prove the column units ran in several worker processes."""
+    from sklearn.base import BaseEstimator, RegressorMixin
+
+    pid_log = os.environ.get("SILLY_KICKS_IMPORTANCE_PID_LOG")
 
     class _SklearnWrapper(BaseEstimator, RegressorMixin):  # type: ignore[misc]
-        def __init__(self, m: GhostGkModel | None = None) -> None:
+        def __init__(self, m=None) -> None:
             self.m = m
 
         def fit(self, X: np.ndarray, y: np.ndarray) -> _SklearnWrapper:
@@ -706,31 +819,99 @@ def _importance_work(key, ctx) -> dict:
                 raise RuntimeError("the importance wrapper holds no model")
             return self.m.predict_mean(pd.DataFrame(X, columns=columns))[:, 0]
 
-    cap = p["perm_importance_sample"]
-    if cap and cap < len(features):
-        idx = np.random.default_rng(42).choice(len(features), cap, replace=False)
-        X, y = features.values[idx], labels["gk_x"].values[idx]
-    else:
-        X, y = features.values, labels["gk_x"].values
-    n_jobs = ctx.pool.workers if ctx.pool is not None else 1
-    print(f"Running permutation importance (5 repeats, n_jobs={n_jobs}) on {len(X)} eval rows...")
-    pi = permutation_importance(
-        _SklearnWrapper(m=model),
+    return _SklearnWrapper(m=model)
+
+
+def _importance_baseline(estimator, X, y) -> float:
+    """The unpermuted score (`permutation_importance`'s ``baseline_score``; no sample weights)."""
+    from scripts import _permutation_units as perm_units
+
+    return perm_units.baseline(estimator, X, y, scoring=_IMPORTANCE_SCORING)
+
+
+def _importance_column_scores(estimator, X, y, col: int) -> list[float]:
+    """Column ``col``'s permuted scores, one per repeat, exactly as `permutation_importance` computes them."""
+    from scripts import _permutation_units as perm_units
+
+    return perm_units.column_scores(
+        estimator,
         X,
         y,
-        scoring="neg_mean_absolute_error",
-        n_repeats=5,
-        random_state=42,
-        n_jobs=n_jobs,
+        col,
+        scoring=_IMPORTANCE_SCORING,
+        random_state=_IMPORTANCE_RANDOM_STATE,
+        n_repeats=_IMPORTANCE_REPEATS,
     )
-    importances = sorted(
-        zip(columns, pi.importances_mean, strict=True),  # type: ignore[reportAttributeAccessIssue]
-        key=lambda x: -x[1],
+
+
+def _importance_table(baseline: float, column_scores, names) -> list[list]:
+    """`_create_importances_bunch`'s arithmetic over the columns in order (``baseline - permuted``, then the mean and
+    the population std over the repeats); rows ``[feature, mean, std]``, sorted by mean descending (stable)."""
+    from scripts import _permutation_units as perm_units
+
+    importances = perm_units.importances(baseline, column_scores)
+    means, stds = np.mean(importances, axis=1), np.std(importances, axis=1)
+    rows = sorted(zip(names, means, stds, strict=True), key=lambda r: -r[1])
+    return [[str(n), float(m), float(s)] for n, m, s in rows]
+
+
+def _importance_inputs(ctx):
+    """``(estimator, X, y, columns)`` for this worker, loaded once: the fit stage's saved model (bit-identical
+    predictions) and the seeded ``perm_importance_sample`` rows of the corpus."""
+    import tempfile
+
+    from scripts._stages import materialize_fileset
+    from silly_kicks.tracking._ghost_gk import GhostGkModel
+
+    p = ctx.params
+    key = (ctx.tokens["cache"], ctx.tokens["fit"], p["perm_importance_sample"])
+    if key not in _IMPORTANCE_INPUTS:
+        _IMPORTANCE_INPUTS.clear()
+        features, labels, _groups, _provs, _keepers = _corpus(ctx)
+        _check_importance_width(features.columns, p["feature_set"])
+        with tempfile.TemporaryDirectory() as tmp:
+            model = GhostGkModel.load(materialize_fileset(ctx, "fit", "_output", Path(tmp)))
+        cap = p["perm_importance_sample"]
+        if cap and cap < len(features):
+            idx = np.random.default_rng(42).choice(len(features), cap, replace=False)
+            X, y = features.values[idx], labels["gk_x"].values[idx]
+        else:
+            X, y = features.values, labels["gk_x"].values
+        columns = features.columns
+        _IMPORTANCE_INPUTS[key] = (_importance_estimator(model, columns), X, y, columns)
+    return _IMPORTANCE_INPUTS[key]
+
+
+def _importance_work(key, ctx) -> dict:
+    """Permutation importance (metrics-only: printed, never in metrics.json), one unit per column (spec r3 D10)."""
+    from scripts._train_guard import require_training_sklearn
+
+    if key == _IMPORTANCE_SKIPPED:
+        print("Skipping permutation importance (--skip-permutation-importance).")
+        return {"skipped": True}
+    require_training_sklearn()
+    estimator, X, y, columns = _importance_inputs(ctx)
+    if key == _IMPORTANCE_BASELINE:
+        return {"baseline": _importance_baseline(estimator, X, y)}
+    col = int(key)
+    print(f"Permutation importance of column {columns[col]!r} ({_IMPORTANCE_REPEATS} repeats, {len(X)} rows)...")
+    return {"column": str(columns[col]), "scores": _importance_column_scores(estimator, X, y, col)}
+
+
+def _importance_reduce(results, ctx) -> dict:
+    """The importance table from the column units in column order (the single call's table, byte for byte)."""
+    if _IMPORTANCE_SKIPPED in results:
+        return {"skipped": True, "top": []}
+    cols = sorted(k for k in results if k != _IMPORTANCE_BASELINE)
+    top = _importance_table(
+        results[_IMPORTANCE_BASELINE]["baseline"],
+        [results[k]["scores"] for k in cols],
+        [results[k]["column"] for k in cols],
     )
     print("Top 10 features:")
-    for name, imp in importances[:10]:
-        print(f"  {name}: {imp:.4f}")
-    return {"skipped": False, "top": [[str(n), float(v)] for n, v in importances]}
+    for name, mean, std in top[:10]:
+        print(f"  {name}: {mean:.4f} (std {std:.4f})")
+    return {"skipped": False, "top": top}
 
 
 def _assemble_work(key, ctx):
@@ -804,8 +985,8 @@ def _assemble_work(key, ctx):
             "per_fold_mae_euclidean": mae_e_vals,
         }
     # spec 4.3 rev 5: the selection-bias limitation from the CORPUS-scoped counters (summed over every
-    # extract unit in sorted key order), so a resumed extraction still reports the whole corpus.
-    bias, bias_unrecorded = item_counters(ctx, "extract")
+    # `select` unit in sorted key order; spec r4 D18 (a)), so a resumed run still reports the whole corpus.
+    bias, bias_unrecorded = item_counters(ctx, "select")
     if bias.get("bias_depth_detected_n") and bias.get("bias_depth_undetected_n"):
         metrics["detection_selection_bias"] = {
             "keeper_depth_detected_mean": _mean_from_counters(
@@ -841,6 +1022,30 @@ def _assemble_work(key, ctx):
     return FileSet(files)
 
 
+#: HFU plan R3-8 S3 item 12: the reviewed serial reasons of this pipeline's SERIAL stages, verbatim from the
+#: plan's SERIAL annex (owner ruling 2026-10-30, "too small to pay"); `scripts/hf_jobs/serial_reasons.py`
+#: holds the same texts and `tests/scripts/test_serial_reasons.py` holds the two equal.
+_SERIAL_REASONS = {
+    "validate": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 1 s of CPU in a 19-22 s wall on "
+        "HF; the wall is the visibility check reading each corpus shard's parquet footer in turn through the bucket "
+        "mount (about 0.18 s a file)."
+    ),
+    "select": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): 179 column projections, 21-24 s of CPU in "
+        "all; a W=8 job is 8.5-9.3 s, mostly worker start-up, and W=16 measured slower (11.7 s)."
+    ),
+    "cache": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 4 s of CPU, combining the select"
+        " outputs into the feature cache."
+    ),
+    "assemble": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 3 s of CPU, building the metrics"
+        " block and the bundle from the cv, fit and importance results."
+    ),
+}
+
+
 PIPELINE = Pipeline(
     name="ghost_gk",
     module="scripts.train_ghost_gk",
@@ -848,6 +1053,7 @@ PIPELINE = Pipeline(
     stages=(
         Stage(
             name="validate",
+            serial_reason=_SERIAL_REASONS["validate"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_validate_work,
             reduce=lambda r, ctx: r["only"],
@@ -862,19 +1068,32 @@ PIPELINE = Pipeline(
             refs=_refs,
             key=lambda ref: ref.stem,  # one game per staged flat file; the dataset identity keys `home`
             load=_extract_load,
-            work=_extract_work,
-            counters=lambda _item, _frame: dict(_UNIT_BIAS),
+            work=_extract_work,  # spec r4 D18 (a): ONE superset for every variant
             needs=("validate",),
             declare=_extraction_declare,
-            cross_commit_version="ghost-gk-extract-1",
+            cross_commit_version="ghost-gk-extract-2",  # the superset (2474b73: one extraction per variant)
             uses_dataset=True,
             max_failures=0,  # the legacy raised on any failed game
         ),
+        ItemStage(
+            name="select",
+            serial_reason=_SERIAL_REASONS["select"],  # S3 item 12 (SERIAL annex)
+            refs=_refs,
+            key=lambda ref: ref.stem,  # the extract unit keys
+            load=_select_load,  # the superset unit, read back; or extract's exclusion, the same reason
+            work=_select_work,  # the variant's grid, bias sums, keeper filter and feature set
+            counters=lambda _item, _frame: dict(_UNIT_BIAS),
+            needs=("extract",),
+            declare=_selection_declare,
+            cross_commit_version="ghost-gk-select-1",
+            max_failures=0,  # the per-variant extract raised on any failed game (an all-null visibility, too)
+        ),
         Stage(
             name="cache",
+            serial_reason=_SERIAL_REASONS["cache"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_cache_work,
-            needs=("extract",),
+            needs=("select",),
             reduce=lambda r, ctx: r["only"],
         ),
         Stage(
@@ -884,6 +1103,8 @@ PIPELINE = Pipeline(
             needs=("cache",),
             reduce=lambda r, ctx: dict(r),
             declare=_model_declare,
+            thread_safe=True,  # HFU T11: each fold fits a HistGB; W=1 gets the full vCPU OMP budget
+            thread_lever="omp",  # HistGB OpenMP; BLAS stays serial (B38) -- identity test_cv_thread_identity_ghost_gk
         ),
         Stage(
             name="fit",
@@ -892,31 +1113,31 @@ PIPELINE = Pipeline(
             needs=("cache",),
             reduce=lambda r, ctx: r["only"],
             declare=_model_declare,
-            params=("training_platform",),
+            thread_safe=True,  # ADR-128 INV-2 opt-in (test_thread_identity; test_thread_safe_registry)
+            thread_lever="omp",  # HistGB OpenMP; BLAS stays serial (B38)
         ),
         Stage(
             name="importance",
-            units=lambda ctx: ["only"],
+            units=_importance_units,  # spec r3 D10: the baseline + one unit per corpus column
             work=_importance_work,
             needs=("cache", "fit"),
-            reduce=lambda r, ctx: r["only"],
+            reduce=_importance_reduce,
             declare=_model_declare,
             params=("skip_permutation_importance", "perm_importance_sample"),
-            inner_parallel=True,
-            inner_width=8,
         ),
         Stage(
             name="assemble",
+            serial_reason=_SERIAL_REASONS["assemble"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_assemble_work,
-            needs=("extract", "cache", "cv", "fit", "importance"),
+            needs=("select", "cache", "cv", "fit", "importance"),
             reduce=lambda r, ctx: r["only"],
             declare=_model_declare,
-            params=("variant", "subsample_fps", "training_platform"),
+            params=("variant", "subsample_fps"),
         ),
     ),
     output="assemble",
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

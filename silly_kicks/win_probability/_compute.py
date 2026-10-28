@@ -54,21 +54,55 @@ def _score_states(states: pd.DataFrame, model: WinProbabilityModel, strength: di
         max_rem = float(sub["minutes_remaining"].max())
         n_tab = max(math.ceil(max_rem / step), 0)
         Pw, Pd, Pl = model.outcome_table(base_strength=bs, home=home, man_advantage=man_adv, n_intervals=n_tab)
-        for pos, (_, r) in zip(sub["_pos"].to_numpy(), sub.iterrows(), strict=False):
-            m = max(math.ceil(float(r["minutes_remaining"]) / step), 0)
-            di = int(np.clip(int(r["score_diff"]) + K, 0, 2 * K))  # clamp extreme blowouts to the pad
-            w_raw, d_raw, l_raw = float(Pw[di, m]), float(Pd[di, m]), float(Pl[di, m])
-            w = model._apply_isotonic(w_raw)
-            rem = max(1.0 - w, 0.0)
-            dl = d_raw + l_raw
-            d_cal = rem * (d_raw / dl) if dl > 0 else rem / 2.0
-            di_up = min(di + 1, 2 * K)
-            leverage = model._apply_isotonic(float(Pw[di_up, m])) - w
-            pw[pos] = w
-            pd_[pos] = d_cal
-            pl[pos] = rem - d_cal
-            lev[pos] = leverage
+        pos = sub["_pos"].to_numpy()
+        remaining = sub["minutes_remaining"].to_numpy(dtype=np.float64)
+        diff = sub["score_diff"].to_numpy()
+        if not np.isfinite(remaining).all():  # math.ceil refuses NaN / inf: keep the row walk's exact error
+            _score_rows(pos, remaining, diff, Pw, Pd, Pl, model, K, step, (pw, pd_, pl, lev))
+            continue
+        # The per-row lookups over arrays (HFU plan R3-8 S3 item 7): the same float operations element by element
+        # (np.interp is elementwise, as `_apply_isotonic` is per value), so every value equals the row walk's.
+        m = np.maximum(np.ceil(remaining / step), 0).astype(np.int64)
+        di = np.clip(diff.astype(np.int64) + K, 0, 2 * K)  # clamp extreme blowouts to the pad
+        w_raw, d_raw, l_raw = Pw[di, m], Pd[di, m], Pl[di, m]
+        w = _isotonic(model, w_raw)
+        rem = 1.0 - w
+        rem = np.where(0.0 > rem, 0.0, rem)  # max(1.0 - w, 0.0)
+        dl = d_raw + l_raw
+        with np.errstate(divide="ignore", invalid="ignore"):
+            d_cal = np.where(dl > 0, rem * (d_raw / dl), rem / 2.0)
+        di_up = np.minimum(di + 1, 2 * K)
+        pw[pos] = w
+        pd_[pos] = d_cal
+        pl[pos] = rem - d_cal
+        lev[pos] = _isotonic(model, Pw[di_up, m]) - w
     return pw, pd_, pl, lev
+
+
+def _isotonic(model: WinProbabilityModel, p_win: np.ndarray) -> np.ndarray:
+    """`WinProbabilityModel._apply_isotonic` over an array: ``np.interp`` on the same breakpoints, per element."""
+    if model._isotonic is None:
+        return p_win
+    xs, ys = model._isotonic
+    return np.interp(p_win, xs, ys)
+
+
+def _score_rows(pos, remaining, diff, Pw, Pd, Pl, model, K, step, out) -> None:
+    """The per-row body for a group with a non-finite ``minutes_remaining`` (it raises where the row walk did)."""
+    pw, pd_, pl, lev = out
+    for p, r_min, s_diff in zip(pos, remaining, diff, strict=True):
+        m = max(math.ceil(float(r_min) / step), 0)
+        di = int(np.clip(int(s_diff) + K, 0, 2 * K))
+        w_raw, d_raw, l_raw = float(Pw[di, m]), float(Pd[di, m]), float(Pl[di, m])
+        w = model._apply_isotonic(w_raw)
+        rem = max(1.0 - w, 0.0)
+        dl = d_raw + l_raw
+        d_cal = rem * (d_raw / dl) if dl > 0 else rem / 2.0
+        di_up = min(di + 1, 2 * K)
+        pw[p] = w
+        pd_[p] = d_cal
+        pl[p] = rem - d_cal
+        lev[p] = model._apply_isotonic(float(Pw[di_up, m])) - w
 
 
 def compute_win_probability(

@@ -45,3 +45,19 @@ def test_load_arms_all_empty_raises(tmp_path):
     p.write_text(json.dumps({"arms": {"public": []}, "ship_order": ["public"]}))
     with pytest.raises(ArmsUnavailableError):
         load_arms(p)
+
+
+def test_an_arm_key_naming_no_unit_of_the_dataset_is_refused():
+    """Fail closed (HFU R4-10, 2026-10-30): an arm key that names no unit of the dataset the job reads is a key
+    mismatch between the launcher and the job, and the row filter would drop its rows silently. The refusal names
+    the stray keys; a spec whose keys all name units passes."""
+    from scripts.hf_jobs.arms import ArmKeyMismatchError, require_arm_keys_in
+
+    spec = ArmSpec(
+        arms={"public": frozenset({"sportec__idsse-g1"}), "sc_extended": frozenset({"sportec__idsse-g1", "x__x-2"})},
+        ship_order=("public", "sc_extended"),
+    )
+    require_arm_keys_in(spec, ["sportec__idsse-g1", "x__x-2", "x__x-3"])  # a unit outside every arm is fine
+    stray = ArmSpec(arms={"public": frozenset({"idsse__idsse-g1", "x__x-2"})}, ship_order=("public",))
+    with pytest.raises(ArmKeyMismatchError, match="idsse__idsse-g1"):
+        require_arm_keys_in(stray, ["sportec__idsse-g1", "x__x-2"])

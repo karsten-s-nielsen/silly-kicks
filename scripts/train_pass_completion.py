@@ -5,42 +5,38 @@ pickle-free JSON + SHA256SUMS artifact via ``model.save(...)``, plus an out-of-f
 stamping ``training_commit`` (ADR-052 / ADR-011 discipline, mirroring the five weight trainers).
 Inference imports no sklearn; sklearn is used only during the fit.
 
-The expensive per-match corpus load is sharded with ``for_each`` (ADR-052): one shard per match
-holding that match's finite-coordinate pass rows, resumable on a crash. The pooled fit + the
-GroupKFold-by-match out-of-fold metrics + the ``save`` happen in the reduce, off the network.
+ADR-128 stage contract (HFU R3-10 / D12; it replaced the one-unit adapter): ``refs`` (the competition set +
+match references, one unit) -> ``extract[match]`` (an ``ItemStage``: one shard of finite-coordinate pass rows
+per open-data match, fetched per unit, resume-before-download) -> ``cv[fold]`` (one unit per GroupKFold fold:
+its out-of-fold predictions; the reduce assembles the OOF array in row order and computes the metrics) ->
+``fit`` (one unit: the pooled fit and the bundle). ``--run-all --out <DIR>`` writes the flat bundle into
+``<DIR>``: the model files, ``MODEL_CARD.md`` and ``metrics.json`` (owner ruling 2026-10-30: the bundle ships
+``metrics.json``, as every other campaign-trained bundle does); ``adopt`` copies it into
+``silly_kicks/expected_passing/weights/``. The legacy CLI is kept verbatim as the test oracle
+(``tests/scripts/_legacy_trainers``).
 
-``--out`` is a run directory OUTSIDE the repo (it holds the shards, the fitted ``weights/`` artifact,
-and ``metrics.json``); the owner copies ``<out>/weights`` into
-``silly_kicks/expected_passing/weights/`` for the bundled-weights commit.
-
-Usage (scripts/ on sys.path):
-  python scripts/train_pass_completion.py --out <DIR> \
+Usage (StatsBomb credentials UNSET so open-data mode is used):
+  python -m scripts.train_pass_completion --store <DIR> --run-all --out <DIR> \
       [--all-competitions | --competition-id C --season-id S] [--max-per-provider N] [--match-ids-json FILE]
 
 The owner-tier pining cross-check (``--source pining``, DGX only) runs from
-``scripts/_pass_completion_pining.py``, which injects its source into ``main``. This module runs on HF (the
-one-unit adapter stage, ADR-128), so it never imports the pining client: the I1 gate walks its static import
-closure (ADR-123 Amendment B).
+``scripts/_pass_completion_pining.py``, which owns its own ``for_each`` flow over this module's pure functions.
+This module runs on HF, so it never imports the pining client: the I1 gate walks its static import closure
+(ADR-123 Amendment B).
 """
 
 from __future__ import annotations
 
-import argparse
+import dataclasses
 import json
 import re
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
-
-#: The owner-tier pining corpus as ``(refs, load, corpus_label, source_token)``, built from the parsed
-#: arguments and the ``--match-ids-json`` selection. ``scripts/_pass_completion_pining.py`` injects it, so
-#: the HF job's import closure never reaches the pining client (I1, ADR-123 Amendment B).
-PiningSource = Callable[[argparse.Namespace, dict | None], tuple[list[Any], Callable[[Any], Any], str, dict]]
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, cli_main, int_key
 
 #: The columns one match's pass-row shard carries (the fit corpus for that match). ``type_id`` and
 #: ``result_id`` are kept so ``PassCompletionModel.fit`` (which filters ``type_id == pass``) and the
@@ -69,30 +65,54 @@ def _predict(model, rows: pd.DataFrame) -> np.ndarray:
     )
 
 
+def _labels(pooled: pd.DataFrame) -> np.ndarray:
+    return (pooled["result_id"].to_numpy() == spadlconfig.result_id["success"]).astype(int)
+
+
+def cv_folds(pooled: pd.DataFrame) -> list[tuple[np.ndarray, np.ndarray]] | None:
+    """The GroupKFold-by-match ``(train, test)`` folds, or None when there are fewer than 2 groups (then the
+    out-of-fold predictions are the in-sample predictions of one fit on everything)."""
+    from sklearn.model_selection import GroupKFold
+
+    groups = pooled["game_id"].to_numpy()
+    n_splits = min(5, len(np.unique(groups)))
+    if n_splits < 2:
+        return None
+    return list(GroupKFold(n_splits=n_splits).split(pooled, _labels(pooled), groups))
+
+
+def fold_predictions(pooled: pd.DataFrame, fold: tuple[np.ndarray, np.ndarray] | None) -> np.ndarray:
+    """The out-of-fold predictions of ONE fold (its test rows), or of the single in-sample fit (``None``)."""
+    from silly_kicks.expected_passing import PassCompletionModel
+
+    if fold is None:
+        return _predict(PassCompletionModel().fit(pooled), pooled)
+    tr, te = fold
+    return _predict(PassCompletionModel().fit(pooled.iloc[tr]), pooled.iloc[te])
+
+
 def cross_val_metrics(pooled: pd.DataFrame) -> dict:
     """GroupKFold-by-match out-of-fold AUC / ECE / Brier + the held-out base rate (pure).
 
     The base rate is the label mean over the finite-prediction rows -- the ``brier_noskill`` a Brier
     skill score is measured against downstream (spec PLAN-09).
     """
+    folds = cv_folds(pooled)
+    if folds is None:
+        return metrics_from_oof(pooled, fold_predictions(pooled, None))
+    oof = np.full(len(pooled), np.nan)
+    for tr, te in folds:
+        oof[te] = fold_predictions(pooled, (tr, te))
+    return metrics_from_oof(pooled, oof)
+
+
+def metrics_from_oof(pooled: pd.DataFrame, oof: np.ndarray) -> dict:
+    """The out-of-fold metrics' arithmetic (``cross_val_metrics`` before the HFU R3-10 split, unchanged)."""
     from sklearn.metrics import roc_auc_score
-    from sklearn.model_selection import GroupKFold
 
     from silly_kicks._calibration_metrics import ece
-    from silly_kicks.expected_passing import PassCompletionModel
 
-    success = spadlconfig.result_id["success"]
-    y = (pooled["result_id"].to_numpy() == success).astype(int)
-    groups = pooled["game_id"].to_numpy()
-    n_splits = min(5, len(np.unique(groups)))
-    oof = np.full(len(y), np.nan)
-    if n_splits < 2:
-        oof = _predict(PassCompletionModel().fit(pooled), pooled)
-    else:
-        for tr, te in GroupKFold(n_splits=n_splits).split(pooled, y, groups):
-            m = PassCompletionModel().fit(pooled.iloc[tr])
-            oof[te] = _predict(m, pooled.iloc[te])
-
+    y = _labels(pooled)
     keep = np.isfinite(oof)
     yk = y[keep]
     ok = oof[keep]
@@ -130,7 +150,9 @@ def render_model_card(metrics: dict) -> str:
     # runs from its own entry with --source pining --providers.
     m_open = re.match(r"statsbomb-open \(competition (\d+), season (\d+)\)", str(providers))
     corpus_note = ""
-    entry = "train_pass_completion.py"
+    # Owner ruling 2026-10-30 (HFU R3-10): the open-data bundle names the PIPELINE command (the legacy CLI is
+    # gone); the pining cross-check keeps its own entry and its exact text.
+    command = "python -m scripts.train_pass_completion --store <DIR> --run-all --out <DIR>"
     if n_competitions is not None:
         reproduce_args = "--all-competitions"
         corpus_note = (
@@ -141,7 +163,7 @@ def render_model_card(metrics: dict) -> str:
         reproduce_args = f"--source open-data --competition-id {m_open.group(1)} --season-id {m_open.group(2)}"
     else:
         # The corpus label is "pining:<providers>"; --providers takes the bare list.
-        entry = "_pass_completion_pining.py"
+        command = "python scripts/_pass_completion_pining.py --out <DIR>"
         reproduce_args = f"--source pining --providers {str(providers).removeprefix('pining:')}"
     return f"""# Pass-completion model -- `default` variant (TF-54b)
 
@@ -168,7 +190,7 @@ pass rows).{corpus_note} GroupKFold-by-match out-of-fold: AUC {auc:.3f}, ECE {ec
 **Missing-value policy.** A non-finite coordinate yields an all-NaN feature row and a NaN probability
 (never a fabricated value); a consumer drops-and-counts such a target.
 
-**Provenance + reproduction.** Reproduce with `python scripts/{entry} --out <DIR>
+**Provenance + reproduction.** Reproduce with `{command}
 {reproduce_args}`. `metrics.json` records `training_commit` ({commit}) and the tree state (this
 bundle was produced from a clean tree). Pickle-free JSON + SHA256 envelope (`model.json` +
 `SHA256SUMS`) with a feature contract + chirality probe; `load()` is fail-closed
@@ -182,157 +204,262 @@ _DEFAULT_COMPETITION_ID = 43
 _DEFAULT_SEASON_ID = 106
 
 
-def main(argv: list[str] | None = None, *, pining_source: PiningSource | None = None) -> None:
-    """The trainer CLI. ``pining_source`` serves ``--source pining``; only the owner entry
-    ``scripts/_pass_completion_pining.py`` passes it, so an HF run refuses ``--source pining``."""
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out", required=True, help="run dir OUTSIDE the repo (shards + weights/ + metrics.json)")
-    ap.add_argument(
-        "--source",
+_PARAMS = (
+    Param("dataset", str, "sb_open", help="declared dataset name (scripts/hf_jobs/datasets.toml)"),
+    Param(
+        "source",
+        str,
+        "open-data",
         choices=("open-data", "pining"),
-        default="open-data",
-        help="'open-data' = PUBLIC StatsBomb open data (redistributable; the bundled default) via statsbombpy; "
-        "'pining' = the pining providers (owner-tier cross-check; run it from scripts/_pass_completion_pining.py).",
-    )
-    # Defaults are None so we can DISTINGUISH an explicit --competition-id/--season-id from the
-    # WC2022 default, which is what makes --all-competitions a real mutual exclusion; an unset value
-    # resolves to WC2022 below, keeping the single-competition path byte-identical.
-    ap.add_argument("--competition-id", type=int, default=None, help="open-data competition (default 43 = World Cup)")
-    ap.add_argument("--season-id", type=int, default=None, help="open-data season (default 106 = 2022)")
-    ap.add_argument(
-        "--all-competitions",
-        action="store_true",
-        help="re-fit on the FULL public open-data corpus (every (competition, season) in the open-data "
-        "manifest); mutually exclusive with --competition-id/--season-id (--source open-data only).",
-    )
-    ap.add_argument("--providers", default="statsbomb", help="comma-separated pining providers (--source pining only)")
-    ap.add_argument("--max-per-provider", type=int, default=None, help="cap the number of matches (both sources)")
-    ap.add_argument("--tracking-limit", type=int, default=None, help="cap frames parsed per match (pining only)")
-    ap.add_argument(
-        "--match-ids-json",
-        default=None,
-        help='JSON {"statsbomb": ["3869685", ...]} pinning WHICH matches this process handles.',
-    )
-    ap.add_argument("--cache-dir", default=None, help="raw-artifact cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)")
-    ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact marked dirty)")
-    args = ap.parse_args(argv)
+        help="'open-data' only here; 'pining' runs from scripts/_pass_completion_pining.py (owner, DGX only)",
+    ),
+    Param("competition_id", int, None, help="open-data competition (default 43 = World Cup)"),
+    Param("season_id", int, None, help="open-data season (default 106 = 2022)"),
+    Param(
+        "all_competitions",
+        flag=True,
+        help="re-fit on the FULL public open-data corpus (every (competition, season) in the open-data manifest)",
+    ),
+    Param("max_per_provider", int, None, help="cap the number of matches"),
+    Param("match_ids_json", str, None, help='JSON {"statsbomb": ["3869685", ...]} pinning WHICH matches'),
+    Param("cache_dir", str, None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"),
+)
 
-    if args.all_competitions:
-        if args.source != "open-data":
-            ap.error("--all-competitions requires --source open-data")
-        if args.competition_id is not None or args.season_id is not None:
-            ap.error("--all-competitions is mutually exclusive with --competition-id/--season-id")
-    if args.source == "pining" and pining_source is None:
-        ap.error(
+
+def _match_ids(params) -> list[str] | None:
+    """The ``--match-ids-json`` statsbomb selection, or None (no selection)."""
+    path = params["match_ids_json"]
+    if path is None:
+        return None
+    return (json.loads(Path(path).read_text(encoding="utf-8")) or {}).get("statsbomb")
+
+
+def _refuse_bad_source(params) -> None:
+    """I1 severance (ADR-123 Amendment B): this module runs on HF and never imports the pining client; the
+    mutual exclusion of ``--all-competitions`` with an explicit competition is the legacy CLI's."""
+    if params["source"] == "pining":
+        raise ValueError(
             "--source pining runs from scripts/_pass_completion_pining.py (owner, DGX only): this module runs "
             "on HF and never imports the pining client (I1 gate, ADR-123 Amendment B)"
         )
+    if params["all_competitions"] and (params["competition_id"] is not None or params["season_id"] is not None):
+        raise ValueError("--all-competitions is mutually exclusive with --competition-id/--season-id")
 
-    # Clean-tree guard FIRST, before any corpus work. This trainer writes BUNDLED weights, and an
-    # artifact whose provenance is unknown is one nobody can reproduce or audit later (ADR-052).
-    from scripts._provenance import git_provenance, require_clean_tree
 
-    prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
+def _refs_work(key, ctx) -> dict:
+    """The corpus and every match reference, as one JSON unit (the legacy corpus selection: the public-only
+    guard runs FIRST, before any manifest call or load)."""
+    import scripts._sb_open_data as sbod
 
-    from scripts._driver import for_each
-    from silly_kicks.expected_passing import PassCompletionModel
-    from silly_kicks.expected_passing._features import FEATURE_NAMES
-
-    match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
-    dest = Path(args.out)
-
-    # The bundled default trains on PUBLIC StatsBomb open data (redistributable -> publicly reproducible);
-    # --source pining is the owner-tier cross-check, served by the injected pining_source. Every source
-    # yields the same (provider, id, actions, frames, home) tuple so for_each is source-agnostic.
-    competitions: list[tuple[int, int]] | None = None
-    if args.all_competitions:
-        # Full public open-data corpus: every (competition, season) in the manifest, chained. The
-        # fail-closed public-only guard runs BEFORE any load so a private-API pull can never bundle.
-        import scripts._sb_open_data as sbod
-
-        sbod.assert_statsbomb_open_data_mode()
-        comps: list[tuple[int, int]] = [(int(c[0]), int(c[1])) for c in sbod.all_open_competitions()]
-        competitions = comps
-        corpus_label = f"statsbomb-open (all {len(comps)} open-data competitions)"
-        refs, load = sbod.open_data_source(
-            comps,
-            match_ids=(match_ids or {}).get("statsbomb"),
-            max_matches=args.max_per_provider,
-            cache_dir=args.cache_dir,
-        )
-        # A different corpus MUST invalidate the shard generation (4.77.1 stale-shard rule): the sorted
-        # competition list is the corpus identity, so a re-run on the same --out with a different corpus
-        # resolves to a DIFFERENT generation directory and cannot silently reuse WC2022-only shards.
-        source_token = {"source": "open-data-all", "competitions": sorted(comps)}
-    elif args.source == "open-data":
-        import scripts._sb_open_data as sbod
-
-        competition_id = _DEFAULT_COMPETITION_ID if args.competition_id is None else args.competition_id
-        season_id = _DEFAULT_SEASON_ID if args.season_id is None else args.season_id
-        corpus_label = f"statsbomb-open (competition {competition_id}, season {season_id})"
-        refs, load = sbod.open_data_source(
-            [(competition_id, season_id)],
-            match_ids=(match_ids or {}).get("statsbomb"),
-            max_matches=args.max_per_provider,
-            cache_dir=args.cache_dir,
-        )
-        source_token = {"source": "open-data", "competition_id": competition_id, "season_id": season_id}
-    elif pining_source is not None:
-        refs, load, corpus_label, source_token = pining_source(args, match_ids)
+    p = ctx.params
+    _refuse_bad_source(p)
+    sbod.assert_statsbomb_open_data_mode()
+    if p["all_competitions"]:
+        comps = [(int(c[0]), int(c[1])) for c in sbod.all_open_competitions()]
+        label = f"statsbomb-open (all {len(comps)} open-data competitions)"
     else:
-        raise AssertionError("unreachable: --source pining without a pining_source is refused above")
+        cid = _DEFAULT_COMPETITION_ID if p["competition_id"] is None else p["competition_id"]
+        sid = _DEFAULT_SEASON_ID if p["season_id"] is None else p["season_id"]
+        comps = [(cid, sid)]
+        label = f"statsbomb-open (competition {cid}, season {sid})"
+    refs = sbod.list_open_data_refs(comps, match_ids=_match_ids(p), max_matches=p["max_per_provider"])
+    return {
+        "competitions": [list(c) for c in comps],
+        "all_competitions": bool(p["all_competitions"]),
+        "label": label,
+        "refs": [dataclasses.asdict(r) for r in refs],
+    }
 
-    def _work(item):
-        _provider, match_id, actions, _frames, _home, *_ = item
-        return pass_rows_for_match(actions, match_id)
 
-    res = for_each(
-        refs,
-        key=lambda ref: ref.key,
-        load=load,
-        work=_work,
-        shard_root=dest / "shards",
-        token_inputs={"model": "PassCompletionModel", "feature_names": list(FEATURE_NAMES), **source_token},
-        label="match",
-    )
+def _extract_refs(ctx):
+    from scripts._sb_open_data import OpenDataRef
 
-    shard_files = sorted(res.shard_dir.glob("*.parquet"))
-    frames = [pd.read_parquet(s) for s in shard_files]
-    pooled = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_SHARD_COLUMNS)
-    if not len(pooled):
-        raise SystemExit("no pass rows collected from the corpus; nothing to fit")
+    return [OpenDataRef(**d) for d in ctx.upstream("refs")["refs"]]
 
-    metrics = cross_val_metrics(pooled)
+
+def _load_match(ref, ctx):
+    """Resume-before-download: the executor calls this only for a pending unit (ADR-052 D14)."""
+    from scripts._driver_sources import resolve_cache_dir
+    from scripts._sb_open_data import assert_statsbomb_open_data_mode, load_open_data_match
+
+    assert_statsbomb_open_data_mode()  # pins the revision in THIS worker process (decision P6)
+    return load_open_data_match(ref, cache_dir=resolve_cache_dir(ctx.params["cache_dir"]))
+
+
+def _extract_work(item, ctx) -> pd.DataFrame:
+    return pass_rows_for_match(item.actions, item.match_id)
+
+
+def _extract_reduce(results, ctx) -> pd.DataFrame:
+    from scripts._stages import combine_frames
+
+    frames = list(results.values())  # sorted key order == the legacy sorted shard glob
+    return combine_frames(frames, ids=("game_id",)) if frames else pd.DataFrame(columns=_SHARD_COLUMNS)
+
+
+_POOLED: dict = {}
+
+
+def _pooled(ctx) -> pd.DataFrame:
+    """The pooled pass rows, loaded ONCE per worker; refuses an empty corpus. Keyed by the store AND the extract
+    token: one token can name different corpora in different stores (``--all-competitions`` lists the manifest at
+    run time), so a process that serves two stores must never reuse the first one's rows."""
+    tok = (str(getattr(ctx.store, "root", getattr(ctx.store, "prefix", ""))), ctx.tokens["extract"])
+    if tok not in _POOLED:
+        pooled = ctx.upstream("extract")
+        if not len(pooled):
+            raise RuntimeError("no pass rows collected from the corpus; nothing to fit")
+        _POOLED.clear()
+        _POOLED[tok] = pooled
+    return _POOLED[tok]
+
+
+def _cv_units(ctx) -> list[str]:
+    """``max(1, min(5, n_done))`` fold keys, from the extract SUMMARY, never from its output (the controller's
+    ``--plan`` reads the bucket every step; the ghost_outfield precedent). The real split count comes from the
+    pooled rows in ``_cv_work``: a key past it returns an empty part, and with fewer than 2 groups key ``0000``
+    carries the single in-sample fit."""
+    n = int(ctx.summary("extract")["n_done"])
+    return [int_key(k) for k in range(max(1, min(5, n)))]
+
+
+def _cv_work(key, ctx) -> pd.DataFrame:
+    """One fold's out-of-fold predictions as ``(row, pred)``; empty for a key past the real split."""
+    pooled = _pooled(ctx)
+    k = int(key)
+    folds = cv_folds(pooled)
+    if folds is None:
+        rows, preds = (np.arange(len(pooled)), fold_predictions(pooled, None)) if k == 0 else ([], [])
+    elif k < len(folds):
+        rows, preds = folds[k][1], fold_predictions(pooled, folds[k])
+    else:
+        rows, preds = [], []
+    return pd.DataFrame({"row": np.asarray(rows, dtype=np.int64), "pred": np.asarray(preds, dtype=float)})
+
+
+def _cv_reduce(results, ctx) -> dict:
+    """The OOF array in row order (each fold writes its own test rows; the single fit writes every row), then
+    the legacy metrics arithmetic."""
+    pooled = _pooled(ctx)
+    if cv_folds(pooled) is None:
+        oof = results[int_key(0)]["pred"].to_numpy(dtype=float)
+    else:
+        oof = np.full(len(pooled), np.nan)
+        for part in results.values():
+            oof[part["row"].to_numpy()] = part["pred"].to_numpy(dtype=float)
+    return metrics_from_oof(pooled, oof)
+
+
+def _fit_work(key, ctx) -> FileSet:
+    """The legacy reduce tail: the pooled fit, ``metrics.json`` (legacy key order) and the card, as ONE flat
+    bundle (an artifact is flat: ``adopt.retrieve`` refuses a nested path). Owner ruling 2026-10-30: the bundle
+    ships ``metrics.json`` beside the weights and the card, as every other campaign-trained bundle does."""
+    import tempfile
+
+    from silly_kicks.expected_passing import PassCompletionModel
+
+    pooled = _pooled(ctx)
+    corpus = ctx.upstream("refs")
     model = PassCompletionModel().fit(pooled)
-    wdir = dest / "weights"
-    model.save(wdir)
-
+    prov = ctx.prov
+    summary = ctx.summary("extract")
+    # Decision P4 (ADR-128): CORPUS-scoped counters, never pass-scoped ones (the legacy `res.manifest()` keys).
+    pass_fields = {
+        "generation": ctx.tokens["extract"],
+        "n_attempted": summary["n_units"],
+        "n_failed": summary["n_failed"],
+        "n_counters_unrecorded": 0,
+        "n_excluded": summary["n_excluded"],
+    }
     out = {
-        **metrics,
+        **ctx.upstream("cv"),
         "n_pass_rows": len(pooled),
         "n_matches": int(pooled["game_id"].nunique()),
-        "providers": corpus_label,
-        # ADR-052: which code produced these weights.
+        "providers": corpus["label"],
         "training_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
         "run_tree_state": prov.get("tree_state"),
-        **res.manifest(),
+        **pass_fields,
     }
-    if competitions is not None:
-        # The full-corpus re-fit records WHICH competitions it spanned (and how many), so the card and
-        # a downstream reader can tell a full-corpus bundle apart from a single-tournament one.
-        out["n_competitions"] = len(competitions)
-        out["competitions"] = [list(c) for c in sorted(competitions)]
-    (dest / "metrics.json").write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
-    # The bundled model carries a MODEL_CARD.md next to its weights (ADR-088), generated from the
-    # metrics so it ships with the weights (into silly_kicks/expected_passing/weights/) and cannot drift.
-    (wdir / "MODEL_CARD.md").write_text(render_model_card(out), encoding="utf-8")
-    print(json.dumps(out, indent=2, default=str))
-    print(f"bundled weights + MODEL_CARD.md -> {wdir}")
+    if corpus["all_competitions"]:
+        comps = [tuple(c) for c in corpus["competitions"]]
+        out["n_competitions"] = len(comps)
+        out["competitions"] = [list(c) for c in sorted(comps)]
+    payload = json.dumps(out, indent=2, default=str)
+    with tempfile.TemporaryDirectory() as tmp:
+        wdir = Path(tmp) / "weights"
+        model.save(wdir)
+        files = {p.name: p.read_bytes() for p in sorted(wdir.iterdir()) if p.is_file()}
+    files["MODEL_CARD.md"] = render_model_card(out).encode("utf-8")
+    files["metrics.json"] = payload.encode("utf-8")
+    print(payload)
+    return FileSet(files)
 
+
+#: HFU plan R3-8 S3 item 12: the reviewed serial reasons of this pipeline's SERIAL stages, verbatim from the
+#: plan's SERIAL annex (owner ruling 2026-10-30, "too small to pay"); `scripts/hf_jobs/serial_reasons.py`
+#: holds the same texts and `tests/scripts/test_serial_reasons.py` holds the two equal.
+_SERIAL_REASONS = {
+    "refs": ("Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, under 1 s of CPU."),
+    "extract": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): 64 units, 28 s of CPU in all; W=16 "
+        "measured slower than W=8 (14.8 s against 13.3 s) and spent 58 % more CPU."
+    ),
+    "cv": ("Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): 5 folds of 0.3 s, 1 s of CPU in all."),
+    "fit": ("Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, under 1 s of CPU."),
+}
+
+
+PIPELINE = Pipeline(
+    name="pass_completion",
+    module="scripts.train_pass_completion",
+    params=_PARAMS,
+    stages=(
+        Stage(
+            name="refs",
+            serial_reason=_SERIAL_REASONS["refs"],  # S3 item 12 (SERIAL annex)
+            units=lambda ctx: ["only"],
+            work=_refs_work,
+            reduce=lambda r, ctx: r["only"],
+            params=("source", "competition_id", "season_id", "all_competitions", "max_per_provider"),
+            # the match selection is declared by CONTENT, never by path (the 4.77.1 stale-shard rule)
+            declare=lambda p: {"match_ids": _match_ids(p)},
+            uses_dataset=True,
+            dataset_files=lambda ctx: (),  # open data over HTTP: no dataset file
+        ),
+        ItemStage(
+            name="extract",
+            serial_reason=_SERIAL_REASONS["extract"],  # S3 item 12 (SERIAL annex)
+            refs=_extract_refs,
+            key=lambda ref: ref.key,
+            load=_load_match,
+            work=_extract_work,
+            needs=("refs",),
+            reduce=_extract_reduce,
+            declare=lambda p: {"model": "PassCompletionModel", "cols": list(_SHARD_COLUMNS)},
+            cross_commit_version="pass-completion-shard-1",
+            uses_dataset=True,
+            max_failures=None,  # legacy for_each recorded failures and fit over the rest
+        ),
+        Stage(
+            name="cv",
+            serial_reason=_SERIAL_REASONS["cv"],  # S3 item 12 (SERIAL annex)
+            units=_cv_units,
+            work=_cv_work,
+            needs=("extract",),
+            reduce=_cv_reduce,
+        ),
+        Stage(
+            name="fit",
+            serial_reason=_SERIAL_REASONS["fit"],  # S3 item 12 (SERIAL annex)
+            units=lambda ctx: ["only"],
+            work=_fit_work,
+            needs=("refs", "extract", "cv"),
+            reduce=lambda r, ctx: r["only"],
+        ),
+    ),
+    output="fit",
+)
 
 if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    main()
+    cli_main(PIPELINE)

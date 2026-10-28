@@ -23,6 +23,7 @@ def _spec(**kw):
         campaign="cycle1",
         run_key="cycle1-4444444-ghost_gk-owner",
         job="ghost_gk",
+        tier="owner",
         variant="default",
         stages=("extract",),
         shard=(1, 4),
@@ -40,6 +41,7 @@ def _spec(**kw):
         extras=(),
     )
     base.update(kw)
+    base.setdefault("gens", tuple(f"{i:08x}" for i in range(len(base["stages"]))))  # spec r4 D17: one per stage
     return L.JobSpec(**base)
 
 
@@ -68,12 +70,15 @@ def test_launch_uses_the_typed_api_with_the_one_flavor_and_image():
         "campaign": "cycle1",
         "run_key": "cycle1-4444444-ghost_gk-owner",
         "job": "ghost_gk",
+        "tier": "owner",  # spec r4 D18 (c): tiers that read one dataset share a store
         "variant": "default",
         "stage": "extract",
+        "gens": "00000000",  # spec r4 D17: the generation of each stage the job runs
         "shard": "1of4",
         "commit": SHA,
+        "kind": "run",  # spec r3 D6(c): a completed run job is told apart from a profile
     }
-    assert kw["name"] == L.job_name(_spec()) == "cycle1-4444444-ghost_gk-owner--default--extract--1of4"
+    assert kw["name"] == L.job_name(_spec()) == "cycle1-4444444-ghost_gk-owner--owner--default--extract--1of4"
 
 
 def test_the_job_name_is_explicit_bounded_and_unique():
@@ -103,6 +108,29 @@ def test_a_label_value_over_the_hf_limit_refuses_before_any_spend():
     assert api.calls == []
 
 
+def test_a_gens_label_over_label_max_is_refused():
+    """Spec r4 D17: the `gens` label holds the 8-hex generation prefix of each stage the job runs, in stage order. Eight
+    stages fit (71 characters); a label over `LABEL_MAX` refuses before any spend, and so does a job whose
+    generations do not match its stages one for one."""
+    api = _FakeApi()
+    eight = tuple(f"s{i}" for i in range(8))
+    assert len(L.labels_for(_spec(stages=eight, gens=tuple(f"{i:08x}" for i in range(8))))["gens"]) == 71
+    twelve = tuple(f"s{i}" for i in range(12))
+    with pytest.raises(ValueError, match="over 100"):
+        L.launch(_spec(stages=twelve, gens=tuple(f"{i:08x}" for i in range(12))), api=api, token="hf_x")
+    with pytest.raises(ValueError, match="one generation per stage"):
+        L.launch(_spec(stages=("a", "b"), gens=("00000000",)), api=api, token="hf_x")
+    assert api.calls == []
+
+
+def test_a_job_without_its_generations_is_refused_when_read_back():
+    """Spec r4 D17: the controller keys in-flight work by the `gens` label, so a campaign job without one is refused
+    loudly instead of read as running nothing (which would launch its work a second time)."""
+    assert L.gens_of({"gens": "0a1b2c3d-4e5f6a7b"}) == ("0a1b2c3d", "4e5f6a7b")
+    with pytest.raises(RuntimeError, match="gens"):
+        L.gens_of({"run_key": "rk", "stage": "extract"}, job="j1")
+
+
 def test_no_other_flavor_is_reachable():
     """INV-4: the only flavor literal in the launcher package is the constant."""
     for path in pathlib.Path("scripts/hf_jobs").glob("*.py"):
@@ -120,7 +148,7 @@ def test_job_env_is_deterministic_and_carries_identity():
     assert env["PYTHONHASHSEED"] == "0" and env["NUMBA_NUM_THREADS"] == "1"
     assert env["SILLY_KICKS_IMAGE"] == L.IMAGE
     assert env["SILLY_KICKS_RUN_KEY"] == "cycle1-4444444-ghost_gk-owner"
-    assert env["SILLY_KICKS_JOB_LABEL"] == "ghost_gk.default.extract.1of4"
+    assert env["SILLY_KICKS_JOB_LABEL"] == "ghost_gk.owner.default.extract.1of4"
     assert env["SILLY_KICKS_IN_HF_JOB"] == "1"
 
 

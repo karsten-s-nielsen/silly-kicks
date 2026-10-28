@@ -33,7 +33,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
 
-from scripts._stages import ItemStage, Param, Pipeline, Stage, main
+from scripts._stages import ItemStage, Param, Pipeline, Stage, cli_main
 
 sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
@@ -65,6 +65,7 @@ def _hpo_once(
     seed=42,
     study_shard_dir=None,
     fold_map=None,
+    runtime_n_jobs=1,
 ) -> dict:
     """Run ruthless HPO once for one candidate; return the frozen best-params dict.
 
@@ -106,6 +107,7 @@ def _hpo_once(
         negative_subsample=negative_subsample,
         subsample_seed=seed,
         fold_map=fold_map,
+        runtime_n_jobs=runtime_n_jobs,  # HFU S3 item 9: the in-process folds at the worker's budget
     )
     cfg = OptunaConfig(
         kind="optuna",
@@ -162,8 +164,11 @@ def _cv_metrics_fold(X, y, fold_i, tr, te, params, negative_subsample=None, seed
         Xtr, ytr, _ = subsample_negatives(Xtr, ytr, ytr, fraction=negative_subsample, seed=seed + fold_i)
         if len(np.unique(ytr)) < 2:
             return None
+    from scripts._thread_pin import runtime_n_jobs_from_env
+
     p_ = dict(_pinned_params(params))
     p_["base_score"] = float(ytr.mean())
+    p_["n_jobs"] = runtime_n_jobs_from_env()  # HFU T11/B-06/B-27: the n_jobs-lever budget into the cv fold fit
     clf = xgb.XGBClassifier(**p_)
     clf.fit(Xtr.to_numpy(float), ytr)
     p = clf.predict_proba(X.iloc[te].to_numpy(float))[:, 1]
@@ -440,9 +445,12 @@ _PARAMS = (
     ),
 )
 
-#: What determines an extract shard's CONTENT (the legacy `_extract` token inputs, unchanged): the
-#: extractor, the label horizon, the domain filter and the carrier params the features are built against.
-#: `feature_set` changes the X columns (27 vs 26), so it MUST key the generation (the 4.77.1 trap).
+#: What determines an extract shard's CONTENT (the legacy `_extract` token inputs): the extractor, the label
+#: horizon, the domain filter and the carrier params the features are built against. Spec r4 D18 (b): the shards
+#: always hold the FAITHFUL columns (27), for both variants -- one extraction; `prep` (its one consumer) projects
+#: `position_only` (26) and declares `feature_set`, so the 4.77.1 rule (different columns never share a
+#: generation) holds there. The declared feature set is the shards' constant, the 2474b73 default's token.
+_EXTRACT_FEATURE_SET = "faithful"
 
 
 def _extract_declare(p) -> dict:
@@ -450,7 +458,7 @@ def _extract_declare(p) -> dict:
 
     return {
         "extractor": "prepare_xshot_training_data",
-        "feature_set": p["feature_set"],
+        "feature_set": _EXTRACT_FEATURE_SET,
         "horizon_seconds": p["horizon_seconds"],
         "attacking_third_only": True,
         "carrier_params": dict(DEFAULT_CARRIER_PARAMS),
@@ -505,7 +513,7 @@ def _extract_work(item, ctx) -> pd.DataFrame | None:
         frames,
         shots,
         home_team_id=home,
-        feature_set=ctx.params["feature_set"],
+        feature_set=_EXTRACT_FEATURE_SET,  # spec r4 D18 (b): one faithful extraction; `prep` projects
         horizon_seconds=ctx.params["horizon_seconds"],
         attacking_third_only=True,
         carrier_params=DEFAULT_CARRIER_PARAMS,  # 4.7.0 values; shared constant (anti-drift)
@@ -552,6 +560,25 @@ def _feature_names(feature_set: str) -> list[str]:
     return list(XSHOT_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XSHOT_FEATURE_NAMES_FAITHFUL)
 
 
+def _extract_for(ctx) -> pd.DataFrame:
+    """The extract output as this variant's consumer reads it (spec r4 D18 (b)): the shared faithful rows, minus the
+    faithful-only columns for `position_only` -- the old `position_only` extract output, column for column."""
+    combined = ctx.upstream("extract")
+    if ctx.params["feature_set"] == "position_only":
+        faithful_only = [c for c in _feature_names("faithful") if c not in _feature_names("position_only")]
+        combined = combined.drop(columns=faithful_only)
+    return combined
+
+
+def _unit_match_keys(ctx) -> list[str]:
+    """The in-job match key of every staged unit of the dataset: the keys an arm may name (HFU R4-10)."""
+    from scripts.hf_jobs.arms import match_key
+
+    st = ctx.pipeline.stage("extract")
+    assert isinstance(st, ItemStage)  # noqa: S101 -- the pipeline declares it so
+    return [match_key(ref.prov, ref.mid) for ref in st.ref_map(ctx).values()]
+
+
 def _cv_n_splits(groups) -> int:
     """`_cv_metrics_plan`'s fold count for an arm's rows (the legacy ``max(2, min(5, n_games))``)."""
     return max(2, min(5, len(np.unique(groups))))
@@ -564,10 +591,13 @@ def _prep_work(key, ctx):
 
     from scripts._stages import FileSet
     from scripts._study_shared import persist_study_inputs
-    from scripts.hf_jobs.arms import match_key, parse_arms
+    from scripts.hf_jobs.arms import match_key, parse_arms, require_arm_keys_in, restrict_to_arms
 
     p = ctx.params
-    combined = ctx.upstream("extract")
+    armspec = parse_arms(p["arms_json"])
+    require_arm_keys_in(armspec, _unit_match_keys(ctx))  # HFU R4-10: fail closed before any row is cut
+    # spec r4 D18 (c): tiers that read one dataset share its extraction -- this tier's arm rows first
+    combined = restrict_to_arms(_extract_for(ctx), armspec)
     X = combined[_feature_names(p["feature_set"])]
     y = combined["_y"].to_numpy(int)
     # game_id dtype is provider-asymmetric (kloppy str vs GS int) -> normalize cross-provider groups to
@@ -575,7 +605,6 @@ def _prep_work(key, ctx):
     groups = np.asarray(combined["_group"].to_numpy()).astype(str)
     providers = combined["_provider"].to_numpy()
     match_ids = combined["_match_id"].to_numpy()
-    armspec = parse_arms(p["arms_json"])
     match_keys = np.array([match_key(str(pv), str(m)) for pv, m in zip(providers, match_ids, strict=True)])
     arms = _build_candidate_masks(match_keys, armspec)
     is_public = arms.get("public", np.zeros(len(match_keys), dtype=bool))
@@ -691,7 +720,19 @@ def _study_fold_task(corpus_dir, rows_path, plan_path, fold_i, params, ns, seed)
         _FOLD_PLAN[str(plan_path)] = {i: (z[f"arr_{2 * i}"], z[f"arr_{2 * i + 1}"]) for i in range(len(z.files) // 2)}
     Xr, yr = _FOLD_DATA[dkey]
     tr, te = _FOLD_PLAN[str(plan_path)][fold_i]
-    return eval_fold(Xr, yr, fold_i, tr, te, params, negative_subsample=ns, subsample_seed=seed)
+    from scripts._thread_pin import runtime_n_jobs_from_env
+
+    return eval_fold(
+        Xr,
+        yr,
+        fold_i,
+        tr,
+        te,
+        params,
+        negative_subsample=ns,
+        subsample_seed=seed,
+        runtime_n_jobs=runtime_n_jobs_from_env(),  # HFU S3 item 9: the child budget, ceil(vcpu / inner)
+    )
 
 
 def _study_work(tag, ctx) -> dict:
@@ -700,6 +741,7 @@ def _study_work(tag, ctx) -> dict:
     import tempfile
 
     from scripts._stages import int_key
+    from scripts._thread_pin import runtime_n_jobs_from_env
     from silly_kicks.tracking._xshot_occurrence_objective import cv_fold_plan
 
     root, inp = _inputs(ctx)
@@ -740,6 +782,7 @@ def _study_work(tag, ctx) -> dict:
             negative_subsample=ns,
             seed=seed,
             fold_map=fold_map,
+            runtime_n_jobs=runtime_n_jobs_from_env(),  # HFU S3 item 9: the n_jobs-lever budget (B38)
         )
     return {"params": params, "n_trials": cfg["n_trials"]}
 
@@ -855,6 +898,7 @@ def _fit_work(key, ctx):
     import tempfile
 
     from scripts._stages import FileSet
+    from scripts._thread_pin import runtime_n_jobs_from_env
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
     from silly_kicks.tracking._xshot_occurrence import XShotOccurrenceModel, subsample_negatives
 
@@ -883,7 +927,13 @@ def _fit_work(key, ctx):
     model.shipped_variant = shipped
     model.provider_list = candidates[shipped]["providers"]
     model.training_commit = cfg["run_prov"]["commit"]
-    model.fit(Xfit, pd.Series(yfit), carrier_params=DEFAULT_CARRIER_PARAMS, horizon_seconds=cfg["horizon_seconds"])
+    model.fit(
+        Xfit,
+        pd.Series(yfit),
+        carrier_params=DEFAULT_CARRIER_PARAMS,
+        horizon_seconds=cfg["horizon_seconds"],
+        runtime_n_jobs=runtime_n_jobs_from_env(),  # the n_jobs-lever budget, read trainer-side (B27/B38)
+    )
     with tempfile.TemporaryDirectory() as tmp:
         art = Path(tmp) / "xshot_occurrence_v1"
         model.save(art)
@@ -930,6 +980,30 @@ def _assemble_work(key, ctx):
     return FileSet(files)
 
 
+#: HFU plan R3-8 S3 item 12: the reviewed serial reasons of this pipeline's SERIAL stages, verbatim from the
+#: plan's SERIAL annex (owner ruling 2026-10-30, "too small to pay"); `scripts/hf_jobs/serial_reasons.py`
+#: holds the same texts and `tests/scripts/test_serial_reasons.py` holds the two equal.
+_SERIAL_REASONS = {
+    "prep": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 6 s of CPU, the arm-restricted "
+        "design matrix from the extract results."
+    ),
+    "fit": (
+        "Too small to pay (under 60 s of unit and reduce CPU, owner ruling 2026-10-30): one xgb fit, 26 s of CPU at one"
+        " core with the dead lever (S1), 7.4 s at 5.84 cores with the lever fixed (S1d); a start-up-bound job of under "
+        "30 s."
+    ),
+    "select": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 1 s of CPU, choosing the "
+        "parameters from the study and cv results."
+    ),
+    "assemble": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 1 s of CPU, the metrics block "
+        "and the bundle."
+    ),
+}
+
+
 PIPELINE = Pipeline(
     name="xshot_occurrence",
     module="scripts.train_xshot_occurrence",
@@ -943,6 +1017,7 @@ PIPELINE = Pipeline(
             work=_extract_work,
             counters=_extract_counters,
             reduce=_extract_reduce,
+            shardable_reduce=("_group",),  # HFU T8: a plain combine_frames concat (raises only when ALL parts empty)
             reduce_order=_mid_of,
             declare=_extract_declare,
             cross_commit_version="xshot-extract-1",
@@ -951,6 +1026,7 @@ PIPELINE = Pipeline(
         ),
         Stage(
             name="prep",
+            serial_reason=_SERIAL_REASONS["prep"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_prep_work,
             needs=("extract",),
@@ -965,10 +1041,23 @@ PIPELINE = Pipeline(
             reduce=lambda r, ctx: dict(r),
             inner_parallel=True,
             inner_width=5,
+            # HFU S3 item 9 (rows 15, 24): each of the 5 children fits at ceil(vcpu / 5) threads (item 0 (c));
+            # ADR-128 INV-2 opt-in (test_thread_identity; test_thread_safe_registry)
+            thread_safe=True,
+            thread_lever="n_jobs",  # xgb: runtime n_jobs + OMP_NUM_THREADS at the budget; BLAS, numba stay 1 (item 1)
         ),
-        Stage(name="cv", units=_cv_units, work=_cv_work, needs=("prep", "study"), reduce=_cv_reduce),
+        Stage(
+            name="cv",
+            units=_cv_units,
+            work=_cv_work,
+            needs=("prep", "study"),
+            reduce=_cv_reduce,
+            thread_safe=True,  # HFU T11: each fold fits an xgb classifier; W=1 gets the full vCPU budget
+            thread_lever="n_jobs",  # xgb runtime n_jobs, env serial (B38); arm test_cv_thread_identity_xgb
+        ),
         Stage(
             name="select",
+            serial_reason=_SERIAL_REASONS["select"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_select_work,
             needs=("prep", "study", "cv"),
@@ -976,13 +1065,17 @@ PIPELINE = Pipeline(
         ),
         Stage(
             name="fit",
+            serial_reason=_SERIAL_REASONS["fit"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_fit_work,
             needs=("prep", "select"),
             reduce=lambda r, ctx: r["only"],
+            thread_safe=True,  # ADR-128 INV-2 opt-in (test_thread_identity; test_thread_safe_registry)
+            thread_lever="n_jobs",  # xgb: runtime n_jobs + OMP_NUM_THREADS at the budget; BLAS, numba stay 1 (item 1)
         ),
         Stage(
             name="assemble",
+            serial_reason=_SERIAL_REASONS["assemble"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_assemble_work,
             needs=("prep", "select", "fit"),
@@ -993,4 +1086,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

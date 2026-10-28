@@ -97,3 +97,40 @@ feature-contract test passes unchanged, no retrain, no re-materialize, no artifa
 - The two discrimination proofs (flip the `go_left` inequality → the bit-identity gate fails; remove
   the values-kernel guard → the >depth-cap "values raises" leg fails) were run and reverted; they
   are documented in the test module docstring, not committed as perturbations.
+
+## Amendment (2026-10-30): the numpy fallback is the TRAINING path (HFU spec r3 D16)
+
+**Context.** The HF training env (`uv sync --extra train --group hfjobs`) has no numba, so every ghost
+training job runs the numpy fallback, not the `@njit` kernel. Measured on HF hardware (read-only canary job
+`6ae4a0dfc78863f9c62e806e`, one real `ghost_outfield` cv fold at `OMP_NUM_THREADS=8`): the fold took
+1,075 s, of which `predict_mean` took 1,012 s on one core; the HistGB fit took 50 s at 7.33 cores. The old
+fallback body fancy-indexed the structured node arrays per tree and per level.
+
+**Decision.** The numpy fallback bodies of `_vectorized_leaf_values` / `_vectorized_leaf_indices` become a
+walk over the flat arrays (`_FlatTrees`): rows in chunks of `_LEAF_WALK_CHUNK`; per tree, level by level,
+only the rows not yet at a leaf advance; the same comparisons, the same 100-step bound, and the same
+asymmetric depth-cap contract (values raise, indices return the non-converged index). Each row still sums
+its leaf values tree by tree in tree order, so the output is bit-identical to the old body by construction.
+The old body is kept verbatim as the test oracle (`tests/tracking/_ghost_leaf_reference.py`). The walk is
+SERIAL and the public API is unchanged: no signature gains a parameter, and with numba importable the
+existing serial `@njit` kernel still serves. Option D's reason (serving stays serial) is untouched.
+
+**Rejected (owner ruling 2026-10-30): a thread pool over the chunks.** A keyword-only `n_threads` was built and
+measured on HF hardware (canary job `6ae4ab410e0338d1bb7cb791`). The walk is GIL-bound there: 8 threads used
+2.8–3.2 cores. The `ghost_outfield` fold predict took 66.0 s at 8 threads against 52.3 s serial (slower);
+`ghost_gk` took 11.9 s against 14.1 s (2.2 s, 16 % faster). The owner ruled for the serial walk: the
+`ghost_gk` gain is given up for one code path with no thread knob. Training parallelism comes from the stage
+units (folds, columns), not from inside the walk.
+
+**Rejected: add numba to the training env.** The leaf walk would be bit-identical, but every path that
+switches backend when numba is importable would switch too: the KDE `auto` default becomes `cpu-numba`
+(≤ 1e-9 from `vectorized`, per this ADR), and the DAS, pitch-control, ball-carrier, coordination and
+xT-GK kernels. That is a rebaseline risk across every campaign trainer.
+
+**Evidence.** On HF, the real `ghost_outfield` fold predict took 1,012 s with the old body and 52 s with the
+flat walk, both serial (19×). Identity on HF (canary job `6ae4aee00e0338d1bb7cb8a7`): the fold-0 predictions
+of the old body and the flat walk on the same fit agree on 822,176 rows (0 differ, maximum difference 0.0),
+and both trainers' `_cv_work` fold-0 results, encoded by the store's own `_encode`, are byte-identical to the
+`2474b73` campaign's stored results at OMP 8 and 1 (4 of 4). The local algorithm benchmark (200 trees ×
+200,000 rows; never a planning number) agreed: old body 83.5 s, flat walk 12.7 s, serial `@njit` 6.1 s; all
+`np.array_equal`.

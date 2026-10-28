@@ -53,23 +53,25 @@ def test_grid_spec_from_args_default_and_extended():
 
 
 def test_grid_x_max_keys_the_shard_generation():
-    # BEHAVIORAL (not a source grep): the 4.77.1 stale-shard trap. A lifted ceiling changes the shard
-    # label ROWS, so grid_x_max MUST resolve to a DIFFERENT shard generation, or a re-run silently
-    # reuses the stale <=30 m shards. Also assert grid_x_max is actually IN the declared inputs.
+    # BEHAVIORAL (not a source grep): the 4.77.1 stale-shard trap. A lifted ceiling changes the selected
+    # label ROWS, so grid_x_max MUST resolve to a DIFFERENT generation, or a re-run silently reuses the
+    # stale <=30 m rows. Spec r4 D18 (a): the rows are SELECTED from one superset extraction, so the trap
+    # now lives in `select`'s declared inputs (the superset declares its own fixed, wider grid).
     import pathlib
     import tempfile
 
     from scripts._driver import generation_dir
-    from scripts.train_ghost_gk import build_extraction_inputs
+    from scripts.train_ghost_gk import build_extraction_inputs, build_selection_inputs
 
-    common = {"feature_set": "faithful", "subsample_fps": 1.0, "carrier_params": {"beta": 0.0}, "with_actions": False}
-    default_inputs = build_extraction_inputs(grid_x_max=30.0, **common)
-    sweeper_inputs = build_extraction_inputs(grid_x_max=52.5, **common)
+    default_inputs = build_selection_inputs(feature_set="faithful", grid_x_max=30.0)
+    sweeper_inputs = build_selection_inputs(feature_set="faithful", grid_x_max=52.5)
     assert default_inputs["grid_x_max"] == 30.0 and sweeper_inputs["grid_x_max"] == 52.5
     root = pathlib.Path(tempfile.mkdtemp())
     gen_default = generation_dir(root, token_inputs=default_inputs)
     gen_sweeper = generation_dir(root, token_inputs=sweeper_inputs)
-    assert gen_default.name != gen_sweeper.name, "a lifted ceiling must NOT reuse the default's shard generation"
+    assert gen_default.name != gen_sweeper.name, "a lifted ceiling must NOT reuse the default's selection"
+    superset = build_extraction_inputs(subsample_fps=1.0, carrier_params={"beta": 0.0}, with_actions=False)
+    assert superset["grid_x_max"] >= sweeper_inputs["grid_x_max"]  # the superset holds every variant's rows
 
 
 def _parse(*argv: str):

@@ -767,7 +767,6 @@ class GhostOutfieldModel:
             "max_depth": self._max_depth,
             "sklearn_version": self._sklearn_version or sklearn.__version__,
             "training_commit": self.training_commit,
-            "training_platform": self.training_platform,
             "corpus_provenance": self.corpus_provenance,
             "serve_estimator": SERVED_ESTIMATOR,
             "version": "1.0.0",
@@ -1175,26 +1174,40 @@ def ghost_rearguard_coherence(served: pd.DataFrame) -> dict:
       (``ghost_gr_y`` non-decreasing in ``slot_index`` order). 1.0 = every ghost line is well ordered.
     * ``min_pairwise_distance_m`` --- the smallest slot-to-slot distance seen across all groups (a
       collapse indicator).
+
+    Computed over arrays, never per group (a training table has about a million groups): the group
+    membership is the ``groupby``'s own (``ngroup``, rows with a missing key dropped), each group's rows
+    take the stable ``slot_index`` order of a per-group ``sort_values`` (one stable sort by slot, then
+    one stable sort by group), and every distance is the same float expression as a per-group distance
+    matrix, so the result equals the per-group loop exactly (HFU plan R3-8 S3 item 15).
     """
     finite = served.dropna(subset=["ghost_gr_x", "ghost_gr_y"])
-    n_groups = 0
-    n_ordered = 0
-    min_dists: list[float] = []
-    for _key, grp in finite.groupby(["game_id", "period_id", "frame_id", "team_id"], sort=False, observed=True):
-        gg = grp.sort_values("slot_index", kind="stable")
-        if len(gg) < 2:
-            continue
-        n_groups += 1
-        ys = gg["ghost_gr_y"].to_numpy(dtype=float)
-        xs = gg["ghost_gr_x"].to_numpy(dtype=float)
-        if np.all(np.diff(ys) >= 0.0):
-            n_ordered += 1
-        pts = np.column_stack([xs, ys])
-        dmat = np.sqrt(((pts[:, None, :] - pts[None, :, :]) ** 2).sum(axis=-1))
-        np.fill_diagonal(dmat, np.inf)
-        min_dists.append(float(dmat.min()))
+    codes = finite.groupby(["game_id", "period_id", "frame_id", "team_id"], sort=False, observed=True).ngroup()
+    keep = codes.notna().to_numpy()
+    rows = finite.loc[keep, ["slot_index", "ghost_gr_x", "ghost_gr_y"]].reset_index(drop=True)
+    group = codes.to_numpy()[keep].astype(np.int64)
+    by_slot = rows.sort_values("slot_index", kind="stable").index.to_numpy()
+    order = by_slot[np.argsort(group[by_slot], kind="stable")]
+    g = group[order]
+    xs = rows["ghost_gr_x"].to_numpy(dtype=float)[order]
+    ys = rows["ghost_gr_y"].to_numpy(dtype=float)[order]
+
+    starts = np.flatnonzero(np.r_[True, g[1:] != g[:-1]]) if len(g) else np.zeros(0, dtype=np.int64)
+    sizes = np.diff(np.r_[starts, len(g)])
+    n_groups = int((sizes >= 2).sum())
+    group_of_row = np.repeat(np.arange(len(starts)), sizes)
+    same_group = g[1:] == g[:-1]
+    broken = same_group & ~(np.diff(ys) >= 0.0)  # a NaN difference breaks the order, as np.all(... >= 0.0) does
+    n_ordered = n_groups - len(np.unique(group_of_row[1:][broken]))
+
+    pair_dists: list[np.ndarray] = []
+    for k in range(1, int(sizes.max()) if len(sizes) else 1):
+        a = np.flatnonzero(g[:-k] == g[k:])
+        if len(a):
+            b = a + k
+            pair_dists.append(np.sqrt((xs[a] - xs[b]) ** 2 + (ys[a] - ys[b]) ** 2))
     return {
         "n_groups": n_groups,
         "ordering_fraction": (n_ordered / n_groups) if n_groups else float("nan"),
-        "min_pairwise_distance_m": float(np.min(min_dists)) if min_dists else float("nan"),
+        "min_pairwise_distance_m": float(np.min(np.concatenate(pair_dists))) if pair_dists else float("nan"),
     }

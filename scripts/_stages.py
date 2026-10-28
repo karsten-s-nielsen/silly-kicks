@@ -3,11 +3,13 @@
 WHY THIS EXISTS. The 4.138.0 re-fit campaign ran 5-9 hour jobs on one of eight vCPUs, from uncommitted
 scratchpad orchestration, because the per-trainer phase flags (ADR-123) had untested real-HF paths. This
 module is the ONE contract every heavy trainer and corpus driver declares instead: a static DAG of
-stages, each a set of independent, keyed, single-threaded units plus an optional reducer. The executor
+stages, each a set of independent, keyed, single-threaded units (unless a stage opts into its vCPU share with
+`thread_safe=True` behind a byte-identity gate, ADR-128 amendment) plus an optional reducer. The executor
 (`scripts/hf_jobs/executor.py`) places units as W worker processes per job x N jobs, and every output is
 byte-identical for every (W, N) (INV-1) because:
 
-1. a unit is single-threaded (the executor starts workers with `_thread_pin.deterministic_env`);
+1. a unit is single-threaded (the executor starts workers with `_thread_pin.deterministic_env`), UNLESS its
+   stage sets `thread_safe=True` behind a committed cross-thread-count byte-identity test (ADR-128 amendment);
 2. a unit writes ONE result file per key, atomically, with a checksum sidecar written first;
 3. every reduction receives results in a declared total order of keys, never completion order
    (floating-point addition is not associative, so this rule is load-bearing);
@@ -26,6 +28,8 @@ Stdlib only at import; pandas is imported inside the functions that need it (the
 from __future__ import annotations
 
 import argparse
+import atexit
+import contextlib
 import dataclasses
 import hashlib
 import importlib
@@ -37,17 +41,21 @@ import re
 import sys
 import time
 import warnings
-from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Protocol
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Literal, NoReturn, Protocol
 
-from scripts._driver import _token, _write_bytes_atomically, join_key
+from scripts._driver import _CHECKSUMMED, _token, _write_bytes_atomically, _write_bytes_exclusively, join_key
 from scripts._item_outcome import ItemExcluded
+from scripts._thread_pin import RUNTIME_THREADS_VAR
 
 #: Numeric key components are zero-padded to this width, so lexicographic key order == numeric order.
 KEY_WIDTH = 4
 _RESULT_SUFFIXES = (".parquet", ".json", ".fileset.json")
 _OUTPUT = "_output"
 MISSING = object()
+#: The upstream-load phases ``read_result`` times when given ``timings`` (spec r3 D11 (b)); ``run_unit`` writes
+#: each as ``upstream_<phase>`` in the unit's ledger record.
+LOAD_PHASES = ("fetch_s", "verify_s", "decode_s")
 #: A failed unit is retried until it has failed this many times (single-sourced with the campaign
 #: controller, `planner.Constraints.unit_attempts`). A memory failure below it is DEFERRED: the unit waits
 #: for its escalation job (W=1, the whole box), so it neither fails its stage nor lets it reduce.
@@ -56,6 +64,13 @@ UNIT_ATTEMPTS = 2
 
 class StageIncompleteError(RuntimeError):
     """A reduce was requested while units are pending, or failures exceed the stage's tolerance."""
+
+
+class UnitsInvalidatedError(StageIncompleteError):
+    """A reduce found unit results that failed verification and DELETED them for re-run (INV-3; spec r3 D6(d)). Not
+    a failure: the stage is incomplete again and the controller re-runs the units. A truncated or lost write on the
+    bucket mount must never end a job in ERROR, because the controller halts on a job that errors with units
+    pending."""
 
 
 class UpstreamNotReducedError(RuntimeError):
@@ -114,7 +129,8 @@ class Stage:
     """A set of keyed units plus an optional reducer (spec 5.1).
 
     ``units(ctx)`` enumerates the keys deterministically (it may read upstream outputs).
-    ``work(key, ctx)`` is pure, deterministic and single-threaded and returns ONE result: a DataFrame,
+    ``work(key, ctx)`` is pure, deterministic and single-threaded (unless the stage opts in with
+    ``thread_safe=True``, ADR-128 amendment) and returns ONE result: a DataFrame,
     a JSON-native value or a ``FileSet``. ``reduce(results, ctx)`` receives ``{key: result}`` in
     ``reduce_order`` order (default: sorted keys) and returns the stage output. An ``inner_parallel``
     unit runs alone at the top level of a job and receives ``ctx.pool`` (an ``InnerPool``); every
@@ -152,6 +168,25 @@ class Stage:
     #: declaration covers every read. Required when ``uses_dataset`` (`Pipeline.validate`). An
     #: ItemStage declares through its refs' ``files`` instead.
     dataset_files: Callable[[RunContext], Sequence[str]] | None = None
+    #: ADR-128 INV-2 opt-in (Cycle 1): when True the executor launches this stage's worker at the per-job
+    #: thread budget instead of pinned to 1. ONLY opt in behind a committed cross-thread-count byte-identity
+    #: test (`test_thread_identity`). Default False keeps every unit single-threaded.
+    thread_safe: bool = False
+    #: The thread lever the budget rides: ``"omp"`` (OpenMP ``prange`` kernels, e.g. HistGB) raises
+    #: ``OMP_NUM_THREADS`` and keeps BLAS serial; ``"n_jobs"`` (e.g. xgb) also raises ``OMP_NUM_THREADS`` (XGBoost caps
+    #: ``nthread`` at it) and exports ``SILLY_KICKS_RUNTIME_THREADS`` for the trainer's runtime ``n_jobs``; BLAS and
+    #: numba stay "1" for both (B38; ADR-128 Amendment 2026-10-31 (b)). Ignored unless ``thread_safe``.
+    thread_lever: Literal["omp", "n_jobs"] = "omp"
+    #: HFU T8: the concat id columns, set ONLY on a plain ``combine_frames`` concat reduce, which makes the
+    #: reduce SHARDABLE. When a shardable stage's measured reduce wall exceeds the per-job budget the reduce
+    #: is range-partitioned: each sub-reduce raw-concats its sorted-key range into a partial (empty-tolerant,
+    #: no per-range raise), and the final reduce runs ``reduce`` over the partials so the stage's own empty
+    #: policy applies ONCE, byte-identically. None = not shardable (a non-concat reduce stays whole).
+    shardable_reduce: tuple[str, ...] | None = None
+    #: Spec r3 D8: a REVIEWED reason this stage cannot fill the box's vCPU, so the R1 audit may pass it as a
+    #: floor. Every declaration must equal its entry in ``scripts/hf_jobs/serial_reasons.py``
+    #: (`test_every_serial_stage_declares_a_reviewed_reason`, an EXACT gate). None: no floor by reason.
+    serial_reason: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -182,6 +217,13 @@ class ItemStage:
     #: The parameter naming the dataset this stage reads (``uses_dataset``); its identity keys the token.
     dataset_param: str = "dataset"
     inner_parallel: bool = dataclasses.field(default=False, init=False)
+    #: ADR-128 INV-2 opt-in — see ``Stage.thread_safe``/``thread_lever``.
+    thread_safe: bool = False
+    thread_lever: Literal["omp", "n_jobs"] = "omp"
+    #: HFU T8 — see ``Stage.shardable_reduce``. The concat id columns; None = the reduce is not shardable.
+    shardable_reduce: tuple[str, ...] | None = None
+    #: Spec r3 D8 — see ``Stage.serial_reason``.
+    serial_reason: str | None = None
 
     def units(self, ctx: RunContext) -> list[str]:
         return [join_key(self.key(r)) for r in self.refs(ctx)]
@@ -224,6 +266,8 @@ class Pipeline:
             for p in st.params:
                 if p not in declared:
                     raise ValueError(f"{self.name}: stage {st.name} names undeclared param {p!r}")
+            if st.serial_reason is not None and not st.serial_reason.strip():
+                raise ValueError(f"{self.name}: stage {st.name} declares a blank serial_reason (spec r3 D8)")
             if isinstance(st, Stage) and st.uses_dataset and st.dataset_files is None:
                 raise ValueError(
                     f"{self.name}: dataset stage {st.name} must declare dataset_files (the files its units read; "
@@ -239,9 +283,39 @@ class Store(Protocol):
 
     def read_bytes(self, rel: str) -> bytes | None: ...
     def write_bytes(self, rel: str, data: bytes) -> None: ...
+    def write_if_absent(self, rel: str, data: bytes) -> bool: ...
     def names(self, rel_dir: str) -> set[str]: ...
     def delete(self, rel: str) -> None: ...
     def local_path(self, rel: str) -> pathlib.Path | None: ...
+
+
+@contextlib.contextmanager
+def _file_read_lock(path: pathlib.Path) -> Iterator[None]:
+    """Hold a container-local exclusive lock for ``path`` while the caller reads it (HFU S3 review, owner ruling
+    2026-10-31, "Per-file read lock").
+
+    The HF bucket mount nearly hangs when several processes read ONE cold file at once: five readers of one
+    156-215 MB generation took 546 s and 4,161 s, where one reader takes 1.4-1.6 s (jobs 6ae62805c78863f9c62f3a2c,
+    6ae634a00e0338d1bb7d3a15); five ghost_gk `cv` folds spent 455 of their 527 s reading their shared upstream (job
+    6ae634ccc78863f9c62f3e3e). Readers of one file take turns, so the later ones read the warm page cache
+    (1,177 MB/s). Readers of different files hold different locks and run at once. The lock file lives in the
+    container's temp directory, never in the store, and is named for the absolute path. Windows has no POSIX
+    ``fcntl`` (a development machine, never HF), so a read there takes no lock."""
+    if sys.platform == "win32":
+        yield
+        return
+    import fcntl
+    import tempfile
+
+    lock_dir = pathlib.Path(tempfile.gettempdir()) / "silly-kicks-read-locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    name = hashlib.sha256(os.path.abspath(path).encode("utf-8")).hexdigest()
+    with open(lock_dir / f"{name}.lock", "a+b") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -253,12 +327,24 @@ class LocalStore:
 
     def read_bytes(self, rel: str) -> bytes | None:
         p = self._p(rel)
-        return p.read_bytes() if p.is_file() else None
+        if not p.is_file():
+            return None
+        with _file_read_lock(p):  # never two processes of a container on one cold file (`_file_read_lock`)
+            try:
+                return p.read_bytes()
+            except FileNotFoundError:  # deleted while this reader waited (a D19 reopen): MISSING, never a failure
+                return None
 
     def write_bytes(self, rel: str, data: bytes) -> None:
         p = self._p(rel)
         p.parent.mkdir(parents=True, exist_ok=True)
         _write_bytes_atomically(p, data)
+
+    def write_if_absent(self, rel: str, data: bytes) -> bool:
+        """Create the file only if absent (O_CREAT|O_EXCL); True when created, False when it exists. Atomic on a
+        single POSIX filesystem; across containers on the bucket mount it is best-effort -- see
+        ``_write_bytes_exclusively`` for the scope of the guarantee."""
+        return _write_bytes_exclusively(self._p(rel), data)
 
     def names(self, rel_dir: str) -> set[str]:
         p = self._p(rel_dir)
@@ -299,7 +385,7 @@ class RunContext:
         return f"{self.stage_dir(stage)}/{self.tokens[stage]}"
 
     def upstream(self, stage: str) -> Any:
-        out = read_result(self.store, f"{self.generation(stage)}/{_OUTPUT}")
+        out = _timed_upstream_read(self.store, f"{self.generation(stage)}/{_OUTPUT}")
         if out is MISSING:
             raise UpstreamNotReducedError(f"{self.pipeline.name}: upstream stage {stage!r} has no output yet")
         return out
@@ -446,7 +532,27 @@ def write_result(store: Store, base: str, result: Any) -> str:
     return digest
 
 
-def _present_suffix(names: set[str], stem: str) -> str | None:
+#: This process's upstream reads so far: their count and the wall seconds of each `LOAD_PHASES` phase. A worker
+#: process loads an upstream once and caches it (e.g. `train_ghost_outfield._data`), so `run_unit` records the
+#: DELTA over the unit: the unit that loaded carries the load, a unit that reused it carries none (spec r3 D11).
+_UPSTREAM_LOAD: dict[str, float] = {"loads": 0, **dict.fromkeys(LOAD_PHASES, 0.0)}
+
+
+def _timed_upstream_read(store: Store, base: str) -> Any:
+    """`read_result` for an UPSTREAM stage's result, counted and timed into `_UPSTREAM_LOAD`."""
+    _UPSTREAM_LOAD["loads"] += 1
+    return read_result(store, base, timings=_UPSTREAM_LOAD)
+
+
+def _upstream_load_delta(before: Mapping[str, float]) -> dict[str, Any]:
+    """The ledger fields for the upstream reads since ``before`` (a copy of `_UPSTREAM_LOAD`)."""
+    out: dict[str, Any] = {"upstream_loads": int(_UPSTREAM_LOAD["loads"] - before["loads"])}
+    for phase in LOAD_PHASES:
+        out[f"upstream_{phase}"] = round(_UPSTREAM_LOAD[phase] - before[phase], 6)
+    return out
+
+
+def _present_suffix(names: Collection[str], stem: str) -> str | None:
     hits = [sfx for sfx in _RESULT_SUFFIXES if f"{stem}{sfx}" in names]
     return hits[0] if hits else None
 
@@ -464,22 +570,72 @@ def _verified(store: Store, base: str, suffix: str) -> bool:
     return True
 
 
-def read_result(store: Store, base: str) -> Any:
-    """The verified result at ``base``, or ``MISSING`` (absent or failing its checksum)."""
-    rel_dir, _, stem = base.rpartition("/")
-    suffix = _present_suffix(store.names(rel_dir), stem)
-    if suffix is None or not _verified(store, base, suffix):
-        return MISSING
-    data = store.read_bytes(base + suffix)
-    assert data is not None  # noqa: S101 -- _verified read it a moment ago
-    if suffix == ".parquet":
-        import pandas as pd
+class _Clock:
+    """Adds the wall time of each ``with clock.phase(name)`` block to ``timings[name]`` (a no-op without one)."""
 
-        return pd.read_parquet(io.BytesIO(data))
+    def __init__(self, timings: dict[str, float] | None) -> None:
+        self.timings = timings
+
+    @contextlib.contextmanager
+    def phase(self, name: str) -> Iterator[None]:
+        t0 = time.perf_counter()
+        try:
+            yield
+        finally:
+            if self.timings is not None:
+                self.timings[name] = self.timings.get(name, 0.0) + (time.perf_counter() - t0)
+
+
+def read_result(
+    store: Store, base: str, *, names: Collection[str] | None = None, timings: dict[str, float] | None = None
+) -> Any:
+    """The verified result at ``base``, or ``MISSING`` (absent or failing its checksum).
+
+    The result is found by PROBING its candidate files in ``_RESULT_SUFFIXES`` order, never by listing its
+    directory: a listing is a full directory scan, and on the HF bucket mount a listing per key made the
+    3,961-unit ``win_probability`` ``extract`` reduce quadratic (spec r3 D1). A caller that already holds the
+    directory listing passes it as ``names`` and saves the absent probes. Each file is read ONCE and verified
+    against its checksum on those same bytes. ``timings``, when given, accumulates the wall seconds of the
+    store reads (``fetch_s``), the checksums (``verify_s``) and the decode (``decode_s``) (spec r3 D11 (b))."""
+    clock = _Clock(timings)
+    with clock.phase("fetch_s"):
+        if names is not None:
+            suffix = _present_suffix(names, base.rpartition("/")[2])
+            data = None if suffix is None else store.read_bytes(base + suffix)
+        else:
+            suffix, data = None, None
+            for sfx in _RESULT_SUFFIXES:
+                data = store.read_bytes(base + sfx)
+                if data is not None:
+                    suffix = sfx
+                    break
+        side = None if suffix is None or data is None else store.read_bytes(base + ".sha256")
+    if suffix is None or data is None:
+        return MISSING
+    with clock.phase("verify_s"):
+        trusted = side is not None and _sha(data) == side.decode("ascii").strip()
+    if not trusted:
+        return MISSING
+    if suffix == ".parquet":
+        with clock.phase("decode_s"):
+            import pandas as pd
+
+            return pd.read_parquet(io.BytesIO(data))
     if suffix == ".json":
-        return json.loads(data)
-    names = json.loads(data)["files"]
-    return FileSet({n: store.read_bytes(f"{base}.files/{n}") or b"" for n in names})
+        with clock.phase("decode_s"):
+            return json.loads(data)
+    files: dict[str, bytes] = {}
+    for name, want in json.loads(data)["files"].items():
+        with clock.phase("fetch_s"):
+            payload = store.read_bytes(f"{base}.files/{name}")
+        if payload is None:
+            return MISSING
+        with clock.phase("verify_s"):
+            trusted = _sha(payload) == want
+        if not trusted:
+            return MISSING
+        files[name] = payload
+    return FileSet(files)
 
 
 #: A joined key is a file stem: letters, digits, '_' and '-' only. No '.', so `<key>.json` (a result) can
@@ -515,11 +671,20 @@ def unit_states(ctx: RunContext, st: AnyStage, keys: Sequence[str], *, verify: b
     Without ``verify`` (the controller's plan) presence of result + sidecar counts as done."""
     gen = ctx.generation(st.name)
     names = ctx.store.names(gen)
+    checked: dict[str, bool] = {}
+    if verify:  # spec r3 D1(b): the INV-3 re-hash of every present result runs through a bounded pool (I/O-bound)
+        todo = [(k, s) for k in keys if (s := _present_suffix(names, k)) is not None and f"{k}.sha256" in names]
+        if todo:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=max(1, min(REDUCE_READ_WORKERS, len(todo)))) as pool:
+                ok = pool.map(lambda ks: _verified(ctx.store, f"{gen}/{ks[0]}", ks[1]), todo)
+                checked = dict(zip((k for k, _ in todo), ok, strict=True))
     out: dict[str, str] = {}
     for k in keys:
         suffix = _present_suffix(names, k)
         if suffix is not None and f"{k}.sha256" in names:
-            if not verify or _verified(ctx.store, f"{gen}/{k}", suffix):
+            if not verify or checked[k]:
                 out[k] = "done"
                 continue
             warnings.warn(f"checksum failure for {gen}/{k}{suffix}; deleting it and redoing the unit", stacklevel=2)
@@ -662,6 +827,21 @@ def combine_frames(parts: Sequence[Any], *, ids: Sequence[str]) -> Any:
     return out
 
 
+def reduce_key_ranges(keys: Sequence[str], n: int) -> list[list[str]]:
+    """Partition keys into at most ``n`` CONTIGUOUS ranges, PRESERVING the given order, for a sharded reduce
+    (HFU T8). The caller supplies the keys in ``reduce_order`` (`reduce_done_order`), so an ordered concat of
+    the per-range sub-concats equals the single reduce: the given order IS the reduce order and ``combine_frames``
+    concatenates in it (``storable_id_column`` idempotent). Never more ranges than keys; an empty key set yields
+    one empty range. It does NOT sort -- plain-sort boundaries would not align with a custom reduce_order and
+    would reorder rows across shards (reviewer B D1-IMPL-08)."""
+    ks = list(keys)
+    if not ks:
+        return [[]]
+    n = max(1, min(int(n), len(ks)))
+    per = -(-len(ks) // n)  # ceil division, no math import
+    return [ks[i : i + per] for i in range(0, len(ks), per)]
+
+
 def _run_item(ctx: RunContext, st: ItemStage, key: str, ref: Any) -> tuple[str, str | None]:
     from scripts._driver import for_each
 
@@ -698,6 +878,9 @@ def run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any 
     attempt = _previous_attempts(ctx.store, base) + 1
     reset_ok = _reset_peak_rss()
     started = time.time_ns()
+    load0 = dict(_UPSTREAM_LOAD)  # spec r3 D11 (b): the upstream load this unit performs
+    cpu0 = _self_and_reaped_cpu_s()  # spec r3 D8: the unit's CPU, threads and live inner-pool children included
+    pool0 = _pool_cpu(pool, ())
     outcome, error = "done", None
     unit_ctx = dataclasses.replace(ctx, pool=pool)
     try:
@@ -716,9 +899,12 @@ def run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any 
         outcome = "excluded"
     except MemoryError:
         outcome, error = "failed", "MemoryError: unit exceeded its memory cap"
+    except UnitsInvalidatedError:  # spec r4 D19: an UPSTREAM stage reopened -- not this unit's failure, no attempt
+        raise
     except Exception as exc:  # broad BY DESIGN: recorded per unit, never swallowed (the for_each rule)
         outcome, error = "failed", f"{type(exc).__name__}: {exc}"
     finished = time.time_ns()
+    cpu_s = _unit_cpu_s(_self_and_reaped_cpu_s() - cpu0, pool0, _pool_cpu(pool, pool0))
     if outcome == "failed":
         ctx.store.write_bytes(base + ".failed.json", _canon_json({"error": error, "attempt": attempt}))
     else:
@@ -732,16 +918,146 @@ def run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any 
         "worker": worker,
         "attempt": attempt,
         "job_label": os.environ.get("SILLY_KICKS_JOB_LABEL"),
+        "platform": ctx.prov.get("platform"),  # the fit host, in run-history not the artifact (D3)
         "started_ns": started,
         "finished_ns": finished,
         "wall_s": (finished - started) / 1e9,
+        "cpu_s": round(cpu_s, 3),  # spec r3 D8: stage diagnostics; R1 itself is judged on the job record
+        # spec r3 D11 (b): the upstream load inside this unit (a per-worker overhead, not unit compute)
+        **_upstream_load_delta(load0),
         "peak_rss_bytes": peak,
         "rss_scope": scope,
         "inner_workers": getattr(pool, "workers", None),
+        "inner_child_peak_rss_bytes": getattr(pool, "child_peak_rss_bytes", None),  # HFU T11/B-19: size the pool
         "inner_completion": list(getattr(pool, "drain_log", lambda: [])()),
+        # ADR-128 INV-2: the applied per-worker thread budget (1 for a pinned stage; the budget for a
+        # thread_safe one). Read from this worker's own env -- either lever resolves to one number.
+        "thread_budget": int(os.environ.get(RUNTIME_THREADS_VAR) or os.environ.get("OMP_NUM_THREADS") or 1),
     }
     ctx.store.write_bytes(base + ".ledger.json", _canon_json(record))
     return outcome
+
+
+def _self_and_reaped_cpu_s() -> float:
+    """This process's CPU seconds plus every REAPED child's (`os.times`; threads included). On Linux the reaped
+    children's figure includes their own reaped descendants, so at the end of a job it is the job's whole CPU."""
+    t = os.times()
+    return t.user + t.system + t.children_user + t.children_system
+
+
+def _proc_cpu_s(pid: int) -> float | None:
+    """A process's CPU seconds (utime + stime, ``/proc/<pid>/stat`` fields 14-15) on Linux, a zombie's final ones
+    included; None when it has no ``/proc`` entry (reaped, or not Linux)."""
+    if sys.platform == "win32":  # no /proc and no os.sysconf
+        return None
+    try:
+        after = pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return (int(after[11]) + int(after[12])) / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+
+
+def _pool_cpu(pool: Any, also: Iterable[int]) -> dict[int, float | None]:
+    """``{pid: CPU seconds or None}`` for the inner pool's current children plus ``also`` (the unit-start pids)."""
+    pids = set(getattr(pool, "child_pids", lambda: ())()) | set(also)
+    return {p: _proc_cpu_s(p) for p in pids}
+
+
+def _unit_cpu_s(reaped_delta: float, start: Mapping[int, float | None], end: Mapping[int, float | None]) -> float:
+    """A unit's CPU seconds (spec r3 D8): its own and its reaped children's (``reaped_delta``, from `os.times`) plus
+    each LIVE inner-pool child's CPU since the unit started. A child alive at the start and reaped during the unit
+    landed its WHOLE-life CPU in ``reaped_delta``, so its pre-unit CPU is subtracted (B r4 R4-11: a clamp let it be
+    counted twice). A child read lower than at the start (a reused pid) adds nothing, and the total is never
+    negative."""
+    live = sum(max(0.0, c - (start.get(p) or 0.0)) for p, c in end.items() if c is not None)
+    reaped_before = sum(c0 for p, c0 in start.items() if c0 is not None and end.get(p) is None)
+    return max(0.0, reaped_delta + live - reaped_before)
+
+
+#: Spec r3 D8: the job records' directory under the store root (one ``<label>.<host>.<pid>.job.json`` per job).
+JOB_RECORD_DIR = "_jobs"
+_IMPORT_EPOCH = time.time()  # the process-start fallback where /proc is unavailable
+
+
+def _process_start_epoch() -> float:
+    """This process's start (epoch seconds) from ``/proc/self/stat`` field 22 and the boot time; else import time."""
+    if sys.platform == "win32":  # no /proc and no os.sysconf
+        return _IMPORT_EPOCH
+    try:
+        after = pathlib.Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()
+        boot = next(
+            int(ln.split()[1]) for ln in pathlib.Path("/proc/stat").read_text().splitlines() if ln.startswith("btime ")
+        )
+        return boot + int(after[19]) / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, StopIteration, AttributeError):
+        return _IMPORT_EPOCH
+
+
+def write_job_record(ctx: RunContext, stages: Sequence[str]) -> None:
+    """Spec r3 D8: R1 is a JOB property, so a job measures itself. At the end of the stage CLI of an HF job (its
+    ``SILLY_KICKS_JOB_LABEL`` set), write the job's total CPU (itself plus every reaped child: workers, reduce
+    children, inner pools) and its wall from the process start. Local runs (no label) write nothing. A write
+    failure warns and never masks the job's exit code."""
+    label = os.environ.get("SILLY_KICKS_JOB_LABEL")
+    if not label:
+        return
+    import socket
+
+    start, now = _process_start_epoch(), time.time()
+    host = re.sub(r"[^A-Za-z0-9_-]", "-", socket.gethostname())[:40] or "host"
+    rec = {
+        "job_label": label,
+        "stages": list(stages),
+        "cpu_s": _self_and_reaped_cpu_s(),
+        "wall_s": now - start,
+        "started_epoch": start,
+        "finished_epoch": now,
+        "host": host,
+        "pid": os.getpid(),
+    }
+    try:
+        ctx.store.write_bytes(f"{JOB_RECORD_DIR}/{label}.{host}.{os.getpid()}.job.json", _canon_json(rec))
+    except OSError as exc:
+        warnings.warn(f"job record not written: {exc}", stacklevel=2)
+
+
+def repair_missing_ledgers(store: Store, gen: str, done_keys: Iterable[str], *, stage: str) -> list[str]:
+    """D7: a unit whose result is present and verified but whose ``.ledger.json`` was lost to a kill between the
+    two writes gets a repair record now -- outcome ``done`` with an UNKNOWN wall (``wall_s`` null), so resume and
+    the summary count the unit without inventing a cost. Returns the repaired keys. Idempotent: a unit that
+    already has a ledger is left untouched.
+
+    The write is create-only (``write_if_absent``), so a straggler that writes the REAL ledger between the
+    ``done_keys`` snapshot and this write keeps it: on a single POSIX filesystem the null-wall repair record
+    never clobbers a measured one (reviewer B B14). The production race is cross-container on the bucket mount,
+    where that is best-effort, not a proof -- see ``_write_bytes_exclusively`` for the scope. The ``names``
+    pre-filter only skips the obvious already-present case cheaply."""
+    names = store.names(gen)
+    repaired: list[str] = []
+    for k in done_keys:
+        if f"{k}.ledger.json" in names:
+            continue
+        record = {
+            "stage": stage,
+            "key": k,
+            "outcome": "done",
+            "error": None,
+            "worker": None,
+            "attempt": 0,
+            "job_label": os.environ.get("SILLY_KICKS_JOB_LABEL"),
+            "started_ns": None,
+            "finished_ns": None,
+            "wall_s": None,
+            "peak_rss_bytes": None,
+            "rss_scope": None,
+            "inner_workers": None,
+            "inner_completion": [],
+            "platform": None,  # the fit host is unknown: the record was lost before this repair
+            "repaired": True,
+        }
+        if store.write_if_absent(f"{gen}/{k}.ledger.json", _canon_json(record)):
+            repaired.append(k)
+    return repaired
 
 
 def output_present(ctx: RunContext, name: str, *, verify: bool) -> bool:
@@ -752,12 +1068,154 @@ def output_present(ctx: RunContext, name: str, *, verify: bool) -> bool:
     return (not verify) or _verified(ctx.store, f"{gen}/{_OUTPUT}", suffix)
 
 
-def reduce_stage(ctx: RunContext, name: str) -> None:
-    """Write the stage output from every unit result, in ``reduce_order``. Idempotent and atomic, so
-    two jobs that both see a complete stage may both reduce: they write identical bytes."""
+def _order_done(states: Mapping[str, str], st: AnyStage) -> list[str]:
+    """The DONE unit keys in the stage's ``reduce_order`` (default: sorted keys). The SINGLE source of the reduce
+    order, shared by the single reduce and every sharded sub-reduce, so both select the same keys and concatenate
+    them in the same order (reviewer B D1-IMPL-08)."""
+    return sorted((k for k, v in states.items() if v == "done"), key=st.reduce_order or (lambda k: k))
+
+
+def reduce_done_order(ctx: RunContext, name: str) -> list[str]:
+    """The DONE unit keys of a stage in ``reduce_order``, from the SAME presence scan (one listing) the single
+    reduce uses (`_reduce_states`). A sharded sub-reduce selects and orders its inputs through this, so it skips
+    excluded/failed/pending keys (reviewer B D1-IMPL-09) and matches the single reduce byte-for-byte. Each
+    sub-reduce then verifies only the units of its own range when it reads them (`_read_units`, spec r3 D1)."""
+    st = ctx.pipeline.stage(name)
+    return _order_done(unit_states(ctx, st, sorted_units(ctx, st), verify=False), st)
+
+
+#: Concurrent unit-result reads in a reduce (spec r3 D1). The reads are I/O: on the HF bucket mount each is a
+#: network fetch, so a bounded pool hides the per-file latency. Results keep the reduce order (``map`` order), so
+#: the output bytes do not depend on the pool size.
+REDUCE_READ_WORKERS = 16
+#: Seconds between a reduce's progress lines: a long reduce is never silent (spec r3 D1).
+REDUCE_PROGRESS_S = 30.0
+
+
+def _read_units(ctx: RunContext, name: str, keys: Sequence[str], *, label: str | None = None) -> dict[str, Any]:
+    """Every unit result of ``keys``, in that order, each read and verified ONCE, from ONE listing of the
+    generation (spec r3 D1). A unit that fails verification is deleted with its sidecar and the stage refuses
+    (INV-3): a re-run redoes it, and a poisoned unit is never combined.
+
+    Spec r4 D19: a missing or corrupt unit of a stage that has ALREADY reduced (a downstream stage reading its
+    units) REOPENS that stage: its ``_output`` and ``_reduce.json`` are deleted too, because readiness and
+    ``reduced`` are both "``_output`` present" and nothing would ever redo the unit otherwise. In the stage's own
+    reduce there is no ``_output`` yet, so this changes nothing there."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    gen = ctx.generation(name)
+    listing = ctx.store.names(gen)
+    tag = label or f"{ctx.pipeline.name}/{name}"
+    n = len(keys)
+    print(f"reduce {tag}: reading {n} unit(s)", file=sys.stderr, flush=True)
+    t0 = last = time.monotonic()
+    out: dict[str, Any] = {}
+    bad: list[str] = []
+    with ThreadPoolExecutor(max_workers=max(1, min(REDUCE_READ_WORKERS, n))) as pool:
+        results = pool.map(lambda k: read_result(ctx.store, f"{gen}/{k}", names=listing), keys)
+        for i, (k, res) in enumerate(zip(keys, results, strict=True), start=1):
+            if res is MISSING:
+                bad.append(k)
+            else:
+                out[k] = res
+            now = time.monotonic()
+            if now - last >= REDUCE_PROGRESS_S:
+                print(f"reduce {tag}: {i}/{n} unit(s) read ({now - t0:.0f} s)", file=sys.stderr, flush=True)
+                last = now
+    if bad:
+        out_suffix = _present_suffix(listing, _OUTPUT)
+        if out_suffix is not None:  # spec r4 D19: the stage had reduced over these units -- reopen it
+            warnings.warn(f"{gen}: reopening the reduced stage for its broken unit(s) {bad[:3]}", stacklevel=2)
+            for rel in (f"{_OUTPUT}{out_suffix}", f"{_OUTPUT}.sha256", "_reduce.json"):
+                ctx.store.delete(f"{gen}/{rel}")
+        for k in bad:
+            suffix = _present_suffix(listing, k)
+            warnings.warn(
+                f"checksum failure for {gen}/{k}{suffix or ''}; deleting it and redoing the unit", stacklevel=2
+            )
+            for sfx in (suffix, ".sha256"):
+                if sfx is not None:
+                    ctx.store.delete(f"{gen}/{k}{sfx}")
+        raise UnitsInvalidatedError(
+            f"{ctx.pipeline.name}/{name}: {len(bad)} unit result(s) failed verification and were deleted for "
+            f"re-run, e.g. {bad[:3]}{'; the stage reopened' if out_suffix is not None else ''}"
+        )
+    print(f"reduce {tag}: {n} unit(s) read in {time.monotonic() - t0:.1f} s", file=sys.stderr, flush=True)
+    return out
+
+
+def combined_units(ctx: RunContext, name: str) -> list[str]:
+    """The units a REDUCED stage combined, in sorted-unit order (spec r4 D19): its sorted units minus the
+    ``excluded`` and ``failed_keys`` its ``_summary.json`` records. A failure the stage tolerated is not a missing
+    unit (B r3 R4S-r3-01), so a reader never reopens a stage over it."""
+    summary = ctx.summary(name)
+    dropped = set(summary.get("excluded") or {}) | set(summary.get("failed_keys") or ())
+    return [k for k in sorted_units(ctx, ctx.pipeline.stage(name)) if k not in dropped]
+
+
+def read_upstream_unit(ctx: RunContext, name: str, key: str) -> Any:
+    """ONE unit result of a REDUCED upstream stage (a downstream unit reading the same key of its upstream, e.g.
+    `ghost_gk` `select` over the superset `extract`), verified. A missing or corrupt one reopens that stage and raises
+    `UnitsInvalidatedError` (spec r4 D19; B r3 R4S-r3-02)."""
+    return _read_units(ctx, name, [key], label=f"{ctx.pipeline.name}/{name} [read by a unit]")[key]
+
+
+def read_combined_units(ctx: RunContext, name: str) -> dict[str, Any]:
+    """Every unit result a REDUCED upstream stage combined, in sorted-unit order, read through `_read_units` (one
+    listing, a read pool, each result verified once). A missing or corrupt one reopens that stage and raises
+    `UnitsInvalidatedError` (spec r4 D19), so a reader never builds a smaller corpus."""
+    return _read_units(ctx, name, combined_units(ctx, name), label=f"{ctx.pipeline.name}/{name} [read by a unit]")
+
+
+#: Spec r3 D6(b): a reduce sweeps a generation's orphan ``.tmp-*`` files older than this. Far above the longest
+#: single write, so a concurrent reducer's or a straggler's in-flight temp is never touched (B review SPEC-R3-10).
+ORPHAN_TEMP_AGE_S = 6 * 3600.0
+#: An mtime before 2020-01-01 UTC is a placeholder (0, the epoch), never a real write time (B review SPEC-R3-12).
+_MIN_PLAUSIBLE_MTIME = 1577836800.0
+
+
+def sweep_orphan_temps(ctx: RunContext, name: str, *, now: float | None = None) -> list[str]:
+    """Delete the generation's orphan ``.tmp-*`` files -- writes whose rename never landed (one 2474b73 job's mount
+    left 100) -- that are older than ``ORPHAN_TEMP_AGE_S``; return the swept names. An mtime earlier than the
+    generation's ``.checksummed`` marker, or before 2020, is implausible (a placeholder a mount may report): it
+    reads as unknown and is never swept. Local (or mounted) stores only."""
+    root = ctx.store.local_path(ctx.generation(name))
+    if root is None or not root.is_dir():
+        return []
+    marker = root / _CHECKSUMMED
+    floor = max(_MIN_PLAUSIBLE_MTIME, marker.stat().st_mtime if marker.is_file() else 0.0)
+    now = time.time() if now is None else now
+    swept: list[str] = []
+    with os.scandir(root) as entries:
+        for e in entries:
+            if not e.name.startswith(".tmp-") or not e.is_file():
+                continue
+            mtime = e.stat().st_mtime
+            if mtime < floor or now - mtime < ORPHAN_TEMP_AGE_S:
+                continue
+            pathlib.Path(e.path).unlink(missing_ok=True)
+            swept.append(e.name)
+    return sorted(swept)
+
+
+def _sweep_after_reduce(ctx: RunContext, name: str) -> None:
+    """The reduce's orphan sweep (spec r3 D6(b)); a failure warns and never fails a reduce whose output is written."""
+    try:
+        swept = sweep_orphan_temps(ctx, name)
+    except OSError as exc:
+        warnings.warn(f"orphan sweep of {ctx.pipeline.name}/{name} failed: {exc}", stacklevel=2)
+        return
+    if swept:
+        print(f"reduce {ctx.pipeline.name}/{name}: swept {len(swept)} orphan temp file(s)", file=sys.stderr, flush=True)
+
+
+def _reduce_states(ctx: RunContext, name: str) -> tuple[list[str], dict[str, str]]:
+    """The stage's keys and unit states by PRESENCE (one listing), refusing an incomplete stage BEFORE any result
+    is read: a pending unit, or failures over the stage's tolerance. Verification happens once, when the reduce
+    reads each unit (`_read_units`, spec r3 D1)."""
     st = ctx.pipeline.stage(name)
     keys = sorted_units(ctx, st)
-    states = unit_states(ctx, st, keys, verify=True)
+    states = unit_states(ctx, st, keys, verify=False)
     pending = [k for k, v in states.items() if v == "pending"]
     failed = [k for k, v in states.items() if v == "failed"]
     if pending:
@@ -766,13 +1224,27 @@ def reduce_stage(ctx: RunContext, name: str) -> None:
         raise StageIncompleteError(
             f"{ctx.pipeline.name}/{name}: {len(failed)} unit(s) failed (tolerance {st.max_failures}): {failed[:5]}"
         )
+    return keys, states
+
+
+def _write_reduce_metadata(ctx: RunContext, name: str, keys: Sequence[str], states: Mapping[str, str]) -> dict:
+    """Write the stage's ``_summary.json`` + ``_inputs.json`` provenance sidecars from its verified states and
+    return the summary dict. Called only AFTER every input verified, so a poisoned unit never leaves metadata.
+    SHARED by ``reduce_stage`` and ``reduce_from_partials``, so a sharded reduce leaves byte-identical provenance
+    beside its byte-identical output (HFU T8). ``adopt`` reads ``_inputs.json`` to check the recorded dataset
+    revision against the pin (ADR-128 spec 5.7 step 4), so the sharded path must write it too."""
+    st = ctx.pipeline.stage(name)
+    # D7: a unit done in a prior job whose ledger was lost to a kill is `done` here (its result verifies) but
+    # absent from any later job's shard, so the reduce -- which sees EVERY unit -- is where its record is repaired.
+    repair_missing_ledgers(ctx.store, ctx.generation(name), [k for k, v in states.items() if v == "done"], stage=name)
+    failed = [k for k, v in states.items() if v == "failed"]
     gen = ctx.generation(name)
     excluded = {}
     for k in keys:
         if states[k] == "excluded":
             raw = ctx.store.read_bytes(f"{gen}/{k}.excluded.json")
             excluded[k] = json.loads(raw)["reason"] if raw else "unknown"
-    done = sorted((k for k, v in states.items() if v == "done"), key=st.reduce_order or (lambda k: k))
+    done = _order_done(states, st)
     summary = {
         "stage": name,
         "token": ctx.tokens[name],
@@ -787,8 +1259,70 @@ def reduce_stage(ctx: RunContext, name: str) -> None:
     # The job's own record of WHAT it read (dataset name/repo/revision, params, upstream tokens): `adopt`
     # checks the recorded dataset revision against the pin (ADR-128 spec 5.7 step 4). Never a unit key.
     ctx.store.write_bytes(f"{gen}/_inputs.json", _canon_json(ctx.token_inputs[name]))
-    results = {k: read_result(ctx.store, f"{gen}/{k}") for k in done}
+    return summary
+
+
+def reduce_stage(ctx: RunContext, name: str) -> None:
+    """Write the stage output from every unit result, in ``reduce_order``. Idempotent and atomic, so
+    two jobs that both see a complete stage may both reduce: they write identical bytes. LINEAR in the unit
+    count (spec r3 D1): completeness is checked from one listing before any read, each unit is read and
+    verified once, and the provenance is written only after every unit verified."""
+    st = ctx.pipeline.stage(name)
+    keys, states = _reduce_states(ctx, name)
+    results = _read_units(ctx, name, _order_done(states, st))
+    summary = _write_reduce_metadata(ctx, name, keys, states)
     output = st.reduce(results, ctx) if st.reduce is not None else summary
+    write_result(ctx.store, f"{ctx.generation(name)}/{_OUTPUT}", output)
+    _sweep_after_reduce(ctx, name)
+
+
+def reduce_subrange(ctx: RunContext, name: str, shard_id: int, n_shards: int) -> None:
+    """HFU T8: sub-reduce shard ``shard_id`` of ``n_shards`` -- raw-concat its contiguous range of the stage's
+    DONE units, taken in ``reduce_order`` through `reduce_done_order` (the SAME selection and order the single
+    reduce uses), so the sharded path is byte-identical and never reads an excluded/missing unit (reviewer B
+    D1-IMPL-08/09). The controller passes only the COUNT; the worker owns the partition. Empty-TOLERANT: a shard
+    with no range (``n_shards`` > done count) or an empty range writes an empty partial with NO per-range raise
+    (the stage's empty policy applies ONCE at the final reduce). Written to ``{gen}/_subreduce/{shard_id}.parquet``."""
+    st = ctx.pipeline.stage(name)
+    if st.shardable_reduce is None:  # () is a valid shardable declaration (a plain concat with NO id columns)
+        raise StageIncompleteError(f"{ctx.pipeline.name}/{name}: not a shardable reduce (no shardable_reduce ids)")
+    ranges = reduce_key_ranges(reduce_done_order(ctx, name), n_shards)
+    rng = ranges[shard_id] if shard_id < len(ranges) else []
+    gen = ctx.generation(name)
+    results = _read_units(ctx, name, rng, label=f"{ctx.pipeline.name}/{name} [{shard_id + 1}/{n_shards}]")
+    part = combine_frames([f for f in results.values() if len(f)], ids=st.shardable_reduce)
+    write_result(ctx.store, f"{gen}/_subreduce/{shard_id:04d}", part)
+    # HFU T8 / reviewer B D1-IMPL-19: stamp the shard COUNT this partial was computed for. A changed reduce_wall
+    # re-partitions the keys, so a partial from an earlier count is stale; the final reduce refuses on a mismatch
+    # rather than silently concatenating a subset. The `_meta_` stem is not a digit, so `_subreduce_present` skips it.
+    ctx.store.write_bytes(f"{gen}/_subreduce/_meta_{shard_id:04d}.json", _canon_json({"n_shards": int(n_shards)}))
+    _sweep_after_reduce(ctx, name)
+
+
+def reduce_from_partials(ctx: RunContext, name: str, n_shards: int) -> None:
+    """HFU T8: the FINAL reduce of a sharded stage -- run the stage's OWN reduce over the sub-reduce partials
+    (in sorted shard order), so the stage's empty policy applies once and the output is byte-identical to the
+    single reduce. Idempotent/atomic like ``reduce_stage``. Refuses (loud) if any partial was computed for a
+    DIFFERENT shard count (reviewer B D1-IMPL-19): a changed reduce_wall re-partitions the keys, so reducing a
+    stale partial set would drop or duplicate keys. The refusal is a ``StageIncompleteError`` -- the job ends in
+    error and, after ``error_resumes`` such jobs, the instance HALTS and surfaces the stale shard count. The
+    controller does NOT auto-clear the stale partials (it re-emits only missing shard indices and never reads
+    the meta); recovery is manual -- clear ``{gen}/_subreduce/`` and let the sub-reduces re-run. The guard's job
+    is to make the mismatch LOUD so no stale subset is ever concatenated silently (reviewer B D1-IMPL-19/23)."""
+    st = ctx.pipeline.stage(name)
+    keys, states = _reduce_states(ctx, name)  # every unit was verified by the sub-reduce that read it
+    summary = _write_reduce_metadata(ctx, name, keys, states)  # byte-identical provenance beside the sharded output
+    gen = ctx.generation(name)
+    for i in range(n_shards):
+        raw = ctx.store.read_bytes(f"{gen}/_subreduce/_meta_{i:04d}.json")
+        meta = json.loads(raw) if raw else None
+        if not meta or int(meta.get("n_shards", -1)) != int(n_shards):
+            raise StageIncompleteError(
+                f"{ctx.pipeline.name}/{name}: sub-reduce partial {i} was computed for a different shard count "
+                f"(meta {meta}, expected n_shards={n_shards}); re-run the sub-reduces"
+            )
+    partials = {f"{i:04d}": read_result(ctx.store, f"{gen}/_subreduce/{i:04d}") for i in range(n_shards)}
+    output = st.reduce(partials, ctx) if st.reduce is not None else summary
     write_result(ctx.store, f"{gen}/{_OUTPUT}", output)
 
 
@@ -800,7 +1334,7 @@ def ordered_values(results: Mapping[str, Any]) -> list:
 def materialize_fileset(ctx: RunContext, stage: str, key: str, dest: pathlib.Path) -> pathlib.Path:
     """Copy a verified FileSet (unit ``key``, or the stage output when ``key == "_output"``) to local
     ``dest`` -- e.g. so a worker can memory-map a persisted design matrix. Returns ``dest``."""
-    res = read_result(ctx.store, f"{ctx.generation(stage)}/{key}")
+    res = _timed_upstream_read(ctx.store, f"{ctx.generation(stage)}/{key}")
     if not isinstance(res, FileSet):
         raise TypeError(f"{stage}/{key} is not a FileSet result")
     for name, data in res.files.items():
@@ -848,11 +1382,21 @@ def _ready(ctx: RunContext, st: AnyStage) -> bool:
     return all(output_present(ctx, n, verify=False) for n in st.needs)
 
 
+def _subreduce_present(store: Any, gen: str) -> list[int]:
+    """HFU T8: the shard indices whose sub-reduce partial is written under ``{gen}/_subreduce/`` -- the
+    controller's state for the two-phase sharded reduce (it emits the missing shards, then the final concat
+    once all are present)."""
+    names = store.names(f"{gen}/_subreduce")
+    stems = {nm.split(".", 1)[0] for nm in names}
+    return sorted(int(s) for s in stems if s.isdigit() and _present_suffix(names, s))
+
+
 def plan(ctx: RunContext) -> dict:
     """The JSON the launcher reads (spec 5.1): per stage token, unit counts, done/pending, readiness."""
     stages = []
     for st in ctx.pipeline.stages:
         gen = ctx.generation(st.name)
+        sr = getattr(st, "shardable_reduce", None)  # bound so the None-narrowing reaches the list() below
         rec: dict[str, Any] = {
             "name": st.name,
             "needs": list(st.needs),
@@ -860,8 +1404,15 @@ def plan(ctx: RunContext) -> dict:
             "generation": gen,
             "inner_parallel": st.inner_parallel,
             "inner_width": getattr(st, "inner_width", 1),
+            "thread_safe": st.thread_safe,
+            "thread_lever": st.thread_lever,
+            "shardable_reduce": None if sr is None else list(sr),
+            "serial_reason": st.serial_reason,  # spec r3 D8: the R1 audit's reviewed floor (an EXACT gate)
+            "subreduce_present": _subreduce_present(ctx.store, gen),  # HFU T8: sub-reduce partials already written
             "history_key": _history_key(ctx.token_inputs[st.name]),
             "item_stage": isinstance(st, ItemStage),
+            # spec r4 D18 (a): `adopt` records the counters of every counters-bearing ItemStage, by this flag
+            "counters": isinstance(st, ItemStage) and st.counters is not None,
             "ready": _ready(ctx, st),
             "reduced": output_present(ctx, st.name, verify=False),
             "n_units": None,
@@ -994,11 +1545,30 @@ def build_parser(pipeline: Pipeline) -> argparse.ArgumentParser:
         action="store_true",
         help="also run units deferred by a memory failure (the controller's W=1, whole-box escalation job)",
     )
+    ap.add_argument(
+        "--wio",
+        action="store_true",
+        help="HFU S3 item 5: a WIO stage (units wait on I/O); bound --workers by the RAM only, not by nproc",
+    )
+    ap.add_argument(
+        "--unit-peaks",
+        type=pathlib.Path,
+        default=None,
+        help="HFU S3 item 6: JSON {unit key: peak RSS bytes} of an earlier generation; runs under the memory gate",
+    )
     ap.add_argument("--inner-workers", type=int, default=1, help="pool size for an inner_parallel stage")
     ap.add_argument("--cap-bytes", type=int, default=None, help="per-worker memory cap (planner)")
+    ap.add_argument("--inner-cap-bytes", type=int, default=None, help="HFU T11: inner_parallel pool CHILD cap")
     ap.add_argument("--peak-rss-bytes", type=int, default=None, help="per-unit peak RSS hint for worker sizing")
     ap.add_argument(
         "--profile", type=int, default=None, help="profile mode: run K evenly spaced units at W=1 then W=max"
+    )
+    ap.add_argument("--subreduce", action="store_true", help="HFU T8: sub-reduce this shard's range of DONE units")
+    ap.add_argument("--shard-id", type=int, default=None, help="HFU T8: this sub-reduce's shard index")
+    ap.add_argument("--n-shards", type=int, default=None, help="HFU T8: this sub-reduce's shard COUNT")
+    ap.add_argument("--from-partials", type=int, default=None, help="HFU T8: final reduce over N sub-reduce partials")
+    ap.add_argument(
+        "--no-inline-reduce", action="store_true", help="HFU T8: a sharded stage's run job skips the inline reduce"
     )
     ap.add_argument("--out", type=pathlib.Path, default=None, help="--run-all only: write the output FileSet here")
     ap.add_argument(
@@ -1037,11 +1607,15 @@ def main(pipeline: Pipeline, argv: Sequence[str] | None = None) -> int:
             workers=args.workers,
             inner_workers=args.inner_workers,
             cap_bytes=args.cap_bytes,
+            inner_cap_bytes=args.inner_cap_bytes,
             peak_rss_bytes=args.peak_rss_bytes,
             profile_units=args.profile,
             escalate=args.escalate,
+            wio=args.wio,
+            unit_peaks=json.loads(args.unit_peaks.read_text(encoding="utf-8")) if args.unit_peaks else None,
         )
     )
+    names_for_record = [n for n in (args.stages or "").split(",") if n]  # spec r3 D8: the stages this job ran
     try:
         if args.run_all:
             for st in pipeline.stages:
@@ -1051,6 +1625,9 @@ def main(pipeline: Pipeline, argv: Sequence[str] | None = None) -> int:
                 export_output(ctx, args.out)
             return 0
         names = [n for n in args.stages.split(",") if n]
+        if args.from_partials is not None:  # HFU T8: the FINAL reduce over N sub-reduce partials
+            reduce_from_partials(ctx, names[0], args.from_partials)
+            return 0
         shard = _parse_shard(args.shard)
         if len(names) > 1 and shard[1] != 1:
             raise SystemExit("--stages with more than one stage requires --shard 0/1 (only a single stage fans out)")
@@ -1059,13 +1636,52 @@ def main(pipeline: Pipeline, argv: Sequence[str] | None = None) -> int:
             if len(names) != 1 or shard != (0, 1):
                 raise SystemExit("--shard-keys runs exactly ONE stage and excludes --shard (it IS the job's slice)")
             keys = json.loads(args.shard_keys.read_text(encoding="utf-8"))
+        if args.subreduce:  # HFU T8: sub-reduce this shard of DONE units (the worker owns the range; no inline reduce)
+            reduce_subrange(ctx, names[0], args.shard_id or 0, args.n_shards or 1)
+            return 0
         for i, name in enumerate(names):
             ex.run_stage(ctx, name, shard=shard if i == 0 else (0, 1), keys=keys if i == 0 else None)
-            ex.try_reduce(ctx, name)
+            if not args.no_inline_reduce:  # HFU T8: a sharded stage's run job leaves the reduce to the sub-reduce jobs
+                ex.try_reduce(ctx, name)
         return 0
     except RefusalError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2
+    except UnitsInvalidatedError as exc:
+        # Spec r3 D6(d): a controller-launched stage job ends CLEANLY on invalidated units (the stage is incomplete
+        # again, not failed; the controller re-runs them; an ERROR job would halt the instance). A `--run-all` caller
+        # has no controller behind it, so its incomplete pipeline exits 3 like any incomplete stage (B r4 R4-07).
+        print(f"UNITS INVALIDATED: {exc}", file=sys.stderr)
+        return 3 if args.run_all else 0
     except (StageFailedError, StageIncompleteError) as exc:
         print(f"STAGE FAILED: {exc}", file=sys.stderr)
         return 3
+    finally:  # spec r3 D8: every job measures itself, whatever its outcome (a failed job is billed too)
+        write_job_record(ctx, [st.name for st in pipeline.stages] if args.run_all else names_for_record)
+
+
+def hard_exit(rc: int) -> NoReturn:
+    """Flush the std streams and hard-exit with ``rc`` after running the Python atexit handlers -- the shared
+    exit for every stage-contract ``__main__`` (``cli_main`` and the executor reduce/worker child). A short
+    ``python -m`` process that uses Arrow can abort at interpreter shutdown (``terminate called without an
+    active exception``, SIGABRT) AFTER it has written its correct output; the HF controller marks ANY nonzero
+    rc as a failed job, so that teardown abort would fail a correct job spuriously. ``atexit._run_exitfuncs``
+    runs the registered Python handlers (e.g. a worker's temp-dir rmtree); the flush keeps the ``--plan`` JSON
+    on stdout; ``os._exit`` then skips interpreter finalization -- the C++ static destructors that raise, and
+    ALSO ``threading._shutdown`` (so no non-daemon pool or thread join runs through this exit; an ``InnerPool``
+    is joined by ``worker_main``'s own ``finally`` before it returns, so that join completes before this exit
+    is reached). Call ONLY from a ``__main__`` -- ``os._exit`` in-process would kill the test runner."""
+    atexit._run_exitfuncs()  # the mechanism multiprocessing uses to run Python exit handlers before a hard exit
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc)
+
+
+def cli_main(pipeline: Pipeline, argv: Sequence[str] | None = None) -> NoReturn:
+    """Process entrypoint for a migrated pipeline module (spec 5.1): run ``main`` then ``hard_exit`` its rc, so
+    a native-library C++ teardown abort at interpreter shutdown cannot turn a CORRECT run's exit code nonzero
+    (observed on Linux CI: a correct ``--subreduce`` wrote its output, then Arrow aborted at teardown). Results
+    are already persisted (atomic writes) before ``main`` returns, so the hard exit loses nothing; see
+    ``hard_exit`` for the mechanism. ``main``'s rc reaches the exit unchanged (a raised acceptance gate still
+    exits nonzero as before). Called ONLY from a module ``__main__`` (in-process ``os._exit`` kills pytest)."""
+    hard_exit(main(pipeline, argv))

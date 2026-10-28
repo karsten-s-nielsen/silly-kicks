@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sys
+import os
 
 import numpy as np
 import pandas as pd
@@ -31,7 +31,8 @@ def _fake_corpus(n_games: int = 6):
 
 def _patch_open_corpus(monkeypatch, matches):
     """Redirect the public open-data SOURCE (Task 8.5 refs+load factory) to a synthetic corpus (no
-    network): ``open_data_source`` returns one ref per synthetic match + a loader serving it."""
+    network): ``open_data_source`` returns one ref per synthetic match + a loader serving it. Shared:
+    ``test_match_outcome_calibration`` drives its validator with it."""
     from _fake_corpus import make_ref
 
     import scripts._sb_open_data as sod
@@ -84,30 +85,25 @@ def test_match_tuples_extracts_goals_and_xgs():
 
 
 @pytest.mark.slow
-def test_train_main_writes_loadable_artifact(tmp_path, monkeypatch):
-    """Does-it-run smoke for main() end-to-end on a synthetic corpus (no network; --allow-dirty)."""
-    from scripts import train_match_outcome_dependence as train
+def test_pipeline_writes_a_loadable_artifact(tmp_path):
+    """Does-it-run smoke for the pipeline end to end on the offline open-data tree (no network): the
+    fail-closed ``DependenceModel.load`` accepts the bundle ``--run-all --out`` writes. The pipeline's units run
+    in worker processes, so the corpus is the served toy tree, not an in-process patch; statsbombpy reads it,
+    so this runs in the ``.venv-hfjobs`` legs and skips in CI."""
+    pytest.importorskip("statsbombpy")
+    from scripts._toy_corpora import build_open_data
     from silly_kicks.match_outcome import DependenceModel
+    from tests.scripts._open_data_server import serve_open_data
+    from tests.scripts._parity import run_serial
 
-    _patch_open_corpus(monkeypatch, _fake_corpus())
     out = tmp_path / "weights"
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "train_match_outcome_dependence.py",
-            "--out",
-            str(out),
-            "--shard-root",
-            str(tmp_path / "shards"),
-            "--allow-dirty",
-        ],
-    )
-    train.main()
+    with serve_open_data(build_open_data(tmp_path / "od")) as url:
+        env = {**os.environ, "SILLY_KICKS_OPEN_DATA_BASE": url}
+        run_serial("scripts.train_match_outcome_dependence", tmp_path / "s", tmp_path / "data", [], out, env=env)
 
     m = DependenceModel.load(out)  # fail-closed load must accept the freshly written artifact
     assert abs(m.rho) < 1.0 and m.training_commit
-    assert (out / "model.json").exists() and (out / "SHA256SUMS").exists()
+    assert sorted(p.name for p in out.iterdir()) == ["SHA256SUMS", "model.json"]
 
 
 def test_reduce_over_shards_equals_in_memory_fit():

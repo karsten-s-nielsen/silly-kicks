@@ -107,7 +107,11 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
-      - run: uv pip install -e ".[kloppy,xgboost,test]"
+      # statsbombpy (the uv.lock version) makes the open-data tests run here against the committed offline toy
+      # tree, never the network (owner ruling 2026-10-30, HFU R3-10). It is installed in this job AND the slow job
+      # so both collect the same node IDs: modules that `importorskip("statsbombpy")` collect differently without
+      # it, and the slow-shard conservation proof compares the two sets.
+      - run: uv pip install -e ".[kloppy,xgboost,test]" "statsbombpy==1.22.0"
       # Bulk suite, DURATION-SHARDED across parallel jobs. xdist `-n auto` was reverted: on the
       # 4-core/7GB CI runners it regressed py3.12 to a memory/JIT-pressure kill (4x heavy ML imports +
       # 4x numba compiles + the ghost-GK suite), the opposite of the 16-core local speedup. Sharding
@@ -197,7 +201,8 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
-      - run: uv pip install -e ".[kloppy,xgboost,test]"
+      # statsbombpy: the open-data identity and parity tests (all @slow) run here (owner ruling 2026-10-30)
+      - run: uv pip install -e ".[kloppy,xgboost,test]" "statsbombpy==1.22.0"
       - run: pytest tests/ -m "slow and not e2e" --splits 6 --group ${{ matrix.slow-shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
       # reconcile artifacts (proofs #2/#3): each slow-shard uploads its node-ID set; slow-shard 1 also
       # uploads the slow FULL set and the combined `not e2e` (incl slow) set for the conservation check.

@@ -6,7 +6,7 @@ its relaunch resumes from the persisted units (INV-3). Workers are capped by `_m
 DGX; inside an HF container, which has no systemd, the executor itself watches the largest single RSS in
 each worker's process tree and kills one over its cap -- the ``rss`` backend; ``RLIMIT_AS`` capped
 address space, not RSS, and failed every unit on real HF), started with `_thread_pin.deterministic_env`
-(INV-2), sized by
+(INV-2; a `thread_safe` stage's worker instead gets its per-job thread budget, ADR-128 amendment), sized by
 `_parallel_launch.size_workers` over the cgroup's CPUs and RAM (a container's `os.cpu_count()` and
 `/proc/meminfo` are the host's) and gated by `should_launch` backpressure.
 
@@ -45,11 +45,20 @@ class StageFailedError(RuntimeError):
     """A stage exceeded its failure tolerance, or a worker kept dying."""
 
 
+#: The reduce child's exit code when it deleted corrupt units for re-run (`_stages.UnitsInvalidatedError`, spec
+#: r3 D6(d)): the stage is incomplete again, which is not a failure. A worker child exits with it too when a unit
+#: found a broken unit of a reduced upstream stage, which reopened (spec r4 D19): no relaunch, no attempt spent.
+_RC_UNITS_INVALIDATED = 4
+
+
 @dataclasses.dataclass(frozen=True)
 class ExecutorConfig:
     workers: int = 1
     inner_workers: int = 1
     cap_bytes: int | None = None
+    #: HFU T11 + reviewer B D1-IMPL-07: the inner_parallel pool CHILD cap (RLIMIT on each pool child), distinct
+    #: from ``cap_bytes`` (the unit worker's cap). Falls back to ``cap_bytes`` when unset.
+    inner_cap_bytes: int | None = None
     peak_rss_bytes: int | None = None
     headroom_bytes: int = 2 * GiB
     max_relaunch: int = 3
@@ -58,6 +67,13 @@ class ExecutorConfig:
     mem_backend: str | None = None
     #: Also run units DEFERRED by a memory failure (the controller's W=1, whole-box escalation job).
     escalate: bool = False
+    #: HFU plan R3-8 S3 item 5: a WIO stage. W is bounded by the planned ``workers``, not by nproc; the RAM part of
+    #: `size_workers`, `should_launch` and the per-worker cap stay.
+    wio: bool = False
+    #: HFU plan R3-8 S3 item 6 (MEM): ``{unit key: predicted peak RSS}`` from an earlier generation. When set, a
+    #: unit-parallel stage runs under the memory gate (`mem_gate`): the parent grants every claim, the RSS part of
+    #: `size_workers` and `should_launch` give way to it, and a box guard watches the summed RSS.
+    unit_peaks: dict[str, int] | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -79,10 +95,22 @@ def _inner_init(cap_bytes: int | None, backend: str) -> None:  # pragma: no cove
         resource.setrlimit(resource.RLIMIT_AS, (int(cap_bytes), int(cap_bytes)))  # type: ignore[attr-defined]
 
 
+def _inner_call(fn: Callable[..., Any], args: tuple) -> tuple[Any, int | None]:
+    """Run one inner task and report the child's own peak RSS (HFU T11/B-19), so the unit ledger can size the
+    study pool by the per-child peak, not the over-counted whole-unit peak. The peak is None where neither
+    /proc nor ``resource`` can measure it (a non-Linux dev box) -- never a crash."""
+    from scripts._stages import _peak_rss
+
+    result = fn(*args)
+    peak, _scope = _peak_rss(False)
+    return result, peak
+
+
 class InnerPool:
     """The pool an ``inner_parallel`` unit maps its inner keys over (spec 5.2: no pool inside a pool).
 
-    Spawn context; children inherit the worker's deterministic environment, so each is single-threaded.
+    Spawn context; children inherit the worker's environment -- single-threaded for a pinned stage, or the
+    stage's thread budget for a ``thread_safe`` one (ADR-128 amendment).
     ``map_keyed(fn, {inner_key: args})`` returns ``{inner_key: value}`` and records completion order;
     callers MUST combine with `_stages.ordered_values` (sorted inner keys), never completion order.
     ``fn`` must be a module-level function (pickled by reference).
@@ -93,6 +121,9 @@ class InnerPool:
         self._cap, self._backend = cap_bytes, backend
         self._ex: concurrent.futures.ProcessPoolExecutor | None = None
         self._log: list[str] = []
+        #: HFU T11/B-19: the max per-child peak RSS over this pool's children, or None (the W=1 in-process path
+        #: spawns no child, and a platform that cannot measure RSS reports None). Read into the unit ledger.
+        self.child_peak_rss_bytes: int | None = None
 
     def _executor(self) -> concurrent.futures.ProcessPoolExecutor:
         if self._ex is None:
@@ -104,6 +135,11 @@ class InnerPool:
             )
         return self._ex
 
+    def child_pids(self) -> list[int]:
+        """The pool's LIVE worker PIDs (spec r3 D8: a unit's CPU includes its pool's); empty before first use. The
+        one place that reads the executor's private process table."""
+        return sorted((getattr(self._ex, "_processes", None) or {}).keys()) if self._ex is not None else []
+
     def map_keyed(self, fn: Callable[..., Any], items: Mapping[str, tuple]) -> dict[str, Any]:
         out: dict[str, Any] = {}
         if self.workers == 1:
@@ -112,10 +148,13 @@ class InnerPool:
                 self._log.append(k)
             return out
         ex = self._executor()
-        futures = {ex.submit(fn, *args): k for k, args in items.items()}
+        futures = {ex.submit(_inner_call, fn, args): k for k, args in items.items()}
         for fut in concurrent.futures.as_completed(futures):
             k = futures[fut]
-            out[k] = fut.result()
+            result, peak = fut.result()
+            out[k] = result
+            if peak is not None:  # HFU T11/B-19: track the max per-child peak for the unit ledger
+                self.child_peak_rss_bytes = max(self.child_peak_rss_bytes or 0, int(peak))
             self._log.append(k)
         return out
 
@@ -137,6 +176,34 @@ def _claim(claims: pathlib.Path, key: str, wid: str) -> bool:
     with os.fdopen(fd, "w", encoding="ascii") as fh:
         fh.write(wid)
     return True
+
+
+def _free_keys(claims: pathlib.Path, pending: list[str]) -> list[str]:
+    """The pending keys no worker holds, in order. In a gated job the parent is the only claimer, so a key is free
+    until the parent grants it; a dead worker's unfinished claim is released by the death path."""
+    return [k for k in pending if not (claims / f"{k}.claim").exists()]
+
+
+def _write_grant(gate: pathlib.Path, wid: str, key: str) -> None:
+    tmp = gate / f"{wid}.grant.tmp"
+    tmp.write_text(key, encoding="utf-8")
+    os.replace(tmp, gate / f"{wid}.grant")  # the worker never sees a partial key
+
+
+def _await_grant(gate: pathlib.Path, wid: str, poll_s: float = 0.05) -> str | None:
+    """S3 item 6, the worker side of a gated claim: ask the parent for the next unit (``<wid>.want``) and wait for
+    its grant (``<wid>.grant``, the key) or a stop (``<wid>.stop``: no work left, or rule (i) returns this idle
+    worker's heap to the box). None on a stop."""
+    (gate / f"{wid}.want").touch()
+    while True:
+        if (gate / f"{wid}.stop").exists():
+            return None
+        grant = gate / f"{wid}.grant"
+        if grant.exists():
+            key = grant.read_text(encoding="utf-8")
+            grant.unlink()
+            return key
+        time.sleep(poll_s)
 
 
 def _claims_of(claims: pathlib.Path, wid: str) -> list[str]:
@@ -216,20 +283,121 @@ def _terminate(procs: dict[str, subprocess.Popen]) -> None:
 
 
 class LocalExecutor:
-    def __init__(self, cfg: ExecutorConfig, *, rss_of: Callable[[int], tuple[int, int] | None] | None = None) -> None:
-        """``rss_of(pid)`` returns ``(pid, bytes)`` of the biggest single process in a worker's tree for
-        the ``rss`` backend (default `_mem_cap.largest_rss`; a test injects one)."""
+    def __init__(
+        self,
+        cfg: ExecutorConfig,
+        *,
+        rss_of: Callable[[int], tuple[int, int] | None] | None = None,
+        total_rss: Callable[[int], tuple[int, int] | None] | None = None,
+    ) -> None:
+        """``rss_of(pid)`` returns ``(pid, bytes)`` of the biggest single process in a worker's tree (the cap
+        quantity for a NON-inner worker); ``total_rss(pid)`` returns the tree's TOTAL (the quantity for an
+        inner_parallel worker, whose pool shares the box -- reviewer B D1-IMPL-18). Defaults from `_mem_cap`;
+        tests inject them."""
         self.cfg = cfg
-        if rss_of is None:
-            from scripts._mem_cap import largest_rss
+        if rss_of is None or total_rss is None:
+            from scripts import _mem_cap
 
-            rss_of = largest_rss
+            rss_of = rss_of or _mem_cap.largest_rss
+            total_rss = total_rss or _mem_cap.total_rss
         self._rss_of = rss_of
+        self._total_rss = total_rss
 
     def _cpus(self) -> int:
         from scripts._parallel_launch import available_cpus
 
         return available_cpus()
+
+    def _gated(self, st) -> bool:
+        """S3 item 6 (MEM): a unit-parallel stage with per-unit peak history runs under the memory gate."""
+        return self.cfg.unit_peaks is not None and not st.inner_parallel and not getattr(st, "thread_safe", False)
+
+    def _mem_gate(self, st):
+        """The job's gate, its budget the usable RAM measured before any worker starts (None: not gated)."""
+        if not self._gated(st):
+            return None
+        from scripts.hf_jobs.mem_gate import MemGate
+
+        return MemGate.from_peaks(self.cfg.unit_peaks or {}, budget=self._ram() - self.cfg.headroom_bytes)
+
+    def _gate_live(self, gdir: pathlib.Path, procs: Mapping, inflight: dict) -> dict:
+        """Each live worker as the gate sees it. A worker asking for a unit (``<wid>.want``) has finished the last one,
+        so it is idle; its measured RSS still counts (retained heap)."""
+        from scripts.hf_jobs.mem_gate import WorkerMem
+
+        live = {}
+        for wid, p in procs.items():
+            if p.poll() is not None:
+                continue
+            if (gdir / f"{wid}.want").exists():
+                inflight[wid] = None
+            top = self._total_rss(p.pid)
+            live[wid] = WorkerMem(rss=int(top[1]) if top else 0, inflight=inflight.get(wid))
+        return live
+
+    def _gate_may_launch(self, gate, gdir, procs, inflight, claims, pending) -> bool:
+        """A free slot gets a fresh worker only when the gate would admit it for the next free unit."""
+        free = _free_keys(claims, pending)
+        return bool(free) and gate.fresh_fits(self._gate_live(gdir, procs, inflight), free[0])
+
+    def _gate_step(
+        self, ctx, st, gate, gdir, procs, claims, pending, inflight, stopping, over_cap, unit_kills, kill_tree
+    ):
+        """S3 item 6: one poll of the memory gate. The box guard first; then each asking worker in worker order: grant
+        it the next free unit, stop the idle workers whose retained heap blocks that unit (rule (i)), or wait for a
+        unit in flight to finish. A worker with nothing left to claim is stopped."""
+        from scripts._stages import record_memory_failure
+        from scripts.hf_jobs.mem_gate import GRANT, WorkerMem
+
+        live = self._gate_live(gdir, procs, inflight)
+        victim = gate.box_victim(live)
+        if victim is not None:
+            key = inflight[victim]
+            total = sum(m.rss for m in live.values())
+            over_cap[victim] = (
+                f"over the box (the job's summed RSS {total} B > usable {gate.budget} B; this worker's excess over its "
+                f"reservation was the largest) on unit(s) {[key]}"
+            )
+            record_memory_failure(ctx.store, ctx.generation(st.name), key, over_cap[victim])
+            unit_kills.add(victim)
+            print(f"killing worker {victim}: {over_cap[victim]}", file=sys.stderr, flush=True)
+            p = procs[victim]
+            if not kill_tree(p.pid):
+                p.kill()
+            try:
+                p.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                p.kill()
+            return
+        free = _free_keys(claims, pending)
+        for wid in sorted(w for w in live if w not in stopping and (gdir / f"{w}.want").exists()):
+            if not free:
+                (gdir / f"{wid}.stop").touch()
+                stopping.add(wid)
+                continue
+            key = free[0]
+            d = gate.decide(live, wid, key)
+            if d is GRANT:
+                free.pop(0)
+                if not _claim(claims, key, wid):  # never: the parent is a gated job's only claimer
+                    continue
+                inflight[wid] = key
+                live[wid] = WorkerMem(rss=live[wid].rss, inflight=key)
+                (gdir / f"{wid}.want").unlink(missing_ok=True)
+                _write_grant(gdir, wid, key)
+            elif d.stop:
+                print(
+                    f"gate: stopping idle worker(s) {list(d.stop)}: their retained heap blocks unit {key} "
+                    f"(reserves {gate.reservation(key)} B of {gate.budget} B)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                for w in d.stop:
+                    (gdir / f"{w}.stop").touch()
+                    stopping.add(w)
+                return
+            else:
+                return  # wait: a unit in flight frees its reservation first
 
     def _ram(self) -> int:
         from scripts._parallel_launch import available_ram_bytes
@@ -254,7 +422,19 @@ class LocalExecutor:
             return False
         if deferred_memory_units(ctx, st, keys):  # waiting for its escalation: a reduce would drop it
             return False
-        self._subprocess(ctx, ["reduce", "--stage", name])
+        from scripts._stages import _canon_json, _self_and_reaped_cpu_s
+
+        t0, cpu0 = time.monotonic(), _self_and_reaped_cpu_s()
+        if self._subprocess(ctx, ["reduce", "--stage", name], ok=(0, _RC_UNITS_INVALIDATED)) != 0:
+            return False  # spec r3 D6(d): corrupt units were deleted for re-run; the stage is incomplete again
+        # HFU T4: record the reduce wall so the planner budgets the INLINE reduce (review B-19/B-04). Written
+        # only by the job that runs the reduce (an earlier return above when the output is already present);
+        # VOLATILE + an _is_record record, so a per-job wall never enters parity and it batches in one listing.
+        # S3 item 3 (S2B-r2-04): also its CPU (the reduce child, reaped), for the "too small to pay" class.
+        wall_s, cpu_s = time.monotonic() - t0, round(_self_and_reaped_cpu_s() - cpu0, 3)
+        ctx.store.write_bytes(
+            f"{ctx.generation(name)}/_reduce.json", _canon_json({"stage": name, "wall_s": wall_s, "cpu_s": cpu_s})
+        )
         return output_present(ctx, name, verify=True)
 
     def require_reduced(self, ctx, name: str) -> None:
@@ -263,7 +443,8 @@ class LocalExecutor:
         if not self.try_reduce(ctx, name):
             raise StageIncompleteError(f"{ctx.pipeline.name}: upstream stage {name!r} is incomplete")
 
-    def _subprocess(self, ctx, args: list[str]) -> None:
+    def _subprocess(self, ctx, args: list[str], *, ok: tuple[int, ...] = (0,)) -> int:
+        """Run an executor child; return its exit code, raising `StageFailedError` unless it is in ``ok``."""
         from scripts._stages import context_to_json
         from scripts._thread_pin import deterministic_env
 
@@ -274,8 +455,9 @@ class LocalExecutor:
             rc = subprocess.run(cmd, env=deterministic_env(), cwd=REPO_ROOT, check=False).returncode  # noqa: S603
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-        if rc != 0:
+        if rc not in ok:
             raise StageFailedError(f"{ctx.pipeline.name}: '{' '.join(args)}' failed (rc={rc})")
+        return rc
 
     # ---- units ----------------------------------------------------------------------------------
     def run_stage(
@@ -284,7 +466,7 @@ class LocalExecutor:
         """Run this job's slice of stage ``name``: the round-robin ``shard`` (default), or exactly ``keys``
         (a planner LPT part). Outputs never depend on the slice (INV-1); this is placement only."""
         from scripts._driver import shard_select
-        from scripts._stages import deferred_memory_units, sorted_units
+        from scripts._stages import deferred_memory_units, sorted_units, unit_states
 
         st = ctx.pipeline.stage(name)
         for need in st.needs:
@@ -303,7 +485,10 @@ class LocalExecutor:
             deferred = deferred_memory_units(ctx, st, mine)
             mine = [k for k in mine if k not in deferred]
         if self.cfg.profile_units:
-            return self._profile(ctx, st, mine)
+            # Spec r3 D5 (B DIAG-04): profile only units still to do, so a repeat profile always does real work. It
+            # sampled from every shard unit, so the 2474b73 `ghost_outfield` cv re-profile re-picked done units.
+            states = unit_states(ctx, st, mine, verify=False)
+            return self._profile(ctx, st, [k for k in mine if states[k] in ("pending", "failed")])
         return self._run(ctx, st, mine, workers=self.cfg.workers, inner=self.cfg.inner_workers)
 
     def _run(self, ctx, st, keys: list[str], *, workers: int, inner: int) -> StageReport:
@@ -315,8 +500,13 @@ class LocalExecutor:
         relaunched, order, w = 0, (), 0
         if pending:
             w = 1 if st.inner_parallel else max(1, min(workers, len(pending)))
-            if self.cfg.peak_rss_bytes and not st.inner_parallel:
-                w = min(w, size_workers(self.cfg.peak_rss_bytes, self._ram(), self._cpus(), self.cfg.headroom_bytes))
+            if self._gated(st):
+                # S3 item 6 (MEM): the gate admits each claim, so the RSS part of `size_workers` (which sizes every
+                # worker for the stage maximum) is skipped; W keeps the nproc bound (the planned W for a WIO stage).
+                w = min(w, max(self._cpus(), workers) if self.cfg.wio else self._cpus())
+            elif self.cfg.peak_rss_bytes and not st.inner_parallel:
+                nproc = max(self._cpus(), workers) if self.cfg.wio else self._cpus()  # S3 item 5 (S2B-04)
+                w = min(w, size_workers(self.cfg.peak_rss_bytes, self._ram(), nproc, self.cfg.headroom_bytes))
             relaunched, order = self._dispatch(ctx, st, pending, w, inner if st.inner_parallel else 1)
         final = unit_states(ctx, st, keys, verify=False)
         deferred = deferred_memory_units(ctx, st, keys)  # waiting for escalation: not a stage failure yet
@@ -354,7 +544,7 @@ class LocalExecutor:
         from scripts._mem_cap import detect_backend, kill_tree, preflight, wrap
         from scripts._parallel_launch import should_launch
         from scripts._stages import context_to_json, unit_states
-        from scripts._thread_pin import deterministic_env
+        from scripts._thread_pin import deterministic_env, thread_budget, thread_safe_env
 
         tmp = pathlib.Path(tempfile.mkdtemp(prefix=f"sk-{st.name}-"))
         procs: dict[str, subprocess.Popen] = {}
@@ -365,10 +555,38 @@ class LocalExecutor:
             claims.mkdir()
             outdir.mkdir()
             backend = detect_backend(self.cfg.mem_backend, watched=True)  # type: ignore[arg-type]
-            cap = self.cfg.cap_bytes
-            if cap:
-                preflight(backend, cap_bytes=cap)
-            env = deterministic_env()
+            cap = self.cfg.cap_bytes  # the UNIT WORKER's cap (the subprocess RLIMIT via `wrap`)
+            # The POOL CHILD cap (reviewer B D1-IMPL-07): worker_main uses its --cap-bytes ONLY for the pool, so it
+            # carries the child-sized cap; it falls back to the worker cap when no distinct inner cap was planned.
+            inner_cap = self.cfg.inner_cap_bytes if self.cfg.inner_cap_bytes is not None else cap
+            # An inner_parallel worker hosts a pool, so the whole TREE (unit process + inner children) shares the
+            # box; its budget is the worker cap plus the pool's caps (~usable). On cgroup the scope must bound the
+            # TREE at that budget (not the worker cap, which would OOM the normal 24 G tree); on rss the watch
+            # checks the TREE TOTAL against it; the rlimit backend keeps per-process caps (worker `cap`, children
+            # `inner_cap` via `_inner_init`). A non-inner worker has no pool: `tree_budget == cap`, unchanged.
+            is_inner = getattr(st, "inner_parallel", False) and cap is not None and self.cfg.inner_cap_bytes is not None
+            # the tree's budget (~usable) for an inner stage, else the worker cap (reviewer B D1-IMPL-18); 0 when
+            # uncapped (never used -- the cap sites below are all guarded by `cap`).
+            tree_budget: int = 0
+            if cap is not None:
+                child = self.cfg.inner_cap_bytes
+                tree_budget = cap + int(inner) * child if (is_inner and child is not None) else cap
+                preflight(backend, cap_bytes=tree_budget)  # cgroup scope budget: the tree for inner, else the worker
+            # ADR-128 INV-2 opt-in: a thread_safe stage's worker runs at the per-job thread budget, injected
+            # PER THE STAGE'S LEVER (omp raises OMP_NUM_THREADS; n_jobs raises OMP_NUM_THREADS too and exports
+            # SILLY_KICKS_RUNTIME_THREADS; BLAS and numba stay "1"). The budget is `thread_budget` (ceil for at most
+            # 5 processes; Amendment 2026-10-31). Every other stage stays deterministic_env (all thread vars "1").
+            if getattr(st, "thread_safe", False):
+                env = thread_safe_env(st.thread_lever, thread_budget(self._cpus(), workers, inner))
+            else:
+                env = deterministic_env()
+            # S3 item 6 (MEM): with per-unit peaks the parent grants every claim through the gate directory.
+            gate = self._mem_gate(st)
+            gdir = tmp / "gate"
+            inflight: dict[str, str | None] = {}
+            stopping: set[str] = set()
+            if gate is not None:
+                gdir.mkdir()
 
             def launch(wid: str) -> None:
                 argv = [
@@ -393,11 +611,20 @@ class LocalExecutor:
                     "--mem-backend",
                     backend,
                 ]
-                if cap:
-                    argv += ["--cap-bytes", str(cap)]
+                if inner_cap:  # worker_main uses --cap-bytes for the POOL children only (the child-sized cap)
+                    argv += ["--cap-bytes", str(inner_cap)]
+                if gate is not None:  # S3 item 6: a fresh worker starts with no grant, want or stop
+                    argv += ["--gate", str(gdir)]
+                    for suffix in (".want", ".grant", ".stop"):
+                        (gdir / f"{wid}{suffix}").unlink(missing_ok=True)
+                    inflight.pop(wid, None)
                 pre = None
                 if cap:
-                    argv, pre = wrap(backend, argv, cap_bytes=cap)
+                    # cgroup wraps the whole tree in a scope -> bound it at the TREE budget for an inner stage;
+                    # rlimit is a PER-PROCESS cap on the worker -> the worker's own cap (children get inner_cap
+                    # via `_inner_init`). tree_budget == cap for a non-inner stage, so both are unchanged there.
+                    wrap_cap = tree_budget if backend == "cgroup" else cap
+                    argv, pre = wrap(backend, argv, cap_bytes=wrap_cap)
                 procs[wid] = subprocess.Popen(argv, env=env, cwd=REPO_ROOT, preexec_fn=pre)  # noqa: S603 -- own argv
 
             slots = [f"w{i}" for i in range(workers)]
@@ -409,20 +636,45 @@ class LocalExecutor:
             while procs or slots:
                 time.sleep(self.cfg.poll_interval_s)
                 while slots and (
-                    not self.cfg.peak_rss_bytes
-                    or should_launch(self._ram(), self.cfg.peak_rss_bytes, self.cfg.peak_rss_bytes)
+                    self._gate_may_launch(gate, gdir, procs, inflight, claims, pending)
+                    if gate is not None  # S3 item 6: the gate replaces `should_launch`
+                    else (
+                        not self.cfg.peak_rss_bytes
+                        or should_launch(self._ram(), self.cfg.peak_rss_bytes, self.cfg.peak_rss_bytes)
+                    )
                 ):
                     launch(slots.pop(0))
+                if gate is not None:
+                    self._gate_step(
+                        ctx, st, gate, gdir, procs, claims, pending, inflight, stopping, over_cap, unit_kills, kill_tree
+                    )
                 self._check_failure_rule(st, outdir, procs)
                 if backend == "rss" and cap:
-                    unit_kills |= self._enforce_rss_cap(ctx, st, procs, claims, cap, over_cap, kill_tree)
+                    # inner stage: watch the TREE TOTAL vs the tree budget; else the largest process vs the worker cap
+                    rss_fn = self._total_rss if is_inner else self._rss_of
+                    unit_kills |= self._enforce_rss_cap(
+                        ctx, st, procs, claims, tree_budget, over_cap, kill_tree, rss_fn=rss_fn
+                    )
                 for wid, p in list(procs.items()):
                     rc = p.poll()
                     if rc is None:
                         continue
                     del procs[wid]
+                    inflight.pop(wid, None)
                     if rc == 0:
+                        if wid in stopping:  # S3 item 6: a stopped worker's slot is refilled once the gate admits one
+                            stopping.discard(wid)
+                            if _free_keys(claims, pending):
+                                slots.append(wid)
                         continue
+                    if rc == _RC_UNITS_INVALIDATED:  # spec r4 D19: an upstream reopened; end the job as D6(d) does
+                        _terminate(procs)
+                        from scripts._stages import UnitsInvalidatedError
+
+                        raise UnitsInvalidatedError(
+                            f"{ctx.pipeline.name}/{st.name}: worker {wid} found a broken unit in a reduced upstream "
+                            "stage, which reopened; the controller redoes it before this stage runs again"
+                        )
                     held = _claims_of(claims, wid)
                     for k, state in unit_states(ctx, st, held, verify=False).items():
                         if state == "pending":
@@ -458,20 +710,24 @@ class LocalExecutor:
             _terminate(procs)
             shutil.rmtree(tmp, ignore_errors=True)
 
-    def _enforce_rss_cap(self, ctx, st, procs, claims: pathlib.Path, cap: int, over_cap: dict, kill_tree) -> set[str]:
-        """The ``rss`` backend: kill a live worker whose tree holds a process over ``cap`` (the cap is per
-        process, `_mem_cap.largest_rss`). Its unit is unclaimed and retried by a relaunch (the dead-worker
-        path). The unit in progress is recorded as FAILED for memory (`_stages.record_memory_failure`), so
-        the job's other units go on and the controller escalates it to a job of its own with the whole box;
-        it is never re-run here. Returns the workers whose in-progress unit was recorded (a kill with no
-        unit in progress still counts toward the relaunch limit, whose message names the cap)."""
+    def _enforce_rss_cap(
+        self, ctx, st, procs, claims: pathlib.Path, cap: int, over_cap: dict, kill_tree, *, rss_fn=None
+    ) -> set[str]:
+        """The ``rss`` backend: kill a live worker whose watched memory exceeds ``cap``. ``rss_fn`` chooses the
+        quantity: `_mem_cap.largest_rss` (the biggest single process) for a non-inner worker, or
+        `_mem_cap.total_rss` (the whole tree) for an inner_parallel worker whose pool shares the box, with ``cap``
+        the matching budget (reviewer B D1-IMPL-18). The over-cap worker's in-progress unit is recorded FAILED
+        for memory (`record_memory_failure`) so the job's other units go on and the controller escalates it to a
+        job of its own; it is never re-run here. Returns the workers whose in-progress unit was recorded (a kill
+        with no unit in progress still counts toward the relaunch limit, whose message names the cap)."""
         from scripts._stages import record_memory_failure, unit_states
 
+        rss_fn = rss_fn or self._rss_of
         recorded: set[str] = set()
         for wid, p in list(procs.items()):
             if p.poll() is not None:
                 continue
-            top = self._rss_of(p.pid)
+            top = rss_fn(p.pid)
             if top is None or top[1] <= cap:
                 continue
             held = _claims_of(claims, wid)
@@ -510,8 +766,15 @@ class LocalExecutor:
         from scripts._parallel_launch import size_workers
         from scripts._stages import _canon_json, profile_sample
 
+        if not mine:  # nothing left to profile: no measurement, and the stage's record (if any) stands
+            return self._run(ctx, st, [], workers=1, inner=1)
         sample = profile_sample(mine, self.cfg.profile_units)
         first, rest = sample[:2], sample[2:]
+        if st.thread_safe and not st.inner_parallel:
+            # HFU T3/B-24: a thread_safe non-inner stage is profiled in ONE bounded job -- the `first` sample
+            # at W=1, each unit at its full 8-thread budget (the shape the planner uses). No wmax phase: a W=1
+            # stage has no multi-worker phase, and running more units here only lengthens the profile job.
+            rest = []
         t0 = time.monotonic()
         self._run(ctx, st, first, workers=1, inner=1)
         wall_1 = time.monotonic() - t0
@@ -539,9 +802,68 @@ class LocalExecutor:
             "peak_rss_bytes": peak,
             "efficiency": (rate_max / (par * rate_1)) if (rate_max and rate_1) else None,
             "nproc": self._cpus(),
+            "reduce_cost": _measure_reduce_cost(ctx, st, sample),  # spec r3 D2 (b): before any reduce has run
         }
-        ctx.store.write_bytes(f"{ctx.generation(st.name)}/_profile.json", _canon_json(record))
+        # Spec r3 D5: create-only. The stage's FIRST measurement stands; a later profile never replaces it (2474b73:
+        # a no-op re-profile overwrote the real record with a 0.33 s measurement of two already-done units).
+        ctx.store.write_if_absent(f"{ctx.generation(st.name)}/_profile.json", _canon_json(record))
         return report
+
+
+def _mean_result_bytes(ctx, name: str, keys: list[str]) -> float | None:
+    """The mean on-disk size of ``keys``' primary result files (None when the store has no local path)."""
+    from scripts._stages import _RESULT_SUFFIXES
+
+    local = ctx.store.local_path(ctx.generation(name))
+    if local is None or not keys:
+        return None
+    sizes = []
+    for k in keys:
+        hit = next((local / f"{k}{sfx}" for sfx in _RESULT_SUFFIXES if (local / f"{k}{sfx}").is_file()), None)
+        if hit is not None:
+            sizes.append(hit.stat().st_size)
+    return sum(sizes) / len(sizes) if sizes else None
+
+
+def _measure_reduce_cost(ctx, st, sample: list[str]) -> dict | None:
+    """Spec r3 D2 (b): the stage's per-unit REDUCE cost, measured on the profile's own done sample before any
+    reduce has run, so the controller can estimate a first-run reduce. The sample is read back through the
+    reduce's pooled reader (`_read_units`; ``read_s_per_unit`` is the serial-equivalent read per unit) and, for a
+    shardable reduce, combined and encoded exactly as a sub-reduce does (``combine_s_per_unit``). A non-shardable
+    reduce may not accept a subset of its units, so it never runs on the sample: its combine stays None. None when
+    no sampled unit is done, or a sampled unit failed its checksum (deleted and pending again, INV-3)."""
+    from scripts._stages import (
+        REDUCE_READ_WORKERS,
+        UnitsInvalidatedError,
+        _encode,
+        _read_units,
+        combine_frames,
+        unit_states,
+    )
+
+    states = unit_states(ctx, st, sample, verify=False)
+    done = [k for k in sample if states.get(k) == "done"]
+    if not done:
+        return None
+    t0 = time.perf_counter()
+    try:
+        results = _read_units(ctx, st.name, done, label=f"{ctx.pipeline.name}/{st.name} [profile reduce cost]")
+    except UnitsInvalidatedError:
+        return None
+    read_wall = time.perf_counter() - t0
+    cost: dict = {
+        "n": len(done),
+        "read_s_per_unit": read_wall * min(REDUCE_READ_WORKERS, len(done)) / len(done),
+        "combine_s_per_unit": None,
+        # B r4 R4-03: the mean result size, which the controller's cold-read floor scales with
+        "bytes_per_unit": _mean_result_bytes(ctx, st.name, done),
+    }
+    ids = getattr(st, "shardable_reduce", None)
+    if ids is not None:
+        t1 = time.perf_counter()
+        _encode(combine_frames([f for f in results.values() if len(f)], ids=ids))
+        cost["combine_s_per_unit"] = (time.perf_counter() - t1) / len(done)
+    return cost
 
 
 def worker_main(argv: list[str]) -> int:
@@ -554,9 +876,15 @@ def worker_main(argv: list[str]) -> int:
     ap.add_argument("--worker-id", required=True)
     ap.add_argument("--inner-workers", type=int, default=1)
     ap.add_argument("--mem-backend", default="none")
-    ap.add_argument("--cap-bytes", type=int, default=None)
+    ap.add_argument(
+        "--cap-bytes",
+        type=int,
+        default=None,
+        help="the POOL CHILD cap (the worker's own cap is the launcher's RLIMIT wrap)",
+    )
+    ap.add_argument("--gate", default=None, help="S3 item 6: the gate directory; the parent grants every claim")
     a = ap.parse_args(argv)
-    from scripts._stages import ItemStage, context_from_json, run_unit
+    from scripts._stages import ItemStage, UnitsInvalidatedError, context_from_json, run_unit
 
     ctx = context_from_json(pathlib.Path(a.ctx).read_text(encoding="utf-8"))
     st = ctx.pipeline.stage(a.stage)
@@ -567,13 +895,28 @@ def worker_main(argv: list[str]) -> int:
     log = outdir / f"{a.worker_id}.jsonl"
     claims = pathlib.Path(a.claims)
     decided: dict = {}
+
+    def keys():
+        if a.gate is None:  # claim in order, first come first served
+            for key in pending:
+                if _worker_should_stop(st, outdir, decided):
+                    return
+                if _claim(claims, key, a.worker_id):
+                    yield key
+            return
+        while not _worker_should_stop(st, outdir, decided):  # S3 item 6: the parent grants each unit
+            key = _await_grant(pathlib.Path(a.gate), a.worker_id)
+            if key is None:
+                return
+            yield key
+
     try:
-        for key in pending:
-            if _worker_should_stop(st, outdir, decided):
-                break
-            if not _claim(claims, key, a.worker_id):
-                continue
-            outcome = run_unit(ctx, st, key, worker=a.worker_id, pool=pool, ref=refs.get(key))
+        for key in keys():
+            try:
+                outcome = run_unit(ctx, st, key, worker=a.worker_id, pool=pool, ref=refs.get(key))
+            except UnitsInvalidatedError as exc:  # spec r4 D19: an upstream stage reopened; this stage cannot run
+                print(f"UNITS INVALIDATED: {exc}", file=sys.stderr, flush=True)
+                return _RC_UNITS_INVALIDATED
             if outcome == "failed":
                 (outdir / _FAILED_DIR).mkdir(exist_ok=True)
                 (outdir / _FAILED_DIR / key).touch()
@@ -590,11 +933,14 @@ def reduce_main(argv: list[str]) -> int:
     ap.add_argument("--ctx", required=True)
     ap.add_argument("--stage", required=True)
     a = ap.parse_args(argv)
-    from scripts._stages import StageIncompleteError, context_from_json, reduce_stage
+    from scripts._stages import StageIncompleteError, UnitsInvalidatedError, context_from_json, reduce_stage
 
     ctx = context_from_json(pathlib.Path(a.ctx).read_text(encoding="utf-8"))
     try:
         reduce_stage(ctx, a.stage)
+    except UnitsInvalidatedError as exc:  # spec r3 D6(d): corrupt units deleted for re-run -- incomplete, not failed
+        print(f"UNITS INVALIDATED: {exc}", file=sys.stderr)
+        return _RC_UNITS_INVALIDATED
     except StageIncompleteError as exc:
         print(f"STAGE FAILED: {exc}", file=sys.stderr)
         return 3
@@ -602,7 +948,11 @@ def reduce_main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    from scripts._stages import hard_exit
+
     _CMDS = {"worker": worker_main, "reduce": reduce_main}
     if len(sys.argv) < 2 or sys.argv[1] not in _CMDS:
         raise SystemExit(f"usage: python -m scripts.hf_jobs.executor {{{','.join(_CMDS)}}} ...")
-    raise SystemExit(_CMDS[sys.argv[1]](sys.argv[2:]))
+    # D1-IMPL-26: the reduce/worker child does Arrow I/O, so harden its exit like cli_main -- a correct child
+    # that aborts at interpreter teardown (SIGABRT) must not return nonzero (`_subprocess` fails on nonzero rc).
+    hard_exit(_CMDS[sys.argv[1]](sys.argv[2:]))

@@ -140,11 +140,16 @@ on the typed `huggingface_hub` API from preflight to adoption and publish.
   the legacy "record failures and fit the rest") the stage reduces without them, and the step report and
   `_summary.json` name them; over it the action is `halt`: the step reports the units and launches nothing.
   A stage whose latest job ended in ERROR is not halted while it has a retryable failed unit (a strict
-  stage's job ends in ERROR on any failed unit) or after an HF job timeout with units pending
-  (`campaign.resume_after_error`): finished units persist, so a fresh job resumes the rest. Cycle 1's xshot
-  sc_extended job timed out with 83 units done. Every such resume is bounded by
-  `Constraints.error_resumes` (2) ERROR jobs in a row per stage, a bound that needs no unit record: a
-  timeout or a crash before any unit writes none, so the attempt count alone would resume forever.
+  stage's job ends in ERROR on any failed unit), after an HF job timeout with units pending, or when its
+  container NEVER STARTED (`started_at` is None -- a transient HF infra fault such as
+  `Volume mount failed: MountVolume.SetUp failed`) with units pending (`campaign.resume_after_error`,
+  `job_never_started`): finished units persist, so a fresh job resumes the rest. Cycle 1's xshot
+  sc_extended job timed out with 83 units done; the HFU cycle1 launch hit a volume-mount failure that must
+  retry, not halt (a deterministic crash runs first, so its `started_at` is set and it still halts). Every such
+  resume is bounded by `Constraints.error_resumes` (2) ERROR jobs in a row per stage (a never-started TIMEOUT is
+  a dispatch overflow and is exempt, handled by the dispatch back-off; a non-timeout mount failure is counted),
+  a bound that needs no unit record: a timeout or a crash before any unit writes none, so the attempt count
+  alone would resume forever.
 - `profile` runs a measured sample of a multi-unit stage; the planner sizes N and W from measured unit
   costs (history keyed by `(pipeline, stage, declared-params digest)`, P14) to meet the 60-minute target; a
   stage whose single unit exceeds it is reported with its irreducible floor. The ledger records every unit
@@ -262,6 +267,263 @@ P1 and P2 correct approved spec TEXT.
 
 - The census runs on the contract and certifies by rebaseline (P15).
 - `ghost_gk` permutation importance keeps scikit-learn's joblib parallelism (P11).
+
+### Amendment 2026-10-27 (4.140.0): a run-dependent value leaves the fit artifact (D3)
+
+P3 strips `identity.PROVENANCE_KEYS` only in the across-commit compare; the same-commit compare is byte-for-byte,
+so a provenance value left in a fit artifact still breaks a main-vs-replica attestation. `training_platform` was
+that value: `_xshot_occurrence` / `_xcross_attempt` stamped the live `platform.platform()` (the node kernel) into
+`metadata.json`, so two HF nodes differed. The four tracking models no longer write it to `metadata.json`; the fit
+host's platform is RUN-HISTORY instead -- `_stages.run_unit` records it (`"platform"`) in each unit ledger, which
+is never shipped in the artifact and is not compared as artifact bytes. Determinism fix D3.
+
+### Amendment 2026-10-28 (compute-parallelism Cycle 1): opt-in multi-threaded fits (INV-2)
+
+INV-2 amended: every unit is single-threaded UNLESS its stage sets `thread_safe=True` behind a committed
+cross-thread-count byte-identity test (`tests/tracking/test_thread_identity.py`; the fail-closed registry
+`tests/scripts/test_thread_safe_registry.py`). A `thread_safe` worker runs at
+`thread_budget = max(1, vcpu // (workers·inner_workers))` threads so `threads × units_in_flight ≤ vcpu`
+(oversubscription-safe); the applied budget is stamped to the unit ledger. The budget is injected **per the
+stage's declared `thread_lever`, never a blanket override** — the default/shared/reduce/adapter env stays
+single-threaded (`deterministic_env`, every thread var `"1"`):
+
+- `thread_lever="omp"` (HistGB, e.g. ghost): the executor raises `OMP_NUM_THREADS` only; `OPENBLAS/MKL/VECLIB`
+  and `NUMBA_NUM_THREADS` stay `"1"`. HistGB is OpenMP `prange`; the ghost assemble's BLAS (`cho_factor`/
+  `einsum`) is an axis the determinism evidence (OMP varied only) never covered, so BLAS stays serial for P3.
+- `thread_lever="n_jobs"` (xgb): the worker env stays fully serial; the executor exports
+  `SILLY_KICKS_RUNTIME_THREADS=<budget>`, which the trainer reads TRAINER-SIDE (never inside the library `fit`,
+  no Hyrum hidden dependency) and passes as the runtime `n_jobs`. The serialized `metadata.json` `n_jobs` stays
+  the constant `1`, so the artifact is byte-identical across thread counts.
+
+Byte-identity (P3) is per host: the gate runs on x86 in CI, the HF `cpu-upgrade` production arch (INV-4, one
+prod flavor). Cross-host byte-equality is neither required nor achievable (P15, cross-host diffs are adopted
+environment deltas); the DGX is a possible backup, never a byte-identity benchmark. The dispatch budget
+(`dispatch_cap`) and the planner's per-stage shard ceiling (`shard_cap`) are decoupled `Constraints` fields:
+raising `dispatch_cap` (Cycle 1: 25) probes the HF account limit; `shard_cap` was 20 (owner-approved 2026-10-30)
+and is 25 since the HFU owner ruling 2026-11-01 (full-utilization sharding this cycle), so `dispatch_floor`
+(= `shard_cap`) is also 25 and the dispatch back-off has no range. A
+never-started-then-timed-out job is a dispatch overflow (the controller backs the live budget off toward
+`dispatch_floor`, re-derived each stateless step; it does NOT count toward `error_resumes`); a started job that
+times out counts as today. Past the floor plus `dispatch_halt_after` more, the instance halts and surfaces the
+real ceiling (owner ruling: surface, not degrade to slow waves). The observed max concurrency is written to the
+campaign summary (probe-first).
+
+### Amendment 2026-10-29 (HF full utilization): every job uses all 8 vCPU; 30 min is a sizing target
+
+This cycle makes the planner and controller drive the whole box, with no rebaseline (every artifact stays
+byte-identical, proven by the per-stage thread-identity gate and `test_thread_safe_registry`).
+
+- **`thread_safe` sizing is W=1.** A `thread_safe` non-inner stage plans one worker, so its single process
+  gets the full vCPU thread budget (`thread_budget(vcpu, 1, 1) = vcpu`); units fan across jobs by wall. The
+  `cv` stages opt in too (ghost HistGB via `omp`, xgb via `n_jobs`), each behind its OWN committed identity
+  arm (the registry is per-stage, not a one-off string grep).
+- **The study inner pool is sized to the fold width by the per-CHILD peak RSS.** `UnitCost` carries
+  `inner_child_peak_rss_bytes` (an `InnerPool` child records its own peak); `plan_stage` sizes the pool AND
+  its cap by the child peak, so `unit_peak + inner × child_peak × cap_factor` stays within the usable RAM.
+  Before any child RSS is recorded the plan falls back to the whole-unit clamp and surfaces
+  `study-unsized-pending-measurement`; a child RSS too large for the fold width records an `inner-ram-floor`,
+  never a silent 1.
+- **The schedule is a DAG, not a linear stage barrier.** The controller emits an action for EVERY ready stage
+  in one step, so independent stages dispatch concurrently.
+- **Timeouts are decoupled from the target.** The 30-minute target is a SIZING input to the planner, never a
+  kill threshold. A run job's timeout is `timeout_safety × wall_p99` (floored); the inline reduce adds the
+  measured `reduce_wall`, or the generous profile ceiling on a first run. A tiny/grouped job (`n_units ≤ 2`
+  plus any chained single-unit stages) runs its bundled stages sequentially, so its timeout is sized to that
+  summed work: `timeout_safety × (Σ n_units·p99 over the bundled stages + their inline reduce walls) +
+  startup_s`, floored, with the profile ceiling as the first-run fallback (owner-ratified 2026-10-29). A flat
+  ceiling would kill a heavy grouped chain whose wall exceeds it. The escalate job re-runs a memory-FAILED
+  unit, which has no committed wall, so it keeps the generous profile ceiling. A job that runs past 30 minutes
+  is NOT failed.
+- **The first run uses the HF-measured startup.** A committed bootstrap summary carries the ~15 s
+  `cpu-upgrade` startup (git clone + venv + `uv sync`), so `planning_constraints` budgets against the real box
+  from the first run, not the 300 s default.
+- **Slot-filling fans toward free dispatch slots**, bounded by `budget_floor` (minimum work per job, derived as
+  `10 × startup_s` so the startup is ~10% of a slot-filled job), the `shard_cap` and the unit count.
+- **A heavy reduce is sharded when it declares `shardable_reduce`.** When its recorded p99 exceeds the per-job
+  budget, the reduce is range-partitioned into `sub-reduce` jobs over sorted-key ranges (each an ordered
+  `combine_frames` concat written to `{gen}/_subreduce/`), then one final `reduce` concatenates the partials
+  in sorted order — byte-identical to the single reduce (`combine_frames` associativity + idempotent storable
+  ids), with the same `_summary.json`/`_inputs.json` provenance beside the output. The inline `try_reduce` is
+  disabled for a sharded stage. A final concat still over budget is an irreducible floor (surfaced, never
+  failed).
+- **The module CLI entry is `cli_main`, not `raise SystemExit(main(...))`.** Every migrated module's
+  `__main__` calls `scripts._stages.cli_main(PIPELINE)`. It runs `main`, then the registered Python atexit
+  handlers (so a worker's temp-dir rmtree still runs), flushes stdout/stderr (so `--plan` JSON survives), then
+  `os._exit(rc)` (which skips interpreter finalization, including `threading._shutdown` — no pool/thread join
+  runs through this exit; an `InnerPool` is joined by its own worker's `finally`). This stops a native-library
+  C++ teardown abort (observed: Arrow
+  `terminate called without an active exception`, SIGABRT at interpreter shutdown) from turning a CORRECT
+  job's exit code nonzero — the controller marks any nonzero rc as a failed job. Outputs are persisted by
+  atomic writes before `main` returns, so the hard exit loses nothing, and a raised acceptance gate still
+  exits nonzero as before. `cli_main` and the executor's reduce/worker child `__main__`
+  (`scripts/hf_jobs/executor.py`) share one `scripts._stages.hard_exit`; the reduce child does Arrow I/O and
+  `_subprocess` fails the inline reduce on any nonzero rc, so it has the same exposure.
+- **Preflight reuses the ~20–30 min `check_plans` toy train** by an input-keyed cache; the cheap checks and
+  `check_ref` always re-observe (see the preflight-reuse ADR). The key (`check_plans_key`) hashes
+  `scripts/**/*.py` + `silly_kicks/**/*.py` + the canary job modules MINUS `_CONTROLLER_ONLY_FILES` -- the
+  orchestrator-only modules (`campaign`, `launch`, `ledger`, `adopt`, `measure`, `dgx_e2e`, `scaffold`,
+  `headtohead`, `__main__`) that no toy `--plan`/`--run-all` loads -- so a controller-only edit does not bust the
+  cache and re-run the train (canary run 3 re-ran the 30-min train on a `campaign.py` amend), while the whole
+  library and every trainer-reachable file stay hashed (never under-hash). The exclusion is gated by a static
+  import closure (`_repo_import_closure`, following every import incl. in-function, relative, ancestor packages and
+  bare `sys.path` siblings) that over-approximates what the subprocesses load and must reach none of the excluded
+  files (reviews R5-PF-01 / CK-B-01/02/07). The key ALSO digests the checked instance `(module, args)` that
+  `check_plans` runs `--plan` with (built by the excluded `campaign.instances()`), so an argv change re-runs the
+  train though `campaign.py` stays excluded (review CK-B-06).
+- **A per-stage utilization audit** is written to the campaign summary: each stage either saturates the vCPU
+  or records an irreducible floor (a study at its fold width records its idle cores).
+
+The four default/shared/reduce/adapter thread vars stay `"1"` (`deterministic_env`); the lever rules above are
+unchanged.
+
+### Amendment 2026-10-30 (HF full utilization r3 and r4): the first real campaign, fixed
+
+The first real campaign ran on `2474b73`. It did not finish, and it used the box poorly. The spec's r3 (D1-D16)
+and r4 (D17-D20) findings fix it. Each fix is byte-identical by construction (no rebaseline) and an identity
+gate proves it, with one owner-approved exception (2026-10-30): the R4-10 identity run found that the `2474b73`
+xShot/xCross arm keys missed the 7 public DFL matches, and the fix (ADR-123 Amendment B.2, plan R4-10a) changes the
+arm masks and the 8 xShot/xCross final fits and their `metrics.json`, as a recorded correctness change. The details
+and the tests are in `docs/superpowers/specs/2026-10-29-hf-full-utilization-design.md` and its plan.
+
+- **The store is read without listing it per result (D1, D19).** `read_result` probes its candidate files; a
+  reduce lists a generation a constant number of times. A stage that reads a reduced upstream reads the units the
+  reduce combined, in a pool (`read_combined_units`). A broken unit reopens its stage: the unit, the reduced
+  output and the reduce record are deleted, and the job exits 0 so the controller relaunches the stage.
+- **A first run can shard a heavy reduce (D2), and a timed-out reduce resumes as a reduce (D3).** The profile
+  times its sample's read-back and combine, so the planner estimates the reduce wall before any reduce ran.
+- **The controller always makes progress (D4, D5, D15).** It rereads a stage's cost when a new ledger lands; a
+  repeat profile runs pending units only; two jobs with no new record halt the instance with a named reason;
+  `--watch` exits nonzero on a halt.
+- **A lossy bucket mount loses no work (D6).** Orphan temp files are swept, the loss is reported, and a unit
+  whose result vanished is re-run.
+- **R1 is measured, not configured (D8).** Every HF job writes a job record (its CPU, itself plus its reaped
+  children, and its wall from the process start); the utilization audit reads measured cores. Its pass bar,
+  `SATURATION_FRACTION`, is provisional until Step 0 calibrates it on HF and the owner accepts the value.
+- **Every stage is shaped by measurement (D9).** Step 0 measures every stage of every campaign module on HF
+  before any stage opts in. A measurement job (`scripts/hf_jobs/measure.py`) runs the pushed base plus the
+  working-tree patch, carried inside the job request with its sha256 checked before `git apply`. Every mount is
+  read-only and the job gets no secrets, so a measurement job cannot write a campaign store by mechanism.
+- **Split work that is per column or per fold (D10, D16).** `ghost_gk` `importance` splits by column (sklearn's
+  per-column seed, its private signature pinned by a test). The `cv` thread opt-in is withdrawn: the fold's cost
+  was a serial leaf walk, not the fit (ADR-076 amendment).
+- **The split cost model counts measured overhead (D11).** Each extra job is charged its measured prelude and
+  upstream load, not `startup_s` alone.
+- **Every trainer is a pipeline (D12).** The adapter that ran a legacy CLI as one pinned unit is deleted; the
+  last three trainers are pipelines, byte-identical to their legacy CLI (`test_adapter_migration_identity`), and
+  the flat public bundles ship `metrics.json`.
+- **Work is keyed by `(run_key, generation)` (D17).** A generation that two instances share runs once; the step
+  budget counts every live job (owner ruling 2026-10-30).
+- **One extraction per source (D18).** `ghost_gk` extracts one superset and selects each variant from it; a
+  `position_only` extract is the faithful extract minus its velocity columns; tiers that read one dataset share
+  one store (run key `{campaign}-{commit7}-{job}-{dataset}`), and a tier keeps its own arm rows in-job.
+- **The extract hot paths are numpy (D20).** Columns become arrays once per match and every frame is a slice;
+  the per-frame scalar code, its order and its argument types are unchanged. The old bodies stay verbatim in the
+  tests as the oracle (`tests/tracking/_extract_reference.py`), and an HF identity run reproduces the stored
+  `2474b73` units byte for byte.
+
+### Amendment 2026-10-31 (HF full utilization, Step 0 decisions): INV-2, the floors, WIO and MEM
+
+Step 0 measured every stage on HF and the plan's R3-8 decision table (A and B approved) shapes each one. The owner
+rulings are dated 2026-10-30 and 2026-10-31; the spec §A and §B record them. This amendment states the contract
+changes.
+
+- **INV-2, the thread budget.** The 2026-10-28 rule `thread_budget = max(1, vcpu // (workers·inner_workers))` keeps
+  `threads × units_in_flight ≤ vcpu`. Three bounded exceptions, each behind its own identity gate:
+  - (a) THREADS: a `thread_safe`, non-inner stage of n ≤ 5 units runs all n at once in one job with
+    `ceil(vcpu / n)` threads per worker. The oversubscription is at most `n × ceil(vcpu / n) − vcpu` threads (2 at
+    n = 5, 1 at n = 3, 0 at n = 1, 2 and 4), measured on HF at n = 5. n = 6 or 7 keeps `vcpu // n`: no HF
+    measurement covers 12 or 14 threads on 8 vCPU.
+  - (b) The `n_jobs` lever (xgb) also raises `OMP_NUM_THREADS` to the budget, because XGBoost caps `nthread` at
+    `omp_get_max_threads()` (Step 0 measured the lever dead in production: one core at an 8-thread budget).
+    `OPENBLAS/MKL/VECLIB` and `NUMBA_NUM_THREADS` stay `"1"`: the xgb determinism evidence varies OpenMP only. The
+    identity arm runs each thread count in a subprocess under the production env and compares the whole stage
+    output.
+  - (c) An inner pool of n ≤ 5 children (the xShot/xCross study's fold children) gets `ceil(vcpu / n)` threads
+    per child, the same bound as (a), with an HF measurement and the identity at child budgets 1 and 2.
+- **The structural floors need measured use.** The R1 audit passes a stage below `SATURATION_FRACTION` (owner
+  ruling: 0.85) only as one of three floors (a final fit at the full thread budget; a sequential study at its
+  fold width; a stage whose every unit runs at once with the whole budget) or with a reviewed serial reason. A
+  floor whose budget is above one thread also needs measured use: from the stage's D8 job record,
+  `cpu_s / wall_s / (workers × inner_workers)` must be MORE than half the thread budget. A dead lever and a
+  mostly-serial fit never audit as a floor.
+- **"Too small to pay".** A stage whose summed unit CPU plus its reduce CPU is under 60 s takes a reviewed serial
+  reason of that class with its measured time; the audit fails a stage that declares it and measures 60 s or more.
+- **WIO, a third stage shape.** An item stage whose units wait on I/O runs `W = ceil(vcpu / cpu_share)` workers,
+  above the vCPU and capped by RAM (`win_probability` and `match_outcome_dependence` `extract`: W = 12). The
+  executor bounds such a stage by the planned W instead of `nproc`. `cpu_share` is the p50 of the done units'
+  `cpu_s / wall_s`. The planner marks a stage WIO when that share is under `SATURATION_FRACTION` (0.85): at
+  W = vcpu such a stage cannot reach the saturation bar, and at or above it W = vcpu already saturates the box
+  (the receiver units, at 0.96, only burn CPU above W = 8). A `thread_safe` or `inner_parallel` stage is never
+  WIO.
+- **MEM, a memory admission gate.** A gated stage plans W = vcpu, or its WIO W when it is also WIO (owner
+  ruling 2026-10-31): the gate bounds the memory, WIO adds the workers that wait on I/O. For a stage with per-unit
+  peak history (its source is below), each unit reserves `1.3 ×` its predicted peak and a worker claims only while the
+  reservations and the measured resident memory of the live workers fit the usable RAM. Retained heap cannot
+  stall a stage: an idle worker that blocks a claim exits, and with no unit in flight the next claim is admitted.
+  The decision logic is `scripts/hf_jobs/mem_gate.py` (pure). In a gated job the executor's parent is the only
+  claimer: a worker asks through a job-local gate directory and the parent grants, stops or holds it. The
+  controller reads the peaks from the unit ledgers of the newest REDUCED generation of the same computation (the
+  stage's `history_key`) in any run key of the campaign bucket that runs the same job (`campaign.bucket_unit_peaks`;
+  owner ruling 2026-10-31, because a new commit's campaign starts in a fresh store; the run key names the job, not
+  the pipeline). Per controller it lists the bucket root once and each earlier store of the job once per stage,
+  and shares every read across instances,
+  stages them once per stage generation (`_unit_peaks/<pipeline>/<stage>/<token>.json`, a prefix of the
+  controller's upload guard `store.CONTROLLER_UPLOAD_PREFIXES`; canary run 1) and passes the file to
+  the job (`--unit-peaks`). A box guard kills the busy worker with the largest excess over its reservation when the
+  summed RSS passes the usable RAM, and its unit goes to the memory escalation.
+  A stage without history keeps the `1.3 ×` maximum-peak worker cap. The search picks the newest matching
+  generation by its newest ledger's upload time and downloads ONLY that generation's ledgers, never the losers'
+  (canary run 2: it had read all 13 `win_probability` generations' 3,961 ledgers to keep one, 591 s). This assumes
+  upload order equals finish order, which holds for distinct earlier campaigns' run keys (the usual candidates) but
+  not for concurrent generations of one computation -- INV-1 replica run keys (`-r<N>`) share a `history_key` and
+  run at once, so newest-by-upload can pick a different replica than newest-by-`finished_ns`. The cost is benign: the
+  peaks size only the memory gate (worker count W), and the output is byte-identical per (W, N) by the R4 identity
+  gates, so either replica's peaks are a valid sample (the old `finished_ns` scan was equally arbitrary there). The
+  exact `finished_ns` scan stays as the fallback when a snapshotted candidate carries no upload time. The per-stage
+  searches run in a thread pool, single-flight on the shared read cache so each store is still listed once, and a
+  failed search releases its waiters and clears its entry rather than hang (`_reads_cached`); `unit_peak_views`
+  dropped 941 s to 149 s on MEDIA-PC.
+- **A store read holds a per-file lock (owner ruling 2026-10-31, "Per-file read lock").** The HF bucket mount
+  nearly hangs when several processes of one container read the same COLD file at once: five readers of one
+  156-215 MB generation took 546 s and 4,161 s, where one reader takes 1.4-1.6 s and two take 2.4 s (jobs
+  `6ae62805c78863f9c62f3a2c`, `6ae634a00e0338d1bb7d3a15`). Concurrent `pread`s on one file in one process are slow
+  too (40 s against 1 s); readers of different files are not (four at once, 1.1 s each), and a warm reread runs at
+  1,177 MB/s. Every multi-worker stage starts its workers at once on the same upstream, so the five ghost_gk `cv`
+  folds of a THREADS job spent 455 of their 527 s in `read_bytes` (job `6ae634ccc78863f9c62f3e3e`).
+  `LocalStore.read_bytes` therefore holds an exclusive `fcntl` lock on a container-local lock file named for the
+  path (`_stages._file_read_lock`): readers of one file take turns and the later ones read the page cache; readers
+  of different files hold different locks. A file deleted while a reader waits on its lock (a D19 reopen) reads as
+  absent, the reopen path, never as a failed unit attempt (review S3B-14). The bytes are unchanged. With the lock
+  the same five folds took 70-75 s
+  each and their reads 5 s or less (job `6ae63a7cc78863f9c62f4051`). Without `fcntl` (a Windows development
+  machine) the read takes no lock. `tests/scripts/test_store_read_lock.py` (Linux CI) proves both directions.
+- **The ERROR-in-a-row stop is an instance halt (owner ruling 2026-10-31, HFU rung 5).** A stage whose latest
+  `error_resumes` jobs all ended in ERROR (a crash or a timeout before any unit writes a record) halts the
+  INSTANCE, named `<stage>: N job(s) in a row ended in ERROR`, and its live jobs are cancelled through the same
+  path as the failed-units halt (`campaign.errors_exhausted`). Before, the stage only reported the failure while
+  the instance's other jobs ran to the end. A failed unit with a record still halts through `next_actions` (the
+  spent unit), which `step` computes first. A SINGLE non-resumable ERROR halts the instance the same way (HFU
+  rung 5, the canary's halt arm): a crash with units still pending and no retryable failed unit — where
+  `resume_after_error` returns its halt default — halts the INSTANCE and cancels its live siblings, so the halt
+  arm's long-lived `hold` job is cancelled instead of orphaned and `--watch` settles non-zero. Before, `step`
+  only reported such an ERROR per stage and left a live sibling orphaned -- a settled `--watch` exited non-zero
+  with it still running. A RESUMABLE ERROR (a retryable failed unit, or a timeout with pending work) still
+  resumes per stage without halting (`test_concurrent_stage_resume_is_per_stage_independent`).
+- **The canary campaign and its halt arm (HFU rung 5; spec `2026-10-31-hfu-rung5-canary-design.md`).**
+  `scripts/hf_jobs/campaigns/canary.toml` runs 13 of the 21 `cycle1` instances at the cycle-1 computation in the
+  cycle-1 bucket (the MEM history is per bucket), plus a forced-halt arm: a third registry kind, `CanarySpec`
+  (`canary_halt`: the toy pipeline's zero-tolerance `strict` stage fails unit `0000`; an independent `hold` stage
+  is the sibling the halt must cancel). `load_campaign` refuses a canary job outside a campaign named `canary*`;
+  a canary campaign never retrieves, verifies, adopts or publishes; the summary leaves the canary rows out.
+  `launch|resume --watch --reports PATH` records every step report and the settled exit code, and
+  `canary-check --reports PATH` asserts the rung-5 criteria from the single-sourced facts.
+- **The OpenMP wait policy stays the default.** One window of HF jobs ran OpenMP stages 7-14 times slower at 3-6
+  times the CPU, with byte-identical output (the ghost_outfield `fit`: 1,330 and 1,650 s against 88-118 s in seven
+  other runs). In-container CPU contention did not reproduce it (8 busy-loop hogs: 258 s, the fair-share
+  slowdown), and `OMP_WAIT_POLICY=PASSIVE` costs about 33 % of the wall without contention (127-131 s against 88-100 s) and
+  gains no wall under contention (285 s), so the policy is not changed (jobs `6ae623d60e0338d1bb7d3717`,
+  `6ae623d8c78863f9c62f38fd`, `6ae62549c78863f9c62f3954`, `6ae6254b0e0338d1bb7d3760`). The container sees the
+  host's 64 CPUs (`os.cpu_count()`); worker sizing reads the cgroup `cpu.max` quota (8), as before.
 
 ## Cycle 1 outcome (2026-10-21)
 

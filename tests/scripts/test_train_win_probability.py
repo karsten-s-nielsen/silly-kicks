@@ -8,11 +8,12 @@ import pytest
 
 import silly_kicks.spadl.config as C
 from scripts.train_win_probability import (
+    _actual_win,
     _attach_strength,
     _games_frame,
     calibration_metrics,
     chronological_strength,
-    main,
+    cli_main,
     match_shard,
 )
 from silly_kicks.win_probability import (
@@ -31,7 +32,7 @@ FAIL = C.result_id["fail"]
 def test_module_imports_without_statsbombpy_and_main_is_argparse_guarded():
     # statsbombpy / _sb_open_data / _driver / _provenance are function-local imports, so the module
     # imports clean in CI (no network dep) and main() does not run on import.
-    assert callable(main)
+    assert callable(cli_main)
     assert callable(chronological_strength) and callable(match_shard)
 
 
@@ -202,3 +203,82 @@ def test_shard_carries_the_columns_compute_win_probability_needs():
     assert required <= set(shard.columns), (
         f"shard missing compute-required columns: {sorted(required - set(shard.columns))}"
     )
+
+
+# ---- HFU plan R3-8 S3 item 7 (b): one `cv` unit per calibration fold ------------------------------------------
+
+
+# The `2474b73` `calibration_metrics` body, VERBATIM (the D20 oracle; only the name differs).
+def _calibration_metrics_2474b73(pooled: pd.DataFrame, games: pd.DataFrame, params) -> dict:
+    """GroupKFold-by-match OOF calibration of the served per-action p_win vs the match win-indicator.
+
+    Returns ece, reliability_slope (OLS of win-indicator on p_win), brier, n_oof. base_strength is a
+    pre-match feature (leakage-free by DATE), so it is the SAME column in every fold -- only the GLM is
+    refit per fold.
+    """
+    from sklearn.model_selection import GroupKFold
+
+    from silly_kicks._calibration_metrics import ece
+    from silly_kicks.win_probability import WinProbabilityModel, compute_win_probability
+
+    win = _actual_win(pooled)
+    game_ids = pd.unique(pooled["game_id"])
+    groups = pooled["game_id"].to_numpy()
+    n_splits = min(5, len(game_ids))
+    if n_splits < 2:
+        return {"ece": float("nan"), "reliability_slope": float("nan"), "brier": float("nan"), "n_oof": 0}
+
+    preds: list[float] = []
+    targets: list[float] = []
+    gkf = GroupKFold(n_splits=n_splits)
+    idx = np.arange(len(pooled))
+    for tr, te in gkf.split(idx, groups=groups):
+        train_games = set(pd.unique(pooled.iloc[tr]["game_id"]))
+        tr_pool = pooled[pooled["game_id"].isin(train_games)]
+        m = WinProbabilityModel(params=params).fit(tr_pool, games=games, strength_column="base_strength")
+        te_games = set(pd.unique(pooled.iloc[te]["game_id"]))
+        te_pool = pooled[pooled["game_id"].isin(te_games)]
+        samples, _ = compute_win_probability(te_pool, model=m, games=games, strength_column="base_strength")
+        s = samples.dropna(subset=["p_win"])
+        for gid, t, pw in zip(s["game_id"], s["team_id"], s["p_win"], strict=False):
+            preds.append(float(pw))
+            targets.append(win.get((gid, t), 0.0))
+
+    p = np.asarray(preds)
+    y = np.asarray(targets)
+    if not len(p):
+        return {"ece": float("nan"), "reliability_slope": float("nan"), "brier": float("nan"), "n_oof": 0}
+    slope = float(np.polyfit(p, y, 1)[0]) if np.std(p) > 1e-9 else float("nan")
+    return {"ece": float(ece(y, p)), "reliability_slope": slope, "brier": float(np.mean((p - y) ** 2)), "n_oof": len(p)}
+
+
+@pytest.mark.parametrize("n_matches", [6, 3, 1])
+def test_the_cv_folds_in_fold_order_reproduce_calibration_metrics_byte_for_byte(n_matches):
+    """The folds' OOF predictions and targets, concatenated in fold order, give the `2474b73` body's metrics JSON:
+    6 matches make 5 folds; 3 make 3 folds and 2 empty units; 1 makes no fold and the NaN metrics."""
+    import json
+
+    from scripts.train_win_probability import CV_FOLDS, calibration_fold, metrics_from_cv
+
+    pooled = _synthetic_corpus(n_matches)
+    pooled = _attach_strength(pooled, chronological_strength(pooled))
+    games = _games_frame(pooled)
+    params = WinProbabilityParams.default()
+    folds = [calibration_fold(pooled, games, params, i) for i in range(CV_FOLDS)]
+    cv = pd.concat(folds, ignore_index=True)
+    oracle = json.dumps(_calibration_metrics_2474b73(pooled, games, params))
+    assert json.dumps(metrics_from_cv(cv)) == oracle
+    assert json.dumps(calibration_metrics(pooled, games, params)) == oracle
+    assert (len(cv) > 0) is (n_matches >= 2)  # non-vacuity: real predictions where folds exist
+    assert sum(len(f) > 0 for f in folds) == (min(CV_FOLDS, n_matches) if n_matches >= 2 else 0)
+
+
+def test_the_pipeline_runs_the_calibration_folds_as_cv_units_before_fit():
+    from typing import Any
+
+    from scripts.train_win_probability import CV_FOLDS, PIPELINE
+
+    cv = PIPELINE.stage("cv")
+    no_ctx: Any = None  # the fold units are fixed; they read no context
+    assert cv.units(no_ctx) == [str(i) for i in range(CV_FOLDS)]
+    assert "cv" in PIPELINE.stage("fit").needs

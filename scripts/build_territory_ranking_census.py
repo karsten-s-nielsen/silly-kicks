@@ -51,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # scripts/, so the bar
 from _crossed_icc import bootstrap_icc_and_power  # scripts/ on sys.path (conftest / the line above)
 
 from scripts._input_contract import declare_inputs
-from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, main
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, cli_main
 from silly_kicks.id_compat import canonical_id, canonical_id_series
 from silly_kicks.spadl import SPADL_COLUMNS
 from silly_kicks.territory import (
@@ -824,6 +824,28 @@ _CORPUS_PARAMS = (
     "match_ids_json",
 )
 
+#: HFU plan R3-8 S3 item 12: the reviewed serial reasons of this pipeline's SERIAL stages, verbatim from the
+#: plan's SERIAL annex (owner ruling 2026-10-30, "too small to pay"); `scripts/hf_jobs/serial_reasons.py`
+#: holds the same texts and `tests/scripts/test_serial_reasons.py` holds the two equal.
+_SERIAL_REASONS = {
+    "refs": ("Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, under 1 s of CPU."),
+    "fit_prepass": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): 32 units of 0.6-0.9 s, 15 s of CPU in all;"
+        " a W=8 job is 9.4 s, mostly worker start-up."
+    ),
+    "prefit": ("Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 1 s of CPU."),
+    "score": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): 32 units of 0.6-0.9 s, 20 s of CPU in all;"
+        " a W=8 job is 10.4 s, mostly worker start-up."
+    ),
+    "bootstrap": (
+        "Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, 0.1 s of work in a 6 s job; its "
+        "idle cores are start-up, not structure."
+    ),
+    "report": ("Too small to pay (under 60 s of unit CPU, owner ruling 2026-10-30): one unit, under 1 s of CPU."),
+}
+
+
 PIPELINE = Pipeline(
     name="territory_ranking_census",
     module="scripts.build_territory_ranking_census",
@@ -831,6 +853,7 @@ PIPELINE = Pipeline(
     stages=(
         Stage(
             name="refs",
+            serial_reason=_SERIAL_REASONS["refs"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_refs_work,
             reduce=lambda r, ctx: r["only"],
@@ -841,6 +864,7 @@ PIPELINE = Pipeline(
         ),
         ItemStage(
             name="fit_prepass",
+            serial_reason=_SERIAL_REASONS["fit_prepass"],  # S3 item 12 (SERIAL annex)
             refs=lambda ctx: _refs_of(ctx, "fit_refs"),
             key=lambda ref: ref.key,
             load=_load,
@@ -853,6 +877,7 @@ PIPELINE = Pipeline(
         ),
         Stage(
             name="prefit",
+            serial_reason=_SERIAL_REASONS["prefit"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_prefit_work,
             needs=("fit_prepass",),
@@ -860,6 +885,7 @@ PIPELINE = Pipeline(
         ),
         ItemStage(
             name="score",
+            serial_reason=_SERIAL_REASONS["score"],  # S3 item 12 (SERIAL annex)
             refs=lambda ctx: _refs_of(ctx, "score_refs"),
             key=lambda ref: str(ref.match_id),  # the legacy key: the score shard filenames are unchanged
             load=_load,
@@ -872,6 +898,7 @@ PIPELINE = Pipeline(
         ),
         Stage(
             name="bootstrap",
+            serial_reason=_SERIAL_REASONS["bootstrap"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_bootstrap_work,
             needs=("score",),
@@ -881,6 +908,7 @@ PIPELINE = Pipeline(
         ),
         Stage(
             name="report",
+            serial_reason=_SERIAL_REASONS["report"],  # S3 item 12 (SERIAL annex)
             units=lambda ctx: ["only"],
             work=_report_work,
             needs=("refs", "score", "bootstrap"),
@@ -891,4 +919,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

@@ -182,6 +182,18 @@ def test_save_load_roundtrip_field_level(tmp_path):
     assert loaded._feature_names() == model._feature_names()
 
 
+def test_metadata_omits_training_platform(tmp_path):
+    """D3/B09: the saved ghost-outfield metadata must not carry `training_platform` (the live kernel string),
+    so a main run and its replica produce byte-identical metadata. The fit host's platform is run-history in
+    the unit ledger now. Restoring the key reintroduces the cross-platform byte difference (reviewer B B09)."""
+    import json
+
+    model, _ = _fit_toy()
+    model.save(tmp_path)
+    meta = json.loads((tmp_path / "metadata.json").read_text())
+    assert "training_platform" not in meta
+
+
 def test_position_only_fit_save_load(tmp_path):
     model, frames = _fit_toy(feature_set="position_only", n_estimators=20, max_depth=3)
     assert model._feature_names() == GHOST_OUTFIELD_FEATURE_NAMES_POSITION_ONLY

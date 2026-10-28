@@ -51,6 +51,10 @@ class Artifact:
     tier: str
     certification: str
     dataset: str | None = None
+    #: Spec r4 D18 (c): the staged dataset the campaign job READS when it is not ``dataset`` (whose corpus identity the
+    #: artifact records): the public xShot / xCross tier reads ``xshot115`` and keeps its public arm, which is exactly
+    #: ``xshot17``'s corpus (`test_every_read_dataset_holds_its_artifacts_corpus_as_its_tier_arm`). None: ``dataset``.
+    read_dataset: str | None = None
     naming: str | None = None
     corpus: str | None = None
     training_commit: str | None = None
