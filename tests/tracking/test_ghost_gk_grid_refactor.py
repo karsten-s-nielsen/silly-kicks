@@ -53,14 +53,18 @@ def test_default_grid_spec_serializes_byte_identical_to_committed():
 
 def test_default_metadata_differs_only_in_recomputed_feature_contract(tmp_path):
     # Pin the finding: re-saving the default changes ONLY feature_contract.probe_sha256 (the
-    # pre-existing recompute). If this refactor ever changes another field for `default`, this fails.
+    # pre-existing recompute) and, until the committed artifact is re-fit, drops training_platform
+    # (D3: save no longer writes the live kernel string; the legacy committed artifact still carries it).
+    # If this refactor ever changes another field for `default`, this fails.
     committed = json.loads((_DEFAULT_DIR / "metadata.json").read_text())
     out = tmp_path / "resaved"
     GhostGkModel.load(_DEFAULT_DIR).save(out)
     resaved = json.loads((out / "metadata.json").read_text())
     diffs = {k for k in set(committed) | set(resaved) if committed.get(k) != resaved.get(k)}
-    # Only feature_contract changed (its probe_sha256); grid_spec + all else are byte-identical.
-    assert diffs <= {"feature_contract"}
+    # feature_contract (its probe_sha256) and the dropped legacy training_platform (D3); grid_spec + all
+    # else are byte-identical. After the D3 re-fit the committed artifact has no training_platform, so the
+    # diff narrows to {feature_contract}; the subset check passes both before and after that re-fit.
+    assert diffs <= {"feature_contract", "training_platform"}
     assert committed["grid_spec"] == resaved["grid_spec"]
 
 

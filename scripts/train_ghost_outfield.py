@@ -27,7 +27,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
 
-from scripts._stages import ItemStage, Param, Pipeline, Stage, main
+from scripts._stages import ItemStage, Param, Pipeline, Stage, cli_main
 
 _FeatureSet = Literal["faithful", "position_only"]
 
@@ -306,7 +306,6 @@ _PARAMS = (
         1.0,
         help="Frames/sec to keep per (game, period) (default 1.0, mirroring train_ghost_gk); a large value keeps all",
     ),
-    Param("training_platform", str, None),
 )
 
 
@@ -434,7 +433,6 @@ def _fit_work(key, ctx):
         data
     )
     final.training_commit = training_commit
-    final.training_platform = p["training_platform"]
     final.corpus_provenance = {
         "n_games": int(data["game_id"].astype(str).nunique()),
         "n_rows": len(data),
@@ -483,7 +481,6 @@ def _assemble_work(key, ctx):
         "coherence": coherence,
         "run_commit": None if ctx.prov["commit"] == "unknown" else ctx.prov["commit"],
         "run_tree_dirty": bool(ctx.prov["dirty"]),
-        "training_platform": p["training_platform"],
     }
     files = {name: data_ for name, data_ in fit.files.items() if name != "coherence.json"}
     files["metrics.json"] = json.dumps(metrics, indent=2).encode("utf-8")  # the legacy json.dump bytes
@@ -502,6 +499,7 @@ PIPELINE = Pipeline(
             load=_extract_load,
             work=_extract_work,
             reduce=_extract_reduce,
+            shardable_reduce=("game_id", "player_id", "team_id"),  # HFU T8: a plain combine_frames concat
             # extraction_inputs is the legacy token; n_rearguard is declared too, so a changed rearguard
             # size can never reuse stale shards.
             params=("n_rearguard",),
@@ -517,6 +515,8 @@ PIPELINE = Pipeline(
             needs=("extract",),
             reduce=_cv_reduce,
             params=("variant", "n_estimators", "max_depth", "cv_folds"),
+            thread_safe=True,  # HFU T11: each fold fits a HistGB; W=1 gets the full vCPU OMP budget
+            thread_lever="omp",  # HistGB OpenMP; BLAS stays serial (B38) -- identity test_cv_thread_identity_ghost
         ),
         Stage(
             name="fit",
@@ -524,7 +524,9 @@ PIPELINE = Pipeline(
             work=_fit_work,
             needs=("extract",),
             reduce=lambda r, ctx: r["only"],
-            params=("variant", "n_estimators", "max_depth", "training_platform"),
+            params=("variant", "n_estimators", "max_depth"),
+            thread_safe=True,  # ADR-128 INV-2 opt-in (test_thread_identity; test_thread_safe_registry)
+            thread_lever="omp",  # HistGB OpenMP; BLAS stays serial (B38)
         ),
         Stage(
             name="assemble",
@@ -532,11 +534,11 @@ PIPELINE = Pipeline(
             work=_assemble_work,
             needs=("extract", "cv", "fit"),
             reduce=lambda r, ctx: r["only"],
-            params=("variant", "subsample_fps", "training_platform"),
+            params=("variant", "subsample_fps"),
         ),
     ),
     output="assemble",
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

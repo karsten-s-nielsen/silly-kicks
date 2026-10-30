@@ -211,3 +211,27 @@ def test_the_compliant_set_is_the_cycle1_migration():
         "train_win_probability",
         "build_territory_ranking_census",
     }
+
+
+def test_plan_emits_thread_safe(tmp_path):
+    """plan() carries each stage's thread_safe + thread_lever into the --plan JSON the controller reads.
+    Without it the controller's plan_stage never sees thread_safe and the W=1 sizing rule is dead in
+    production (ADR-128 full-utilization; HFU plan T1 / review B-01)."""
+    from scripts._stages import LocalStore, make_context, plan
+    from tests.scripts import _toy_pipeline
+    from tests.scripts._stage_harness import PROV, params_from_args
+
+    pipeline = _toy_pipeline.PIPELINE
+    ctx = make_context(
+        pipeline,
+        params_from_args(pipeline, []),
+        PROV,
+        store=LocalStore(tmp_path / "s"),
+        data_root=tmp_path / "d",
+    )
+    recs = {s["name"]: s for s in plan(ctx)["stages"]}
+    assert recs["nfit"]["thread_safe"] is True
+    assert recs["nfit"]["thread_lever"] == "omp"
+    assert recs["env_njobs"]["thread_safe"] is True
+    assert recs["env_njobs"]["thread_lever"] == "n_jobs"
+    assert recs["gen"]["thread_safe"] is False

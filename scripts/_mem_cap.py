@@ -168,6 +168,23 @@ def largest_rss(pid: int, *, proc: Path = _PROC) -> tuple[int, int] | None:
     return best
 
 
+def total_rss(pid: int, *, proc: Path = _PROC) -> tuple[int, int] | None:
+    """``(pid, bytes)`` where bytes is the TOTAL resident set of ``pid`` and all its descendants, or None when
+    ``pid`` is gone. For an inner_parallel worker the protected quantity is the whole TREE (the unit process PLUS
+    its pool children) against the tree's budget (~usable), because that tree is the box's one tenant -- not a
+    single process against a unit-sized cap (reviewer B D1-IMPL-18). `largest_rss` stays right for a NON-inner
+    worker, which has no pool. The root pid is reported for the kill message."""
+    if not (proc / str(pid)).is_dir():
+        return None
+    page, total = _page_size(), 0
+    for p in process_tree(pid, proc=proc):
+        try:
+            total += int((proc / str(p) / "statm").read_text(encoding="ascii").split()[1]) * page
+        except (OSError, ValueError, IndexError):
+            continue  # the process exited mid-scan
+    return (pid, total)
+
+
 def kill_tree(pid: int, *, proc: Path = _PROC) -> bool:
     """SIGKILL ``pid`` and its descendants, leaves first. False when there is no ``/proc`` (the caller
     kills the direct child itself)."""

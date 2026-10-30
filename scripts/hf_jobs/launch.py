@@ -83,6 +83,15 @@ class JobSpec:
     shard_keys_path: str | None = None
     extra_env: Mapping[str, str] | None = None
     escalate: bool = False
+    #: HFU T8 sharded reduce: a sub-reduce's shard index; the final reduce's partial count; a sharded run's
+    #: skip of the inline reduce.
+    subreduce_shard_id: int | None = None
+    subreduce_n_shards: int | None = None
+    from_partials: int | None = None
+    no_inline_reduce: bool = False
+    #: HFU T11 + reviewer B D1-IMPL-07: the inner_parallel pool CHILD cap, distinct from ``cap_bytes`` (the unit
+    #: worker's). None for a non-inner stage.
+    inner_cap_bytes: int | None = None
 
 
 def label_of(labels: Mapping[str, str]) -> str:
@@ -174,6 +183,8 @@ def _run_argv(spec: JobSpec) -> list[str]:
     argv += ["--workers", str(spec.workers), "--inner-workers", str(spec.inner_workers)]
     if spec.cap_bytes:
         argv += ["--cap-bytes", str(spec.cap_bytes)]
+    if spec.inner_cap_bytes:  # HFU T11: the inner_parallel pool child cap (distinct from the unit worker's)
+        argv += ["--inner-cap-bytes", str(spec.inner_cap_bytes)]
     if spec.peak_rss_bytes:
         argv += ["--peak-rss-bytes", str(spec.peak_rss_bytes)]
     if spec.profile:
@@ -182,6 +193,12 @@ def _run_argv(spec: JobSpec) -> list[str]:
         argv += ["--escalate"]
     if spec.shard_keys_path:
         argv += ["--shard-keys", spec.shard_keys_path]
+    if spec.from_partials is not None:  # HFU T8: the final reduce over N sub-reduce partials
+        argv += ["--from-partials", str(spec.from_partials)]
+    if spec.subreduce_shard_id is not None:  # HFU T8: a sub-reduce; the worker computes its range from DONE units
+        argv += ["--subreduce", "--shard-id", str(spec.subreduce_shard_id), "--n-shards", str(spec.subreduce_n_shards)]
+    if spec.no_inline_reduce:  # HFU T8: a sharded stage's run job skips the inline reduce
+        argv += ["--no-inline-reduce"]
     return argv
 
 

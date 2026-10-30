@@ -317,7 +317,10 @@ ARCHITECTURE with INTERPRETER; `atol` cannot transfer to xCross's quantized `spa
 (~8.87e6 × atol per cell) or integer-ratio `box_off_def_ratio`, where it degenerates to an equality
 test; and it measures the fingerprint only, not any model's acceptance. **The platform is now
 recorded on every artifact** via `git_provenance`, so this class of stale premise is answerable from
-the artifact instead of from a comment.
+the artifact instead of from a comment. *(Amended by D3, ADR-128 amendment 2026-10-27: a
+run-dependent value in a fit artifact broke a same-commit main-vs-replica byte-identity, so the
+platform moved OUT of the artifact `metadata.json` into each unit ledger. A cross-platform contract
+mismatch is now answerable from the run ledger, not the loaded artifact.)*
 
 **The blindness.** This ADR already records that the contract cannot see an UPSTREAM-RESOLUTION
 change (4.73.0, above). The re-fit surfaced a second one from the opposite direction, and the two

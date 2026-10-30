@@ -476,8 +476,14 @@ class XShotOccurrenceModel:
         *,
         carrier_params: dict | None = None,
         horizon_seconds: float = 1.0,
+        runtime_n_jobs: int = 1,
     ) -> XShotOccurrenceModel:
         """Fit the classifier. Records ``carrier_params`` into the model (R3).
+
+        ``runtime_n_jobs`` sets xgboost's thread count for THIS fit only (ADR-128 Cycle-1 opt-in): the
+        serialized ``n_jobs`` stays the pinned ``1`` (``self._params`` is untouched), so the artifact is
+        byte-identical across thread counts (proven) while a ``thread_safe`` trainer can use its vCPU share.
+        The budget reaches here trainer-side (``SILLY_KICKS_RUNTIME_THREADS``), never an env read in ``fit``.
 
         Examples
         --------
@@ -494,6 +500,7 @@ class XShotOccurrenceModel:
         # P(shot) calibrated without scale_pos_weight" claim does not silently depend on xgboost's
         # auto-intercept behaviour surviving a future pin move.
         params["base_score"] = float(np.asarray(labels, dtype=float).mean())
+        params["n_jobs"] = int(runtime_n_jobs)  # runtime only; self._params (serialized) keeps n_jobs=1
         clf = xgb.XGBClassifier(**params)
         clf.fit(features.to_numpy(dtype=float), labels.to_numpy(dtype=int))
         booster = clf.get_booster()
@@ -524,8 +531,6 @@ class XShotOccurrenceModel:
         """
         if self._booster is None:
             raise RuntimeError("Model not fitted.")
-        import platform
-
         import xgboost as xgb
 
         path = Path(path)
@@ -550,7 +555,6 @@ class XShotOccurrenceModel:
             "pitch_width": _geo.PITCH_WIDTH,
             "geometry_version": _geo.GEOMETRY_VERSION,
             "xgboost_version": xgb.__version__,
-            "training_platform": platform.platform(),
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),

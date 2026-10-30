@@ -6,7 +6,7 @@ its relaunch resumes from the persisted units (INV-3). Workers are capped by `_m
 DGX; inside an HF container, which has no systemd, the executor itself watches the largest single RSS in
 each worker's process tree and kills one over its cap -- the ``rss`` backend; ``RLIMIT_AS`` capped
 address space, not RSS, and failed every unit on real HF), started with `_thread_pin.deterministic_env`
-(INV-2), sized by
+(INV-2; a `thread_safe` stage's worker instead gets its per-job thread budget, ADR-128 amendment), sized by
 `_parallel_launch.size_workers` over the cgroup's CPUs and RAM (a container's `os.cpu_count()` and
 `/proc/meminfo` are the host's) and gated by `should_launch` backpressure.
 
@@ -50,6 +50,9 @@ class ExecutorConfig:
     workers: int = 1
     inner_workers: int = 1
     cap_bytes: int | None = None
+    #: HFU T11 + reviewer B D1-IMPL-07: the inner_parallel pool CHILD cap (RLIMIT on each pool child), distinct
+    #: from ``cap_bytes`` (the unit worker's cap). Falls back to ``cap_bytes`` when unset.
+    inner_cap_bytes: int | None = None
     peak_rss_bytes: int | None = None
     headroom_bytes: int = 2 * GiB
     max_relaunch: int = 3
@@ -79,10 +82,22 @@ def _inner_init(cap_bytes: int | None, backend: str) -> None:  # pragma: no cove
         resource.setrlimit(resource.RLIMIT_AS, (int(cap_bytes), int(cap_bytes)))  # type: ignore[attr-defined]
 
 
+def _inner_call(fn: Callable[..., Any], args: tuple) -> tuple[Any, int | None]:
+    """Run one inner task and report the child's own peak RSS (HFU T11/B-19), so the unit ledger can size the
+    study pool by the per-child peak, not the over-counted whole-unit peak. The peak is None where neither
+    /proc nor ``resource`` can measure it (a non-Linux dev box) -- never a crash."""
+    from scripts._stages import _peak_rss
+
+    result = fn(*args)
+    peak, _scope = _peak_rss(False)
+    return result, peak
+
+
 class InnerPool:
     """The pool an ``inner_parallel`` unit maps its inner keys over (spec 5.2: no pool inside a pool).
 
-    Spawn context; children inherit the worker's deterministic environment, so each is single-threaded.
+    Spawn context; children inherit the worker's environment -- single-threaded for a pinned stage, or the
+    stage's thread budget for a ``thread_safe`` one (ADR-128 amendment).
     ``map_keyed(fn, {inner_key: args})`` returns ``{inner_key: value}`` and records completion order;
     callers MUST combine with `_stages.ordered_values` (sorted inner keys), never completion order.
     ``fn`` must be a module-level function (pickled by reference).
@@ -93,6 +108,9 @@ class InnerPool:
         self._cap, self._backend = cap_bytes, backend
         self._ex: concurrent.futures.ProcessPoolExecutor | None = None
         self._log: list[str] = []
+        #: HFU T11/B-19: the max per-child peak RSS over this pool's children, or None (the W=1 in-process path
+        #: spawns no child, and a platform that cannot measure RSS reports None). Read into the unit ledger.
+        self.child_peak_rss_bytes: int | None = None
 
     def _executor(self) -> concurrent.futures.ProcessPoolExecutor:
         if self._ex is None:
@@ -112,10 +130,13 @@ class InnerPool:
                 self._log.append(k)
             return out
         ex = self._executor()
-        futures = {ex.submit(fn, *args): k for k, args in items.items()}
+        futures = {ex.submit(_inner_call, fn, args): k for k, args in items.items()}
         for fut in concurrent.futures.as_completed(futures):
             k = futures[fut]
-            out[k] = fut.result()
+            result, peak = fut.result()
+            out[k] = result
+            if peak is not None:  # HFU T11/B-19: track the max per-child peak for the unit ledger
+                self.child_peak_rss_bytes = max(self.child_peak_rss_bytes or 0, int(peak))
             self._log.append(k)
         return out
 
@@ -216,15 +237,25 @@ def _terminate(procs: dict[str, subprocess.Popen]) -> None:
 
 
 class LocalExecutor:
-    def __init__(self, cfg: ExecutorConfig, *, rss_of: Callable[[int], tuple[int, int] | None] | None = None) -> None:
-        """``rss_of(pid)`` returns ``(pid, bytes)`` of the biggest single process in a worker's tree for
-        the ``rss`` backend (default `_mem_cap.largest_rss`; a test injects one)."""
+    def __init__(
+        self,
+        cfg: ExecutorConfig,
+        *,
+        rss_of: Callable[[int], tuple[int, int] | None] | None = None,
+        total_rss: Callable[[int], tuple[int, int] | None] | None = None,
+    ) -> None:
+        """``rss_of(pid)`` returns ``(pid, bytes)`` of the biggest single process in a worker's tree (the cap
+        quantity for a NON-inner worker); ``total_rss(pid)`` returns the tree's TOTAL (the quantity for an
+        inner_parallel worker, whose pool shares the box -- reviewer B D1-IMPL-18). Defaults from `_mem_cap`;
+        tests inject them."""
         self.cfg = cfg
-        if rss_of is None:
-            from scripts._mem_cap import largest_rss
+        if rss_of is None or total_rss is None:
+            from scripts import _mem_cap
 
-            rss_of = largest_rss
+            rss_of = rss_of or _mem_cap.largest_rss
+            total_rss = total_rss or _mem_cap.total_rss
         self._rss_of = rss_of
+        self._total_rss = total_rss
 
     def _cpus(self) -> int:
         from scripts._parallel_launch import available_cpus
@@ -254,7 +285,16 @@ class LocalExecutor:
             return False
         if deferred_memory_units(ctx, st, keys):  # waiting for its escalation: a reduce would drop it
             return False
+        from scripts._stages import _canon_json
+
+        t0 = time.monotonic()
         self._subprocess(ctx, ["reduce", "--stage", name])
+        # HFU T4: record the reduce wall so the planner budgets the INLINE reduce (review B-19/B-04). Written
+        # only by the job that runs the reduce (an earlier return above when the output is already present);
+        # VOLATILE + an _is_record record, so a per-job wall never enters parity and it batches in one listing.
+        ctx.store.write_bytes(
+            f"{ctx.generation(name)}/_reduce.json", _canon_json({"stage": name, "wall_s": time.monotonic() - t0})
+        )
         return output_present(ctx, name, verify=True)
 
     def require_reduced(self, ctx, name: str) -> None:
@@ -354,7 +394,7 @@ class LocalExecutor:
         from scripts._mem_cap import detect_backend, kill_tree, preflight, wrap
         from scripts._parallel_launch import should_launch
         from scripts._stages import context_to_json, unit_states
-        from scripts._thread_pin import deterministic_env
+        from scripts._thread_pin import deterministic_env, thread_budget, thread_safe_env
 
         tmp = pathlib.Path(tempfile.mkdtemp(prefix=f"sk-{st.name}-"))
         procs: dict[str, subprocess.Popen] = {}
@@ -365,10 +405,30 @@ class LocalExecutor:
             claims.mkdir()
             outdir.mkdir()
             backend = detect_backend(self.cfg.mem_backend, watched=True)  # type: ignore[arg-type]
-            cap = self.cfg.cap_bytes
-            if cap:
-                preflight(backend, cap_bytes=cap)
-            env = deterministic_env()
+            cap = self.cfg.cap_bytes  # the UNIT WORKER's cap (the subprocess RLIMIT via `wrap`)
+            # The POOL CHILD cap (reviewer B D1-IMPL-07): worker_main uses its --cap-bytes ONLY for the pool, so it
+            # carries the child-sized cap; it falls back to the worker cap when no distinct inner cap was planned.
+            inner_cap = self.cfg.inner_cap_bytes if self.cfg.inner_cap_bytes is not None else cap
+            # An inner_parallel worker hosts a pool, so the whole TREE (unit process + inner children) shares the
+            # box; its budget is the worker cap plus the pool's caps (~usable). On cgroup the scope must bound the
+            # TREE at that budget (not the worker cap, which would OOM the normal 24 G tree); on rss the watch
+            # checks the TREE TOTAL against it; the rlimit backend keeps per-process caps (worker `cap`, children
+            # `inner_cap` via `_inner_init`). A non-inner worker has no pool: `tree_budget == cap`, unchanged.
+            is_inner = getattr(st, "inner_parallel", False) and cap is not None and self.cfg.inner_cap_bytes is not None
+            # the tree's budget (~usable) for an inner stage, else the worker cap (reviewer B D1-IMPL-18); 0 when
+            # uncapped (never used -- the cap sites below are all guarded by `cap`).
+            tree_budget: int = 0
+            if cap is not None:
+                child = self.cfg.inner_cap_bytes
+                tree_budget = cap + int(inner) * child if (is_inner and child is not None) else cap
+                preflight(backend, cap_bytes=tree_budget)  # cgroup scope budget: the tree for inner, else the worker
+            # ADR-128 INV-2 opt-in: a thread_safe stage's worker runs at the per-job thread budget, injected
+            # PER THE STAGE'S LEVER (omp raises OMP_NUM_THREADS; n_jobs exports SILLY_KICKS_RUNTIME_THREADS and
+            # keeps the env serial). Every other stage stays deterministic_env (all thread vars "1").
+            if getattr(st, "thread_safe", False):
+                env = thread_safe_env(st.thread_lever, thread_budget(self._cpus(), workers, inner))
+            else:
+                env = deterministic_env()
 
             def launch(wid: str) -> None:
                 argv = [
@@ -393,11 +453,15 @@ class LocalExecutor:
                     "--mem-backend",
                     backend,
                 ]
-                if cap:
-                    argv += ["--cap-bytes", str(cap)]
+                if inner_cap:  # worker_main uses --cap-bytes for the POOL children only (the child-sized cap)
+                    argv += ["--cap-bytes", str(inner_cap)]
                 pre = None
                 if cap:
-                    argv, pre = wrap(backend, argv, cap_bytes=cap)
+                    # cgroup wraps the whole tree in a scope -> bound it at the TREE budget for an inner stage;
+                    # rlimit is a PER-PROCESS cap on the worker -> the worker's own cap (children get inner_cap
+                    # via `_inner_init`). tree_budget == cap for a non-inner stage, so both are unchanged there.
+                    wrap_cap = tree_budget if backend == "cgroup" else cap
+                    argv, pre = wrap(backend, argv, cap_bytes=wrap_cap)
                 procs[wid] = subprocess.Popen(argv, env=env, cwd=REPO_ROOT, preexec_fn=pre)  # noqa: S603 -- own argv
 
             slots = [f"w{i}" for i in range(workers)]
@@ -415,7 +479,11 @@ class LocalExecutor:
                     launch(slots.pop(0))
                 self._check_failure_rule(st, outdir, procs)
                 if backend == "rss" and cap:
-                    unit_kills |= self._enforce_rss_cap(ctx, st, procs, claims, cap, over_cap, kill_tree)
+                    # inner stage: watch the TREE TOTAL vs the tree budget; else the largest process vs the worker cap
+                    rss_fn = self._total_rss if is_inner else self._rss_of
+                    unit_kills |= self._enforce_rss_cap(
+                        ctx, st, procs, claims, tree_budget, over_cap, kill_tree, rss_fn=rss_fn
+                    )
                 for wid, p in list(procs.items()):
                     rc = p.poll()
                     if rc is None:
@@ -458,20 +526,24 @@ class LocalExecutor:
             _terminate(procs)
             shutil.rmtree(tmp, ignore_errors=True)
 
-    def _enforce_rss_cap(self, ctx, st, procs, claims: pathlib.Path, cap: int, over_cap: dict, kill_tree) -> set[str]:
-        """The ``rss`` backend: kill a live worker whose tree holds a process over ``cap`` (the cap is per
-        process, `_mem_cap.largest_rss`). Its unit is unclaimed and retried by a relaunch (the dead-worker
-        path). The unit in progress is recorded as FAILED for memory (`_stages.record_memory_failure`), so
-        the job's other units go on and the controller escalates it to a job of its own with the whole box;
-        it is never re-run here. Returns the workers whose in-progress unit was recorded (a kill with no
-        unit in progress still counts toward the relaunch limit, whose message names the cap)."""
+    def _enforce_rss_cap(
+        self, ctx, st, procs, claims: pathlib.Path, cap: int, over_cap: dict, kill_tree, *, rss_fn=None
+    ) -> set[str]:
+        """The ``rss`` backend: kill a live worker whose watched memory exceeds ``cap``. ``rss_fn`` chooses the
+        quantity: `_mem_cap.largest_rss` (the biggest single process) for a non-inner worker, or
+        `_mem_cap.total_rss` (the whole tree) for an inner_parallel worker whose pool shares the box, with ``cap``
+        the matching budget (reviewer B D1-IMPL-18). The over-cap worker's in-progress unit is recorded FAILED
+        for memory (`record_memory_failure`) so the job's other units go on and the controller escalates it to a
+        job of its own; it is never re-run here. Returns the workers whose in-progress unit was recorded (a kill
+        with no unit in progress still counts toward the relaunch limit, whose message names the cap)."""
         from scripts._stages import record_memory_failure, unit_states
 
+        rss_fn = rss_fn or self._rss_of
         recorded: set[str] = set()
         for wid, p in list(procs.items()):
             if p.poll() is not None:
                 continue
-            top = self._rss_of(p.pid)
+            top = rss_fn(p.pid)
             if top is None or top[1] <= cap:
                 continue
             held = _claims_of(claims, wid)
@@ -512,6 +584,11 @@ class LocalExecutor:
 
         sample = profile_sample(mine, self.cfg.profile_units)
         first, rest = sample[:2], sample[2:]
+        if st.thread_safe and not st.inner_parallel:
+            # HFU T3/B-24: a thread_safe non-inner stage is profiled in ONE bounded job -- the `first` sample
+            # at W=1, each unit at its full 8-thread budget (the shape the planner uses). No wmax phase: a W=1
+            # stage has no multi-worker phase, and running more units here only lengthens the profile job.
+            rest = []
         t0 = time.monotonic()
         self._run(ctx, st, first, workers=1, inner=1)
         wall_1 = time.monotonic() - t0
@@ -554,7 +631,12 @@ def worker_main(argv: list[str]) -> int:
     ap.add_argument("--worker-id", required=True)
     ap.add_argument("--inner-workers", type=int, default=1)
     ap.add_argument("--mem-backend", default="none")
-    ap.add_argument("--cap-bytes", type=int, default=None)
+    ap.add_argument(
+        "--cap-bytes",
+        type=int,
+        default=None,
+        help="the POOL CHILD cap (the worker's own cap is the launcher's RLIMIT wrap)",
+    )
     a = ap.parse_args(argv)
     from scripts._stages import ItemStage, context_from_json, run_unit
 
@@ -602,7 +684,11 @@ def reduce_main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    from scripts._stages import hard_exit
+
     _CMDS = {"worker": worker_main, "reduce": reduce_main}
     if len(sys.argv) < 2 or sys.argv[1] not in _CMDS:
         raise SystemExit(f"usage: python -m scripts.hf_jobs.executor {{{','.join(_CMDS)}}} ...")
-    raise SystemExit(_CMDS[sys.argv[1]](sys.argv[2:]))
+    # D1-IMPL-26: the reduce/worker child does Arrow I/O, so harden its exit like cli_main -- a correct child
+    # that aborts at interpreter teardown (SIGABRT) must not return nonzero (`_subprocess` fails on nonzero rc).
+    hard_exit(_CMDS[sys.argv[1]](sys.argv[2:]))

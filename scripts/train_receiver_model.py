@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from scripts._cover_shadow_thresholds import MIN_RECEIVER_MARGIN
-from scripts._stages import ItemStage, Param, Pipeline, Stage, main
+from scripts._stages import ItemStage, Param, Pipeline, Stage, cli_main
 from silly_kicks.id_compat import canonical_id, same_id
 from silly_kicks.spadl.config import actiontypes, results
 from silly_kicks.tracking import link_actions_to_frames
@@ -672,4 +672,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

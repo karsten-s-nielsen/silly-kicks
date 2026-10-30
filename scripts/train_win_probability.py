@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
-from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, main
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, cli_main
 
 _SHOT_IDS = [spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")]
 _SUCCESS = spadlconfig.result_id["success"]
@@ -411,6 +411,7 @@ PIPELINE = Pipeline(
             work=_extract_work,
             needs=("refs",),
             reduce=_extract_reduce,
+            shardable_reduce=("game_id",),  # HFU T8: a plain combine_frames concat (the reduce that timed out)
             declare=lambda p: {"model": "WinProbabilityModel", "cols": list(_SHARD_COLUMNS)},
             cross_commit_version="win-probability-shard-1",
             uses_dataset=True,
@@ -428,4 +429,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

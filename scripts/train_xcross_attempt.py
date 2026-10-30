@@ -34,7 +34,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
 
-from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, join_key, main
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, cli_main, join_key
 
 sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
@@ -923,8 +923,18 @@ def _cv_work(key, ctx) -> dict:
     _i, tr, te = ev._cv_score_plan(y, groups)[fold_i]
     cfg = inp.config
     params = ctx.upstream("study")[arm]["params"]
+    from scripts._thread_pin import runtime_n_jobs_from_env
+
     res = ev._cv_score_fold(
-        X, y, fold_i, tr, te, params, seed=cfg["seed"], negative_subsample=cfg["negative_subsample"]
+        X,
+        y,
+        fold_i,
+        tr,
+        te,
+        params,
+        seed=cfg["seed"],
+        negative_subsample=cfg["negative_subsample"],
+        runtime_n_jobs=runtime_n_jobs_from_env(),  # HFU T11/B-06: the n_jobs-lever budget into the cv fold fit
     )
     return {"fold": res, "positive_rate": float(np.asarray(y, dtype=int).mean())}
 
@@ -1019,6 +1029,7 @@ def _fit_work(key, ctx):
     failed gate writes the legacy ``metrics_FAILED.json`` payload beside the unit and raises."""
     import tempfile
 
+    from scripts._thread_pin import runtime_n_jobs_from_env
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
     from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
     from silly_kicks.tracking._xshot_occurrence import subsample_negatives
@@ -1048,7 +1059,13 @@ def _fit_work(key, ctx):
     model.shipped_variant = shipped
     model.provider_list = candidates[shipped]["providers"]
     model.training_commit = cfg["run_prov"]["commit"]
-    model.fit(Xfit, pd.Series(yfit), carrier_params=DEFAULT_CARRIER_PARAMS, horizon_seconds=cfg["horizon_seconds"])
+    model.fit(
+        Xfit,
+        pd.Series(yfit),
+        carrier_params=DEFAULT_CARRIER_PARAMS,
+        horizon_seconds=cfg["horizon_seconds"],
+        runtime_n_jobs=runtime_n_jobs_from_env(),  # the n_jobs-lever budget, read trainer-side (B27/B38)
+    )
     with tempfile.TemporaryDirectory() as tmp:
         art = Path(tmp) / "xcross_attempt_v1"
         model.save(art)
@@ -1194,6 +1211,7 @@ PIPELINE = Pipeline(
             work=_extract_work,
             counters=_extract_counters,
             reduce=_extract_reduce,
+            shardable_reduce=("_group",),  # HFU T8: a plain combine_frames concat (raises only when ALL parts empty)
             reduce_order=_mid_of,
             declare=_extract_declare,
             cross_commit_version="xcross-extract-1",
@@ -1250,7 +1268,15 @@ PIPELINE = Pipeline(
             inner_parallel=True,
             inner_width=5,
         ),
-        Stage(name="cv", units=_cv_units, work=_cv_work, needs=("prep", "study"), reduce=_cv_reduce),
+        Stage(
+            name="cv",
+            units=_cv_units,
+            work=_cv_work,
+            needs=("prep", "study"),
+            reduce=_cv_reduce,
+            thread_safe=True,  # HFU T11: each fold fits an xgb classifier; W=1 gets the full vCPU budget
+            thread_lever="n_jobs",  # xgb runtime n_jobs, env serial (B38); arm test_cv_thread_identity_xcross
+        ),
         Stage(
             name="select",
             units=lambda ctx: ["only"],
@@ -1264,6 +1290,8 @@ PIPELINE = Pipeline(
             work=_fit_work,
             needs=("prep", "select"),
             reduce=lambda r, ctx: r["only"],
+            thread_safe=True,  # ADR-128 INV-2 opt-in (test_thread_identity; test_thread_safe_registry)
+            thread_lever="n_jobs",  # xgb: budget via runtime n_jobs, env stays serial (B38)
         ),
         Stage(
             name="assemble",
@@ -1277,4 +1305,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

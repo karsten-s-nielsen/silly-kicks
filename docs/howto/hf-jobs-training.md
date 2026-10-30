@@ -47,7 +47,9 @@ for a public dataset the canonical id list) into `scripts/hf_jobs/datasets.lock.
 ## The campaign file
 
 `scripts/hf_jobs/campaigns/<name>.toml` (committed, INV-7): the bucket, `target_minutes` (60),
-`concurrency_cap`, `attempts`, and per job the trainer or driver, its tier, its dataset (plus
+`dispatch_cap` (jobs in flight at once, the probed HF account budget) and `shard_cap` (the planner's
+per-stage shard ceiling; omit it to equal `dispatch_cap`; a legacy single `concurrency_cap` still sets both),
+`attempts`, and per job the trainer or driver, its tier, its dataset (plus
 `probe_dataset` for xcross) and its variants. Run keys are derived: `{campaign}-{commit7}-{job}-{tier}`;
 `--replica N` adds `-rN`, a FRESH store for the same-commit re-run (INV-1 gate, decision P18).
 
@@ -60,10 +62,13 @@ Run long commands in the background; `--watch` steps every 60 s until done or fa
    flags any stage predicted above the target.
 2. `plan` -- each instance's next action (`profile` / `run` / `reduce`) and predicted wall; launches nothing.
 3. `profile` -- measures a sample of every unprofiled multi-unit stage (unit wall, peak RSS).
-4. `launch` / `resume --watch` -- the stateless controller: each step rebuilds state from the store
-   (`--plan` per instance) and the job labels, then launches each instance's next stage, sized by the
-   planner (N jobs x W workers to meet the target; LPT partition by measured cost). A killed job loses at
-   most its in-flight units; `resume` never redoes a finished unit.
+4. `launch` / `resume --watch` -- the stateless controller: each step rebuilds state from the store and the
+   job labels. It lists each distinct store once (a recursive listing), runs `--plan` 8 at a time and only for
+   an instance whose store listing or working tree changed since its last plan, and reads a stage's unit
+   ledgers in one batch, caching the bytes by xet hash across `--watch` steps. It then launches each
+   instance's next stage, sized by the planner (N jobs x W workers to meet the target; LPT partition by
+   measured cost). It refuses to run on a dirty working tree. A killed job loses at most its in-flight units;
+   `resume` repairs the ledger of a finished unit whose record was lost and never redoes a finished unit.
 5. `status` -- per instance, stage progress and the running jobs. A failed instance: read its job logs and
    the unit `*.failed.json`; a code defect is a new owner-approved commit, then `resume`.
 6. `retrieve --staging DIR` -- copies each reduced output (and `<instance>.record.json`: what the job read,

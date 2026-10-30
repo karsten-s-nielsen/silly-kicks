@@ -52,8 +52,10 @@ def test_summary_carries_top_level_provenance():
         stages=[],
         jobs=[],
         artifacts=[],
+        observed_max_concurrency=7,
     )
     assert s["run_commit"] == "c" * 40 and s["run_tree_dirty"] is False
+    assert s["observed_max_concurrency"] == 7  # §D probe-first: the real HF ceiling this run
 
 
 def _job(labels, start_s, end_s):
@@ -117,3 +119,34 @@ def test_median_startup_is_read_from_the_committed_summaries(tmp_path):
     (tmp_path / "b.json").write_text(json.dumps({"stages": [{"startup_s": 40.0}, {"startup_s": 220.0}]}))
     assert median_startup_s(tmp_path.glob("*.json")) == 100.0
     assert median_startup_s([]) is None
+
+
+# ---- HFU T10: bootstrap the first run's startup with the HF-measured value ------------------------------
+
+
+def test_bootstrap_summary_supplies_first_run_startup(tmp_path):
+    """HFU T10 S2 (B-15): before any campaign measured a startup, the committed bootstrap summary supplies the
+    HF-measured median (~15 s: git clone + venv + uv sync on cpu-upgrade), so the first planning run does NOT
+    fall back to the 300 s Constraints default. The bootstrap stage carries startup_s alone -- no history_key,
+    no unit_cost -- so it feeds median_startup_s only, never the cost history."""
+    from scripts.hf_jobs.ledger import BOOTSTRAP_STARTUP_S, load_history, write_bootstrap_summary
+
+    p = tmp_path / "_bootstrap_startup.json"
+    write_bootstrap_summary(p)
+    assert median_startup_s(tmp_path.glob("*.json")) == BOOTSTRAP_STARTUP_S  # supplies the first-run startup
+    assert load_history(tmp_path.glob("*.json")) == {}  # never pollutes the cost history
+
+
+def test_unit_cost_surfaces_inner_child_peak_rss():
+    """HFU T11 S5b/B-19/B-20: unit_cost surfaces the MAX per-child pool RSS from the unit ledgers as
+    UnitCost.inner_child_peak_rss_bytes; on an older record that lacks the field it is None (defaulted)."""
+    from scripts.hf_jobs.ledger import unit_cost as _uc
+
+    recs = [
+        {"outcome": "done", "wall_s": 10.0, "peak_rss_bytes": 100, "inner_child_peak_rss_bytes": 30},
+        {"outcome": "done", "wall_s": 12.0, "peak_rss_bytes": 120, "inner_child_peak_rss_bytes": 50},
+    ]
+    cost = _uc(recs)
+    assert cost is not None and cost.inner_child_peak_rss_bytes == 50  # the max child peak across the ledgers
+    old = _uc([{"outcome": "done", "wall_s": 10.0, "peak_rss_bytes": 100}])  # older ledger: no child field
+    assert old is not None and old.inner_child_peak_rss_bytes is None

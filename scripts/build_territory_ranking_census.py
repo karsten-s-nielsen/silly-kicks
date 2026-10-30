@@ -51,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # scripts/, so the bar
 from _crossed_icc import bootstrap_icc_and_power  # scripts/ on sys.path (conftest / the line above)
 
 from scripts._input_contract import declare_inputs
-from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, main
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, cli_main
 from silly_kicks.id_compat import canonical_id, canonical_id_series
 from silly_kicks.spadl import SPADL_COLUMNS
 from silly_kicks.territory import (
@@ -891,4 +891,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)

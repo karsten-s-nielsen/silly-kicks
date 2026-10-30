@@ -350,7 +350,8 @@ def _writes_bundled_weights(tree: ast.AST) -> bool:
 
 
 def _is_stage_pipeline(tree: ast.AST) -> bool:
-    """ADR-128: the module declares ``PIPELINE = Pipeline(..., output=...)`` and runs ``main(PIPELINE)``.
+    """ADR-128: the module declares ``PIPELINE = Pipeline(..., output=...)`` and runs it from ``__main__``
+    through ``cli_main(PIPELINE)`` (the hardened entry) or the legacy ``main(PIPELINE)``.
 
     Its CLI -- ``--out``, ``--allow-dirty``, the ``require_clean_tree`` guard and the provenance stamp -- is
     ``scripts._stages.main``'s, not the module's own, so the source checks below read ``scripts/_stages.py``
@@ -369,7 +370,9 @@ def _is_stage_pipeline(tree: ast.AST) -> bool:
         for n in getattr(tree, "body", [])
     )
     runs_main = any(
-        isinstance(n, ast.ImportFrom) and n.module == "scripts._stages" and any(a.name == "main" for a in n.names)
+        isinstance(n, ast.ImportFrom)
+        and n.module == "scripts._stages"
+        and any(a.name in ("main", "cli_main") for a in n.names)
         for n in ast.walk(tree)
     )
     return declares and runs_main

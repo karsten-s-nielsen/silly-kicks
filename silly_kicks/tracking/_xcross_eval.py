@@ -50,9 +50,12 @@ def _cv_score_fold(
     *,
     seed: int = 42,
     negative_subsample: float | None = None,
+    runtime_n_jobs: int = 1,
 ) -> tuple[float, float, float | None] | None:
     """One fold of `_cv_score`: ``(log_loss, brier, pr_auc | None)``, or None for a skipped fold.
-    ``seed`` drives ONLY ``negative_subsample`` (``seed + fold_i``), exactly as `_cv_score` does."""
+    ``seed`` drives ONLY ``negative_subsample`` (``seed + fold_i``), exactly as `_cv_score` does.
+    ``runtime_n_jobs`` sets xgboost's thread count for THIS fit only (HFU T11 n_jobs lever); the serialized
+    ``n_jobs`` stays the pinned ``1`` because the result is byte-identical across thread counts (xgb ``hist``)."""
     import xgboost as xgb
     from sklearn.metrics import average_precision_score, brier_score_loss, log_loss
 
@@ -68,6 +71,7 @@ def _cv_score_fold(
             return None
     p_ = dict(_pinned_params(params))
     p_["base_score"] = float(ytr.mean())
+    p_["n_jobs"] = int(runtime_n_jobs)  # HFU T11: the n_jobs-lever budget for THIS fit; serialized params untouched
     clf = xgb.XGBClassifier(**p_)
     clf.fit(Xtr.to_numpy(float), ytr)
     p = clf.predict_proba(X.iloc[te].to_numpy(float))[:, 1]

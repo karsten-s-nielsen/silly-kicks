@@ -4467,7 +4467,7 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'test'", specifier = ">=14.0.0" },
     { name = "pyarrow", marker = "extra == 'train'", specifier = ">=14.0.0" },
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.409" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.4.2" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.4.2,<9.2" },
     { name = "pytest-benchmark", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.1.0" },
     { name = "pytest-mock", marker = "extra == 'test'", specifier = ">=3.11.1" },

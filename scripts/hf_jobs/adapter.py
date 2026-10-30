@@ -5,7 +5,8 @@ Cycle 1 to Cycle 2: the three public trainers (``train_pass_completion``, ``trai
 they get the stage contract's store, ledger, run key and resume-by-unit without a migration. Their own
 ``for_each`` shards (``--out`` and, where needed, ``--shard-root``) live on the persistent store, so a killed
 attempt resumes through the target's OWN resume. The target runs under the deterministic environment
-(INV-2). Cycle 2 replaces each with a real pipeline (spec 12 R7).
+(INV-2; a `thread_safe` stage may opt into its vCPU share per the ADR-128 amendment). Cycle 2 replaces each
+with a real pipeline (spec 12 R7).
 
 Usage::
 
@@ -22,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root, so `from scripts._X` resolves
 
-from scripts._stages import FileSet, Param, Pipeline, Stage, main
+from scripts._stages import FileSet, Param, Pipeline, Stage, cli_main
 
 _REPO = Path(__file__).resolve().parents[2]
 
@@ -85,4 +86,4 @@ PIPELINE = Pipeline(
 )
 
 if __name__ == "__main__":
-    raise SystemExit(main(PIPELINE))
+    cli_main(PIPELINE)
