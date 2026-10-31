@@ -529,6 +529,9 @@ def _call_corner_windows(actions, frames, links, home_team_id):
                 "kick_y": 1.0,
                 "corner_kind": "direct",
                 "corner_source": "spadl_corner",
+                # type_source travels from the SPADL action's base-signal column (spec section 9.4).
+                # The synthesized corner has no action behind it, so the tier is <NA> (not classified).
+                "type_source": pd.NA,
             }
         ]
     ).astype(CORNER_IDENTIFY_COLUMNS)

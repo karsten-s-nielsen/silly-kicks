@@ -51,10 +51,10 @@ def _new_probe_cohort() -> dict:
     return {"frames": [], "actions": [], "home": None, "matches": [], "match_groups": {}}
 
 
-#: The four per-row arrays `_extract` returns alongside the feature matrix, carried as COLUMNS so
+#: The five per-row arrays `_extract` returns alongside the feature matrix, carried as COLUMNS so
 #: one match is one tidy shard. Underscore-prefixed and collision-checked: a feature named `_y`
 #: would be silently overwritten, and the model would train on its own label.
-_SIDE_COLS = ("_y", "_group", "_provider", "_match_id")
+_SIDE_COLS = ("_y", "_group", "_provider", "_match_id", "_stoppage_source")
 
 
 def _write_probe_sample(ps: Path, cohort: dict, provider_filter: list) -> None:
@@ -565,16 +565,21 @@ def _prepare(item, ctx):
 
 
 def _extract_work(item, ctx) -> pd.DataFrame | None:
-    """One match -> its tidy feature rows + the four side columns (the legacy `_extract._work`), or None."""
-    prov, mid, *_ = item
+    """One match -> its tidy feature rows + the five side columns (the legacy `_extract._work`), or None."""
+    prov, mid, _actions, frames, _home = item
     X, y, groups = _prepare(item, ctx)
     if not len(X):
         return None  # "ran, produced no usable row"
+    from scripts._study_shared import match_stoppage_source
+
     return X.assign(
         _y=np.asarray(y, int),
         _group=np.asarray(groups),
         _provider=str(prov),
         _match_id=str(mid),  # per-row match id (the arm key)
+        # TF-46: the match's single stoppage source, broadcast per row (Task 4 stamps the shipped bundle's
+        # provenance from exactly the shipped-arm rows' sources at fit time).
+        _stoppage_source=match_stoppage_source(frames),
     )
 
 
@@ -729,6 +734,7 @@ def _prep_work(key, ctx):
     groups = np.asarray(combined["_group"].to_numpy()).astype(str)
     providers = combined["_provider"].to_numpy()
     match_ids = combined["_match_id"].to_numpy()
+    stoppage_sources = combined["_stoppage_source"].to_numpy()  # per-ROW (TF-46), persisted for the fit stamp
     sd_probe = _sd_range_probe(X)
     armspec = parse_arms(p["arms_json"])
     match_keys = np.array([match_key(str(pv), str(m)) for pv, m in zip(providers, match_ids, strict=True)])
@@ -780,6 +786,7 @@ def _prep_work(key, ctx):
             is_public=is_public,
             config=config,
             arms=arms,
+            stoppage_sources=stoppage_sources,
         )
         files = {q.relative_to(root).as_posix(): q.read_bytes() for q in sorted(root.rglob("*")) if q.is_file()}
     return FileSet(files)
@@ -1048,6 +1055,11 @@ def _fit_work(key, ctx):
     model.shipped_variant = shipped
     model.provider_list = candidates[shipped]["providers"]
     model.training_commit = cfg["run_prov"]["commit"]
+    # TF-46: stamp the stoppage provenance from the SHIPPED-ARM rows' per-row sources before save() (which
+    # refuses an unstamped model); load()/verify_stoppage_provenance then passes and the bundle UNBLOCKS.
+    from scripts._study_shared import provenance_from_sources
+
+    model.stoppage_provenance = provenance_from_sources(inp.stoppage_sources, inp.match_ids, ship_mask)
     model.fit(Xfit, pd.Series(yfit), carrier_params=DEFAULT_CARRIER_PARAMS, horizon_seconds=cfg["horizon_seconds"])
     with tempfile.TemporaryDirectory() as tmp:
         art = Path(tmp) / "xcross_attempt_v1"
@@ -1151,6 +1163,8 @@ def _assemble_work(key, ctx):
     shipped, candidates = sel["shipped"], sel["candidates"]
     fit = ctx.upstream("fit")
     run_prov = cfg["run_prov"]
+    from scripts._study_shared import contributing_units_by_provider
+
     metrics = {
         "run_commit": run_prov["commit"],
         "run_tree_dirty": run_prov["dirty"],
@@ -1159,8 +1173,13 @@ def _assemble_work(key, ctx):
         "n_rows": len(inp.X),
         "n_positive": int(np.asarray(inp.y).sum()),
         "providers": canonical_providers(inp.providers),
-        # Corpus IDENTITY (spec section 5): exact ids only for an all-public corpus, else a digest.
-        **corpus_identity(inp.providers.tolist(), inp.match_ids.tolist(), all_public=bool(inp.is_public.all())),
+        # TF-46 Task 4: the per-provider POST-DROP contributing-unit (distinct match) count over the SHIPPED
+        # arm -- the ACTUAL adopt compares against the INTENDED arm membership (A PLAN-03), derived from the
+        # persisted providers/match_ids/arms, never an extract counter (ADR-128 bars those from the artifact).
+        "contributing_units": contributing_units_by_provider(inp.providers, inp.match_ids, inp.arms[shipped]),
+        # Corpus IDENTITY (spec section 5): the visibility-blind in-job trainer stamps the DIGEST form
+        # unconditionally (ADR-123 Amendment B); `adopt` rehydrates the exact PUBLIC ids off-HF.
+        **corpus_identity(inp.providers.tolist(), inp.match_ids.tolist(), all_public=False),
         # ADR-067 M4 caveat, emitted here -- never hand-added at bundling (spec 0.11).
         **reproducibility(shipped, candidates[shipped]["providers"], training_commit=run_prov["commit"]),
         "candidates": candidates,

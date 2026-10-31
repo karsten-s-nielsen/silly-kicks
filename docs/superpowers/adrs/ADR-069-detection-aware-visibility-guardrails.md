@@ -115,3 +115,32 @@ The parquet `null_count` path was verified on a real native SkillCorner shard: `
 1,080,126 = the observed 4.3%), not float-NaN — so the metadata read is reliable. Should a future
 producer store `visibility` as float, the read fallback still decides correctly; re-check the metadata
 path then.
+
+## Amendment 2026-10-26 -- Gradient Sports is detection-aware (TF-46 Part 2 spec section 27.15, finding G)
+
+Source: the DL design G1-G8 (2026-10-26), saved with the owner decisions at
+`D:\Development\_handoffs\tf46p2-r2-diag\dl_ruling_cl42_v3_g_slow_error_2026-10-26.md`; owner decision 2026-10-26: in
+the C2 amend, in full. The premise "every other bundled provider is fully observed by construction" was wrong for
+Gradient Sports.
+
+- **Fact.** The raw GS records are broadcast-derived tracking: every player and ball object carries `visibility`
+  (`VISIBLE` / `ESTIMATED`) and `confidence` (`LOW` / `MEDIUM` / `HIGH`). In match 10502 only 0.31 of the player
+  positions and 0.63 of the ball records are `VISIBLE`; 26 % of the records have no ball.
+- **Decision.** `_DETECTION_AWARE_PROVIDERS = {"skillcorner", "gradientsports"}`; `_FULLY_OBSERVED_PROVIDERS =
+  {"sportec", "idsse", "metrica"}`; `_DEAD_BALL_OBSERVED_PROVIDERS = {"sportec", "idsse"}` (the GS loader writes a
+  constant `"alive"`; the schema has no null value; a dead-ball state derived from `game_event` has no validation
+  truth on GS and is not built). The GS adapter accepts an optional input column `visibility_native` (closed
+  vocabulary: `VISIBLE` -> True, `ESTIMATED` -> False, any other value raises) and writes the boolean `visibility`;
+  without the column `visibility` is None and every detection consumer fails loud (as the SkillCorner adapter). The
+  loader reads the raw arrays with their own flags, never the `*Smoothed` copies; `confidence` is not carried.
+- **Detection-aware does NOT imply a camera footprint.** GS has a detection flag and no footprint. A footprint
+  consumer tests for the footprint itself (`detect_ball_contacts` reads `footprint_active` from the data profile's
+  gate entry; the `_camera_footprint` functions take the footprint or `in_camera_view` as input); it never infers a
+  footprint from provider membership. No library consumer infers one (sweep 2026-10-26).
+- **Consequences (Hyrum's law).** Every detection consumer now gates GS: the keeper detection gate
+  (`resolve_detected_keeper_xy`, `keeper_detected`, the action-context defending keeper, GK influence, GKDV, rest
+  defence, GK decision), `detected_mask` / `keeper_detection_mask` (ghost-GK, coordination), ball-contact attribution,
+  the kick resolver's launch rule; an ESTIMATED GS keeper is honest-NaN, as on SkillCorner. GS frames built before
+  this amendment (no flag) fail loud at those consumers until re-staged. The models and research artifacts that read
+  a GS detection mask, GS ball z / `is_aerial` or the GS dead-ball state are classified (G7) and re-run or retrained
+  before the joint release; each model publish needs the owner's approval (ADR-088).

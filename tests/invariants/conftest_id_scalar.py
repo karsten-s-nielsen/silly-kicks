@@ -1323,6 +1323,15 @@ NOT_INVARIANT: dict[str, str] = {
 #: Each entry states precisely WHAT blocks the pair, so a future change that removes the
 #: obstruction is recognisable as one.
 NOT_EXERCISABLE: dict[str, str] = {
+    "silly_kicks.tracking.schema.TrackingConversionReport": (
+        "A FROZEN report dataclass (the tracking convert_to_frames audit trail), not a comparator. Its "
+        "id-typed fields -- `unrecognized_player_ids` (a set of player ids) and the `derived_gk_picks` "
+        "keys/values ((game_id, team_id) tuples and player_id lists) -- are STORED verbatim from the "
+        "converter and never compared against any column, so the gate's axis (one id value in two dtypes) "
+        "is inexpressible: constructing the report with an id in another dtype changes nothing it would "
+        "compare. The converter that POPULATES these, `tracking.<provider>.convert_to_frames`, carries its "
+        "own id-dtype coverage, so an entry for the passive container would be vacuous."
+    ),
     "silly_kicks.tracking._run_features.run_tracking_features": (
         "ORCHESTRATOR/forwarder, not a comparator. `home_team_id` is only forwarded (via the "
         "`_opt` signature-aware pass-through) to whichever sub-families still accept it; "

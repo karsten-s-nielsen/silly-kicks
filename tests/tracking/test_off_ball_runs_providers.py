@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from silly_kicks.tracking import play_left_to_right
+from silly_kicks.tracking import derive_stoppage_state, play_left_to_right
+from silly_kicks.tracking._provider_visibility import dead_ball_observed
 from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
 
 _PROVIDERS = ["sportec", "metrica", "gradientsports"]
@@ -21,6 +22,10 @@ def provider_data(request):
     home_team_id = team_counts.index[0]
     # LTR-normalize (kernels require this)
     frames = play_left_to_right(frames, home_team_id=home_team_id)
+    # TF-46 Part 2 section 27.19 (R-C2): Metrica and Gradient Sports have no observed dead-ball state, so the reader
+    # needs the stoppage column; these provider fixtures are full-rate, so the library builds it from the actions.
+    if not dead_ball_observed(provider):
+        frames = derive_stoppage_state(frames, actions=actions)
     return actions, frames, home_team_id
 
 

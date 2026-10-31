@@ -24,6 +24,7 @@ from silly_kicks.tracking._velocity_availability import (
     velocity_availability_is_mixed,
 )
 from silly_kicks.tracking.schema import SPEED_SOURCE_UNAVAILABLE
+from tests._stoppage_fixtures import with_toy_stoppage_provenance
 from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
 from tests.tracking.test_xshot_occurrence import _synthetic_match_frames
 
@@ -266,6 +267,7 @@ def test_feature_contract_block_length_is_feature_set_aware():
 # -- Task 7: provenance columns on the add_* path -------------------------------------------------
 
 
+@pytest.mark.usefixtures("legacy_xs_xc_bundles")  # interim until the R-C3 retrain (legacy_override weights)
 def test_add_xshot_emits_variant_provenance_column():
     from tests.tracking.test_xshot_occurrence import _actions_and_frames_for_add
 
@@ -298,6 +300,7 @@ def test_add_xshot_emits_variant_provenance_column():
     assert out2["xshot_occurrence"].isna().all()  # NaN value (forced-unbundled), NOT the default model
 
 
+@pytest.mark.usefixtures("legacy_xs_xc_bundles")  # interim until the R-C3 retrain (legacy_override weights)
 def test_add_xshot_explicit_override_is_custom():
     from tests.tracking.test_xshot_occurrence import _actions_and_frames_for_add
 
@@ -360,7 +363,7 @@ def test_xshot_position_only_fit_save_load_predict_roundtrip(tmp_path):
     assert np.isfinite(p1).all()
 
     out_dir = tmp_path / "xshot_po"
-    m.save(out_dir)
+    with_toy_stoppage_provenance(m).save(out_dir)
     m2 = _xs.XShotOccurrenceModel.load(out_dir)
     assert m2.feature_set == "position_only"
     np.testing.assert_allclose(m2.predict_proba(X), p1, atol=1e-9, rtol=0)
@@ -388,7 +391,7 @@ def test_xcross_position_only_fit_save_load_predict_roundtrip(tmp_path):
     assert np.isfinite(p1).all()
 
     out_dir = tmp_path / "xcross_po"
-    m.save(out_dir)
+    with_toy_stoppage_provenance(m).save(out_dir)
     m2 = _xc.XCrossAttemptModel.load(out_dir)
     assert m2.feature_set == "position_only"
     np.testing.assert_allclose(m2.predict_proba(X), p1, atol=1e-9, rtol=0)

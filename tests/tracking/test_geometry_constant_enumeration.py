@@ -9,7 +9,15 @@ forcing function. A gate that relies on the next contributor remembering is not 
 from __future__ import annotations
 
 import ast
+import copy
 from pathlib import Path
+
+import pytest
+
+from tests._stoppage_fixtures import with_toy_stoppage_provenance
+
+# interim until the R-C3 retrain: the xS / xCross gates run on the shipped weights under legacy_override
+pytestmark = pytest.mark.usefixtures("legacy_xs_xc_bundles")
 
 SK = Path(__file__).resolve().parents[2] / "silly_kicks"
 
@@ -130,7 +138,10 @@ def _built_contract_constants(tmp_path) -> dict[str, set[str]]:
         ("ghost", GhostGkModel),
     ):
         d = tmp_path / name
-        cls.from_variant("default").save(d)
+        m = cls.from_variant("default")
+        if name in ("xshot", "xcross"):  # interim until the R-C3 retrain: the legacy weights record no provenance
+            m = with_toy_stoppage_provenance(copy.copy(m))
+        m.save(d)
         meta = json.loads((d / "metadata.json").read_text(encoding="utf-8"))
         out[name] = set(meta["feature_contract"]["constants"])
     return out

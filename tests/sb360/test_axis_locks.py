@@ -18,6 +18,9 @@ from tests.sb360._harness import run_axis
 from tests.sb360._probes import derive_applicability
 from tests.sb360._registry import SB360_ENTRIES, iter_verdicts
 
+# interim until the R-C3 retrain: the xS / xCross gates run on the shipped weights under legacy_override
+pytestmark = pytest.mark.usefixtures("legacy_xs_xc_bundles")
+
 #: (axis, roster). Velocity holds roster fixed; visibility varies it at fixed kinematics. Both
 #: visibility rosters are swept because a feature can survive a missing outfielder and collapse
 #: on a missing keeper -- which is why each roster has its own verdict slot.

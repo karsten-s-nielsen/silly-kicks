@@ -23,7 +23,9 @@ import pandas as pd
 
 _GAME = 1
 _PERIOD = 1
-_SRC = "fixture"
+# TF-46 Part 2 section 27.19 (R-C2): the dead-ball reader gate needs a classified provider. The fixture models an
+# optical feed (every player, no detection flag) with an observed ball_state: sportec (was the unclassified "fixture").
+_SRC = "sportec"
 
 
 def _player(fid, t, team_id, player_id, x, y, *, gk=False):

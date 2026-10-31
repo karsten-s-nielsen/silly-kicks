@@ -311,6 +311,7 @@ def load_match(
     token: str | None = None,
     base_url: str | None = None,
     with_velocity: bool = True,
+    stoppage: bool = False,
 ) -> LoadedMatch:
     """Download (or read from the cache) and build ONE match (ADR-052 D14).
 
@@ -340,6 +341,7 @@ def load_match(
         cache_dir=resolve_cache_dir(cache_dir),
         events_only=events_only,
         with_velocity=with_velocity,
+        stoppage=stoppage,
     )
     if not events_only and ref.provider == "skillcorner" and getattr(report, "geometry_excluded", False):
         # S1 geometry rate-gate (spec 4.4): a geometrically-broken SkillCorner match's tracking is
@@ -367,6 +369,7 @@ def pining_source(
     token: str | None = None,
     base_url: str | None = None,
     with_velocity: bool = True,
+    stoppage: bool = False,
 ) -> tuple[list[MatchRef], Callable[[MatchRef], LoadedMatch]]:
     """The tracking source factory: ``(refs, load)`` for ``for_each`` (ADR-052 D14, reuse of the
     S-migration recipe's source step, owner-ratified 2026-09-23).
@@ -391,6 +394,7 @@ def pining_source(
             token=token,
             base_url=base_url,
             with_velocity=with_velocity,
+            stoppage=stoppage,
         )
 
     return refs, load
@@ -469,6 +473,7 @@ def _build_match_with_retry(
     cache_dir=None,
     events_only: Literal[False] = False,
     with_velocity: bool = True,
+    stoppage: bool = False,
     attempts: int = 3,
     backoff: float = 3.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, object, object, object]: ...
@@ -486,6 +491,7 @@ def _build_match_with_retry(
     cache_dir=None,
     events_only: Literal[True],
     with_velocity: bool = True,
+    stoppage: bool = False,
     attempts: int = 3,
     backoff: float = 3.0,
 ) -> tuple[pd.DataFrame, None, object, None, None]: ...
@@ -502,6 +508,7 @@ def _build_match_with_retry(
     cache_dir=None,
     events_only: bool = False,
     with_velocity: bool = True,
+    stoppage: bool = False,
     attempts: int = 3,
     backoff: float = 3.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame | None, object, object, object]:
@@ -523,7 +530,7 @@ def _build_match_with_retry(
         if events_only:
             actions, home = _build_match_actions(provider, match_id, paths)
             return actions, None, home, None, None
-        return _build_match(provider, match_id, paths, tracking_limit, with_velocity=with_velocity)
+        return _build_match(provider, match_id, paths, tracking_limit, with_velocity=with_velocity, stoppage=stoppage)
 
     last_exc: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -611,7 +618,7 @@ def _download_artifacts(
     return out
 
 
-def _build_match(provider, match_id, paths, tracking_limit, *, with_velocity: bool = True):
+def _build_match(provider, match_id, paths, tracking_limit, *, with_velocity: bool = True, stoppage: bool = False):
     """Provider dispatch: parse artifacts into ``(actions, frames, home_team_id, visible_area, report)``.
 
     ``visible_area`` is the per-action SB360 freeze-frame polygon table (``action_id``/``polygon``)
@@ -622,13 +629,19 @@ def _build_match(provider, match_id, paths, tracking_limit, *, with_velocity: bo
     match. The 5-tuple arity is uniform across providers so the retry wrapper + caller unpack cleanly.
     """
     if provider == "idsse":
-        actions, frames, home = _build_idsse(paths, match_id, tracking_limit, with_velocity=with_velocity)
+        actions, frames, home = _build_idsse(
+            paths, match_id, tracking_limit, with_velocity=with_velocity, stoppage=stoppage
+        )
         return actions, frames, home, None, None
     if provider == "skillcorner":
-        actions, frames, home, report = _build_skillcorner(paths, match_id, tracking_limit, with_velocity=with_velocity)
+        actions, frames, home, report = _build_skillcorner(
+            paths, match_id, tracking_limit, with_velocity=with_velocity, stoppage=stoppage
+        )
         return actions, frames, home, None, report
     if provider == "gradientsports":
-        actions, frames, home = _build_gradientsports(paths, tracking_limit, with_velocity=with_velocity)
+        actions, frames, home = _build_gradientsports(
+            paths, tracking_limit, with_velocity=with_velocity, stoppage=stoppage
+        )
         return actions, frames, home, None, None
     if provider == "statsbomb":
         # SB360 freeze-frames carry no per-player temporal history, so `tracking_limit` (a frame
@@ -913,7 +926,7 @@ def _skillcorner_bronze(raw_frames: list[dict], meta: dict, *, match_id: str) ->
     return pd.DataFrame(rows)
 
 
-def build_skillcorner_frames(paths, match_id, tracking_limit, *, with_velocity: bool = True):
+def build_skillcorner_frames(paths, match_id, tracking_limit, *, with_velocity: bool = True, preprocess: bool = True):
     """Preprocessed silly-kicks frames from SkillCorner artifacts via the NATIVE builder.
 
     Was: the kloppy gateway (``visibility=None``, no ``ball_z``, and a pitch scale that disagrees
@@ -978,7 +991,9 @@ def build_skillcorner_frames(paths, match_id, tracking_limit, *, with_velocity: 
     # 1363 actions), zero warnings -- i.e. identical before and after. A previous cycle changed it
     # anyway on an assumed (never measured) premise; spec section 11.1 records that.
     frames, report = tracking_sk.convert_to_frames(bronze, home_team_id=home_team_id, output_convention="ltr")
-    return _preprocess(frames, with_velocity=with_velocity), report
+    # ``preprocess=False`` returns RAW full-rate frames so the stoppage seam (``_build_skillcorner``
+    # under ``stoppage=True``) can run ``derive_stoppage_state`` on the ball's raw x/y BEFORE smoothing.
+    return (_preprocess(frames, with_velocity=with_velocity) if preprocess else frames), report
 
 
 def _skillcorner_actions(paths):
@@ -1000,7 +1015,7 @@ def _skillcorner_actions(paths):
     return actions, home_team_id
 
 
-def _build_skillcorner(paths, match_id, tracking_limit, *, with_velocity: bool = True):
+def _build_skillcorner(paths, match_id, tracking_limit, *, with_velocity: bool = True, stoppage: bool = False):
     """SkillCorner: NATIVE tracking builder + silly-kicks SkillCorner events converter.
 
     Returns ``(actions, frames, home_team_id, report)``. ``report`` is the tracking
@@ -1012,8 +1027,14 @@ def _build_skillcorner(paths, match_id, tracking_limit, *, with_velocity: bool =
     exclusion was DORMANT). The actions come from :func:`_skillcorner_actions`, which the
     events-only load shares.
     """
-    frames, report = build_skillcorner_frames(paths, match_id, tracking_limit, with_velocity=with_velocity)
     actions, home_team_id = _skillcorner_actions(paths)
+    frames, report = build_skillcorner_frames(
+        paths, match_id, tracking_limit, with_velocity=with_velocity, preprocess=not stoppage
+    )
+    if stoppage:
+        from silly_kicks.tracking import derive_stoppage_state
+
+        frames = _preprocess(derive_stoppage_state(frames, actions=actions), with_velocity=with_velocity)
     return actions, frames, home_team_id, report
 
 
@@ -1062,7 +1083,7 @@ def _idsse_actions(paths, match_id):
     return actions, mi, hsl, hsl_et
 
 
-def _build_idsse(paths, match_id, tracking_limit, *, with_velocity: bool = True):
+def _build_idsse(paths, match_id, tracking_limit, *, with_velocity: bool = True, stoppage: bool = False):
     """IDSSE (DFL/Sportec XML) via the silly-kicks DFL parse+shape port (ADR-031 T3).
 
     Single-sources the DFL parser: ``providers.sportec.parse_dfl_*`` (bytes -> RAW bronze) ->
@@ -1096,6 +1117,10 @@ def _build_idsse(paths, match_id, tracking_limit, *, with_velocity: bool = True)
         home_team_start_left_extratime=hsl_et,
         output_convention="absolute_frame",
     )
+    if stoppage:
+        from silly_kicks.tracking import derive_stoppage_state
+
+        frames = derive_stoppage_state(frames, actions=actions)
     return actions, _preprocess(frames, with_velocity=with_velocity), mi.home_team_id
 
 
@@ -1285,7 +1310,7 @@ def _gradientsports_actions(paths):
     return actions, _GsMatch(game_id, home_team_id, away_team_id, home_start_left, home_start_left_et, roster)
 
 
-def _build_gradientsports(paths, tracking_limit=None, *, with_velocity: bool = True):
+def _build_gradientsports(paths, tracking_limit=None, *, with_velocity: bool = True, stoppage: bool = False):
     """Gradient Sports: flatten JSONL tracking + roster -> add_gradientsports_player_ids -> frames;
     flatten gameEvents JSON -> SPADL via spadl.gradientsports. Ports the PR-A e2e + GS SPADL test.
 
@@ -1327,6 +1352,10 @@ def _build_gradientsports(paths, tracking_limit=None, *, with_velocity: bool = T
                         "is_ball": False,
                         "x_centered": float(p["x"]),
                         "y_centered": float(p["y"]),
+                        # The raw per-object VISIBLE / ESTIMATED flag. GS is detection-aware (ADR-069
+                        # amended 2026-10-26): convert_to_frames maps this to the boolean `visibility`;
+                        # without it `visibility` is None and the detection consumers fail loud.
+                        "visibility_native": p.get("visibility"),
                     }
                 )
         for b in fr.get("balls", []):
@@ -1343,9 +1372,18 @@ def _build_gradientsports(paths, tracking_limit=None, *, with_velocity: bool = T
                     # ball records); the old base z=0.0 silently flattened it. Players
                     # keep z=0.0 (no z in GS player records). TF-48 depends on real ball z.
                     "z": float(ball_z) if ball_z is not None else float("nan"),
+                    # The raw VISIBLE / ESTIMATED flag (same detection-aware contract as the players).
+                    "visibility_native": b.get("visibility"),
                 }
             )
     jersey_frames = pd.DataFrame(rows)
+    # Detection-aware GS (ADR-069 amended 2026-10-26): carry `visibility_native` only when the raw feed
+    # supplies the flag. An entirely-null column (a legacy/synthetic feed without it) is dropped so
+    # convert_to_frames leaves `visibility` None -- a real detection-aware consume then fails loud at the
+    # visibility gate, exactly as before this plumb. A PARTIAL flag (some rows null) is kept and the
+    # closed-vocab check in convert_to_frames rejects the nulls.
+    if "visibility_native" in jersey_frames and jersey_frames["visibility_native"].isna().all():
+        jersey_frames = jersey_frames.drop(columns=["visibility_native"])
     resolved, _rep = add_gradientsports_player_ids(
         jersey_frames, roster, home_team_id=home_team_id, away_team_id=away_team_id
     )
@@ -1358,4 +1396,8 @@ def _build_gradientsports(paths, tracking_limit=None, *, with_velocity: bool = T
         home_team_start_left=home_start_left,
         home_team_start_left_extratime=home_start_left_et,
     )
+    if stoppage:
+        from silly_kicks.tracking import derive_stoppage_state
+
+        frames = derive_stoppage_state(frames, actions=actions)
     return actions, _preprocess(frames, with_velocity=with_velocity), str(home_team_id)

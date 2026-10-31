@@ -880,7 +880,12 @@ def _resolve_fn(qkey: str):
 # The gate
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("qkey,variant_name", [(q, v[0]) for q, vs in PURITY_ENTRIES.items() for v in vs])
-def test_add_star_does_not_mutate_input(qkey, variant_name):
+def test_add_star_does_not_mutate_input(qkey, variant_name, request):
+    if "xshot_occurrence" in qkey or "xcross_attempt" in qkey:
+        # TF-46 R-C3 interim (owner decision 2026-10-26): the shipped xS / xCross bundle refuses to load
+        # without stoppage provenance, so this purity gate loads the real weights under legacy_override.
+        # Task 8 removes this once the refit bundle loads clean.
+        request.getfixturevalue("legacy_xs_xc_bundles")
     variant = next(v for v in PURITY_ENTRIES[qkey] if v[0] == variant_name)
     _vname, build_inputs, invoke = variant
     _assert_pure(qkey, variant_name, build_inputs(), invoke)
@@ -1026,6 +1031,7 @@ _EXHAUSTIVE_EMITTED: dict[tuple[str, str], frozenset[str]] = {
             "shot_fit_rmse",
             "shot_fit_end_reason",
             "shot_z_profile",
+            "shot_z_source",  # ADR-125 (2026-10-26): provenance of shot_crossing_z / shot_z_profile
         }
     ),
     ("tracking:add_off_ball_context", "default"): frozenset(

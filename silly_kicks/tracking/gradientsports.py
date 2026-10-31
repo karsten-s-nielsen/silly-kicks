@@ -8,6 +8,11 @@ silly_kicks.spadl.gradientsports (PR-S18) for
 Input contract (EXPECTED_INPUT_COLUMNS):
   Same shape as sportec, except ``player_id`` / ``team_id`` are nullable
   Int64 (Gradient Sports integer identifiers) and ``game_id`` is int64.
+  Optional ``visibility_native``: the raw per-object ``visibility`` flag of the GS
+  records (closed vocabulary ``VISIBLE`` / ``ESTIMATED``). Gradient Sports is
+  broadcast-derived tracking and DETECTION-AWARE (ADR-069 amended 2026-10-26): the
+  flag becomes the boolean ``visibility`` (``VISIBLE`` -> True); without the column
+  ``visibility`` is None and every detection consumer fails loud.
 
 Coordinate transformation: ``x = x_centered + 52.5``;
 ``y = y_centered + 34.0``. Per-period direction flip via the shared
@@ -49,6 +54,22 @@ EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
         "ball_state",
     }
 )
+
+#: The closed vocabulary of the optional ``visibility_native`` input column (the raw GS object flag): VISIBLE = the
+#: object was found in the broadcast image, ESTIMATED = the provider estimated it (ADR-069 amended 2026-10-26).
+VISIBILITY_NATIVE_VALUES: dict[str, bool] = {"VISIBLE": True, "ESTIMATED": False}
+
+
+def _visibility_from_native(native: pd.Series) -> pd.Series:
+    """The boolean ``visibility`` of the raw GS flag; any value outside :data:`VISIBILITY_NATIVE_VALUES` (a null
+    included) raises -- a closed vocabulary, never a guess."""
+    vals = native.astype(object)
+    bad = sorted({repr(v) for v in vals.tolist() if not (isinstance(v, str) and v in VISIBILITY_NATIVE_VALUES)})
+    if bad:
+        raise ValueError(
+            f"gradientsports convert_to_frames: visibility_native outside {sorted(VISIBILITY_NATIVE_VALUES)}: {bad[:5]}"
+        )
+    return pd.Series([VISIBILITY_NATIVE_VALUES[v] for v in vals.tolist()], index=native.index, dtype=object)
 
 
 def convert_to_frames(
@@ -139,10 +160,12 @@ def convert_to_frames(
     out["speed"] = out["speed_native"].astype("float64")
     speed_source: list[object] = ["native" if pd.notna(v) else None for v in out["speed"]]
     out["speed_source"] = pd.Series(speed_source, index=out.index, dtype="object")
-    out["visibility"] = None
+    # ADR-069 amended 2026-10-26 (TF-46 Part 2 section 27.15 G1): the raw VISIBLE / ESTIMATED flag when the caller
+    # carries it; without it `visibility` is None and the detection consumers fail loud (as the SkillCorner adapter).
+    out["visibility"] = _visibility_from_native(out["visibility_native"]) if "visibility_native" in out else None
     out["source_provider"] = _PROVIDER_NAME
     out["is_goalkeeper_source"] = "native"
-    out["z_source"] = Z_PROVENANCE["gradientsports"]  # ADR-125: measured (optical); ground-level noise only
+    out["z_source"] = Z_PROVENANCE["gradientsports"]  # ADR-125 amended 2026-10-26: estimated (broadcast-derived)
 
     final = pd.DataFrame({col: out[col] for col in GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS})
     for col, dtype_str in GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS.items():

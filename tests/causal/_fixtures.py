@@ -35,7 +35,9 @@ def frow(pid, team, gk, x, y, t, *, is_ball=False, period=1):
         speed_source="native",
         ball_state="alive",
         team_attacking_direction="ltr",
-        source_provider="test",
+        # TF-46 Part 2 section 27.19 (R-C2): the dead-ball reader gate needs a classified provider; an optical feed
+        # (every player, no detection flag) with an observed ball_state -> sportec (was the unclassified "test").
+        source_provider="sportec",
     )
 
 

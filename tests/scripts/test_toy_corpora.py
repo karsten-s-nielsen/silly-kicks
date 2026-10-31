@@ -98,3 +98,15 @@ def test_every_toy_writes_the_locked_id_kinds_and_mixes_them_where_the_campaign_
         assert kind == PROVIDER_ID_KIND[provider], (module, provider, kind)  # what the builder really wrote
     if len(set(locked.values())) > 1:  # the campaign's data mixes id kinds: the toy must, too
         assert set(written.values()) >= set(locked.values()), (module, written, locked)
+
+
+def test_game_actions_carries_every_spadl_column():
+    """WS-C (Task 10): every SPADL_COLUMNS key is present in the toy actions, so
+    `.astype(SPADL_COLUMNS)` finds each (the `result_source`/`restart_evidence`/`type_source`/`repair_kind`
+    KeyError the recut's minimal rows otherwise raised)."""
+    from scripts._toy_corpora import _game_actions
+    from silly_kicks.spadl import SPADL_COLUMNS
+
+    cols = set(_game_actions("g", n_frames=20, home=1, away=2).columns)
+    missing = set(SPADL_COLUMNS) - cols
+    assert not missing, sorted(missing)

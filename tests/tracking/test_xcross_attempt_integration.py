@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL
+from tests._stoppage_fixtures import bundle_pinned, with_toy_stoppage_provenance
 
 
 def _build_xcross_fold():
@@ -303,6 +304,7 @@ def test_from_hub_shape_mocked(monkeypatch, tmp_path):
     rng = np.random.default_rng(0)
     X = pd.DataFrame(rng.normal(size=(120, 16)), columns=XCROSS_FEATURE_NAMES_FAITHFUL)
     m = xc.XCrossAttemptModel().fit(X, pd.Series((rng.random(120) > 0.6).astype(int)))
+    with_toy_stoppage_provenance(m)  # TF-46 R-C3: save() refuses a model with no stoppage provenance
     d = tmp_path / "art"
     m.save(d)
     monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda repo_id: str(d))
@@ -489,6 +491,7 @@ def test_xcross_gk_block_rederivation_is_faithful():
 
 
 @pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
+@bundle_pinned("XCrossAttemptModel")  # TF-46 R-C3 interim: the shipped bundle refuses to load; Task 8 removes this
 def test_xcross_bundled_model_predictions_are_live():
     """LIVENESS -- finite, in [0, 1], non-constant.
 
@@ -505,6 +508,7 @@ def test_xcross_bundled_model_predictions_are_live():
 
 
 @pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
+@bundle_pinned("XCrossAttemptModel")  # TF-46 R-C3 interim: the shipped bundle refuses to load; Task 8 removes this
 def test_xcross_bundled_model_reads_the_gk_block():
     """RESPONSE. Claims exactly what it tests: perturbing the GK BLOCK moves the prediction.
 
@@ -535,6 +539,7 @@ def test_xcross_bundled_model_reads_the_gk_block():
 
 
 @pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
+@bundle_pinned("XCrossAttemptModel")  # TF-46 R-C3 interim: the shipped bundle refuses to load; Task 8 removes this
 def test_xcross_from_variant_default_in_bounds():
     from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
 

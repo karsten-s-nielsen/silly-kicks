@@ -51,6 +51,12 @@ class StructuralPassParams:
     underflow -> 1/rho ~ 1e8), so an explicit eps-floor on rho (_RHO_FLOOR) bounds SGM
     independently of sigma (BUG-3 fix, 2026-06-09). See scripts/tune_structural_pass_sigma.py +
     spec D1. No is_default() (matches CoverShadowParams / LineBreakingParams).
+
+    Dated note (2026-10-27): sigma = 15 is NOT validated. The tuning label (final-third entry) is a function of the
+    pass start_x and end_x only, and the SGM reads rho at the end point, so the sweep's AUC rewards a score that
+    encodes the end location; it cannot validate structure. The value is unchanged (consumers depend on it); a
+    re-tune against an outcome after the pass, above a location-only baseline, is owner-timed (owner decision
+    2026-10-27; TF-46 Part 2 spec section 27.19).
     """
 
     sigma: float = 15.0

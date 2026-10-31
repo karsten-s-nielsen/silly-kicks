@@ -1,0 +1,251 @@
+{
+  "away_team": {
+    "id": 866,
+    "name": "Adelaide United Football Club"
+  },
+  "away_team_score": 2,
+  "home_team": {
+    "id": 1803,
+    "name": "Western United"
+  },
+  "home_team_score": 3,
+  "id": 2016236,
+  "match_periods": [
+    {
+      "duration_frames": 30550,
+      "duration_minutes": 50.92,
+      "end_frame": 31720,
+      "name": "period_1",
+      "period": 1,
+      "start_frame": 1170
+    },
+    {
+      "duration_frames": 29490,
+      "duration_minutes": 49.15,
+      "end_frame": 70550,
+      "name": "period_2",
+      "period": 2,
+      "start_frame": 41060
+    }
+  ],
+  "pitch_length": 106,
+  "pitch_width": 68,
+  "players": [
+    {
+      "goal": 0,
+      "id": 50971,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 51646,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 50963,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 50949,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 1002177,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 1,
+      "id": 50959,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 23925,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 809759,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 560895,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 51005,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 1,
+      "id": 797295,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 42513,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 560893,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 4792,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 26766,
+      "own_goal": 1,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 795520,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 51690,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 818284,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 26994,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 818554,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 51008,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 560917,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 957737,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 23922,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 51675,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 26844,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 2,
+      "id": 560916,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 795529,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 795527,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 23883,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 50968,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 18811,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 969677,
+      "own_goal": 0,
+      "team_id": 866
+    },
+    {
+      "goal": 0,
+      "id": 811891,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 809670,
+      "own_goal": 0,
+      "team_id": 1803
+    },
+    {
+      "goal": 0,
+      "id": 159946,
+      "own_goal": 0,
+      "team_id": 1803
+    }
+  ]
+}

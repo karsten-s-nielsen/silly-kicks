@@ -1,0 +1,24 @@
+{
+  "_license": "StatsBomb Open Data (https://github.com/statsbomb/open-data) under the StatsBomb Public Data License (non-commercial). See https://github.com/statsbomb/open-data/blob/master/LICENSE.pdf.",
+  "_provenance": "Per-team final scores read from the StatsBomb open-data match-summary files at commit d07ebdad. The raw event fixtures under raw/events/ carry no score field; this companion records the goals PER TEAM ID so TF-46 Guard 1 (goal reconciliation) compares each team's SPADL goals to its score (not a direction-blind multiset). The team ids are the StatsBomb team_ids present in the committed event fixtures.",
+  "matches": {
+    "7298": {
+      "description": "Manchester City WFC 2-2 Chelsea FCW (FA Women's Super League)",
+      "source": "matches/37/4.json",
+      "commit": "d07ebdad",
+      "team_goals": {"746": 2, "971": 2}
+    },
+    "7584": {
+      "description": "Belgium 3-2 Japan (Belgium 782, Japan 778)",
+      "source": "matches/43/3.json",
+      "commit": "d07ebdad",
+      "team_goals": {"782": 3, "778": 2}
+    },
+    "3754058": {
+      "description": "Leicester 0-0 Bournemouth",
+      "source": "matches/2/27.json",
+      "commit": "d07ebdad",
+      "team_goals": {"22": 0, "28": 0}
+    }
+  }
+}

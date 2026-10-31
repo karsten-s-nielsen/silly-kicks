@@ -43,10 +43,20 @@ _FRAME_KEEP_COLS = {
 }
 
 
+def provider_frames_source(provider: str) -> tuple[Path, str]:
+    """The committed frames file behind :func:`load_provider_frames` and its class: ``"real"`` for the Tier-3
+    lakehouse-derived slim slices (``action_context_slim``, the action-context PR-1 design), ``"synthetic"`` for the
+    Gradient Sports file that ``tests/datasets/tracking/gradientsports/generate_synthetic.py`` writes. The preprocess
+    baseline records it per field (owner decision 2026-10-27)."""
+    if provider == "gradientsports":
+        return GRADIENTSPORTS_DIR / "medium_halftime.parquet", "synthetic"
+    return SLIM_DIR / f"{provider}_slim.parquet", "real"
+
+
 def load_provider_frames(provider: str) -> pd.DataFrame:
     """Load frames for a provider, projecting to silly-kicks tracking schema."""
     if provider == "gradientsports":
-        df = pd.read_parquet(GRADIENTSPORTS_DIR / "medium_halftime.parquet")
+        df = pd.read_parquet(provider_frames_source(provider)[0])
         return pd.DataFrame(
             {
                 "game_id": df.get("game_id", 1),
@@ -76,11 +86,16 @@ def load_provider_frames(provider: str) -> pd.DataFrame:
                 # This synthetic fixture does NOT swap ends at half-time.
                 "team_attacking_direction": df["team_id"].map({100: "ltr", 200: "rtl"}),
                 "confidence": pd.NA,
-                "visibility": pd.NA,
+                # GS is detection-aware (ADR-069 amended 2026-10-26): a null flag would be a discarded one and
+                # fail loud. As for the SkillCorner slims below, every present row is read as a detected
+                # observation so the compute is exercised exactly as before; the GS gate's ESTIMATED -> NaN
+                # behaviour is covered by the controlled-fixture tests (test_gradientsports_detection_flag,
+                # test_detection_aware_visibility).
+                "visibility": True,
                 "source_provider": "gradientsports",
             }
         )
-    df = pd.read_parquet(SLIM_DIR / f"{provider}_slim.parquet")
+    df = pd.read_parquet(provider_frames_source(provider)[0])
     frames = df[df["__kind"] == "frame"].drop(columns=["__kind"]).reset_index(drop=True)
     out = frames[[c for c in frames.columns if c in _FRAME_KEEP_COLS]].copy()
     # The committed slims predate `visibility` preservation (the column is entirely null). The

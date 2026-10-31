@@ -34,6 +34,7 @@ import silly_kicks.tracking._xcross_attempt as _xc
 import silly_kicks.tracking._xshot_occurrence as _xs
 from scripts.hf_jobs import manifest as M
 from silly_kicks.tracking.schema import SPEED_SOURCE_UNAVAILABLE
+from tests._stoppage_fixtures import REFUSED_UNTIL_RETRAIN, assert_bundle_refused, bundle_pinned
 
 # The pandas-major probe mismatch is expected on one leg and tolerated (see the module docstring).
 pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.UnverifiableFeatureContractWarning")
@@ -79,6 +80,9 @@ def test_bundled_position_only_loads_clean(name, cls, root, n_feat):
     # A plain load IS the assertion: load() raises IntegrityError on a SHA / chirality /
     # declared-constant mismatch. The only non-raising divergence is the pandas-major probe mismatch,
     # which warns (filtered above) and still enforces the declared constants.
+    if cls.__name__ in REFUSED_UNTIL_RETRAIN:
+        assert_bundle_refused(cls.__name__)  # TF-46 R-C3 interim; Task 8 removes this
+        return
     _clear_variant_caches()
     m = cls.from_variant("position_only")
     assert m is not None
@@ -158,6 +162,7 @@ def test_bundled_ghost_serves_a_coordinate_on_a_declared_freeze_frame():
     assert np.isfinite(served["ghost_gk_x"]).all() and np.isfinite(served["ghost_gk_y"]).all()
 
 
+@bundle_pinned("XShotOccurrenceModel")  # TF-46 R-C3 interim: the shipped bundle refuses to load; Task 8 removes this
 def test_bundled_xshot_serves_via_position_only_on_declared_frames():
     from tests.tracking.test_xshot_occurrence import _actions_and_frames_for_add
 
@@ -168,6 +173,7 @@ def test_bundled_xshot_serves_via_position_only_on_declared_frames():
     assert out["xshot_occurrence"].notna().any(), "the bundled position_only xShot must serve a value on SB360"
 
 
+@bundle_pinned("XCrossAttemptModel")  # TF-46 R-C3 interim: the shipped bundle refuses to load; Task 8 removes this
 def test_bundled_xcross_serves_via_position_only_on_declared_frames():
     from tests.tracking.test_xcross_attempt_velocity_contract import _freeze_frame
 

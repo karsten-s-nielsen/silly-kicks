@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.tracking import _xcross_attempt as xc
+from tests._stoppage_fixtures import bundle_pinned, with_toy_stoppage_provenance
 
 
 def _one_frame():
@@ -254,7 +255,7 @@ def _mini_match():
             ),
         ]
     frames = pd.DataFrame(rows)
-    frames["source_provider"] = "test"  # required by link_actions_to_frames
+    frames["source_provider"] = "sportec"  # link_actions_to_frames + the R-C2 reader gate (spec 27.19); was "test"
     from silly_kicks.spadl import config as spc
 
     actions = pd.DataFrame(  # SPADL-shaped: result_id present (required by the score lookup)
@@ -278,6 +279,50 @@ def test_prepare_returns_features_labels_groups():
     assert set(np.unique(y)).issubset({0, 1})
     assert (groups == "g").all()
     assert y.sum() >= 1  # the cross at 0.9 labels some wide-area frames positive
+
+
+def _censor_first_frame(monkeypatch) -> None:
+    """Force the section 18.2.1 censor on the first labelled frame (its cross anchor has an unvalidated time)."""
+    real = xc.build_xcross_labels
+
+    def fake(*args, **kwargs):
+        out = real(*args, **kwargs)
+        if kwargs.get("return_censor") and len(args[0]):
+            y_s, censor = out
+            censor = np.asarray(censor, dtype=bool).copy()
+            censor[0] = True
+            return y_s, censor
+        return out
+
+    monkeypatch.setattr(xc, "build_xcross_labels", fake)
+
+
+def test_prepare_with_return_meta_false_survives_a_censored_frame(monkeypatch):
+    # TF-46 regression (sibling of the xShot keys[keep] fix): the section-18.2.1 censor-subset block subset
+    # `meta_details` with a strict zip, but meta_details is populated ONLY under return_meta. The extract path
+    # (return_meta=False) left it empty, so the first match with a censored cross would raise. Force one
+    # censored row with the censoring opted in; the extract-style call must RETURN, not raise.
+    frames, actions = _mini_match()
+    _censor_first_frame(monkeypatch)
+    # return_meta defaults to False -- exactly the extract path.
+    X, y, groups = xc.prepare_xcross_training_data(frames, actions, home_team_id="A", apply_provenance_censor=True)
+    assert len(X) == len(y) == len(groups)  # consistent after the censored row is dropped
+    assert X.attrs["n_provenance_censored"] >= 1  # non-vacuous: a row was actually censored
+
+
+def test_prepare_apply_provenance_censor_false_keeps_the_censored_frame(monkeypatch):
+    # TF-46 (plan B-40): the section 18.2.1 censoring is OFF by default until the joint release fills the gate
+    # table, so a cross frame whose anchor has an unvalidated time is KEPT. Force a censor: the default and the
+    # flag False keep the row (n_provenance_censored == 0); the flag True censors it -- the flag gates the drop.
+    frames, actions = _mini_match()
+    _censor_first_frame(monkeypatch)
+    x_on, _, _ = xc.prepare_xcross_training_data(frames, actions, home_team_id="A", apply_provenance_censor=True)
+    x_off, _, _ = xc.prepare_xcross_training_data(frames, actions, home_team_id="A", apply_provenance_censor=False)
+    x_default, _, _ = xc.prepare_xcross_training_data(frames, actions, home_team_id="A")
+    assert x_on.attrs["n_provenance_censored"] >= 1  # the flag ON censors (joint-release behaviour)
+    assert x_off.attrs["n_provenance_censored"] == 0  # the flag OFF keeps the row (provenance-only)
+    assert len(x_off) == len(x_on) + int(x_on.attrs["n_provenance_censored"])
+    assert len(x_default) == len(x_off) and x_default.attrs["n_provenance_censored"] == 0  # OFF is the default
 
 
 def test_prepare_tolerates_na_team_id_in_frames():
@@ -326,7 +371,7 @@ def _fit_tiny_model():
     rng = np.random.default_rng(0)
     X = pd.DataFrame(rng.normal(size=(200, 16)), columns=xc.XCROSS_FEATURE_NAMES_FAITHFUL)
     y = (X["gk_r"] + rng.normal(scale=0.5, size=200) > 0).astype(int).to_numpy()
-    m = xc.XCrossAttemptModel().fit(X, pd.Series(y))
+    m = with_toy_stoppage_provenance(xc.XCrossAttemptModel().fit(X, pd.Series(y)))
     return m, X
 
 
@@ -383,7 +428,7 @@ def test_carrier_params_recorded_and_restored(tmp_path):
     X = pd.DataFrame(rng.normal(size=(120, 16)), columns=xc.XCROSS_FEATURE_NAMES_FAITHFUL)
     y = pd.Series((rng.random(120) > 0.6).astype(int))
     cp = {"tolerance_m": 2.0, "beta": 0.1, "gamma": 0.5}
-    m = xc.XCrossAttemptModel().fit(X, y, carrier_params=cp)
+    m = with_toy_stoppage_provenance(xc.XCrossAttemptModel().fit(X, y, carrier_params=cp))
     d = tmp_path / "m"
     m.save(d)
     assert xc.XCrossAttemptModel.load(d).carrier_params == cp
@@ -416,6 +461,7 @@ def test_compute_adds_column_and_uses_metadata_carrier_params(monkeypatch):
     assert seen["tolerance_m"] == 2.5  # R3: carrier params read from model metadata, not library default
 
 
+@bundle_pinned("XCrossAttemptModel")  # interim until the R-C3 retrain: the shipped bundle is refused
 def test_compute_model_none_uses_bundled_default():
     """Post-PR-B (Task 13 bundling): model=None resolves to the bundled 'default' (the production
     path) and produces the column -- pre-weights this raised FileNotFoundError. An unsupported model
@@ -515,3 +561,17 @@ def test_xfns_silent_nan_on_frames_none():
     result = fn(states, None)
     assert list(result.columns) == ["xcross_attempt_a0", "xcross_attempt_a1", "xcross_attempt_a2"]
     assert result.isna().all(axis=None)
+
+
+def test_sum_unknown_labels_gates_the_censor_on_the_flag():
+    # B27(b) / R7-A-01: the section 27.19 n_stoppage_unknown_labels count drops the censored positives ONLY when
+    # the section 18.2.1 censoring is applied. This cycle the flag is off, so the published count is the FULL
+    # count. Reverting the gate to an unconditional subtraction regresses the flag-off count (this goes red).
+    import numpy as np
+
+    from silly_kicks.tracking._xcross_attempt import _sum_unknown_labels
+
+    labels = np.array([1, 1, 0, 1])
+    censor = np.array([True, False, False, True])  # 2 of the 3 positive would-be rows are censored
+    assert _sum_unknown_labels(labels, censor, apply_provenance_censor=False) == 3  # flag off: full count
+    assert _sum_unknown_labels(labels, censor, apply_provenance_censor=True) == 1  # flag on: censored dropped

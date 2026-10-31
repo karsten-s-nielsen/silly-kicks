@@ -300,6 +300,15 @@ _NOT_A_DRIVER: dict[str, str] = {
         "would make the report unrenderable during the session that produces it. Same class as "
         "`render_sb360_matrix`; provenance travels by reference to the manifest it stamps."
     ),
+    "build_xcross_probe": (
+        "a staging WRAPPER (TF-46 Task 5): it drives materialize_tc3_frames (its own for_each + "
+        "provenance) as a subprocess, then calls repackage.flat_to_pergame in-process; together they "
+        "write the probe corpus. Its OWN only write is a TEMP roster JSON (the held-out M6 pair from the "
+        "dataset lock) consumed by the materialize subprocess -- not a committed or cited artifact. The "
+        "write makes it a candidate (write + --out), but it produces no artifact of its own whose "
+        "provenance could be misattributed; the real artifacts are policed where materialize/repackage "
+        "write them."
+    ),
 }
 
 #: Genuinely a driver, enrolled, but invisible to the rule. MUST be empty on landing -- see

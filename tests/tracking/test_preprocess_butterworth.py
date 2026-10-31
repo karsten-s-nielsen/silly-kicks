@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from scipy.signal import sosfiltfilt, sosfreqz
 
+from silly_kicks.tracking import STOPPAGE_SOURCES
 from silly_kicks.tracking.preprocess import (
     PreprocessConfig,
     butterworth_lowpass,
@@ -290,6 +291,67 @@ def test_resample_frames_keeps_every_game_apart():
     for game, base in ((1, 0.0), (2, 100.0)):
         part = out[out["game_id"] == game].sort_values("frame_id")
         np.testing.assert_allclose(part["x"].to_numpy(), base + np.arange(6.0))
+
+
+# --------------------------------------------------------------------------- the frame stoppage state (spec 27.19)
+# Owner decision 2026-10-26: resample_frames carries the stoppage column by (game, period, grid frame) from the ball
+# row; a grid frame without a ball row reads as not live; no default is filled in.
+
+
+def _stoppage_scene(ball_times, ball_states, player_times, player_state="live") -> pd.DataFrame:
+    rows = []
+    for t, st in zip(ball_times, ball_states, strict=True):
+        rows.append((t, True, np.nan, st))
+    for t in player_times:
+        rows.append((t, False, 9.0, player_state))
+    df = pd.DataFrame(rows, columns=["time_seconds", "is_ball", "player_id", "stoppage_state"])
+    df["stoppage_source"] = STOPPAGE_SOURCES[1]
+    df["game_id"] = 1
+    df["period_id"] = 1
+    df["frame_id"] = np.rint(df["time_seconds"] * 10).astype("int64")
+    df["frame_rate"] = 10.0
+    df["team_id"] = np.where(df["is_ball"], np.nan, 7.0)
+    df["is_goalkeeper"] = False
+    df["x"] = df["time_seconds"] * 10.0
+    df["y"] = 30.0
+    return df
+
+
+def test_resample_frames_carries_the_ball_rows_stoppage_state_to_every_row_of_the_frame():
+    times = [0.0, 0.1, 0.2, 0.3]
+    # the player's own (stale) state differs on purpose: a per-entity hold would keep it
+    frames = _stoppage_scene(times, ["live", "live", "dead", "dead"], times, player_state="live")
+    out = resample_frames(frames, 20.0)
+    by_frame = out.groupby("frame_id")["stoppage_state"].agg(lambda s: sorted(set(map(str, s))))
+    assert all(len(v) == 1 for v in by_frame), "one stoppage state per grid frame"
+    player = out[~out["is_ball"].astype(bool)].set_index("frame_id")["stoppage_state"]
+    ball = out[out["is_ball"].astype(bool)].set_index("frame_id")["stoppage_state"]
+    pd.testing.assert_series_equal(player, ball, check_names=False)
+    assert (player.loc[[4, 5, 6]] == "dead").all()  # t = 0.2 .. 0.3 s: the ball's dead source frames
+    assert (out["stoppage_source"] == STOPPAGE_SOURCES[1]).all()
+
+
+def test_resample_frames_grid_frame_without_a_ball_row_is_not_live():
+    from silly_kicks.tracking import stoppage_not_live
+
+    # the ball is missing for 0.6 s (> max_gap_seconds): its grid frames there carry no ball row
+    ball_t = [0.0, 0.1, 0.2, 0.9, 1.0]
+    player_t = [round(k / 10.0, 1) for k in range(11)]
+    frames = _stoppage_scene(ball_t, ["live"] * 5, player_t, player_state="live")
+    out = resample_frames(frames, 10.0, max_gap_seconds=0.5)
+    gap = out[(out["frame_id"] >= 3) & (out["frame_id"] <= 8)]
+    assert len(gap) and not gap["is_ball"].astype(bool).any()
+    assert gap["stoppage_state"].isna().all() and gap["stoppage_source"].isna().all()  # never a default
+    assert stoppage_not_live(gap).all()
+    kept = out[out["frame_id"].isin([0, 1, 2, 9, 10])]
+    assert (kept["stoppage_state"] == "live").all()
+
+
+def test_resample_frames_refuses_two_ball_rows_in_one_frame():
+    frames = _stoppage_scene([0.0, 0.1], ["live", "dead"], [0.0, 0.1])
+    twin = frames[frames["is_ball"]].assign(player_id=-1.0)  # a second ball entity
+    with pytest.raises(ValueError, match="more than one ball row"):
+        resample_frames(pd.concat([frames, twin], ignore_index=True), 10.0)
 
 
 def test_smooth_frames_butterworth_additive_and_tagged():

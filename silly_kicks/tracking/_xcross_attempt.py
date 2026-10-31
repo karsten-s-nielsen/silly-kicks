@@ -28,7 +28,8 @@ from silly_kicks.tracking._ball_carrier import (
     infer_ball_carrier,
 )
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
-from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
+from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels, occurrence_labels_and_censor
+from silly_kicks.tracking._stoppages import has_stoppage_state, stoppage_provenance_problem, verify_stoppage_provenance
 from silly_kicks.tracking._velocity_availability import (
     variant_key_for_velocity as _variant_key_for_velocity,
 )
@@ -91,6 +92,11 @@ _BOX_HALF_WIDTH_M = _spc.penalty_area_half_width  # 20.16 (40.32/2)
 _GOAL_HALF_WIDTH_M = 3.66  # goal width 7.32 / 2
 
 _DEFAULT_CROSS_TYPES = ("cross",)  # open-play only (corner/freekick excluded by default)
+
+#: Provenance dimensions this trainer READS (TF-46 Arm 1 Part 2, spec section 18.2.1). The open-play variant
+#: reads TIME (an unvalidated-time cross censors its window); the set-piece sensitivity variant also reads TYPE
+#: (a ``default`` subtype censors its window).
+TRAINING_READS = frozenset({"time", "type"})
 _DEFAULT_CARRIER_PARAMS = DEFAULT_CARRIER_PARAMS
 
 _HF_REPO_ID = "silly-kicks/xcross-attempt-v1"
@@ -356,14 +362,32 @@ def build_xcross_labels(
     horizon_seconds: float = 1.0,
     cross_types: tuple[str, ...] = _DEFAULT_CROSS_TYPES,
     frame_team_col: str = "team_in_possession",
-) -> pd.Series:
+    return_censor: bool = False,
+) -> pd.Series | tuple[pd.Series, np.ndarray]:
     """Per-frame xCross label: 1 iff a same-team cross occurs in [t, t+horizon] (same period).
 
     Open-play ``cross`` only by default; ``cross_types`` can add ``corner_crossed`` /
     ``freekick_crossed`` for sensitivity. Thin wrapper over the shared occurrence helper.
+
+    With ``return_censor`` the provenance contract applies (TF-46 Arm 1 Part 2, spec section 18.2.1): a cross
+    with an unvalidated time, or -- for the set-piece sensitivity variant -- an unvalidated (``default``)
+    subtype, is NOT dropped; it censors its window. Returns ``(labels, censor_mask)``. The default open-play
+    variant reads TIME only; the sensitivity variant (any set-piece cross type) also reads TYPE.
     """
     type_ids = {_spc.actiontype_id[t] for t in cross_types}
-    crosses = actions[actions["type_id"].isin(type_ids)][["game_id", "period_id", "team_id", "time_seconds"]]
+    crosses_t = actions[actions["type_id"].isin(type_ids)]
+    if return_censor:
+        sensitivity = any(t in ("corner_crossed", "freekick_crossed") for t in cross_types)
+        if sensitivity:
+            y, censor = occurrence_labels_and_censor(
+                frames_index, crosses_t, horizon=horizon_seconds, frame_team_col=frame_team_col, reads_type=True
+            )
+        else:
+            y, censor = occurrence_labels_and_censor(
+                frames_index, crosses_t, horizon=horizon_seconds, frame_team_col=frame_team_col, reads_type=False
+            )
+        return pd.Series(y, index=frames_index.index), censor
+    crosses = crosses_t[["game_id", "period_id", "team_id", "time_seconds"]]
     y = _build_occurrence_labels(frames_index, crosses, horizon=horizon_seconds, frame_team_col=frame_team_col)
     return pd.Series(y, index=frames_index.index)
 
@@ -382,6 +406,16 @@ def _in_wide_area(ball_x: float, ball_y: float, goal_x: float, advance_m: float)
     return wide and advanced
 
 
+def _sum_unknown_labels(u_labels, u_censor, *, apply_provenance_censor: bool) -> int:
+    """Sum the positive labels of the UNKNOWN-span would-be rows (the section 27.19 diagnostic count). When the
+    section 18.2.1 censoring is applied, the censored rows are dropped first; otherwise every would-be row counts
+    (the uncensored path this cycle, so ``features.attrs["n_stoppage_unknown_labels"]`` is the full count)."""
+    u_pos = np.asarray(u_labels)
+    if apply_provenance_censor:
+        u_pos = u_pos[~np.asarray(u_censor, dtype=bool)]
+    return int(u_pos.sum())
+
+
 @overload
 def prepare_xcross_training_data(
     frames: pd.DataFrame,
@@ -394,6 +428,7 @@ def prepare_xcross_training_data(
     advance_m: float = ...,
     cross_types: tuple[str, ...] = ...,
     carrier_params: dict | None = ...,
+    apply_provenance_censor: bool = ...,
     return_meta: Literal[False] = ...,
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]: ...
 
@@ -410,6 +445,7 @@ def prepare_xcross_training_data(
     advance_m: float = ...,
     cross_types: tuple[str, ...] = ...,
     carrier_params: dict | None = ...,
+    apply_provenance_censor: bool = ...,
     return_meta: Literal[True],
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, pd.DataFrame]: ...
 
@@ -425,10 +461,22 @@ def prepare_xcross_training_data(
     advance_m: float = _ADVANCE_M,
     cross_types: tuple[str, ...] = _DEFAULT_CROSS_TYPES,
     carrier_params: dict | None = None,
+    apply_provenance_censor: bool = False,
     return_meta: bool = False,
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray] | tuple[pd.DataFrame, np.ndarray, np.ndarray, pd.DataFrame]:
     """Return (features, labels, groups=game_id) for one match. Shared train/serve extractor =
     anti-skew guarantee. ``home_team_id`` is USED to sign score_differential (PA-H1).
+
+    Dead-ball frames leave the domain. A provider without an observed dead-ball state (SkillCorner, Gradient Sports,
+    Metrica) REQUIRES the ``stoppage_state`` column of :func:`~silly_kicks.tracking.derive_stoppage_state` (else
+    ``ValueError``): its dead frames leave, and its UNKNOWN frames are never trained on but counted in
+    ``features.attrs["n_stoppage_unknown_rows"]`` / ``["n_stoppage_unknown_labels"]`` (TF-46 Part 2 spec section
+    27.19). IDSSE / Sportec without the column keep the ``ball_state`` test (the ball row is ``dead``).
+
+    ``apply_provenance_censor`` (default False) applies the TF-46 spec section 18.2.1 time-censoring: it drops the
+    frames whose cross anchor has an unvalidated time. It stays off until the joint release fills the restart gate
+    table; with the empty table it would drop every derived or repaired cross's frames.
+    ``features.attrs["n_provenance_censored"]`` counts the dropped rows (0 when off).
 
     ``return_meta=True`` additionally returns a per-example meta frame (row-aligned with features,
     ghost-verbatim contract) carrying the behind-line box detail for the keeper-box gr_x decision:
@@ -440,6 +488,9 @@ def prepare_xcross_training_data(
     # The callback is _score(game_id, time) -> home_score - away_score (negate for away possessor).
     from silly_kicks.tracking._ghost_gk import _build_score_lookup
 
+    # The dead-ball domain (spec section 27.19, owner decision R-C2): a provider without an observed dead-ball state
+    # needs the derive_stoppage_state column (fail closed); dead frames leave, UNKNOWN frames are counted only.
+    use_stoppage = has_stoppage_state(frames, where="prepare_xcross_training_data")
     cp: dict = dict(carrier_params) if carrier_params else dict(_DEFAULT_CARRIER_PARAMS)
     carrier = infer_ball_carrier(frames, **cp)
     poss = derive_team_in_possession(frames, carrier)
@@ -449,10 +500,18 @@ def prepare_xcross_training_data(
 
     feat_rows: list[pd.DataFrame] = []
     frame_index_rows: list[dict] = []
+    unknown_index_rows: list[dict] = []  # the would-be rows inside an UNKNOWN span (label counting only)
     meta_details: list[dict] = []
     coverage = {"in_domain": 0, "carrier_resolved": 0}  # L-2 carrier-coverage log
     for (gid, pid, fid), grp in poss.groupby(["game_id", "period_id", "frame_id"], sort=False):
-        if has_ball_state:
+        is_unknown = False
+        if use_stoppage:
+            s_row = grp[grp["is_ball"]]
+            s_state = str((s_row if len(s_row) else grp)["stoppage_state"].iloc[0])
+            if s_state == "dead":
+                continue
+            is_unknown = s_state != "live"
+        elif has_ball_state:
             ball_row = grp[grp["is_ball"]]
             # M3: judge ball_state on the ball row (row-level), not .all() over every player row
             if len(ball_row) and str(ball_row["ball_state"].iloc[0]) == "dead":
@@ -476,6 +535,17 @@ def prepare_xcross_training_data(
         bx = float(ball["x"].iloc[0]) if len(ball) else np.nan
         by = float(ball["y"].iloc[0]) if len(ball) else np.nan
         if wide_area_only and not _in_wide_area(bx, by, goal_x, advance_m):
+            continue
+        if is_unknown:
+            unknown_index_rows.append(
+                dict(
+                    game_id=gid,
+                    period_id=pid,
+                    frame_id=fid,
+                    time_seconds=grp["time_seconds"].iloc[0],
+                    team_in_possession=poss_team,
+                )
+            )
             continue
         coverage["in_domain"] += 1
         carrier_pid_s = grp["ball_carrier_player_id"].dropna()
@@ -532,19 +602,62 @@ def prepare_xcross_training_data(
                 stacklevel=2,
             )
 
+    # The cost of the UNKNOWN spans (DL ruling R-C1 item 2): the would-be rows and their positive labels, excluded.
+    n_unknown_labels = 0
+    if unknown_index_rows:
+        u_y, u_censor = build_xcross_labels(
+            pd.DataFrame(unknown_index_rows),
+            actions,
+            horizon_seconds=horizon_seconds,
+            cross_types=cross_types,
+            return_censor=True,
+        )
+        n_unknown_labels = _sum_unknown_labels(u_y, u_censor, apply_provenance_censor=apply_provenance_censor)
+
     if not feat_rows:
         empty = pd.DataFrame(
             columns=(
                 XCROSS_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XCROSS_FEATURE_NAMES_FAITHFUL
             )
         )
+        empty.attrs["n_stoppage_unknown_rows"] = len(unknown_index_rows)
+        empty.attrs["n_stoppage_unknown_labels"] = n_unknown_labels
         if return_meta:
             return empty, np.array([], dtype=int), np.array([], dtype=object), pd.DataFrame()
         return empty, np.array([], dtype=int), np.array([], dtype=object)
 
     features = pd.concat(feat_rows, ignore_index=True)
     frame_index = pd.DataFrame(frame_index_rows)  # carries team_in_possession (matches label helper)
-    y = np.asarray(build_xcross_labels(frame_index, actions, horizon_seconds=horizon_seconds, cross_types=cross_types))
+    # TF-46 Arm 1 Part 2 (spec section 18.2.1): CENSOR frames whose cross anchor has an unvalidated time (and,
+    # for a set-piece sensitivity run, a `default` subtype) rather than dropping the cross. Byte-identical for a
+    # native provider (empty censor mask).
+    # Section 18.2.1 time-censoring is OFF by default (owner decision 2026-10-31, plan B-40): the gate table ships
+    # EMPTY, so every derived row would be censored. The default False keeps the pre-18.2.1 all-events labels;
+    # the joint release fills the gate table and turns the censoring on. True opts in now.
+    if apply_provenance_censor:
+        y_s, censor = build_xcross_labels(
+            frame_index, actions, horizon_seconds=horizon_seconds, cross_types=cross_types, return_censor=True
+        )
+        y = np.asarray(y_s)
+        n_censored = int(censor.sum())
+        if censor.any():
+            keep = ~censor
+            features = features[keep].reset_index(drop=True)
+            y = y[keep]
+            frame_index = frame_index[keep].reset_index(drop=True)
+            # `meta_details` is populated ONLY under return_meta (and consumed only in the return_meta branch
+            # below); when a caller (the extract path, return_meta=False) leaves it empty, the strict zip would
+            # raise on the first match with a censored frame. Subset it only when it exists.
+            if return_meta:
+                meta_details = [d for d, k in zip(meta_details, keep, strict=True) if k]
+    else:
+        y = np.asarray(
+            build_xcross_labels(frame_index, actions, horizon_seconds=horizon_seconds, cross_types=cross_types)
+        )
+        n_censored = 0
+    features.attrs["n_provenance_censored"] = n_censored  # read at the call site (spec section 18.2.1)
+    features.attrs["n_stoppage_unknown_rows"] = len(unknown_index_rows)  # excluded; read at the call site (27.19)
+    features.attrs["n_stoppage_unknown_labels"] = n_unknown_labels
     groups = frame_index["game_id"].to_numpy()
     if return_meta:
         meta = frame_index.copy()
@@ -661,6 +774,9 @@ class XCrossAttemptModel:
         # Training commit (clean tree); written into metadata by save() so a retrain re-stamps it
         # rather than dropping the hand-patched value the bundle carried (ADR-054 c487c49; ADR-106).
         self.training_commit: str | None = None
+        # The stoppage provenance of the training frames (owner decision 2026-10-26: a reader-built model records
+        # it; load() refuses a model without it). Set by the trainer from `stoppage_provenance` before save().
+        self.stoppage_provenance: dict | None = None
 
     def fit(
         self,
@@ -703,6 +819,13 @@ class XCrossAttemptModel:
 
         import xgboost as xgb
 
+        prov = self.stoppage_provenance
+        problem = stoppage_provenance_problem(prov)
+        if problem is not None or prov is None:
+            raise RuntimeError(
+                f"xCrossAttempt: the model {problem}; set model.stoppage_provenance from "
+                "silly_kicks.tracking.stoppage_provenance(training frames) before save() (spec section 27.19)"
+            )
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
         self._booster.save_model(str(path / "model.json"))
@@ -729,6 +852,9 @@ class XCrossAttemptModel:
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),
             "feature_contract": _feature_contract_block(self.feature_set),
+            # the stoppage provenance of the training frames (owner decision 2026-10-26; load() refuses without it)
+            "stoppage_rule_version": prov["stoppage_rule_version"],
+            "stoppage_sources": list(prov["stoppage_sources"]),
             # LAST, matching the bundled artifacts' key order (ADR-054 c487c49 hand-patch) so a
             # re-save stays byte-identical (test_weights_bundle_golden).
             "training_commit": self.training_commit,
@@ -748,6 +874,9 @@ class XCrossAttemptModel:
         A behavioral chirality fingerprint is enforced (ADR-037 § 9, TF-19 PR-2): a
         pre-PR-2 artifact with no fingerprint is REFUSED unless ``legacy_override=True``
         (which warns), and an output/probe-frame mismatch raises. See ``_chirality``.
+        A model without a current stoppage provenance (``stoppage_rule_version`` / ``stoppage_sources``;
+        TF-46 Part 2 spec section 27.19) is REFUSED the same way: ``legacy_override=True`` loads it with a
+        ``StoppageProvenanceWarning``, for audit use only.
         """
         path = Path(path)
         sums = path / "SHA256SUMS"
@@ -807,6 +936,13 @@ class XCrossAttemptModel:
             model_name="xCrossAttempt",
             error_cls=IntegrityError,
         )
+        # LAST: a reader-built model without a current stoppage provenance is refused (owner decision 2026-10-26);
+        # the structural guards above run first, so a tampered artifact still fails on its own guard
+        verify_stoppage_provenance(
+            meta, model_name="xCrossAttempt", legacy_override=legacy_override, error_cls=IntegrityError
+        )
+        if stoppage_provenance_problem(meta) is None:
+            model.stoppage_provenance = {k: meta[k] for k in ("stoppage_rule_version", "stoppage_sources")}
         return model
 
     @classmethod

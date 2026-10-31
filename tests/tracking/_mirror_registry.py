@@ -162,7 +162,9 @@ _BASE_FRAME = dict(
     ball_state="alive",
     confidence=None,
     visibility=True,
-    source_provider="synthetic",
+    # TF-46 Part 2 section 27.19 (R-C2): the dead-ball reader gate needs a classified provider; an optical scene (every
+    # player, all rows detected) with an observed ball_state -> sportec (was the unclassified "synthetic").
+    source_provider="sportec",
     is_goalkeeper_source="native",
 )
 

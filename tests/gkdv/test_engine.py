@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.gkdv import GkdvParams, build_ghost_frames
-from silly_kicks.tracking import infer_ball_carrier
+from silly_kicks.tracking import FRAME_STOPPAGE_STATES, infer_ball_carrier
 from tests.gkdv._fixtures import in_domain_frames, multi_frame_in_domain
 from tests.tracking.test_ghost_gk import _fitted_model
 
@@ -139,8 +139,11 @@ def test_both_keepers_mapped_to_the_same_end_is_dropped_as_degenerate():
 
 
 def test_dead_ball_is_dropped():
+    # TF-46 Part 2 section 27.19 (R-C2): the fixture is Gradient Sports, which has no observed dead-ball state (its
+    # ball_state is the constant "alive", so planting ball_state "dead" no longer models a dead ball). The dead span
+    # is planted explicitly in the stoppage column instead; the expected drop is unchanged.
     frames = in_domain_frames()
-    frames["ball_state"] = "dead"
+    frames["stoppage_state"] = pd.Categorical(["dead"] * len(frames), categories=list(FRAME_STOPPAGE_STATES))
     _cf, _prov, report = _build(frames)
     assert report.drop_reasons == {"ball_not_alive": 1}
 

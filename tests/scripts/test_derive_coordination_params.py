@@ -528,7 +528,11 @@ def test_d1_reduce_hands_its_artifact_to_d2(tmp_path, monkeypatch):
     derivation = json.loads(derivation_path.read_text(encoding="utf-8"))
 
     provider = sorted(derivation["providers"])[0]
-    loader = SpyLoader({(provider, "m1"): make_loaded(provider, "m1", frames=pd.DataFrame({"x": [1.0]}))})
+    # A detection-aware provider (gradientsports/skillcorner) is visibility-gated at the pass boundary now
+    # (ADR-069 Layer 2, visibility_preflight): its loaded frames MUST carry a non-null `visibility` flag on a
+    # non-ball row, else the pass refuses before any compute. match_tables is spied here, so ONE such row is enough.
+    planted_frames = pd.DataFrame({"x": [1.0], "is_ball": [False], "visibility": [True]})
+    loader = SpyLoader({(provider, "m1"): make_loaded(provider, "m1", frames=planted_frames)})
     monkeypatch.setattr(d2, "corpus_source", lambda args: ([make_ref(provider, "m1")], loader))
     seen = []
 

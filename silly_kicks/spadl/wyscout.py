@@ -13,7 +13,12 @@ from .base import (
 )
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
-from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
+from .utils import (
+    _ensure_base_signal_columns,
+    _finalize_output,
+    _validate_input_columns,
+    _validate_preserve_native,
+)
 
 # ---------------------------------------------------------------------------
 # Wyscout event type IDs
@@ -336,6 +341,7 @@ def convert_to_actions(
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)
 
+    actions = _ensure_base_signal_columns(actions)
     actions = _finalize_output(actions, extra_columns=preserve_native)
 
     mapped_counts: dict[str, int] = {}

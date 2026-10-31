@@ -504,6 +504,7 @@ def _positioning_columns() -> set[str]:
 
     from silly_kicks.positioning import POSITIONING_METRIC_COLUMNS, PositioningParams, SAParams, compute_positioning_gap
     from silly_kicks.xthreat import ExpectedThreat
+    from tests._stoppage_fixtures import mark_all_live
     from tests.tracking._gk_test_helpers import _make_two_team_frame
 
     xt = ExpectedThreat(l=16, w=12)
@@ -523,6 +524,10 @@ def _positioning_columns() -> set[str]:
     frame["team_in_possession"] = 2
     frame["speed_source"] = "derived"
     frame["speed"] = np.hypot(frame["vx"].astype(float), frame["vy"].astype(float))
+    # TF-46 section 27.19: the positioning reader needs an observed dead-ball state. _make_two_team_frame
+    # stamps "synthetic" (unclassified), so declare a real non-observed provider and mark the live scene.
+    frame["source_provider"] = "skillcorner"
+    frame = mark_all_live(frame)
     params = PositioningParams(sa=SAParams(num_iterations=10, patience=10))
     samples, _ = compute_positioning_gap(frame, xt=xt, params=params)
     return set(POSITIONING_METRIC_COLUMNS) & set(samples.columns)

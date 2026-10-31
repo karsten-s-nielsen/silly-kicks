@@ -6,8 +6,8 @@ These files are vendored from the [kloppy](https://github.com/PySport/kloppy) te
 
 | File | Origin | License |
 |---|---|---|
-| `sportec_events.xml` | [PySport/kloppy `kloppy/tests/files/sportec_events.xml`](https://github.com/PySport/kloppy/blob/master/kloppy/tests/files/sportec_events.xml) | BSD-3-Clause (kloppy synthetic test data) |
-| `sportec_meta.xml` | [PySport/kloppy `kloppy/tests/files/sportec_meta.xml`](https://github.com/PySport/kloppy/blob/master/kloppy/tests/files/sportec_meta.xml) | BSD-3-Clause (kloppy synthetic test data) |
+| `sportec_events.xml` | [PySport/kloppy `kloppy/tests/files/sportec_events.xml`](https://github.com/PySport/kloppy/blob/master/kloppy/tests/files/sportec_events.xml) | BSD-3-Clause (kloppy vendored; a SPLICED REAL DFL excerpt, not synthetic — 27 events of DFL-MAT-003BN1 plus one FOREIGN top-level `OwnGoal` event, EventId 182094 / CurrentResult 3:3, while `sportec_meta.xml` says Result 1:0; so it is one file, not one match) |
+| `sportec_meta.xml` | [PySport/kloppy `kloppy/tests/files/sportec_meta.xml`](https://github.com/PySport/kloppy/blob/master/kloppy/tests/files/sportec_meta.xml) | BSD-3-Clause (kloppy vendored; real DFL MatchInformation for DFL-MAT-003BN1) |
 | `metrica_events.json` | [PySport/kloppy `kloppy/tests/files/metrica_events.json`](https://github.com/PySport/kloppy/blob/master/kloppy/tests/files/metrica_events.json) | Originally from [`metrica-sports/sample-data`](https://github.com/metrica-sports/sample-data) Sample Game 2 — **CC-BY-NC-4.0** (test-data-only; not redistributed in the wheel) |
 | `epts_metrica_metadata.xml` | [PySport/kloppy `kloppy/tests/files/epts_metrica_metadata.xml`](https://github.com/PySport/kloppy/blob/master/kloppy/tests/files/epts_metrica_metadata.xml) | BSD-3-Clause (kloppy synthetic test data) |
 

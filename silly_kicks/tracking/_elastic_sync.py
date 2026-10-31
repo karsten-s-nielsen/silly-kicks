@@ -35,6 +35,7 @@ from scipy.signal import argrelextrema, find_peaks
 from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import canonical_id, canonical_id_series, same_id
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.tracking._stoppages import has_stoppage_state
 
 #: A physically-plausible ball-touch candidate frame: ``players`` is the tuple of canonical
 #: player ids within ``touch_distance_m`` of the ball at that frame (the paper's set P_c).
@@ -696,11 +697,17 @@ def _inplay_segments(frames: pd.DataFrame) -> dict[tuple, np.ndarray]:
     per ``frame_id``.
     """
     out: dict[tuple, np.ndarray] = {}
-    if frames.empty or "ball_state" not in frames.columns:
+    if frames.empty:
+        return out
+    if "stoppage_state" in frames.columns:  # dead and UNKNOWN are not in play (TF-46 Part 2 section 27.19)
+        state_col, in_play = "stoppage_state", "live"
+    elif "ball_state" in frames.columns:
+        state_col, in_play = "ball_state", "alive"
+    else:
         return out
     for (gid, pid), grp in frames.groupby(["game_id", "period_id"], sort=False):
         per_frame = grp.drop_duplicates("frame_id").sort_values("frame_id")
-        alive = (per_frame["ball_state"] == "alive").to_numpy()
+        alive = (per_frame[state_col] == in_play).to_numpy()
         if not alive.any():
             continue
         times = np.asarray(per_frame["time_seconds"].values, dtype=np.float64)
@@ -773,7 +780,10 @@ def align_events_to_frames(
     Global, order-preserving extended-Needleman-Wunsch alignment (Kim et al. 2026) between the
     virtual-termination-enriched SPADL event sequence and sparse ball-touch candidate frames, run
     per possession-episode. Requires continuous tracking with player identity + ``team_id`` (for
-    possession); SB360 freeze-frames are not supported.
+    possession); SB360 freeze-frames are not supported. The episodes are the in-play runs: a provider without an
+    observed dead-ball state (SkillCorner, Gradient Sports, Metrica) REQUIRES the ``stoppage_state`` column of
+    :func:`~silly_kicks.tracking.derive_stoppage_state` (else ``ValueError``), whose dead and UNKNOWN frames are not
+    in play (TF-46 Part 2 spec section 27.19); IDSSE / Sportec without the column keep ``ball_state == "alive"``.
 
     Parameters
     ----------
@@ -825,6 +835,9 @@ def align_events_to_frames(
     # freeze-frame regime causes a refusal.
     if validate_velocity_regime(frames, on_mismatch="ignore").regime == POSITIONAL_ONLY:
         return _empty_alignment()
+    # The in-play episodes (TF-46 Part 2 spec section 27.19): a provider without an observed dead-ball state needs the
+    # derive_stoppage_state column (fail closed); _inplay_segments reads it in preference to ball_state.
+    has_stoppage_state(frames, where="align_events_to_frames")
 
     # ``_candidates`` (private) lets a caller that already ran _detect_candidate_frames (e.g.
     # link_actions_to_frames_elastic, which needs them for n_candidate_frames) thread them in to avoid

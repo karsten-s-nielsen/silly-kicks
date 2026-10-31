@@ -23,9 +23,12 @@ CORNER_SOURCE = "corner_source"
 #: Closed vocabularies (validated by tests/corners/test_columns.py).
 CORNER_SIDE_VALUES = frozenset({"left", "right"})
 CORNER_KIND_VALUES = frozenset({"direct", "short", "unclear"})
-CORNER_SOURCE_VALUES = frozenset({"skillcorner_gi", "spadl_corner", "sb360_event"})
+# ``skillcorner_marker`` (not ``skillcorner_gi``): SkillCorner corners come from the interruption
+# MARKER, not the GI reception token (decision C7, spec section 9.4).
+CORNER_SOURCE_VALUES = frozenset({"skillcorner_marker", "spadl_corner", "sb360_event"})
 
-#: Full identification-table column order + dtype.
+#: Full identification-table column order + dtype. ``type_source`` travels from the SPADL action's base
+#: signal column (spec section 9.4): native / inferred / default / ``<NA>``.
 CORNER_IDENTIFY_COLUMNS: dict[str, str] = {
     "game_id": "object",
     "corner_id": "int64",
@@ -37,6 +40,7 @@ CORNER_IDENTIFY_COLUMNS: dict[str, str] = {
     "kick_y": "float64",
     CORNER_KIND: "category",
     CORNER_SOURCE: "category",
+    "type_source": "object",
 }
 
 # --- window columns (add_corner_windows, additive onto the identification table) -------------

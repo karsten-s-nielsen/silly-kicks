@@ -1356,6 +1356,15 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_SHOT_GOALMOUTH,
         attribution=_A_ANZER_BAUER,
     ),
+    FeatureColumn(
+        name="shot_z_source",
+        definition=(
+            "Provenance of the shot's z-height inputs (shot_crossing_z / shot_z_profile): the frame "
+            "z_source carried through -- measured vs estimated (ADR-125)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_SHOT_GOALMOUTH,
+    ),
     # -- Event/tracking sync quality (TF-6) -----------------------------------------------------
     FeatureColumn(
         name="sync_score_mean",

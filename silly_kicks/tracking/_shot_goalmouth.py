@@ -706,7 +706,8 @@ def compute_shot_goalmouth(
     come from the GK map (``defended_goal_x``), output is canonicalized to
     attacked-goal-at-x=105 (full point reflection x->105-x, y->68-y); the engine never
     reads ``team_attacking_direction``. Consumed frame columns: game_id, period_id,
-    frame_id, time_seconds, team_id, is_ball, is_goalkeeper, x, y, z. The action's own
+    frame_id, time_seconds, team_id, is_ball, is_goalkeeper, x, y, z (and ``z_source`` when present: it becomes
+    ``shot_z_source``, the provenance of ``shot_crossing_z`` / ``shot_z_profile``). The action's own
     location (``start_x``/``start_y``; atomic ``x``/``y``) is consumed OPTIONALLY as the
     contact anchor (see ``_contact_anchor``; NaN/absent -> un-anchored fit).
 
@@ -758,6 +759,7 @@ def compute_shot_goalmouth(
     out["shot_fit_rmse"] = np.full(n, np.nan)
     out["shot_fit_end_reason"] = pd.array([pd.NA] * n, dtype="object")
     out["shot_z_profile"] = pd.array([pd.NA] * n, dtype="object")
+    out["shot_z_source"] = pd.array([pd.NA] * n, dtype="object")
     if n == 0 or "type_id" not in actions.columns:
         return out
     is_shot = actions["type_id"].isin(shot_type_ids).to_numpy()
@@ -825,6 +827,10 @@ def compute_shot_goalmouth(
         out.loc[ridx, "shot_crossing_source"] = r["source"]
         out.loc[ridx, "shot_fit_end_reason"] = r["end_reason"]
         out.loc[ridx, "shot_z_profile"] = r["z_profile"]
+        if pd.notna(r["z_profile"]) or np.isfinite(r["crossing_z"]):
+            # the provenance of the z-dependent outputs (ADR-125; owner decision 2026-10-26): a broadcast estimate is
+            # never a measured crossing height. Static per provider, so the window's first value; no column = absent
+            out.loc[ridx, "shot_z_source"] = str(g["z_source"].iloc[0]) if "z_source" in g.columns else "absent"
         out.loc[ridx, "shot_fit_n_frames"] = r["n_fit_frames"] if r["n_fit_frames"] else pd.NA
         out.loc[ridx, "shot_fit_rmse"] = r["fit_rmse"]
         out.loc[ridx, "shot_crossing_confidence"] = _confidence(r, params)

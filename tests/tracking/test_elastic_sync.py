@@ -74,7 +74,7 @@ def _make_tracking_frames(
                         "is_ball": False,
                     }
                 )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).assign(source_provider="sportec")  # R-C2 gate (spec 27.19): IDSSE-like optical
 
 
 def _make_actions(n: int = 5) -> pd.DataFrame:
@@ -204,7 +204,7 @@ def _make_touch_fixture(
                 "is_ball": False,
             }
         )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).assign(source_provider="sportec")  # R-C2 gate (spec 27.19): IDSSE-like optical
 
 
 # ---------------------------------------------------------------------------
@@ -591,7 +591,7 @@ def _make_alignable(frame_offset: int = 0, period_id: int = 1, frame_rate: int =
                 "is_ball": False,
             }
         )
-    frames = pd.DataFrame(rows)
+    frames = pd.DataFrame(rows).assign(source_provider="sportec")  # R-C2 gate (spec 27.19): IDSSE-like optical
     actions = pd.DataFrame(
         {
             "action_id": [0, 1, 2],

@@ -193,13 +193,14 @@ def test_tracking_categorical_domains_values():
 
 
 def test_z_provenance_classification():
-    # ADR-125: provider-declared ball-z provenance (spike finding). SkillCorner (broadcast,
-    # extrapolated) = estimated; the optical providers = measured. All tokens are valid z_source vocab.
+    # ADR-125: provider-declared ball-z provenance (spike finding). The BROADCAST-derived providers
+    # SkillCorner and Gradient Sports (ADR-125/069 amended 2026-10-26: GS z is extrapolated, not measured)
+    # = estimated; the optical providers = measured. All tokens are valid z_source vocab.
     from silly_kicks.tracking.schema import Z_PROVENANCE
 
     assert Z_PROVENANCE["skillcorner"] == "estimated"
     assert Z_PROVENANCE["sportec"] == "measured" and Z_PROVENANCE["idsse"] == "measured"
-    assert Z_PROVENANCE["gradientsports"] == "measured" and Z_PROVENANCE["metrica"] == "measured"
+    assert Z_PROVENANCE["gradientsports"] == "estimated" and Z_PROVENANCE["metrica"] == "measured"
     assert set(Z_PROVENANCE.values()) <= TRACKING_CATEGORICAL_DOMAINS["z_source"]
 
 

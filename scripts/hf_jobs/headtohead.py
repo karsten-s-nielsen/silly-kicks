@@ -408,6 +408,15 @@ def _require_corpus(corpus_dir: Path | None) -> Path:
     return Path(corpus_dir)
 
 
+def eval_needs_corpus(name: str) -> bool:
+    """True when trainer ``name``'s head-to-head eval reads the staged corpus (``--corpus-dir``), False when it
+    reads public open data. The trainer's own eval data decides, never the campaign tier: a public-tier
+    xshot/xcross certification still scores on its corpus (ADR-128)."""
+    from scripts.hf_jobs.registry import get
+
+    return get(name).certification != "public"
+
+
 def build_eval(name: str, corpus_dir: Path | None, *, feature_set: str = "faithful") -> dict:
     """Assemble the REAL eval bundle (the one the floor's δ comparison is meaningful on).
 
@@ -422,10 +431,7 @@ def build_eval(name: str, corpus_dir: Path | None, *, feature_set: str = "faithf
     (``predict_proba`` is strict on ``feature_names``; ADR-123 / spec §5). Ignored by the public evals
     and the ghost/receiver builders (ghost's ``predict_mean`` reindexes to the model's own names).
     """
-    from scripts.hf_jobs.registry import get
-
-    spec = get(name)
-    if spec.certification == "public":  # ADR-128: the certification policy (the `source` field is gone)
+    if not eval_needs_corpus(name):  # ADR-128: the trainer's eval data source (the `source` field is gone)
         _require_statsbombpy()
         return _build_public_eval(name)
     return _build_owner_eval(name, _require_corpus(corpus_dir), feature_set=feature_set)

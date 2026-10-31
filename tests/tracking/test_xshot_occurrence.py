@@ -8,6 +8,7 @@ import pytest
 from silly_kicks.spadl import config as _spc
 from silly_kicks.tracking import _geometry as geo
 from silly_kicks.tracking import _xshot_occurrence as xs
+from tests._stoppage_fixtures import bundle_pinned, with_toy_stoppage_provenance
 
 _FIELD_LENGTH = 105.0
 _SHOT_TID = _spc.actiontype_id["shot"]  # ADR-126: build_xshot_labels filters shots by type_id
@@ -357,7 +358,7 @@ def test_model_deterministic():
 def test_model_save_load_roundtrip(tmp_path):
     X, y = _toy_xy()
     m = xs.XShotOccurrenceModel().fit(X, y, carrier_params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0})
-    m.save(tmp_path / "xs_v1")
+    with_toy_stoppage_provenance(m).save(tmp_path / "xs_v1")
     loaded = xs.XShotOccurrenceModel.load(tmp_path / "xs_v1")
     np.testing.assert_allclose(loaded.predict_proba(X), m.predict_proba(X), rtol=1e-9)
     assert loaded.carrier_params == {"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0}
@@ -366,7 +367,7 @@ def test_model_save_load_roundtrip(tmp_path):
 
 def test_model_sha256_verification(tmp_path):
     X, y = _toy_xy()
-    xs.XShotOccurrenceModel().fit(X, y).save(tmp_path / "xs_v1")
+    with_toy_stoppage_provenance(xs.XShotOccurrenceModel().fit(X, y)).save(tmp_path / "xs_v1")
     (tmp_path / "xs_v1" / "model.json").write_text("tampered")
     with pytest.raises(xs.IntegrityError):
         xs.XShotOccurrenceModel.load(tmp_path / "xs_v1")
@@ -412,7 +413,7 @@ def test_metadata_records_pitch_and_platform(tmp_path):
 
     X, y = _toy_xy()
     m = xs.XShotOccurrenceModel().fit(X, y)
-    m.save(tmp_path / "v1")
+    with_toy_stoppage_provenance(m).save(tmp_path / "v1")
     meta = json.loads((tmp_path / "v1" / "metadata.json").read_text())
     assert meta["pitch_length"] == 105.0 and meta["pitch_width"] == 68.0
     for k in ("geometry_version", "xgboost_version", "training_platform"):
@@ -422,7 +423,7 @@ def test_metadata_records_pitch_and_platform(tmp_path):
 def test_load_raises_on_pitch_dimension_mismatch(tmp_path, monkeypatch):
     """M4: a rescale/unit change genuinely skews features -> fail closed, never warn."""
     X, y = _toy_xy()
-    xs.XShotOccurrenceModel().fit(X, y).save(tmp_path / "v1")
+    with_toy_stoppage_provenance(xs.XShotOccurrenceModel().fit(X, y)).save(tmp_path / "v1")
     monkeypatch.setattr(xs._geo, "PITCH_LENGTH", 100.0)
     with pytest.raises((xs.IntegrityError, ValueError)):
         xs.XShotOccurrenceModel.load(tmp_path / "v1")
@@ -438,7 +439,7 @@ def test_load_warns_on_geometry_version_only(tmp_path, monkeypatch):
     import warnings
 
     X, y = _toy_xy()
-    xs.XShotOccurrenceModel().fit(X, y).save(tmp_path / "v1")
+    with_toy_stoppage_provenance(xs.XShotOccurrenceModel().fit(X, y)).save(tmp_path / "v1")
     # MUST differ from the live constant, or this compares a value to itself and silently stops
     # testing. It said "goal-relative-2" until PR 5 bumped the library to exactly that.
     monkeypatch.setattr(xs._geo, "GEOMETRY_VERSION", _GEOMETRY_SENTINEL)
@@ -453,7 +454,7 @@ def test_from_variant_loads_bundled_dir(tmp_path, monkeypatch):
     root = tmp_path / "_xshot_weights"
     (root / "default").mkdir(parents=True)
     X, y = _toy_xy()
-    xs.XShotOccurrenceModel().fit(X, y).save(root / "default")
+    with_toy_stoppage_provenance(xs.XShotOccurrenceModel().fit(X, y)).save(root / "default")
     monkeypatch.setattr(xs, "_XSHOT_WEIGHTS_ROOT", root)
     monkeypatch.setattr(xs, "_VARIANT_CACHE", {})  # honour the temp root, not a cached instance
 
@@ -612,6 +613,7 @@ def _synthetic_match_frames(n_frames=20, game_id=1):
     return df
 
 
+@bundle_pinned("XShotOccurrenceModel")  # interim until the R-C3 retrain: the shipped bundle is refused
 def test_compute_xshot_model_none_uses_bundled_default():
     # PR-S80: weights now ship, so model=None resolves to the bundled "default" variant
     # (from_variant("default")) instead of raising. compute runs and adds the column.

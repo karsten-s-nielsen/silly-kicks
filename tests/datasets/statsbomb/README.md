@@ -11,9 +11,9 @@ the same ones measured during the luxury-lakehouse PR-LL2 boundary-
 metrics campaign that produced the empirical baselines published in
 `silly_kicks.spadl.add_possessions`'s docstring:
 
-- `7298.json` — Women's World Cup
-- `7584.json` — Champions League
-- `3754058.json` — Premier League
+- `7298.json` — Manchester City WFC 2-2 Chelsea FCW (FA Women's Super League; `matches/37/4.json`)
+- `7584.json` — Belgium 3-2 Japan (`matches/43/3.json`)
+- `3754058.json` — Leicester 0-0 Bournemouth (Premier League; `matches/2/27.json`)
 
 ## `three-sixty/` — SB360 freeze-frame slice
 

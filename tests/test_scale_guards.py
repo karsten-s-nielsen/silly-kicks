@@ -1044,6 +1044,7 @@ def test_elastic_align_is_subquadratic():
     import pandas as pd
 
     from silly_kicks.tracking import align_events_to_frames
+    from tests._stoppage_fixtures import mark_all_live
 
     def _fixture(n):
         n_frames = n * 10
@@ -1081,6 +1082,10 @@ def test_elastic_align_is_subquadratic():
                     }
                 )
         frames = pd.DataFrame(rows)
+        # TF-46 section 27.19: align_events_to_frames reads the dead-ball state. A non-observed provider needs
+        # a stoppage column; this all-live toy has no restart (mark_all_live).
+        frames["source_provider"] = "skillcorner"
+        frames = mark_all_live(frames)
         actions = pd.DataFrame(
             {
                 "action_id": range(n),

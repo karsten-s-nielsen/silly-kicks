@@ -33,6 +33,7 @@ from silly_kicks.id_compat import canonical_id, canonical_id_series, ids_equal, 
 from ..spadl import config as spadlconfig
 from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH, acting_team_attacks_rtl
 from ._off_ball_runs import _prepare_run_candidates
+from ._stoppages import has_stoppage_state
 from ._warnings import RunValueCoverageWarning
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -193,7 +194,11 @@ def detect_off_ball_runs(
 
     Candidacy is the SHARED TF-4/TF-35 predicate
     (:func:`silly_kicks.tracking._off_ball_runs._prepare_run_candidates`): same team
-    as the actor, not the actor, not a goalkeeper, positions present, ball alive. A
+    as the actor, not the actor, not a goalkeeper, positions present, ball alive. "Ball
+    alive" on a provider without an observed dead-ball state (SkillCorner, Gradient Sports,
+    Metrica) REQUIRES the ``stoppage_state`` column of
+    :func:`~silly_kicks.tracking.derive_stoppage_state` (else ``ValueError``); its dead and
+    UNKNOWN frames are not live (TF-46 Part 2 spec section 27.19). A
     candidate becomes a run when its first-to-last displacement clears
     ``min_displacement_m`` AND its peak speed clears ``min_peak_speed_ms``.
 
@@ -243,6 +248,9 @@ def detect_off_ball_runs(
         params = RunValuationParams()
     if len(actions) == 0 or len(frames) == 0:
         return _empty_runs()
+    # The dead-ball gate (TF-46 Part 2 spec section 27.19): a provider without an observed dead-ball state needs the
+    # derive_stoppage_state column (fail closed); the dead-ball tag and the candidacy read it first.
+    has_stoppage_state(frames, where="detect_off_ball_runs")
 
     records: list[dict] = []
     # ADR-068: build the per-game lookup ONCE instead of re-filtering `frames` per game (the lookup
@@ -260,12 +268,16 @@ def detect_off_ball_runs(
         # Dead-ball tagging must read the BALL rows, so it happens before they are dropped
         # (identical rule to the TF-4 kernel: the frame nearest the action clock decides).
         dead_actions: set = set()
-        if "ball_state" in game_frames.columns:
+        if "stoppage_state" in game_frames.columns or "ball_state" in game_frames.columns:
             ball_in_window = sliced[sliced["is_ball"].astype(bool)]
             if not ball_in_window.empty:
                 closest_idx = ball_in_window["time_offset_seconds"].abs().groupby(ball_in_window["action_id"]).idxmin()
                 closest = ball_in_window.loc[closest_idx]
-                dead_actions = set(closest.loc[closest["ball_state"] == "dead", "action_id"])
+                if "stoppage_state" in game_frames.columns:  # dead and UNKNOWN are not live (section 27.19)
+                    not_live = closest["stoppage_state"].astype(object).to_numpy() != "live"
+                else:
+                    not_live = (closest["ball_state"] == "dead").to_numpy()
+                dead_actions = set(closest.loc[not_live, "action_id"])
 
         sliced = sliced[~sliced["is_ball"].astype(bool)].copy()
         actor = game_actions[["action_id", "player_id", "team_id"]].rename(

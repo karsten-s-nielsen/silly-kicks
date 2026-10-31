@@ -26,6 +26,7 @@ from silly_kicks.tracking._xshot_occurrence import (
 from silly_kicks.tracking._xshot_occurrence import (
     _XSHOT_WEIGHTS_ROOT,
 )
+from tests._stoppage_fixtures import bundle_pinned
 
 
 @pytest.mark.parametrize("aliases", [XS_ALIASES, XC_ALIASES])
@@ -46,6 +47,7 @@ def test_bundled_default_declares_public_shipped_variant(root):
     assert meta["shipped_variant"] == "public"
 
 
+@bundle_pinned("XShotOccurrenceModel")  # interim until the R-C3 retrain: the shipped bundle is refused
 def test_xshot_public_and_default_return_the_same_bundled_object():
     from silly_kicks.tracking._xshot_occurrence import XShotOccurrenceModel
 
@@ -54,6 +56,7 @@ def test_xshot_public_and_default_return_the_same_bundled_object():
     assert a is b  # same cached bundled instance; NOT a Hub download
 
 
+@bundle_pinned("XCrossAttemptModel")  # interim until the R-C3 retrain: the shipped bundle is refused
 def test_xcross_public_and_default_return_the_same_bundled_object():
     from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
 
@@ -106,6 +109,7 @@ def test_from_variant_routes_each_hub_key_to_its_own_repo(monkeypatch, mod_name,
     assert captured == [mod._HUB_REPOS["sc_extended"], mod._HUB_REPOS["sc_extended_position_only"]]
 
 
+@bundle_pinned("XShotOccurrenceModel")  # interim until the R-C3 retrain: the shipped bundle is refused
 def test_publish_verify_only_is_feature_set_aware_for_a_position_only_artifact():
     """The publish verify-sample must match the artifact's feature_set (ADR-070): a hard-coded faithful
     (27-col) sample would raise an xgboost feature-count mismatch on the bundled position-only fit."""

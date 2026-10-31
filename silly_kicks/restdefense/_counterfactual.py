@@ -80,15 +80,22 @@ def _apply_domain(
     which: Literal["keeper", "rearguard"],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split frame keys into ``(eligible, dropped)`` per the spec domain, one row per frame on both
-    sides so they partition the input exactly (the conservation the report rests on)."""
+    sides so they partition the input exactly (the conservation the report rests on).
+
+    A provider without an observed dead-ball state (SkillCorner, Gradient Sports, Metrica) REQUIRES the
+    ``stoppage_state`` column of ``silly_kicks.tracking.derive_stoppage_state`` (else ``ValueError``); its dead and
+    UNKNOWN frames drop as ``ball_not_alive`` (TF-46 Part 2 spec section 27.19). IDSSE / Sportec without the column
+    keep the ``ball_state == "dead"`` test."""
+    from silly_kicks.tracking import has_stoppage_state  # the public seam, function-local
+
+    use_stoppage = has_stoppage_state(frames, where="restdefense domain")
     players = frames[~frames["is_ball"].astype(bool)]
     ball = frames[frames["is_ball"].astype(bool)]
 
     keys = frames[RD_FRAME_KEYS].drop_duplicates().sort_values(RD_FRAME_KEYS).reset_index(drop=True)
 
-    ball_slim = ball.drop_duplicates(subset=RD_FRAME_KEYS, keep="first")[[*RD_FRAME_KEYS, "x", "ball_state"]].rename(
-        columns={"x": "ball_x"}
-    )
+    ball_cols = [*RD_FRAME_KEYS, "x", "ball_state", *(["stoppage_state"] if use_stoppage else [])]
+    ball_slim = ball.drop_duplicates(subset=RD_FRAME_KEYS, keep="first")[ball_cols].rename(columns={"x": "ball_x"})
     work = keys.merge(ball_slim, on=RD_FRAME_KEYS, how="left")
 
     left, right = align_join_keys(work, carrier, list(RD_FRAME_KEYS))
@@ -112,7 +119,10 @@ def _apply_domain(
 
     advance = (work["ball_x"] - work["own_goal_x"]).abs()
     _mark(work["ball_state"].isna().to_numpy(), _DROP_BALL_MISSING)
-    _mark((work["ball_state"] == "dead").to_numpy(), _DROP_BALL_NOT_ALIVE)
+    if use_stoppage:
+        _mark((work["stoppage_state"].astype(object) != "live").to_numpy(), _DROP_BALL_NOT_ALIVE)
+    else:
+        _mark((work["ball_state"] == "dead").to_numpy(), _DROP_BALL_NOT_ALIVE)
     _mark(work["ball_x"].isna().to_numpy(), _DROP_BALL_COORDS)
     _mark(work["possession_team_id"].isna().to_numpy(), _DROP_NO_POSSESSION)
     _mark(work["own_goal_x"].isna().to_numpy(), _DROP_NO_GOAL_MAP)

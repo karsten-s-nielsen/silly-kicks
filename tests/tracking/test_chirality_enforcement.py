@@ -8,6 +8,7 @@ import pytest
 from silly_kicks.tracking import _xshot_occurrence as xs
 from silly_kicks.tracking._chirality import chirality_fingerprint, verify_chirality
 from silly_kicks.tracking._xshot_occurrence import IntegrityError
+from tests._stoppage_fixtures import with_toy_stoppage_provenance
 
 
 def test_chirality_fingerprint_raises_on_nonfinite():
@@ -60,7 +61,7 @@ def _toy_xs_model():
     rng = np.random.default_rng(0)
     X = pd.DataFrame(rng.normal(size=(400, 27)), columns=xs.XSHOT_FEATURE_NAMES_FAITHFUL)
     y = (X["r"] + rng.normal(scale=0.5, size=400) < 0).astype(int)
-    return xs.XShotOccurrenceModel().fit(X, pd.Series(y))
+    return with_toy_stoppage_provenance(xs.XShotOccurrenceModel().fit(X, pd.Series(y)))
 
 
 def _resum(d):
@@ -126,7 +127,7 @@ def _toy_xcross_model():
     rng = np.random.default_rng(0)
     X = pd.DataFrame(rng.normal(size=(200, 16)), columns=xc.XCROSS_FEATURE_NAMES_FAITHFUL)
     y = (X["gk_r"] + rng.normal(scale=0.5, size=200) > 0).astype(int).to_numpy()
-    return xc.XCrossAttemptModel().fit(X, pd.Series(y))
+    return with_toy_stoppage_provenance(xc.XCrossAttemptModel().fit(X, pd.Series(y)))
 
 
 def test_xcross_load_raises_on_chirality_output_mismatch(tmp_path):

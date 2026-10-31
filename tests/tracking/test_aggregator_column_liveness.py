@@ -28,10 +28,15 @@ import pytest
 import silly_kicks.tracking as tracking
 from silly_kicks.tracking import features as F
 from silly_kicks.tracking import link_actions_to_frames
+from tests._stoppage_fixtures import mark_all_live
 
 # ADR-041 opt-out: auto-enumerating gate: sweeps EVERY registered aggregator on defaults, so the OBSO family's
 # synthetic-EPV notice is expected and irrelevant here.
-pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning")
+# interim until the R-C3 retrain: the xS / xCross gates run on the shipped weights under legacy_override
+pytestmark = [
+    pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning"),
+    pytest.mark.usefixtures("legacy_xs_xc_bundles"),
+]
 
 # ---------------------------------------------------------------------------
 # Fixture: 5 action windows, each exercising a distinct feature domain.
@@ -120,7 +125,9 @@ def _frow(pid, team, gk, x, y, t, *, is_ball=False, vx=4.3, vy=0.0):
         # does NOT reject uniform "ltr" -- it raises only on a SINGLE team self-contradicting.)
         team_attacking_direction="ltr" if _is_home_team else "rtl",
         confidence=None,
-        visibility=None,
+        # GS is detection-aware (ADR-069 amended 2026-10-26): every present row is a DETECTED observation (a null
+        # flag would be a discarded one and fail loud); the ESTIMATED -> NaN gate has its own controlled tests.
+        visibility=True,
         source_provider="gradientsports",
         is_goalkeeper_source="native",
     )
@@ -218,7 +225,9 @@ def make_frames() -> pd.DataFrame:
     f = pd.DataFrame(rows)
     f["player_id"] = f["player_id"].astype("Int64")
     f["team_id"] = f["team_id"].astype("Int64")
-    return f
+    # TF-46 Part 2 section 27.19 (R-C2): Gradient Sports has no observed dead-ball state, so the ball_state readers
+    # need the stoppage column; the windows are sparse (5 frames each), so the test-only helper marks them live.
+    return mark_all_live(f)
 
 
 @functools.cache
@@ -379,7 +388,8 @@ def _run_elastic_sync():
                     "is_ball": False,
                 }
             )
-    frames = pd.DataFrame(rows)
+    # R-C2 gate (spec 27.19): an IDSSE-like optical feed without ball_state -> sportec (was no source_provider)
+    frames = pd.DataFrame(rows).assign(source_provider="sportec")
     actions = pd.DataFrame(
         {
             "action_id": [0, 1, 2],

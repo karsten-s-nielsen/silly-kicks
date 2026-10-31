@@ -760,7 +760,8 @@ def _tiny_poss_frames() -> pd.DataFrame:
                     "ball_state": "alive",
                 }
             )
-    return pd.DataFrame(rows)
+    # R-C2 gate (spec 27.19): an optical feed, no detection flag -> sportec (was no source_provider)
+    return pd.DataFrame(rows).assign(source_provider="sportec")
 
 
 def test_derive_team_in_possession_preserves_carrier_player_id():

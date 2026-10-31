@@ -56,13 +56,19 @@ def _metrics(tmp_path, trainer, data, base, arms_json: str) -> dict:
 
 @pytest.mark.slow
 @TRAINERS
-def test_public_run_records_ids_and_public_reproducibility(trainer, tmp_path):
+def test_public_run_records_a_digest_and_public_reproducibility(trainer, tmp_path):
+    """The in-job trainer is visibility-blind (ADR-123 Amendment B / adopt-for-refit Task 2): it stamps the
+    corpus-identity DIGEST unconditionally -- never the exact `corpus_match_ids`, even for an all-public arm.
+    The exact public ids are rehydrated OFF-HF at `adopt` (`rehydrate_public_corpus_ids`), not in the fit.
+    So the public/restricted difference is now ONLY `reproducibility` + `shipped_variant`, never the stamp
+    form -- this case and `test_restricted_run_records_a_digest_never_ids` both assert a digest."""
     from scripts._toy_corpora import xshot_arms
 
     data, base = _toy(tmp_path, trainer)
     metrics = _metrics(tmp_path, trainer, data, base, xshot_arms(data / "toy", paired=False))
     assert metrics["shipped_variant"] == "public"
-    assert metrics["corpus_match_ids"] == [list(k) for k in sorted(_keys(data))]
+    assert "corpus_match_ids" not in metrics  # visibility-blind: digest only, exact ids rehydrate at adopt
+    assert metrics["corpus_match_ids_sha256"] and metrics["corpus_n_matches"] == len(_keys(data))
     assert metrics["reproducibility"] == "public"
 
 

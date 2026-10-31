@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.restdefense._counterfactual import build_restdefense_ghost_frames
+from tests._stoppage_fixtures import mark_all_live
 from tests.tracking.test_ghost_gk import _fitted_model
 from tests.tracking.test_ghost_outfield_model import _fit_toy
 
@@ -54,7 +55,8 @@ def _committed_frame() -> pd.DataFrame:
         _r("a3", 2, 84, 48),
         _r("a4", 2, 86, 30),
     ]
-    return pd.DataFrame(rows)
+    # GS has no observed dead-ball state: the R-C2 reader gate needs the stoppage column (spec 27.19)
+    return mark_all_live(pd.DataFrame(rows))
 
 
 def test_pure_and_conserves():

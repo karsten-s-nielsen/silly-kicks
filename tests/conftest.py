@@ -50,3 +50,12 @@ def fitted_xt():
     xt = ExpectedThreat(l=16, w=12)
     xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
     return xt
+
+
+@pytest.fixture
+def legacy_xs_xc_bundles(monkeypatch):
+    """A property gate tests the shipped xS / xCross weights loaded under legacy_override until the R-C3 retrain
+    (owner decision 2026-10-26; tests/_stoppage_fixtures.legacy_bundles)."""
+    from tests._stoppage_fixtures import legacy_bundles
+
+    legacy_bundles(monkeypatch)

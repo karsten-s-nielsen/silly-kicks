@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 
 import silly_kicks.tracking as T
+from tests._stoppage_fixtures import REFUSED_UNTIL_RETRAIN, assert_bundle_refused, bundle_pinned
 
 _FRAME_GEOMETRY_MODELS = [
     "XShotOccurrenceModel",
@@ -33,6 +34,9 @@ def test_bundled_model_loads_on_unchanged_float64_probe(model_name):
     # load() runs verify_chirality + the feature-contract probe against the model's stored (float64,
     # commit-1-unchanged) probe. A raise here means a probe builder was routed through the float32
     # schema -- fix the builder to stay float64 until commit-2 casts it explicitly.
+    if model_name in REFUSED_UNTIL_RETRAIN:
+        assert_bundle_refused(model_name)  # TF-46 R-C3 interim; Task 8 removes this
+        return
     cls = getattr(T, model_name)
     model = cls.from_variant("default")
     assert model is not None
@@ -67,6 +71,7 @@ def _float32_canonical_frame() -> pd.DataFrame:
     return df
 
 
+@bundle_pinned("XShotOccurrenceModel")  # TF-46 R-C3 interim: the shipped bundle refuses to load; Task 8 removes this
 def test_bundled_xshot_finite_predicts_on_float32_frame():
     # A representative frame-geometry model serves finite output on a float32-stored frame (the other
     # models' float32-serve is covered by the model real-data suites).

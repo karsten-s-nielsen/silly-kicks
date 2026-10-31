@@ -54,6 +54,10 @@ def _decorate(
     out.loc[ball, "x"] = ball_xy[0]
     out.loc[ball, "y"] = ball_xy[1]
     out["ball_state"] = "alive"
+    # TF-46 Part 2 section 27.19 (R-C2): the dead-ball reader gate needs a classified provider. This fixture models an
+    # optical feed (every player, no detection flag) with an observed ball_state, so it is labelled sportec (was the
+    # unclassified "synthetic" of the shared builder).
+    out["source_provider"] = "sportec"
     out["team_in_possession"] = possession
     out["speed_source"] = "derived"  # velocity-informed (not the SB360 "unavailable" marker)
     out["speed"] = np.hypot(out["vx"].astype(float), out["vy"].astype(float))  # derive_velocities emits this

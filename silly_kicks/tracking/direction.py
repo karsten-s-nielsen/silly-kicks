@@ -172,6 +172,45 @@ def compute_attacking_direction(
     return out
 
 
+def _decide_ltr_flips(
+    *,
+    x_arr: np.ndarray,
+    period_arr: np.ndarray,
+    home_arr: np.ndarray,
+    player_arr: np.ndarray,
+    gk_arr: np.ndarray,
+) -> dict[int, bool | None]:
+    """Per-period geometric LTR flip decision (TF-46 Arm 1 Part 2, spec section 17.7 amendment).
+
+    PURE: no warnings, no mutation. Returns ``{period: True | False | None}`` in the same period order the
+    orienter iterates -- ``True`` = a GK anchor says the period is mis-oriented (flip it), ``False`` = a GK
+    anchor says it is already home-attacks-right, ``None`` = no GK anchor (the orienter warns and leaves the
+    period as-is). Period 5 (PSO) is always ``False`` (orientation undefined, never flipped). The anchor is the
+    home GK median x (fallback the away GK), exactly as the orienter decided inline before the split, so the
+    orienter's frame output stays byte-identical.
+    """
+
+    def _gk_median(mask: np.ndarray) -> float:
+        vals = x_arr[mask]
+        vals = vals[~np.isnan(vals)]
+        return float(np.median(vals)) if vals.size else float("nan")
+
+    flips: dict[int, bool | None] = {}
+    for period in pd.Series(period_arr[player_arr]).dropna().unique():
+        p = int(period)
+        if period not in _LTR_KNOWN_PERIODS:
+            flips[p] = False  # period 5 (PSO): orientation undefined -- never flip
+            continue
+        psel = player_arr & (period_arr == period)
+        home_gk_x = _gk_median(psel & home_arr & gk_arr)
+        if not np.isnan(home_gk_x):
+            flips[p] = bool(home_gk_x > _PITCH_MID_X)
+        else:
+            away_gk_x = _gk_median(psel & ~home_arr & gk_arr)
+            flips[p] = None if np.isnan(away_gk_x) else bool(away_gk_x < _PITCH_MID_X)
+    return flips
+
+
 def orient_frames_to_ltr_by_geometry(
     frames: pd.DataFrame,
     *,
@@ -239,6 +278,33 @@ def orient_frames_to_ltr_by_geometry(
         from silly_kicks.tracking.direction import orient_frames_to_ltr_by_geometry
         oriented = orient_frames_to_ltr_by_geometry(frames, home_team_id="Home")
     """
+    return _orient_frames_to_ltr_by_geometry(
+        frames,
+        home_team_id=home_team_id,
+        source=source,
+        game_id=game_id,
+        on_missing_home=on_missing_home,
+        copy=copy,
+        flips=None,
+        stacklevel=3,
+    )
+
+
+def _orient_frames_to_ltr_by_geometry(
+    frames: pd.DataFrame,
+    *,
+    home_team_id: Any,
+    source: str = "",
+    game_id: Any = None,
+    on_missing_home: Literal["raise", "warn"] = "raise",
+    copy: bool = True,
+    flips: dict[int, bool | None] | None,
+    stacklevel: int,
+) -> pd.DataFrame:
+    """The implementation behind :func:`orient_frames_to_ltr_by_geometry`. ``flips`` = a per-period decision
+    already made by the caller (``convert_to_frames`` records it on the report and threads it to the camera
+    footprint, so it is decided once); ``None`` decides here. ``stacklevel`` keeps every warning pointing at the
+    PUBLIC caller's line (Hyrum: lakehouse callers filter on it). Private: the public surface is unchanged."""
     required = {"x", "y", "team_id", "period_id", "is_ball", "is_goalkeeper"}
     missing = required - set(frames.columns)
     if missing:
@@ -259,38 +325,34 @@ def orient_frames_to_ltr_by_geometry(
         )
         if on_missing_home == "raise":
             raise ValueError(msg + " --- refusing to guess orientation.")
-        warnings.warn(msg + " --- orientation left as-is.", stacklevel=2)
+        warnings.warn(msg + " --- orientation left as-is.", stacklevel=stacklevel)
         return out
 
     x_arr = out["x"].to_numpy(dtype="float64")
     period_arr = out["period_id"].to_numpy()
-    home_arr = is_home.to_numpy(dtype=bool)
-    player_arr = is_player.to_numpy(dtype=bool)
-    gk_arr = is_gk.to_numpy(dtype=bool)
 
-    def _gk_median(mask: np.ndarray) -> float:
-        vals = x_arr[mask]
-        vals = vals[~np.isnan(vals)]
-        return float(np.median(vals)) if vals.size else float("nan")
+    # Decide the per-period flip ONCE (spec section 17.7 amendment, DL ruling). A caller that already decided
+    # (convert_to_frames, which records it on the report and threads it to the camera footprint) passes `flips`
+    # so the decision is not made twice; every other caller decides here. The decider is pure; the no-anchor
+    # warning stays HERE (`stacklevel` -> the public caller, unchanged -- Hyrum, the lakehouse callers).
+    if flips is None:
+        flips = _decide_ltr_flips(
+            x_arr=x_arr,
+            period_arr=period_arr,
+            home_arr=is_home.to_numpy(dtype=bool),
+            player_arr=is_player.to_numpy(dtype=bool),
+            gk_arr=is_gk.to_numpy(dtype=bool),
+        )
 
     has_vx, has_vy = "vx" in out.columns, "vy" in out.columns
-    for period in pd.Series(period_arr[player_arr]).dropna().unique():
-        if period not in _LTR_KNOWN_PERIODS:  # period 5 (PSO): orientation undefined --- never flip
+    for period, needs_flip in flips.items():
+        if needs_flip is None:
+            warnings.warn(
+                f"orient_frames_to_ltr_by_geometry: {source} game={game_id} period={period} "
+                "has no GK anchor (home or away) --- orientation left as-is for this period.",
+                stacklevel=stacklevel,
+            )
             continue
-        psel = player_arr & (period_arr == period)
-        home_gk_x = _gk_median(psel & home_arr & gk_arr)
-        if not np.isnan(home_gk_x):
-            needs_flip = home_gk_x > _PITCH_MID_X
-        else:
-            away_gk_x = _gk_median(psel & ~home_arr & gk_arr)
-            if np.isnan(away_gk_x):
-                warnings.warn(
-                    f"orient_frames_to_ltr_by_geometry: {source} game={game_id} period={period} "
-                    "has no GK anchor (home or away) --- orientation left as-is for this period.",
-                    stacklevel=2,
-                )
-                continue
-            needs_flip = away_gk_x < _PITCH_MID_X
         if needs_flip:
             fmask = period_arr == period
             # F1b (ADR-106): coords are float32; store the flipped float64 result back at the column's

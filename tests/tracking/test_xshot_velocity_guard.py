@@ -61,6 +61,7 @@ def test_undeclared_missing_velocity_raises_naming_remedy():
         xs.compute_xshot_occurrence(frames, model=None, home_team_id=1)
 
 
+@pytest.mark.usefixtures("legacy_xs_xc_bundles")  # interim until the R-C3 retrain (legacy_override weights)
 def test_velocity_bearing_frame_is_scored_not_nan():
     # NON-VACUITY for the declared-NaN test: the SAME scoring context WITH velocity scores finite,
     # so the NaN above is SUPPRESSION, not "nothing scores here".

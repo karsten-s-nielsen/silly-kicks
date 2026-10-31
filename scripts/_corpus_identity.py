@@ -22,6 +22,22 @@ import json
 _CONVERTER_TO_IDENTITY = {"sportec": "idsse"}
 
 
+def _invert_injective(mapping: dict[str, str]) -> dict[str, str]:
+    """Invert a 1:1 ``mapping``; raise ``ValueError`` if two keys share a value (no well-defined inverse)."""
+    inverse = {v: k for k, v in mapping.items()}
+    if len(inverse) != len(mapping):  # two converters on one identity = no inverse
+        raise ValueError(f"mapping is not injective, cannot invert: {mapping}")
+    return inverse
+
+
+#: The inverse: dataset IDENTITY -> SPADL converter / in-job ``source_provider``. The launcher arm policy
+#: builds its arm keys from the staged shard stems, which carry the identity name (e.g. ``idsse``), but the
+#: in-job ``match_key`` uses the frames' ``source_provider`` (the converter, e.g. ``sportec``). Mapping the
+#: stem identity back to its converter makes the emitted arm key EQUAL the in-job key for a
+#: converter!=identity provider -- else ``np.isin`` misses those rows and they drop from the arm. 1:1 today.
+_IDENTITY_TO_CONVERTER = _invert_injective(_CONVERTER_TO_IDENTITY)
+
+
 def canonical_providers(providers) -> list[str]:
     """Sorted unique provider IDENTITIES for an artifact's ``provider_list`` (converter names normalised,
     e.g. ``sportec`` -> ``idsse``) -- the stable vocabulary the metadata test, model cards and consumers

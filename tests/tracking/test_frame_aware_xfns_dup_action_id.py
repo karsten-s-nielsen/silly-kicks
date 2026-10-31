@@ -20,7 +20,11 @@ from tests.tracking.test_defensive_line import _make_frame_rows
 
 # ADR-041 opt-out: auto-enumerating gate: sweeps EVERY registered aggregator on defaults, so the OBSO family's
 # synthetic-EPV notice is expected and irrelevant here.
-pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning")
+# interim until the R-C3 retrain: the xS / xCross gates run on the shipped weights under legacy_override
+pytestmark = [
+    pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning"),
+    pytest.mark.usefixtures("legacy_xs_xc_bundles"),
+]
 
 
 def _xt():

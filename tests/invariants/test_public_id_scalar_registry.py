@@ -203,8 +203,14 @@ def _has_live_value(obj) -> bool:
 
 
 @pytest.mark.parametrize("entry", PUBLIC_ID_SCALAR_ENTRIES, ids=lambda e: e.key)
-def test_public_id_scalar_is_dtype_invariant(entry):
+def test_public_id_scalar_is_dtype_invariant(entry, request):
     """A value-equal id scalar of a different dtype must not change the answer."""
+    if "xshot" in entry.key or "xcross" in entry.key:
+        # TF-46 R-C3 interim (owner decision 2026-10-26): the xS / xCross entries that score load the shipped
+        # bundle, which refuses to load without stoppage provenance; load the real weights under
+        # legacy_override. Harmless for the extract / prepare entries (they touch no bundle cache). Task 8
+        # removes this once the refit bundle loads clean.
+        request.getfixturevalue("legacy_xs_xc_bundles")
     matched = entry.invoke(entry.matched)
     mismatched = entry.invoke(entry.mismatched)
 

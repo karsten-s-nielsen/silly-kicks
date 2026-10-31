@@ -111,7 +111,12 @@ def xcross_behind_line_match():
                 )
             )
     frames = pd.DataFrame(rows)
-    frames["source_provider"] = "test"
+    # TF-46 section 27.19: prepare_xcross_training_data reads the dead-ball state. Declare a real non-observed
+    # provider (was "test", unclassified) and mark the all-live toy (no restart) via mark_all_live.
+    from tests._stoppage_fixtures import mark_all_live
+
+    frames["source_provider"] = "skillcorner"
+    frames = mark_all_live(frames)
     actions = pd.DataFrame(
         {
             "game_id": ["g"],

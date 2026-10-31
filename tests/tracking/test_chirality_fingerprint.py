@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks.tracking._chirality import canonical_probe_frame, chirality_fingerprint
+from tests._stoppage_fixtures import with_toy_stoppage_provenance
 from tests.tracking._probe_fixtures import planted_model
 
 
@@ -65,7 +66,7 @@ def test_chirality_block_roundtrips_for_xshot(tmp_path):
         columns=xs.XSHOT_FEATURE_NAMES_FAITHFUL,
     )
     y = (X["r"] + rng.normal(scale=0.5, size=200) < 0).astype(int)
-    model = xs.XShotOccurrenceModel().fit(X, pd.Series(y))
+    model = with_toy_stoppage_provenance(xs.XShotOccurrenceModel().fit(X, pd.Series(y)))
     model.save(tmp_path / "xs")
 
     meta = json.loads((tmp_path / "xs" / "metadata.json").read_text())
@@ -85,7 +86,7 @@ def test_chirality_block_roundtrips_for_xcross(tmp_path):
     rng = np.random.default_rng(0)
     X = pd.DataFrame(rng.normal(size=(200, 16)), columns=xc.XCROSS_FEATURE_NAMES_FAITHFUL)
     y = (X["gk_r"] + rng.normal(scale=0.5, size=200) > 0).astype(int)
-    model = xc.XCrossAttemptModel().fit(X, pd.Series(y))
+    model = with_toy_stoppage_provenance(xc.XCrossAttemptModel().fit(X, pd.Series(y)))
     model.save(tmp_path / "xc")
 
     meta = json.loads((tmp_path / "xc" / "metadata.json").read_text())

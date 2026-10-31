@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from silly_kicks.id_compat import ids_match
 
@@ -106,7 +107,7 @@ _PRE_SHOT_GK_COLS = (
 )
 
 
-def _pre_shot_fixture() -> tuple[pd.DataFrame, pd.DataFrame]:
+def _pre_shot_fixture(provider: str = "skillcorner") -> tuple[pd.DataFrame, pd.DataFrame]:
     """1 shot at (90,34), defending GK (team 2, player 99) at (104,34) in the linked frame -- the
     known-numeric geometry of ``test_features_standard.shot_actions_and_frames_with_gk``, tagged for
     the detection-aware provider."""
@@ -148,7 +149,7 @@ def _pre_shot_fixture() -> tuple[pd.DataFrame, pd.DataFrame]:
             team_attacking_direction="ltr",
             confidence=None,
             visibility=True,
-            source_provider="skillcorner",
+            source_provider=provider,
         )
 
     frames = pd.DataFrame(
@@ -161,10 +162,13 @@ def _pre_shot_fixture() -> tuple[pd.DataFrame, pd.DataFrame]:
     return actions, frames
 
 
-def test_pre_shot_gk_position_nan_when_defending_keeper_undetected():
+@pytest.mark.parametrize("provider", ["skillcorner", "gradientsports"])
+def test_pre_shot_gk_position_nan_when_defending_keeper_undetected(provider):
+    # G (2026-10-26) / G7 trace ruling D: GS is detection-aware, so an ESTIMATED GS keeper (visibility False after the
+    # adapter's visibility_native mapping) leaves the TF-64 gate exactly as an undetected SkillCorner keeper does
     from silly_kicks.tracking.features import add_pre_shot_gk_position
 
-    actions, frames = _pre_shot_fixture()
+    actions, frames = _pre_shot_fixture(provider)
 
     obs = add_pre_shot_gk_position(actions, frames)
     assert np.isfinite(obs["pre_shot_gk_x"].iloc[0]), "observed keeper must yield a numeric position"

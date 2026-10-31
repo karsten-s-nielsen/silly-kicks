@@ -224,18 +224,29 @@ def _apply_domain(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split the frame keys into ``(eligible, dropped)`` per the spec §4.1 domain.
 
+    A frame whose ball is not alive drops (``ball_not_alive``). A provider without an observed dead-ball state
+    (SkillCorner, Gradient Sports, Metrica) REQUIRES the ``stoppage_state`` column of
+    ``silly_kicks.tracking.derive_stoppage_state`` (else ``ValueError``); its dead and UNKNOWN frames drop (TF-46
+    Part 2 spec section 27.19). IDSSE / Sportec without the column keep the ``ball_state`` test.
+
     Returns one row per ``(game_id, period_id, frame_id)`` on BOTH sides, so the two
     partition the input exactly -- that conservation is what makes the drop accounting
     trustworthy. ``eligible`` carries the pinned per-frame context (possession team,
     defending team, both goal ends) so nothing downstream re-derives it.
     """
+    # The dead-ball domain (TF-46 Part 2 spec section 27.19): a provider without an observed dead-ball state needs the
+    # derive_stoppage_state column (fail closed); it then decides "not alive" (dead and UNKNOWN frames drop).
+    from silly_kicks.tracking import has_stoppage_state  # the public seam, function-local (gkdv's import rule)
+
+    use_stoppage = has_stoppage_state(frames, where="gkdv domain")
     players = frames[~frames["is_ball"].astype(bool)]
     ball = frames[frames["is_ball"].astype(bool)]
 
     keys = frames[_FRAME_KEYS].drop_duplicates().sort_values(_FRAME_KEYS).reset_index(drop=True)
 
     # --- ball facts -------------------------------------------------------------------
-    ball_slim = ball.drop_duplicates(subset=_FRAME_KEYS, keep="first")[[*_FRAME_KEYS, "x", "y", "ball_state"]].rename(
+    ball_cols = [*_FRAME_KEYS, "x", "y", "ball_state", *(["stoppage_state"] if use_stoppage else [])]
+    ball_slim = ball.drop_duplicates(subset=_FRAME_KEYS, keep="first")[ball_cols].rename(
         columns={"x": "ball_x", "y": "ball_y"}
     )
     work = keys.merge(ball_slim, on=_FRAME_KEYS, how="left")
@@ -346,7 +357,10 @@ def _apply_domain(
         reason.loc[reason.isna() & pd.Series(mask, index=work.index)] = why
 
     _mark(work["ball_state"].isna().to_numpy(), _DROP_BALL_MISSING)
-    _mark((work["ball_state"] != "alive").to_numpy(), _DROP_BALL_NOT_ALIVE)
+    if use_stoppage:
+        _mark((work["stoppage_state"].astype(object) != "live").to_numpy(), _DROP_BALL_NOT_ALIVE)
+    else:
+        _mark((work["ball_state"] != "alive").to_numpy(), _DROP_BALL_NOT_ALIVE)
     _mark((work["ball_x"].isna() | work["ball_y"].isna()).to_numpy(), _DROP_BALL_COORDS)
     _mark(work["possession_team_id"].isna().to_numpy(), _DROP_NO_POSSESSION)
     _mark((work["n_defending"] != 1).to_numpy(), _DROP_NO_DEFENDING_TEAM)

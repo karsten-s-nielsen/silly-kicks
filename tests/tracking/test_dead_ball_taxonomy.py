@@ -12,14 +12,17 @@ from silly_kicks.tracking._provider_visibility import (
 
 
 def test_observed_members():
-    assert _DEAD_BALL_OBSERVED_PROVIDERS == frozenset({"sportec", "idsse", "gradientsports"})
+    # ADR-069 amended 2026-10-26 (TF-46 Part 2 section 27.15 G4): Gradient Sports left the set (its loader writes a
+    # constant "alive"; the schema has no null value)
+    assert _DEAD_BALL_OBSERVED_PROVIDERS == frozenset({"sportec", "idsse"})
     for p in _DEAD_BALL_OBSERVED_PROVIDERS:
         assert dead_ball_observed(p) is True
 
 
-def test_skillcorner_and_metrica_unobserved():
+def test_skillcorner_metrica_and_gradientsports_unobserved():
     assert dead_ball_observed("skillcorner") is False
     assert dead_ball_observed("metrica") is False
+    assert dead_ball_observed("gradientsports") is False
 
 
 def test_unclassified_provider_raises():

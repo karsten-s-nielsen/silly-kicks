@@ -121,6 +121,7 @@ def register() -> None:
             "shot_crossing_source": "exempt",
             "shot_fit_end_reason": "exempt",
             "shot_z_profile": "exempt",
+            "shot_z_source": "exempt",
             **dict.fromkeys(_PROVENANCE, "exempt"),
         },
         tol=1e-9,
@@ -139,6 +140,7 @@ def register() -> None:
             "shot_crossing_source": "string provenance vocabulary, not geometry",
             "shot_fit_end_reason": "string provenance vocabulary, not geometry",
             "shot_z_profile": "string provenance vocabulary (rolling/airborne/bounced), not geometry",
+            "shot_z_source": "string provenance vocabulary (measured/estimated/absent), not geometry",
             **dict.fromkeys(_PROVENANCE, _PROVENANCE_REASON),
         },
     )

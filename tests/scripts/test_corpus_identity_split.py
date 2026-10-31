@@ -38,3 +38,17 @@ def test_canonical_providers_normalizes_converter_to_identity():
     assert canonical_providers(["sportec", "skillcorner", "skillcorner", "sportec"]) == ["idsse", "skillcorner"]
     assert canonical_providers(["skillcorner"]) == ["skillcorner"]
     assert canonical_providers(["sportec"]) == ["idsse"]
+
+
+def test_invert_injective_builds_the_inverse_and_refuses_a_collision():
+    # B27(a): _IDENTITY_TO_CONVERTER is the inverse of _CONVERTER_TO_IDENTITY; a two-converters-on-one-identity
+    # map has no well-defined inverse and must raise at build time, else the arm key for the losing converter
+    # would silently resolve to the wrong in-job match key (the DFL-drop class).
+    import pytest
+
+    from scripts._corpus_identity import _CONVERTER_TO_IDENTITY, _IDENTITY_TO_CONVERTER, _invert_injective
+
+    assert _invert_injective({"sportec": "idsse"}) == {"idsse": "sportec"}
+    assert _IDENTITY_TO_CONVERTER == {v: k for k, v in _CONVERTER_TO_IDENTITY.items()}
+    with pytest.raises(ValueError, match="not injective"):
+        _invert_injective({"sportec": "idsse", "wyscout": "idsse"})  # two converters -> one identity

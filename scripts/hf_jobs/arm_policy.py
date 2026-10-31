@@ -10,7 +10,8 @@ only; the EMITTED keys are always the in-job dataset keys (reviewer HVB-SPEC-01 
 The emitted key must EQUAL the in-job ``arms.match_key(source_provider, game_dir.name)``. For the
 owner_pergame trainers (xshot/xcross) the job ``repackage``s the flat corpus into ``{provider}-{game}``
 per-game dirs (no ``__`` -- the driver key separator), so the in-job key is
-``{provider}__{provider}-{game}``, derived here from each flat shard stem ``{provider}__{game}``.
+``{source_provider}__{provider}-{game}``: the frames' SPADL converter first, then the identity-named per-game
+dir. It is derived here from each flat shard stem ``{provider}__{game}`` (``_injob_key``).
 
 This module is imported ONLY on the local launcher; it never runs in-job (the job receives
 ``/tmp/arms.json`` as pre-written data). It is deliberately NOT in any trainer's import closure.
@@ -24,7 +25,7 @@ from scripts._corpus import PUBLIC_CORPUS
 
 # Single-sourced in the neutral provenance module (the in-job trainers normalise provider_list with the
 # same map; _corpus_identity must stay I1-clean, so the map lives there, not here).
-from scripts._corpus_identity import _CONVERTER_TO_IDENTITY
+from scripts._corpus_identity import _CONVERTER_TO_IDENTITY, _IDENTITY_TO_CONVERTER
 
 
 def _is_public(provider: str, game: str) -> bool:
@@ -33,8 +34,16 @@ def _is_public(provider: str, game: str) -> bool:
 
 
 def _injob_key(provider: str, game: str) -> str:
-    """The key the owner_pergame trainer computes: ``match_key(source_provider, "{provider}-{game}")``."""
-    return f"{provider}__{provider}-{game}"
+    """The key the owner_pergame trainer computes: ``match_key(source_provider, "{provider}-{game}")``.
+
+    The staged shard stem carries the dataset IDENTITY (e.g. ``idsse``) in ``provider``, and the repackaged
+    per-game dir is ``{provider}-{game}`` (identity-named). But the in-job frames carry the SPADL converter
+    ``source_provider`` (e.g. ``sportec``), which is the FIRST component of the in-job ``match_key``. So map
+    the stem identity back to its converter for the first component -- else, for a converter!=identity
+    provider (idsse/sportec), the emitted key ``idsse__idsse-...`` misses the in-job key ``sportec__idsse-...``
+    and every DFL row drops from the public arm (the HVB-SPEC-01 class of bug; the first bug, re-surfaced)."""
+    source_provider = _IDENTITY_TO_CONVERTER.get(provider, provider)
+    return f"{source_provider}__{provider}-{game}"
 
 
 def compute_arms(flat_stems: Sequence[str]) -> dict:

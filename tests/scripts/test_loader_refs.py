@@ -87,6 +87,7 @@ def test_load_match_raises_matchexcluded_with_both_rates_on_the_s1_gate(monkeypa
         cache_dir=None,
         events_only=False,
         with_velocity=True,
+        stoppage=False,
     ):
         return "act", "frm", "home", None, _Report(excluded=True, reason="player off-pitch 0.341 > 0.005")
 
@@ -110,6 +111,7 @@ def test_load_match_returns_a_seven_field_loaded_match(monkeypatch):
         cache_dir=None,
         events_only=False,
         with_velocity=True,
+        stoppage=False,
     ):
         return "act", "frm", "home", "va", _Report(excluded=False)
 
@@ -157,6 +159,7 @@ def _install_parity_network(monkeypatch):
         cache_dir=None,
         events_only=False,
         with_velocity=True,
+        stoppage=False,
     ):
         rep = _Rep(excluded=(match_id == "bad")) if provider == "skillcorner" else None
         return f"act-{match_id}", f"frm-{match_id}", f"home-{match_id}", f"va-{match_id}", rep

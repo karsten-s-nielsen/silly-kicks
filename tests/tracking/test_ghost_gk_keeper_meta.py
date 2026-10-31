@@ -24,9 +24,12 @@ def test_detection_aware_provider_keeps_only_detected_keepers():
 
 
 def test_fully_observed_provider_keeps_everything():
-    """GS/IDSSE are full-pitch products: every player is observed, and no flag exists."""
-    mask = keeper_detection_mask(pd.Series([None, None]), provider="gradientsports")
+    """IDSSE is a full-pitch optical product: every player is observed, and no flag exists. (GS is broadcast-derived
+    and detection-aware since ADR-069's 2026-10-26 amendment: its ESTIMATED keepers are dropped.)"""
+    mask = keeper_detection_mask(pd.Series([None, None]), provider="idsse")
     assert list(mask) == [True, True]
+    gs = keeper_detection_mask(pd.Series([True, False]), provider="gradientsports")
+    assert list(gs) == [True, False]
 
 
 def test_unknown_provider_RAISES():
