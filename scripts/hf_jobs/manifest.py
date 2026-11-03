@@ -62,6 +62,10 @@ class Artifact:
     hub_class: str | None = None
     hub_role: str | None = None
     expect: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    #: The committed record of a wheel artifact's out-of-fold metrics when the bundle ships no
+    #: ``metrics.json`` (HFU spec 14.4): ``"<repo path>"`` (the whole JSON file) or
+    #: ``"<repo path>:<dotted key>"`` (an object inside it). Read only by public CV parity.
+    cv_reference: str | None = None
 
     @property
     def kind(self) -> str:

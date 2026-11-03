@@ -41,10 +41,10 @@ def test_build_eval_is_fail_loud_without_data(monkeypatch):
 
     monkeypatch.setattr(hh, "_require_statsbombpy", _unreachable)
     with pytest.raises(EvalDataUnavailableError):
-        build_eval("win_probability", None)
+        build_eval("win_probability", None, certification="public")
     # Owner trainer with no staged corpus -> raise (deterministic, offline).
     with pytest.raises(EvalDataUnavailableError):
-        build_eval("ghost_gk", None)
+        build_eval("ghost_gk", None, certification="owner")
 
 
 def test_cli_e2e_writes_pair_plus_stamp_and_floor_admits(tmp_path, monkeypatch):
@@ -61,7 +61,7 @@ def test_cli_e2e_writes_pair_plus_stamp_and_floor_admits(tmp_path, monkeypatch):
     monkeypatch.setattr(
         headtohead,
         "build_eval",
-        lambda name, corpus_dir, *, feature_set="faithful": synthetic_bundle(name, pathlib.Path(committed)),
+        lambda name, corpus_dir, **_kw: synthetic_bundle(name, pathlib.Path(committed)),
     )
     mj = tmp_path / "metrics.json"
     monkeypatch.setattr(
@@ -76,6 +76,8 @@ def test_cli_e2e_writes_pair_plus_stamp_and_floor_admits(tmp_path, monkeypatch):
             committed,
             "--metrics-json",
             str(mj),
+            "--certification",
+            "public",
         ],
     )
     headtohead.main()
@@ -89,3 +91,28 @@ def test_cli_e2e_writes_pair_plus_stamp_and_floor_admits(tmp_path, monkeypatch):
 def test_stamp_has_platform_and_versions():
     s = stamp()
     assert "training_platform" in s and "sklearn_version" in s
+
+
+def test_flat_tc3_public_eval_reads_eval_rows(tmp_path, monkeypatch):
+    """HFU spec 14.4: an xshot/xcross public head-to-head scores the extract rows of the run itself
+    (``--eval-rows``): no corpus directory, no re-extraction."""
+    import numpy as np
+    import pandas as pd
+
+    from scripts.hf_jobs import headtohead as H
+    from scripts.train_xshot_occurrence import _feature_names
+
+    names = _feature_names("position_only")
+    rows = pd.DataFrame({n: np.arange(3, dtype=float) for n in names}).assign(_y=[0, 1, 0], _group=["g1", "g1", "g2"])
+    path = tmp_path / "rows.parquet"
+    rows.to_parquet(path)
+
+    def _no_corpus(*_a, **_k):
+        raise AssertionError("no corpus read")
+
+    monkeypatch.setattr(H, "_owner_shards", _no_corpus)
+    b = H.build_eval("xshot_occurrence", None, certification="public", eval_rows=path, feature_set="position_only")
+    assert list(b["features"].columns) == names
+    assert b["y"].tolist() == [0, 1, 0] and b["groups"].tolist() == ["g1", "g1", "g2"]
+    with pytest.raises(H.EvalDataUnavailableError):
+        H.build_eval("xshot_occurrence", None, certification="public", eval_rows=None)

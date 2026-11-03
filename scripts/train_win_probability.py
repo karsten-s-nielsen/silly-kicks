@@ -29,15 +29,16 @@ Usage (StatsBomb credentials UNSET so open-data mode is used):
 
 from __future__ import annotations
 
-import dataclasses
 import json
+import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
-from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, main
+from scripts import _open_data_stages as od
+from scripts._stages import FileSet, ItemStage, Pipeline, Stage, main
 
 _SHOT_IDS = [spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")]
 _SUCCESS = spadlconfig.result_id["success"]
@@ -185,11 +186,14 @@ def calibration_metrics(pooled: pd.DataFrame, games: pd.DataFrame, params) -> di
     if n_splits < 2:
         return {"ece": float("nan"), "reliability_slope": float("nan"), "brier": float("nan"), "n_oof": 0}
 
+    from scripts._study_shared import print_fold
+
     preds: list[float] = []
     targets: list[float] = []
     gkf = GroupKFold(n_splits=n_splits)
     idx = np.arange(len(pooled))
-    for tr, te in gkf.split(idx, groups=groups):
+    t0 = time.monotonic()
+    for k, (tr, te) in enumerate(gkf.split(idx, groups=groups), start=1):
         train_games = set(pd.unique(pooled.iloc[tr]["game_id"]))
         tr_pool = pooled[pooled["game_id"].isin(train_games)]
         m = WinProbabilityModel(params=params).fit(tr_pool, games=games, strength_column="base_strength")
@@ -200,6 +204,7 @@ def calibration_metrics(pooled: pd.DataFrame, games: pd.DataFrame, params) -> di
         for gid, t, pw in zip(s["game_id"], s["team_id"], s["p_win"], strict=False):
             preds.append(float(pw))
             targets.append(win.get((gid, t), 0.0))
+        print_fold("win_probability", k, n_splits, t0)
 
     p = np.asarray(preds)
     y = np.asarray(targets)
@@ -245,58 +250,9 @@ Dixon & Robinson (1998); Robberechts, Van Haaren & Davis (2019) -- see NOTICE.
 """
 
 
-_DEFAULT_COMPETITION_ID = 43
-_DEFAULT_SEASON_ID = 106
-
-_PARAMS = (
-    Param("dataset", str, "sb_open", help="declared dataset name (scripts/hf_jobs/datasets.toml)"),
-    Param("all_competitions", flag=True, help="full public open-data corpus (every release)"),
-    Param("competition_id", int, None, help="open-data competition (default 43 = World Cup)"),
-    Param("season_id", int, None, help="open-data season (default 106 = 2022)"),
-    Param("max_matches", int, None, help="cap the number of matches"),
-    Param("cache_dir", str, None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"),
-)
-
-
-def _competitions(params) -> list[tuple[int, int]]:
-    import scripts._sb_open_data as sbod
-
-    if params["all_competitions"] and (params["competition_id"] is not None or params["season_id"] is not None):
-        raise ValueError("--all-competitions is mutually exclusive with --competition-id/--season-id")
-    sbod.assert_statsbomb_open_data_mode()
-    if params["all_competitions"]:
-        return [(int(c[0]), int(c[1])) for c in sbod.all_open_competitions()]
-    return [
-        (
-            _DEFAULT_COMPETITION_ID if params["competition_id"] is None else params["competition_id"],
-            _DEFAULT_SEASON_ID if params["season_id"] is None else params["season_id"],
-        )
-    ]
-
-
-def _refs_work(key, ctx) -> dict:
-    """The competition set + every match reference, as one JSON unit (the legacy listing: ``:259-291`` at
-    ``cd2ebcb``)."""
-    import scripts._sb_open_data as sbod
-
-    comps = _competitions(ctx.params)
-    refs = sbod.list_open_data_refs(comps, max_matches=ctx.params["max_matches"])
-    return {"competitions": [list(c) for c in sorted(comps)], "refs": [dataclasses.asdict(r) for r in refs]}
-
-
-def _extract_refs(ctx):
-    from scripts._sb_open_data import OpenDataRef
-
-    return [OpenDataRef(**d) for d in ctx.upstream("refs")["refs"]]
-
-
 def _load_match(ref, ctx):
-    """Resume-before-download: the executor calls this only for a pending unit (ADR-052 D14)."""
-    from scripts._driver_sources import resolve_cache_dir
-    from scripts._sb_open_data import assert_statsbomb_open_data_mode, load_open_data_match
-
-    assert_statsbomb_open_data_mode()  # pins the revision in THIS worker process (decision P6)
-    return load_open_data_match(ref, cache_dir=resolve_cache_dir(ctx.params["cache_dir"])), ref.match_date
+    """The shared loader, plus the match date the shard needs (resume-before-download, ADR-052 D14)."""
+    return od.load_open_match(ref, ctx), ref.match_date
 
 
 def _extract_work(item, ctx):
@@ -315,6 +271,7 @@ def _extract_reduce(results, ctx):
 def _fit_work(key, ctx) -> FileSet:
     import tempfile
 
+    from scripts._corpus_identity import open_data_identity
     from silly_kicks.win_probability import WinProbabilityModel, WinProbabilityParams
 
     pooled = ctx.upstream("extract")
@@ -352,16 +309,6 @@ def _fit_work(key, ctx) -> FileSet:
     model_expected_goals = expected_total_goals(hz_home, hz_away, n_intervals=n_int, K=params.lattice_pad)
 
     prov = ctx.prov
-    summary = ctx.summary("extract")
-    # Decision P4 (ADR-128): CORPUS-scoped counters (the values a single fresh serial pass reports), never
-    # pass-scoped ones, so resume history cannot change metrics.json (INV-1). `generation` is the token.
-    pass_fields = {
-        "generation": ctx.tokens["extract"],
-        "n_attempted": summary["n_units"],
-        "n_failed": summary["n_failed"],
-        "n_counters_unrecorded": 0,
-        "n_excluded": summary["n_excluded"],
-    }
     out = {
         **metrics,
         "corpus_goals_per_match": corpus_goals_per_match,
@@ -371,10 +318,12 @@ def _fit_work(key, ctx) -> FileSet:
         "n_action_rows": len(pooled),
         "n_competitions": len(comps),
         "competitions": [list(c) for c in sorted(comps)],
+        # The corpus identity verify compares with the lock (HFU spec 14.3): the listed refs.
+        **open_data_identity([r["match_id"] for r in ctx.upstream("refs")["refs"]]),
         "training_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
         "run_tree_state": prov.get("tree_state"),
-        **pass_fields,
+        **od.pass_fields(ctx),
     }
     # metrics.json ships INSIDE the bundle (test_bundled's calibration + expected-goals gates read it from
     # the shipped artifact).
@@ -392,20 +341,20 @@ def _fit_work(key, ctx) -> FileSet:
 PIPELINE = Pipeline(
     name="win_probability",
     module="scripts.train_win_probability",
-    params=_PARAMS,
+    params=od.PARAMS,
     stages=(
         Stage(
             name="refs",
             units=lambda ctx: ["only"],
-            work=_refs_work,
+            work=od.refs_work,
             reduce=lambda r, ctx: r["only"],
-            params=("all_competitions", "competition_id", "season_id", "max_matches"),
+            params=od.REFS_PARAMS,
             uses_dataset=True,
             dataset_files=lambda ctx: (),  # open data over HTTP: no dataset file
         ),
         ItemStage(
             name="extract",
-            refs=_extract_refs,
+            refs=od.extract_refs,
             key=lambda ref: ref.key,
             load=_load_match,
             work=_extract_work,

@@ -61,13 +61,24 @@ def corpus_identity(providers, match_ids, *, all_public: bool) -> dict:
     """The corpus identity an artifact may record: the exact ids for an all-public corpus, else a digest.
 
     Hub publishes copy ``metrics.json``, so an owner/NDA id must never appear in one; the digest still
-    lets two artifacts be proven to share (or not share) a corpus.
+    lets two artifacts be proven to share (or not share) a corpus. The in-job trainers always pass
+    ``all_public=False`` (HFU spec 17.2, owner 2026-11-09: digest only; gated by
+    ``test_in_job_trainers_record_the_corpus_digest``): the canonical public ids come only from
+    ``_corpus.rehydrate_public_corpus_ids`` at adoption. Do not re-wire the ``all_public=True`` branch into a trainer.
     """
     pairs = match_id_pairs(providers, match_ids)
     if all_public and pairs:
         return {"corpus_match_ids": pairs}
     digest = hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode("utf-8")).hexdigest()
     return {"corpus_match_ids_sha256": digest, "corpus_n_matches": len(pairs)}
+
+
+def open_data_identity(match_ids) -> dict:
+    """The corpus identity of a StatsBomb open-data corpus: the digest over its ``("statsbomb", match_id)``
+    pairs. ONE function for the lock (``sb_open.identity.open``) and every event-only trainer, so verify
+    compares two strings (HFU spec 14.3)."""
+    ids = [str(m) for m in match_ids]
+    return corpus_identity(["statsbomb"] * len(ids), ids, all_public=False)
 
 
 def reproducibility(shipped: str, providers, *, training_commit: str | None = None) -> dict:

@@ -46,38 +46,46 @@ def _pinned(params: dict) -> dict:
     return base
 
 
-def _cv_logloss(X, y, groups, params) -> tuple[float, float, float]:
-    """Label-stratified, match-grouped CV -> (mean log-loss, mean PR-AUC, mean Brier).
-
-    Groups are stringified for cross-provider dtype safety (kloppy str vs GS int game ids).
-    """
-    import xgboost as xgb
-    from sklearn.metrics import average_precision_score, brier_score_loss, log_loss
+def _cv_splits(y, groups) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Label-stratified, match-grouped folds (groups stringified for cross-provider dtype safety)."""
     from sklearn.model_selection import StratifiedGroupKFold
 
     groups = np.asarray(groups).astype(str)
-    n_splits = min(5, len(np.unique(groups)))
-    if n_splits < 2:
-        n_splits = 2
+    n_splits = max(2, min(5, len(np.unique(groups))))
     gkf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    lls, prs, brs = [], [], []
-    for tr, te in gkf.split(X, y, groups):
-        if len(np.unique(y[tr])) < 2:
-            continue
-        clf = xgb.XGBClassifier(**_pinned(params))
-        clf.fit(X[tr], y[tr])
-        p = clf.predict_proba(X[te])[:, 1]
-        lls.append(log_loss(y[te], p, labels=[0, 1]))
-        if len(np.unique(y[te])) == 2:
-            prs.append(average_precision_score(y[te], p))
-        brs.append(brier_score_loss(y[te], p))
-    if not lls:
+    return list(gkf.split(np.zeros(len(y)), y, groups))
+
+
+def _fold_score(X, y, tr, te, params) -> tuple[float, float | None, float] | None:
+    """One fold's (log-loss, PR-AUC or None for a one-class test fold, Brier); None for a one-class train fold."""
+    import xgboost as xgb
+    from sklearn.metrics import average_precision_score, brier_score_loss, log_loss
+
+    if len(np.unique(y[tr])) < 2:
+        return None
+    clf = xgb.XGBClassifier(**_pinned(params))
+    clf.fit(X[tr], y[tr])
+    p = clf.predict_proba(X[te])[:, 1]
+    pr = float(average_precision_score(y[te], p)) if len(np.unique(y[te])) == 2 else None
+    return float(log_loss(y[te], p, labels=[0, 1])), pr, float(brier_score_loss(y[te], p))
+
+
+def _combine(scores) -> tuple[float, float, float]:
+    """The fold scores, in fold order -> (mean log-loss, mean PR-AUC, mean Brier); ``inf`` when none scored."""
+    kept = [s for s in scores if s is not None]
+    if not kept:
         return float("inf"), float("nan"), float("nan")
+    prs = [s[1] for s in kept if s[1] is not None]
     return (
-        float(np.mean(lls)),
+        float(np.mean([s[0] for s in kept])),
         float(np.mean(prs)) if prs else float("nan"),
-        float(np.mean(brs)),
+        float(np.mean([s[2] for s in kept])),
     )
+
+
+def _cv_logloss(X, y, groups, params) -> tuple[float, float, float]:
+    """Label-stratified, match-grouped CV -> (mean log-loss, mean PR-AUC, mean Brier)."""
+    return _combine([_fold_score(X, y, tr, te, params) for tr, te in _cv_splits(y, groups)])
 
 
 class XSuccessObjective:
@@ -101,9 +109,15 @@ class XSuccessObjective:
     def _params(self, candidate) -> dict:
         return {k: candidate.params[k] for k in _SEARCH_KEYS if k in candidate.params}
 
-    def evaluate_patch(self, invariant: _Invariant, candidate) -> dict:
-        """Cheap per-trial CV log-loss on the cached invariant (+ diagnostics)."""
-        ll, pr, br = _cv_logloss(invariant.X, invariant.y, invariant.groups, self._params(candidate))
+    def evaluate_patch(self, invariant: _Invariant, candidate, *, fold_map=None) -> dict:
+        """Cheap per-trial CV log-loss on the cached invariant (+ diagnostics). ``fold_map(params)``, when given,
+        returns the ``_fold_score`` of each ``_cv_splits`` fold in fold order (e.g. computed in parallel by the
+        caller); the result equals the serial one."""
+        params = self._params(candidate)
+        if fold_map is None:
+            ll, pr, br = _cv_logloss(invariant.X, invariant.y, invariant.groups, params)
+        else:
+            ll, pr, br = _combine(fold_map(params))
         return {"logloss": ll, "pr_auc": pr, "brier": br}
 
     def evaluate(self, candidate) -> dict:

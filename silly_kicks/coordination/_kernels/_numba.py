@@ -1,12 +1,13 @@
-"""Numba-accelerated exact pair counters for coordination sample entropy (with numpy fallbacks), plus the two
+"""Numba-accelerated exact pair counters for coordination sample entropy (with numpy references), plus the two
 surrogate-identity kernels (spec 7.9): the % near-in-phase count and the cross-correlation edge correction, each with a
 bit-identical numpy reference in ``_surrogates`` (same arithmetic, same ascending order).
 
 Pure counting. The distance predicate is always the naive Chebyshev one, ``|p - q| <= r`` per coordinate.
-The numba path is an O(N log N) Fenwick sweep; the numpy fallback is a ``cKDTree`` neighbour count. Both
+The numba path is an O(N log N) Fenwick sweep; the numpy reference is a ``cKDTree`` neighbour count. Both
 return identical INTEGER counts on data with no pair sitting exactly at ``r`` (the numba path additionally
 matches the naive predicate at exact-``r`` ties, via predicate bisection rather than ``searchsorted(s + r)``).
-Selection honours ``SILLY_KICKS_COORDINATION_FORCE_NUMPY`` so the fallback is testable with numba installed.
+numba is a core dependency (HFU spec 13.2): ``use_numba()`` delegates to ``silly_kicks._numba_dispatch``, the
+numpy reference runs only under ``SILLY_KICKS_COORDINATION_FORCE_NUMPY=1``, and a missing numba raises.
 """
 
 from __future__ import annotations
@@ -31,8 +32,16 @@ _NUMBA_CACHE = os.environ.get("SILLY_KICKS_NUMBA_CACHE", "0") == "1" or bool(os.
 
 
 def use_numba() -> bool:
-    """True iff numba is importable AND ``SILLY_KICKS_COORDINATION_FORCE_NUMPY`` is not ``"1"``."""
-    return HAVE_NUMBA and os.environ.get("SILLY_KICKS_COORDINATION_FORCE_NUMPY") != "1"
+    """True unless ``SILLY_KICKS_COORDINATION_FORCE_NUMPY=1``. numba is core (HFU spec 13.2): a missing numba raises
+    ``NumbaUnavailableError`` instead of selecting the numpy reference silently. ``HAVE_NUMBA`` only gates the eager
+    ``@njit`` compile below."""
+    import silly_kicks._numba_dispatch as _numba_dispatch
+
+    if not _numba_dispatch.use_numba("COORDINATION"):
+        return False
+    if not HAVE_NUMBA:  # pragma: no cover - numba importable now but not when this module loaded
+        raise _numba_dispatch.NumbaUnavailableError("silly_kicks.coordination kernels were not compiled")
+    return True
 
 
 if HAVE_NUMBA:

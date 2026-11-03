@@ -51,6 +51,10 @@ home_teams = false
 description = "licensed StatsBomb 360 freeze-frame corpus for receiver_model (no home-team map: unused)"
 
 [datasets.sb_open]
+# The staged, read-only copy of the pinned revision every sb_open job mounts as its open-data cache (HFU
+# spec 14.7). read_concurrency: the I5 probe (2026-11-08): 7.8 files/s at 1, 29.5 at 4, no gain past 4.
+snapshot_repo = "silly-kicks/hf-refit-sb-open"
+read_concurrency = 4
 repo = "statsbomb/open-data"
 kind = "statsbomb_open"
 visibility = "public"

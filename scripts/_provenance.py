@@ -78,6 +78,17 @@ def git_tree_hash() -> str:
         return "unknown"
 
 
+def _has_tracked_changes() -> bool:
+    """True when the working tree carries TRACKED modifications (staged or unstaged) vs HEAD. Untracked files
+    do NOT count: they are absent from a HEAD clone, so they never change what cloned compute runs -- only a
+    tracked edit does. ``git diff --quiet HEAD`` exits 0 for no tracked diff, non-zero otherwise; a git failure
+    is treated as changed (fail-closed, like ``git_provenance``)."""
+    try:
+        return subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], capture_output=True).returncode != 0  # noqa: S607
+    except _GIT_FAILURES:
+        return True
+
+
 def git_provenance() -> dict:
     """``{"commit", "tree_state", "dirty", "dirty_files", "platform", "machine"}`` for this run.
 
@@ -273,5 +284,14 @@ def code_identity(prov: Mapping[str, object]) -> str:
     if state == "clean":
         return str(prov["commit"])
     if state == "dirty":
-        return f"dirty-{git_tree_hash()}"
+        # A tree dirty ONLY by untracked files runs HEAD's committed code: the compute (an HF job) clones HEAD
+        # and never sees the untracked files, so the GEN identity is the commit -- STABLE across a controller's
+        # own UNTRACKED logs / caches (the 2026-11-04 campaign wedge: an untracked `_retrain.log` moved the gen
+        # between launch and status, so results written under one gen read empty under another). A TRACKED
+        # modification DOES change what HEAD-cloned code runs -> the content tree hash (`git add -A`, which also
+        # folds in any untracked litter), so a dev edit still invalidates a stale store; stability is the
+        # untracked-only guarantee, which is the campaign's committed-commit case (P9).
+        if _has_tracked_changes():
+            return f"dirty-{git_tree_hash()}"
+        return str(prov["commit"])
     return f"unknown-{uuid.uuid4().hex}"

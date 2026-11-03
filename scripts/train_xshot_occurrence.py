@@ -87,7 +87,7 @@ def _hpo_once(
     """
     from scripts._input_contract import declare_inputs
     from scripts._provenance import objective_id, store_path_for
-    from scripts._study_shared import read_study_shard, write_study_shard
+    from scripts._study_shared import TrialPrinter, read_study_shard, write_study_shard
     from silly_kicks.tracking._xshot_occurrence_objective import XShotOccurrenceObjective
 
     # The id depends on the objective CLASS, never its data, so it is known before the shard check.
@@ -127,7 +127,8 @@ def _hpo_once(
             objective_id=oid,  # pyright: ignore[reportCallIssue]  # B m4: ruthless-efficiency 0.7.0 stub omits objective_id
         ),
     )
-    result = OptunaStrategy(cfg, seed=42).run(obj, backend=InProcessBackend())
+    printer = TrialPrinter(tag, n_trials, metric=cfg.metric)  # HFU spec 14.8: one line per trial
+    result = OptunaStrategy(cfg, seed=42).run(obj, backend=InProcessBackend(), observer=printer)
     if result.best is None:
         raise RuntimeError("HPO produced no best candidate")
     params = dict(result.best.candidate.params)
@@ -914,9 +915,9 @@ def _assemble_work(key, ctx):
         "n_rows": len(inp.X),
         "n_positive": int(np.asarray(inp.y).sum()),
         "providers": canonical_providers(inp.providers),
-        # Corpus IDENTITY (spec section 5): exact ids only for an all-public corpus, else a digest
-        # (Hub publishes copy metrics.json). n_rows alone could not tell 17 public matches from 27.
-        **corpus_identity(inp.providers.tolist(), inp.match_ids.tolist(), all_public=bool(inp.is_public.all())),
+        # Corpus IDENTITY (spec section 5): always the digest in-job (HFU spec 17.2, owner 2026-11-09: digest only);
+        # `adopt` rehydrates the canonical public ids off-HF. n_rows alone could not tell 17 public matches from 27.
+        **corpus_identity(inp.providers.tolist(), inp.match_ids.tolist(), all_public=False),
         # ADR-067 M4 caveat, emitted here -- never hand-added at bundling (spec 0.11).
         **reproducibility(shipped, candidates[shipped]["providers"], training_commit=run_prov["commit"]),
         "candidates": candidates,

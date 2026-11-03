@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -83,31 +81,120 @@ def test_match_tuples_extracts_goals_and_xgs():
     assert ag == 0
 
 
+def _patch_pipeline_corpus(monkeypatch, matches):
+    """Redirect the open-data listing and loader the PIPELINE calls to a synthetic corpus (no network)."""
+    import scripts._sb_open_data as sod
+    from scripts._driver_sources import LoadedMatch
+
+    by_id = {m[1]: m for m in matches}
+    monkeypatch.setattr(sod, "assert_statsbomb_open_data_mode", lambda: None)
+    monkeypatch.setattr(sod, "all_open_competitions", lambda: [(1, 1)])
+    monkeypatch.setattr(
+        sod,
+        "list_open_data_refs",
+        lambda comps, *, match_ids=None, max_matches=None: [sod.OpenDataRef(1, 1, m[1], 10) for m in matches],
+    )
+    monkeypatch.setattr(
+        sod,
+        "load_open_data_match",
+        lambda ref, *, preserve_native=(), cache_dir=None: LoadedMatch(
+            "statsbomb", ref.match_id, by_id[ref.match_id][2], pd.DataFrame(), 10, None, None
+        ),
+    )
+
+
+def _with_one_sided_game(corpus: list) -> list:
+    """The corpus plus a match with only ONE team: its shard is the empty frame (the concat edge case)."""
+    one_sided = make_actions([{"team_id": 10, "type_id": SHOT, "xg": 0.3, "result_id": FAIL}], game_id=99)
+    return [*corpus, ("statsbomb", "g99", one_sided, pd.DataFrame(), 10)]
+
+
 @pytest.mark.slow
 def test_train_main_writes_loadable_artifact(tmp_path, monkeypatch):
-    """Does-it-run smoke for main() end-to-end on a synthetic corpus (no network; --allow-dirty)."""
-    from scripts import train_match_outcome_dependence as train
+    """Does-it-run smoke for the PIPELINE end-to-end on a synthetic corpus (no network)."""
+    from scripts.train_match_outcome_dependence import PIPELINE
     from silly_kicks.match_outcome import DependenceModel
+    from tests.scripts._stage_harness import export, run_in_process
 
-    _patch_open_corpus(monkeypatch, _fake_corpus())
-    out = tmp_path / "weights"
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "train_match_outcome_dependence.py",
-            "--out",
-            str(out),
-            "--shard-root",
-            str(tmp_path / "shards"),
-            "--allow-dirty",
-        ],
-    )
-    train.main()
+    _patch_pipeline_corpus(monkeypatch, _with_one_sided_game(_fake_corpus()))
+    ctx = run_in_process(PIPELINE, [], store=tmp_path / "store", data_root=None)
+    out = export(ctx, tmp_path / "weights")
 
     m = DependenceModel.load(out)  # fail-closed load must accept the freshly written artifact
     assert abs(m.rho) < 1.0 and m.training_commit
-    assert (out / "model.json").exists() and (out / "SHA256SUMS").exists()
+    assert sorted(p.name for p in out.iterdir()) == ["SHA256SUMS", "metrics.json", "model.json"]
+    import json
+
+    from scripts._corpus_identity import open_data_identity
+
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics == {
+        "rho": m.rho,
+        **open_data_identity([mid for _p, mid, *_ in _with_one_sided_game(_fake_corpus())]),
+    }
+
+
+def _parquet_roundtrip(frame: pd.DataFrame) -> pd.DataFrame:
+    import io
+
+    buf = io.BytesIO()
+    frame.to_parquet(buf, index=False)
+    return pd.read_parquet(io.BytesIO(buf.getvalue()))
+
+
+def test_fit_artifact_matches_the_legacy_main():
+    """HFU spec §5.3: the pipeline's fit writes the legacy `main`'s `model.json` BYTES: the same per-match shards
+    (a parquet round trip, in the legacy sorted-glob order), the same kernel, the same serialization."""
+    import hashlib
+    import json
+
+    from scripts.train_match_outcome_dependence import _extract_reduce, extract_match_slice, fit_artifact
+    from scripts.train_match_outcome_dependence import matches_from_shards as from_shards
+
+    corpus = _with_one_sided_game(_fake_corpus(8))
+    shards = {f"statsbomb__{mid}": _parquet_roundtrip(extract_match_slice(a, "xg")) for _p, mid, a, _f, _h in corpus}
+    prov = {"commit": "c" * 40, "dirty": False}
+
+    legacy_matches = from_shards([shards[k] for k in sorted(shards)])  # the legacy `sorted(glob("*.parquet"))`
+    legacy = json.dumps(
+        {
+            "rho": fit_rho(legacy_matches),
+            "training_commit": prov["commit"],
+            "run_tree_dirty": prov["dirty"],
+            "corpus": "statsbomb-open",
+            "n_matches": len(legacy_matches),
+        },
+        indent=2,
+    ).encode("utf-8")
+
+    ids = [mid for _p, mid, *_ in corpus]
+    art = fit_artifact(_parquet_roundtrip(_extract_reduce(dict(sorted(shards.items())), None)), prov, match_ids=ids)
+
+    assert art.files["model.json"] == legacy
+    assert art.files["SHA256SUMS"] == f"{hashlib.sha256(legacy).hexdigest()}  model.json\n".encode("ascii")
+    assert json.loads(legacy)["n_matches"] == 8  # the one-sided match yields no scoreline
+
+
+def test_fit_artifact_writes_the_open_identity_metrics():
+    """HFU spec 14.3: the bundle's metrics.json holds ``rho`` and the corpus identity of the refs it fit; the
+    model.json bytes and SHA256SUMS (model.json only, the repo convention) do not change."""
+    import json
+
+    from scripts._corpus_identity import open_data_identity
+    from scripts.train_match_outcome_dependence import _extract_reduce, extract_match_slice, fit_artifact
+
+    corpus = _fake_corpus(4)
+    shards = {f"statsbomb__{mid}": extract_match_slice(a, "xg") for _p, mid, a, _f, _h in corpus}
+    ids = [mid for _p, mid, *_ in corpus]
+    art = fit_artifact(
+        _extract_reduce(dict(sorted(shards.items())), None), {"commit": "c" * 40, "dirty": False}, match_ids=ids
+    )
+    model = json.loads(art.files["model.json"])
+    assert json.loads(art.files["metrics.json"]) == {"rho": model["rho"], **open_data_identity(ids)}
+    assert art.files["SHA256SUMS"].decode("ascii").split() == [
+        art.files["SHA256SUMS"].split()[0].decode(),
+        "model.json",
+    ]
 
 
 def test_reduce_over_shards_equals_in_memory_fit():

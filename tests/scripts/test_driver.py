@@ -855,3 +855,23 @@ def test_a_NON_shard_file_in_the_root_does_not_trigger_the_flat_warning(tmp_path
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         mod.generation_dir(root, token_inputs={"v": 1})
+
+
+def _raise_in_work(item):
+    raise ValueError(f"bad item {item[0]}")
+
+
+def test_for_each_failures_strings_unchanged(tmp_path):
+    """HFU spec §4.3: `failures` keeps its exact legacy string; the traceback rides an additive map."""
+    res = mod.for_each(
+        _items(2),
+        key=lambda it: it[0],
+        work=_raise_in_work,
+        shard_root=tmp_path,
+        token_inputs={"v": "v1"},
+        max_consecutive_failures=5,
+    )
+    assert res.failures == {k: f"ValueError: bad item {k}" for k in res.failures}
+    assert len(res.failures) == 2
+    assert set(res.tracebacks) == set(res.failures)
+    assert all("_raise_in_work" in tb for tb in res.tracebacks.values())

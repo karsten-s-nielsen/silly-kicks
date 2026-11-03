@@ -237,3 +237,43 @@ def test_an_lpt_part_runs_its_keys_without_a_round_robin_shard():
     argv = shlex.split(L.job_command(s)[2].splitlines()[-1])
     assert argv[argv.index("--shard-keys") + 1].endswith("1of4.json") and "--shard" not in argv
     assert L.labels_for(s)["shard"] == "1of4"
+
+
+def test_job_command_exports_the_deadline_first():
+    """HFU spec §11.4: the job's deadline is taken at bash start, before git and uv, for every process."""
+    s = _spec()
+    assert L.job_command(s)[2].splitlines()[1] == (
+        f"export SILLY_KICKS_JOB_DEADLINE_EPOCH=$(( $(date +%s) + {s.timeout_s} ))"
+    )
+
+
+def test_job_env_hides_the_known_converter_warnings():
+    """HFU spec 15.2: the three per-match converter warnings from the open-data loader are hidden in a job; a
+    ``StatsBomb…`` warning from another module and any other warning still print."""
+    import sys
+
+    env = L.job_env(_spec())
+    assert env["PYTHONWARNINGS"] == L.JOB_WARNING_FILTER
+    code = "\n".join(
+        [
+            "import warnings",
+            "def w(msg, module):",
+            "    warnings.warn_explicit(msg, UserWarning, module.replace('.', '/') + '.py', 1, module=module)",
+            "w('Inferred xy_fidelity_version=2.', 'scripts._sb_open_data')",
+            "w('Inferred shot_fidelity_version=2.', 'scripts._sb_open_data')",
+            "w('StatsBomb: 3 unrecognized event types dropped', 'scripts._sb_open_data')",
+            "w('StatsBomb360 frames missing', 'silly_kicks.spadl.statsbomb')",
+            "w('an unrelated warning', 'scripts._sb_open_data')",
+        ]
+    )
+    import os
+
+    p = subprocess.run(  # noqa: S603 -- fixed argv
+        [sys.executable, "-c", code],
+        env={**os.environ, **env},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "fidelity_version" not in p.stderr and "unrecognized event types" not in p.stderr
+    assert "StatsBomb360 frames missing" in p.stderr and "an unrelated warning" in p.stderr

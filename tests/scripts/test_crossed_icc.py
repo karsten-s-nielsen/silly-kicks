@@ -415,7 +415,7 @@ def test_bootstrap_icc_and_power_matches_separate_loops():
     y, dc, tc = _balanced_crossed_design(4, 20, 10, 4, sd_def=2.0, sd_team=1.5, sd_resid=3.0)
     ci = bootstrap_icc_ci(y, dc, tc, n_boot=60, alpha=0.10, rng_seed=7)
     pw = _old_power(y, dc, tc, n_boot=60, effect=0.05, seed=7)
-    res = bootstrap_icc_and_power(y, dc, tc, n_boot=60, alpha=0.10, effect_size=0.05, rng_seed=7, progress_every=0)
+    res = bootstrap_icc_and_power(y, dc, tc, n_boot=60, alpha=0.10, effect_size=0.05, rng_seed=7)
     assert res["icc"] == ci["icc"]
     assert res["lo"] == ci["lo"] and res["hi"] == ci["hi"]
     assert res["n_boot_effective"] == ci["n_boot_effective"]

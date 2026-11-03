@@ -133,3 +133,22 @@ def test_reproducibility_public_and_restricted():
     assert r["reproducibility"] == "restricted"
     assert "abc1234" in r["reproducibility_note"] and "skillcorner" in r["reproducibility_note"]
     assert len(r["reproducibility_note"]) > 20  # the ADR-067 M4 test's floor
+
+
+def test_in_job_trainers_record_the_corpus_digest():
+    """HFU spec 17.2 (owner 2026-11-09: digest only): every `corpus_identity` call in a `scripts/train_*.py` passes the
+    literal `all_public=False`, so a job never records match ids; `adopt` rehydrates the canonical public ids."""
+    import ast
+    import pathlib
+
+    calls = []
+    for path in sorted(pathlib.Path("scripts").glob("train_*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+            if name == "corpus_identity":
+                flag = next((k.value for k in node.keywords if k.arg == "all_public"), None)
+                calls.append((path.name, isinstance(flag, ast.Constant) and flag.value is False))
+    assert len(calls) >= 2 and all(ok for _, ok in calls), calls

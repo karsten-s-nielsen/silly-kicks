@@ -290,6 +290,7 @@ commit_field = "metrics.json:run_commit"
 refit_event = "f1b"
 card = "silly_kicks/tracking/_receiver_weights/default/MODEL_CARD.md"
 [artifacts.expect]
+"metrics.json:corpus_n_matches" = 30  # the corpus-scope check (HFU spec 14.3)
 "metrics.json:providers_trained" = ["statsbomb"]
 "metrics.json:corpus_visibility" = "restricted"
 
@@ -307,6 +308,8 @@ commit_field = "metrics.json:training_commit"
 
 [[artifacts]]
 id = "match_outcome"
+# The committed CV record (HFU spec 14.4): the fitted rho in model.json (one MLE parameter, no OOF metric).
+cv_reference = "silly_kicks/match_outcome/weights/model.json"
 destination = "wheel:silly_kicks/match_outcome/weights"
 job = "match_outcome_dependence"
 variant = "default"
@@ -316,6 +319,8 @@ dataset = "sb_open"
 
 [[artifacts]]
 id = "expected_passing"
+# The committed CV record (HFU spec 14.4): the bundle ships no metrics.json.
+cv_reference = "docs/research/territory_counterfactual_construct_validity/metrics.json:completion"
 destination = "wheel:silly_kicks/expected_passing/weights"
 job = "pass_completion"
 variant = "default"
@@ -325,6 +330,8 @@ dataset = "sb_open"
 
 [[artifacts]]
 id = "xsuccess"
+# The committed CV record (HFU spec 14.4): the card numbers, the only committed record of them.
+cv_reference = "docs/artifacts/cv_reference/xsuccess.json"
 destination = "wheel:silly_kicks/xsuccess/weights"
 job = "xsuccess"
 variant = "default"
@@ -480,6 +487,7 @@ wheel_sibling = "ghost_default"
 hub_class = "GhostGkModel"
 hub_role = "hf_only"
 [artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179  # the corpus-scope check (HFU spec 14.3)
 "metrics.json:variant" = "full"
 
 [[artifacts]]
@@ -499,6 +507,7 @@ mirror_of = "ghost_sweeper"
 hub_class = "GhostGkModel"
 hub_role = "mirror"
 [artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179  # the corpus-scope check (HFU spec 14.3)
 "metrics.json:variant" = "sweeper"
 
 [[artifacts]]
@@ -518,6 +527,7 @@ mirror_of = "ghost_sweeper_position_only"
 hub_class = "GhostGkModel"
 hub_role = "mirror"
 [artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179  # the corpus-scope check (HFU spec 14.3)
 "metrics.json:variant" = "sweeper_position_only"
 
 [[artifacts]]
@@ -537,6 +547,7 @@ mirror_of = "outfield_default"
 hub_class = "GhostOutfieldModel"
 hub_role = "mirror"
 [artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179  # the corpus-scope check (HFU spec 14.3)
 "metadata.json:corpus_provenance.variant" = "default"
 
 [[artifacts]]
@@ -556,6 +567,7 @@ mirror_of = "outfield_position_only"
 hub_class = "GhostOutfieldModel"
 hub_role = "mirror"
 [artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179  # the corpus-scope check (HFU spec 14.3)
 "metadata.json:corpus_provenance.variant" = "position_only"
 
 [[artifacts]]

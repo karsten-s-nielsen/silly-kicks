@@ -21,6 +21,8 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
@@ -86,26 +88,74 @@ def _artifact_dir(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
     return staging / inst_id
 
 
+def _open_data_dir(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
+    """The open-data cache of one statsbomb_open head-to-head (HFU spec 17.5): one folder per instance, so no two
+    concurrent verify workers download into one folder."""
+    return staging / "_open_data" / inst_id
+
+
+def _eval_rows_path(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
+    """The run's own extract rows of a staged-corpus public instance (HFU spec 14.4): beside the
+    artifact dir, never inside it (adopt's bundle is the artifact dir only)."""
+    d = _artifact_dir(staging, inst_id)
+    return d.with_name(f"{d.name}.eval_rows.parquet")
+
+
+def _dataset_kind_of(inst: Instance) -> str | None:
+    """The declared kind of the instance's primary dataset (its first mount)."""
+    return _declared()[inst.datasets[0].name].kind if inst.datasets else None
+
+
+def _public_staged(inst: Instance) -> bool:
+    """A public-certified instance on a staged ``flat_tc3`` corpus: its head-to-head scores its own extract
+    rows (HFU spec 14.4), which retrieve saves."""
+    from scripts.hf_jobs.registry import TrainerSpec, spec_for
+
+    spec = spec_for(inst.job)
+    return (
+        isinstance(spec, TrainerSpec)
+        and spec.certification_for(inst.tier) == "public"
+        and (_dataset_kind_of(inst) == "flat_tc3")
+    )
+
+
 # ---- retrieve --------------------------------------------------------------------------------------
 
 
-def _counters(store: Any, stage: Mapping[str, Any]) -> dict:
-    """An ItemStage's per-unit counters merged in sorted key order (`_stages.item_counters`'s rule),
-    read from the store by the unit list the plan reports; ``n_counters_unrecorded`` counts the units
-    that are neither excluded nor carry a sidecar."""
+def _counters(
+    store: Any, stage: Mapping[str, Any], *, workers: int = 8, progress_s: float = 60.0, label: str = ""
+) -> dict:
+    """An ItemStage's per-unit counters merged in sorted key order (`_stages.item_counters`'s rule). HFU spec
+    14.9: ONE listing of the generation (``store.names``); only the ``<key>.counters.json`` files present are read,
+    over ``workers`` threads; the merge stays in sorted key order, so the totals are the serial ones.
+    ``n_counters_unrecorded`` counts the units with neither a counters nor an excluded file in the listing.
+    A long read prints ``[retrieve] <label> counters <k>/<units>`` at most every ``progress_s``."""
+    import concurrent.futures
+
     from scripts._driver import _merge_counters
 
-    totals: dict = {}
-    missing = 0
     gen = stage["generation"]
-    for key in sorted(stage.get("units") or []):
-        raw = store.read_bytes(f"{gen}/{key}.counters.json")
-        if raw is None:
-            if store.read_bytes(f"{gen}/{key}.excluded.json") is None:
-                missing += 1
+    keys = sorted(stage.get("units") or [])
+    names = store.names(gen)
+    present = [k for k in keys if f"{k}.counters.json" in names]
+    missing = sum(1 for k in keys if f"{k}.counters.json" not in names and f"{k}.excluded.json" not in names)
+    raw: dict[str, bytes | None] = {}
+    last = time.monotonic()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = {pool.submit(store.read_bytes, f"{gen}/{k}.counters.json"): k for k in present}
+        for fut in concurrent.futures.as_completed(futures):
+            raw[futures[fut]] = fut.result()
+            if time.monotonic() - last >= progress_s:
+                print(f"[retrieve] {label} counters {len(raw)}/{len(keys)}", file=sys.stderr, flush=True)
+                last = time.monotonic()
+    totals: dict = {}
+    for k in present:  # sorted key order: the serial merge
+        blob = raw[k]
+        if blob is None:  # listed but gone: unrecorded, as the serial read counted it
+            missing += f"{k}.excluded.json" not in names
             continue
-        _merge_counters(totals, json.loads(raw), key)
-    return {"totals": totals, "n_counters_unrecorded": missing}
+        _merge_counters(totals, json.loads(blob), k)
+    return {"totals": totals, "n_counters_unrecorded": missing, "n_read": len(present)}
 
 
 def retrieve(
@@ -117,53 +167,99 @@ def retrieve(
     replica: int | None = None,
     plan_fn: Callable[..., dict] = read_plan,
     store_fn: Callable[[str], Any] | None = None,
+    workers: int = 4,
 ) -> dict[str, pathlib.Path]:
     """Copy every reduced instance output into ``<staging>/<run_key>/<variant>/`` (never into the repo),
     with ``<instance>.record.json`` beside it: the job's recorded token inputs per stage and the extract
-    counters. An instance whose output stage is not reduced is skipped (and absent from the result)."""
-    from scripts._stages import FileSet, read_result
+    counters. An instance whose output stage is not reduced is skipped (and absent from the result). Up to
+    ``workers`` instances at once (HFU spec 17.5): each ``[retrieve]`` line prints when its instance ends; the
+    result is in instance order."""
+    import concurrent.futures
+
     from scripts.hf_jobs.store import BucketStore
 
     staging = _outside_repo(staging)
     open_store = store_fn or (lambda uri: dataclasses.replace(BucketStore.from_uri(uri), api=api))
-    out: dict[str, pathlib.Path] = {}
-    for inst in instances(c, commit, replica=replica):
-        plan = plan_fn(inst, bucket=c.bucket)
-        stages = {s["name"]: s for s in plan["stages"]}
-        rec = stages[plan["output"]]
-        if not rec["reduced"]:
-            continue
-        store = open_store(store_uri(c.bucket, inst.run_key))
-        result = read_result(store, f"{rec['generation']}/_output")
-        if not isinstance(result, FileSet):
-            raise AdoptionRefusedError(f"{inst.id}: output stage {plan['output']!r} is not a FileSet")
-        dest = _artifact_dir(staging, inst.id)
-        dest.mkdir(parents=True, exist_ok=True)
-        for name, data in sorted(result.files.items()):
-            if "/" in name or "\\" in name:
-                raise AdoptionRefusedError(f"{inst.id}: nested output path {name!r} (an artifact is flat)")
-            (dest / name).write_bytes(data)
-        inputs = {}
-        for name, s in stages.items():
-            raw = store.read_bytes(f"{s['generation']}/_inputs.json")
-            inputs[name] = json.loads(raw) if raw is not None else None
-        record = {
-            "instance": inst.id,
-            "job": inst.job,
-            "tier": inst.tier,
-            "variant": inst.variant,
-            "module": inst.module,
-            "commit": commit,
-            "output": plan["output"],
-            "code_identity": plan.get("code_identity"),
-            "token_inputs": inputs,
-            "counters": _counters(store, stages["extract"]) if "extract" in stages else None,
-        }
-        p = _record_path(staging, inst.id)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        out[inst.id] = dest
-    return out
+    insts = instances(c, commit, replica=replica)
+
+    def one(item: tuple[int, Instance]) -> pathlib.Path | None:
+        i, inst = item
+        return _retrieve_one(
+            inst, i, len(insts), c=c, commit=commit, staging=staging, plan_fn=plan_fn, open_store=open_store
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        dests = list(pool.map(one, enumerate(insts, start=1)))
+    return {inst.id: dest for inst, dest in zip(insts, dests, strict=True) if dest is not None}
+
+
+def _retrieve_one(
+    inst: Instance,
+    i: int,
+    n: int,
+    *,
+    c: Campaign,
+    commit: str,
+    staging: pathlib.Path,
+    plan_fn: Callable[..., dict],
+    open_store: Callable[[str], Any],
+) -> pathlib.Path | None:
+    """:func:`retrieve` for instance ``i`` of ``n``: its artifact dir, or ``None`` when its output stage is not
+    reduced. Every file it writes is this instance's own (the artifact dir, the record, the eval rows)."""
+    import pandas as pd
+
+    from scripts._stages import FileSet, read_result
+
+    t0 = time.monotonic()
+    plan = plan_fn(inst, bucket=c.bucket)
+    stages = {s["name"]: s for s in plan["stages"]}
+    rec = stages[plan["output"]]
+    if not rec["reduced"]:
+        return None
+    store = open_store(store_uri(c.bucket, inst.run_key))
+    result = read_result(store, f"{rec['generation']}/_output")
+    if not isinstance(result, FileSet):
+        raise AdoptionRefusedError(f"{inst.id}: output stage {plan['output']!r} is not a FileSet")
+    dest = _artifact_dir(staging, inst.id)
+    dest.mkdir(parents=True, exist_ok=True)
+    for name, data in sorted(result.files.items()):
+        if "/" in name or "\\" in name:
+            raise AdoptionRefusedError(f"{inst.id}: nested output path {name!r} (an artifact is flat)")
+        (dest / name).write_bytes(data)
+    inputs = {}
+    for name, s in stages.items():
+        raw = store.read_bytes(f"{s['generation']}/_inputs.json")
+        inputs[name] = json.loads(raw) if raw is not None else None
+    record = {
+        "instance": inst.id,
+        "job": inst.job,
+        "tier": inst.tier,
+        "variant": inst.variant,
+        "module": inst.module,
+        "commit": commit,
+        "output": plan["output"],
+        "code_identity": plan.get("code_identity"),
+        "token_inputs": inputs,
+        "counters": _counters(store, stages["extract"], label=inst.id) if "extract" in stages else None,
+    }
+    if _public_staged(inst):  # the head-to-head's eval rows: the run's own extract output (HFU spec 14.4)
+        rows = read_result(store, f"{stages['extract']['generation']}/_output")
+        if not isinstance(rows, pd.DataFrame):
+            raise AdoptionRefusedError(f"{inst.id}: the extract output is not a frame")
+        rows.to_parquet(_eval_rows_path(staging, inst.id), index=False)
+    p = _record_path(staging, inst.id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    ctr = record["counters"] or {}
+    units = len(stages["extract"].get("units") or []) if "extract" in stages else 0
+    mb = sum(len(v) for v in result.files.values()) / 1e6
+    print(  # HFU spec 14.9
+        f"[retrieve] {i}/{n} {inst.id}: {len(result.files)} files, {mb:.1f} MB, "
+        f"counters {ctr.get('n_read', 0)}/{units} in {time.monotonic() - t0:.1f} s",
+        file=sys.stderr,
+        flush=True,
+    )
+    return dest
 
 
 # ---- verify ----------------------------------------------------------------------------------------
@@ -181,8 +277,11 @@ def expectation_violations(a: mf.Artifact, fresh: pathlib.Path, record: Mapping[
     from scripts.hf_jobs.datasets import locked
 
     bad: list[str] = []
-    corpus = "digest" if a.corpus == "public_ids" else a.corpus
-    bad += mf.violations(dataclasses.replace(a, training_commit=commit, corpus=corpus), read=_dir_reader(fresh))
+    corpus, naming = ("digest" if a.corpus == "public_ids" else a.corpus), a.naming
+    if _dataset_kind(a) == "statsbomb_open":  # a fresh event-only artifact: the lock digest (HFU spec 14.3)
+        corpus, naming = "digest", "open"
+    fresh_a = dataclasses.replace(a, training_commit=commit, corpus=corpus, naming=naming)
+    bad += mf.violations(fresh_a, read=_dir_reader(fresh))
     if a.dataset is not None and a.dataset in _declared():
         pinned = locked(a.dataset)["revision"]
         read = {
@@ -192,6 +291,15 @@ def expectation_violations(a: mf.Artifact, fresh: pathlib.Path, record: Mapping[
         }
         if read != {pinned}:
             bad.append(f"{a.id}: the job read dataset {a.dataset} at {sorted(map(str, read))}, pinned {pinned}")
+        snap = (locked(a.dataset).get("snapshot") or {}).get("revision")
+        if snap is not None:  # the staged open-data copy the job read (HFU spec 14.7)
+            seen = {
+                (ti or {})["dataset"].get("snapshot")
+                for ti in (record.get("token_inputs") or {}).values()
+                if (ti or {}).get("dataset") and (ti or {})["dataset"].get("name") == a.dataset
+            }
+            if seen != {snap}:
+                bad.append(f"{a.id}: the job read snapshot {sorted(map(str, seen))}, locked {snap}")
     for fname in ("metadata.json", "metrics.json"):
         p = fresh / fname
         if p.is_file():
@@ -199,6 +307,47 @@ def expectation_violations(a: mf.Artifact, fresh: pathlib.Path, record: Mapping[
             if sv is not None and sv != a.tier:
                 bad.append(f"{a.id}: {fname} ships {sv!r}, the expected tier is {a.tier!r}")
     return bad
+
+
+def _dataset_kind(a: mf.Artifact) -> str | None:
+    d = _declared().get(a.dataset or "")
+    return d.kind if d is not None else None
+
+
+#: The ``expect`` keys that pin a corpus size (HFU spec 14.3): the last segment of the key path.
+_COUNT_KEYS = ("n_games", "n_matches", "corpus_n_matches")
+
+
+def corpus_scope(a: mf.Artifact) -> str | None:
+    """How verify checks the corpus a certified artifact trained on (HFU spec 14.3), or ``None``: the
+    manifest corpus rule, a count ``expect``, or the lock digest of a ``statsbomb_open`` dataset."""
+    if a.corpus in ("public_ids", "digest"):
+        return a.corpus
+    if any(str(k).rsplit(".", 1)[-1].rsplit(":", 1)[-1] in _COUNT_KEYS for k in a.expect or {}):
+        return "count"
+    if _dataset_kind(a) == "statsbomb_open":
+        return "statsbomb_open"
+    return None
+
+
+def _say_verify(i: int, n: int, inst_id: str, row: Mapping[str, Any], failed: Sequence[str], t0: float) -> None:
+    """``[verify] <i>/<n> <instance> ok|FAIL (<failed checks>) in <s> s[ note=<coverage note>]`` (HFU spec 14.9)."""
+    outcome = "ok" if not failed else f"FAIL ({', '.join(failed)})"
+    note = f" note={row['coverage_note']}" if row.get("coverage_note") else ""
+    print(f"[verify] {i}/{n} {inst_id} {outcome} in {time.monotonic() - t0:.1f} s{note}", file=sys.stderr, flush=True)
+
+
+def coverage_note(*, cv_ok: bool) -> str:
+    """The verify note of an ``sb_open`` instance (HFU spec 14.3): the committed event-only artifacts record
+    no match ids, so the evidence is the count, the competition set and CV parity."""
+    from scripts.hf_jobs.datasets import locked
+
+    rec = locked("sb_open")
+    n, k = rec["identity"]["open"]["corpus_n_matches"], len(rec["competitions"])
+    return (
+        "committed artifact records no match ids; faithful-migration evidence: "
+        f"corpus_n_matches {n}, {k} competitions, CV parity {'ok' if cv_ok else 'FAIL'}"
+    )
 
 
 def _declared() -> Mapping[str, Any]:
@@ -218,10 +367,20 @@ def load_check(job: str, artifact_dir: pathlib.Path, *, run: Callable[..., Any] 
 
 
 def _committed_metrics(a: mf.Artifact, observed: Mapping[str, Any]) -> dict:
-    """The committed side of a CV-parity certification: the wheel bundle's ``metrics.json``, or the
-    observed ``metrics_summary`` of a Hub artifact (written by `bootstrap_observed` / `adopt`)."""
+    """The committed side of a CV-parity certification: the wheel bundle's ``metrics.json``, else its
+    manifest ``cv_reference`` (HFU spec 14.4), else a refusal naming the artifact; for a Hub artifact the
+    observed ``metrics_summary`` (written by `bootstrap_observed` / `adopt`)."""
     if a.kind == "wheel":
-        return _read_json(REPO_ROOT / a.path / "metrics.json")
+        own = REPO_ROOT / a.path / "metrics.json"
+        if own.is_file():
+            return _read_json(own)
+        if a.cv_reference is None:
+            raise AdoptionRefusedError(f"{a.id}: no metrics.json and no cv_reference (the committed CV record)")
+        path, _, key = a.cv_reference.partition(":")
+        doc: Any = _read_json(REPO_ROOT / path)
+        for part in key.split(".") if key else ():
+            doc = doc[part]
+        return dict(doc)
     try:
         return dict(observed[a.id]["metrics_summary"])
     except KeyError as exc:
@@ -261,8 +420,10 @@ def _integrity(
 
 def _rebaseline(spec: Any, fresh: pathlib.Path, commit: str, *, run: Callable[..., Any]) -> dict:
     """A rebaseline driver (decisions P3, P15): its output vs the committed one, provenance removed. A
-    difference is classified by the git log of the driver's declared input modules since ``dd7ed4f``:
-    empty -> an environment delta (reported); else a code delta, which STOPS for an owner ruling."""
+    difference is classified by the code of the driver's declared input modules at ``dd7ed4f`` and at the
+    campaign commit (:func:`_code_delta`, docstrings removed): none changed -> an environment delta
+    (reported); else a code delta, which STOPS for an owner ruling -- unless the driver declares a ``tolerance``
+    and every difference is within it (:func:`_within_tolerance`, HFU spec 17.4)."""
     from importlib import import_module
 
     from scripts.hf_jobs.identity import artifact_identity, compare
@@ -279,23 +440,150 @@ def _rebaseline(spec: Any, fresh: pathlib.Path, commit: str, *, run: Callable[..
     contract = import_module(spec.module).input_contract()
     modules = sorted({*contract.get("extractors", []), *contract.get("models", [])})
     paths = [m.replace(".", "/") + ".py" for m in modules]
-    p = run(
-        ["git", "log", "--format=%h", f"{REBASELINE_FROM[spec.name]}..{commit}", "--", *paths],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=REPO_ROOT,
-    )
-    commits = (p.stdout or "").split()
-    return {
-        "ok": not commits,  # a code delta STOPS adoption of this artifact for an owner ruling (P15)
+    changed = _code_delta(paths, REBASELINE_FROM[spec.name], commit, run=run)
+    out = {
+        "ok": not changed,  # a code delta STOPS adoption of this artifact for an owner ruling (P15)
         "basis": "rebaseline",
         "identical": False,
         "diffs": diffs,
-        "delta": "code" if commits else "environment",
+        "delta": "code" if changed else "environment",
         "input_modules": modules,
-        "commits": commits,
+        "changed_modules": changed,
     }
+    if spec.tolerance is not None:  # HFU spec 17.4: within the owner-ratified tolerance passes
+        within, notes = _within_tolerance(committed, fresh, spec.tolerance)
+        out |= {"ok": out["ok"] or within, "within_tolerance": within, "tolerance_notes": notes}
+    return out
+
+
+def _within_tolerance(committed: pathlib.Path, fresh: pathlib.Path, tol: Mapping[str, Any]) -> tuple[bool, list[str]]:
+    """A rebaseline's outputs compared within ``tol`` (HFU spec 17.4): ``(ok, notes)``, the notes being the
+    failures, else the measured differences. JSON after the provenance keys, field by field: every number within
+    ``tol["rel"]`` relative (zero only equals zero; NaN equals only NaN; an infinity only itself), a dotted
+    ``tol["abs"]`` field within its absolute bound, ``tol["uncompared"]`` top-level keys skipped,
+    ``tol["fresh_zero"]`` keys 0 in the fresh run, everything else exact. Parquet: the same columns, dtypes, rows
+    and order; float columns within ``rel`` (one note per column: the count and the largest relative difference, or
+    the first row beyond), the rest exact. Any other file: the same bytes."""
+    import math
+
+    import numpy as np
+    import pandas as pd
+
+    from scripts.hf_jobs.identity import normalized_json
+
+    rel, bounds = float(tol["rel"]), dict(tol.get("abs", {}))
+    bad: list[str] = []
+    measured: list[str] = []
+
+    def close(path: str, a: Any, b: Any) -> bool:  # equal values never reach a note (`walk`)
+        if not (math.isfinite(a) and math.isfinite(b)):  # NaN equals only NaN; an infinity only itself
+            return math.isnan(a) and math.isnan(b)
+        if path in bounds:
+            return abs(a - b) <= bounds[path]
+        if isinstance(a, float) or isinstance(b, float):
+            return abs(a - b) <= rel * max(abs(a), abs(b))
+        return False
+
+    def walk(path: str, a: Any, b: Any) -> None:
+        if isinstance(a, dict) and isinstance(b, dict):
+            if set(a) != set(b):
+                bad.append(f"{path or '<root>'}: keys {sorted(set(a) ^ set(b))} differ")
+                return
+            for k in sorted(a):
+                walk(f"{path}.{k}" if path else k, a[k], b[k])
+            return
+        if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+            for i, (x, y) in enumerate(zip(a, b, strict=True)):
+                walk(f"{path}[{i}]", x, y)
+            return
+        numbers = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (a, b))
+        if numbers and close(path, a, b):
+            if a != b and not (isinstance(a, float) and math.isnan(a)):
+                measured.append(f"{path}: {a!r} -> {b!r}")
+        elif a != b:
+            bad.append(f"{path}: {a!r} != {b!r}")
+
+    names = sorted(p.name for p in committed.iterdir() if p.is_file())
+    if names != sorted(p.name for p in fresh.iterdir() if p.is_file()):
+        return False, ["the file sets differ"]
+    for name in names:
+        c, f = committed / name, fresh / name
+        if name.endswith(".json"):
+            raw = json.loads(f.read_text(encoding="utf-8"))
+            zero = tol.get("fresh_zero", ())
+            bad += [f"{name}: fresh {k} = {raw.get(k)!r}, expected 0" for k in zero if raw.get(k) != 0]
+            skip = set(tol.get("uncompared", ()))
+            docs = [json.loads(normalized_json(p.read_bytes())) for p in (c, f)]
+            walk("", *({k: v for k, v in d.items() if k not in skip} for d in docs))
+        elif name.endswith(".parquet"):
+            a, b = pd.read_parquet(c), pd.read_parquet(f)
+            if list(a.columns) != list(b.columns) or list(a.dtypes) != list(b.dtypes) or len(a) != len(b):
+                bad.append(f"{name}: columns, dtypes or rows differ")
+                continue
+            for col in a.columns:
+                if a[col].dtype.kind != "f":
+                    if not (a[col].to_numpy() == b[col].to_numpy()).all():
+                        bad.append(f"{name}: column {col} differs")
+                    continue
+                x, y = a[col].to_numpy(dtype=np.float64), b[col].to_numpy(dtype=np.float64)
+                nan = np.isnan(x) & np.isnan(y)  # NaN equals only NaN; an infinity only itself
+                finite = np.isfinite(x) & np.isfinite(y)
+                scale = np.maximum(np.abs(x), np.abs(y))
+                with np.errstate(invalid="ignore"):  # inf - inf
+                    within = nan | (x == y) | (finite & (np.abs(x - y) <= rel * scale))
+                changed = ~nan & (x != y)
+                if not within.all():
+                    i = int(np.flatnonzero(~within)[0])
+                    bad.append(
+                        f"{name}:{col}: {int((~within).sum())} of {len(x)} values beyond {rel:g} relative; "
+                        f"first row {i}: {x[i]!r} -> {y[i]!r}"
+                    )
+                elif changed.any():
+                    worst = float((np.abs(x[changed] - y[changed]) / scale[changed]).max())
+                    n_changed = int(changed.sum())
+                    measured.append(f"{name}:{col}: {n_changed} of {len(x)} values differ, max rel {worst:.3g}")
+        elif c.read_bytes() != f.read_bytes():
+            bad.append(f"{name}: bytes differ")
+    return not bad, bad or measured
+
+
+def _code_ast(source: str | None) -> str | None:
+    """The module's AST dump with every module, class and function docstring removed (``None``: absent)."""
+    import ast
+
+    if source is None:
+        return None
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (
+            isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            node.body = body[1:] or [ast.Pass()]
+    return ast.dump(tree, include_attributes=False)
+
+
+def _code_delta(
+    module_paths: Sequence[str],
+    base: str,
+    commit: str,
+    *,
+    run: Callable[..., Any] = subprocess.run,
+    cwd: pathlib.Path = REPO_ROOT,
+) -> list[str]:
+    """The input modules whose code differs between ``base`` and ``commit`` (HFU spec 14.3, F9): an endpoint
+    compare, one ``git show`` per module and endpoint, docstrings removed. A docstring-only commit is not a
+    code delta; a module present at only one endpoint is. Empty == no code delta."""
+
+    def _show(rev: str, path: str) -> str | None:
+        p = run(["git", "show", f"{rev}:{path}"], capture_output=True, text=True, check=False, cwd=cwd)
+        return p.stdout if p.returncode == 0 else None
+
+    return [path for path in module_paths if _code_ast(_show(base, path)) != _code_ast(_show(commit, path))]
 
 
 def _certify(
@@ -316,34 +604,48 @@ def _certify(
         if ref.kind != "wheel":
             return {"ok": False, "reason": f"{ref.id}: a public head-to-head needs a committed wheel bundle"}
         h2h = fresh.parent / f"{inst.variant}.headtohead.json"
-        p = run(
-            [
-                str(HFJOBS_PYTHON),
-                "-m",
-                "scripts.hf_jobs.headtohead",
-                inst.job,
-                "--committed-dir",
-                str(REPO_ROOT / ref.path),
-                "--fresh-dir",
-                str(fresh),
-                "--feature-set",
-                "position_only" if "position_only" in inst.variant else "faithful",
-                "--metrics-json",
-                str(h2h),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=REPO_ROOT,
-        )
+        argv = [
+            str(HFJOBS_PYTHON), "-m", "scripts.hf_jobs.headtohead", inst.job,
+            "--committed-dir", str(REPO_ROOT / ref.path), "--fresh-dir", str(fresh),
+            "--feature-set", "position_only" if "position_only" in inst.variant else "faithful",
+            "--certification", "public", "--metrics-json", str(h2h),
+        ]  # fmt: skip
+        env = None
+        rows = fresh.with_name(f"{fresh.name}.eval_rows.parquet")
+        if _public_staged(inst):  # the run's own extract rows (HFU spec 14.4)
+            argv += ["--eval-rows", str(rows)]
+        elif ref.dataset is not None and _dataset_kind(ref) == "statsbomb_open":
+            from scripts._sb_open_data import OPEN_DATA_REVISION_ENV
+            from scripts.hf_jobs.datasets import locked
+
+            # F14: the public builders read the open data at the LOCKED revision, never live master; with a
+            # staged snapshot, from that snapshot into the staging folder (HFU spec 14.7).
+            rec = locked(ref.dataset)
+            env = {**os.environ, OPEN_DATA_REVISION_ENV: rec["revision"]}
+            if rec.get("snapshot"):
+                from scripts._sb_open_data import OPEN_DATA_SNAPSHOT_ENV
+
+                repo = _declared()[ref.dataset].snapshot_repo
+                env[OPEN_DATA_SNAPSHOT_ENV] = f"{repo}@{rec['snapshot']['revision']}"
+                env["SILLY_KICKS_CORPUS_CACHE_DIR"] = str(_open_data_dir(fresh.parents[1], inst.id))
+        p = run(argv, capture_output=True, text=True, check=False, cwd=REPO_ROOT, env=env)
         if p.returncode != 0 or not h2h.is_file():
             return {"ok": False, "reason": f"head-to-head failed: {(p.stderr or '')[-2000:]}"}
         try:
+            committed = _committed_metrics(ref, observed)
+            gate = next((b.in_sample_gate for b in getattr(spec, "builds", ()) if b.variant == inst.variant), True)
             ok, detail = floor.certify(
-                spec, inst.tier, fresh_metrics=fresh_metrics, committed_metrics={}, headtohead=_read_json(h2h)
+                spec,
+                inst.tier,
+                fresh_metrics=fresh_metrics,
+                committed_metrics=committed,
+                headtohead=_read_json(h2h),
+                in_sample_gate=gate,
             )
+        except AdoptionRefusedError as exc:
+            return {"ok": False, "reason": str(exc)}
         except KeyError as exc:
-            return {"ok": False, "reason": f"missing head-to-head pair {exc}"}
+            return {"ok": False, "reason": f"missing head-to-head pair or cv metric {exc}"}
         return {"ok": ok, **detail}
     try:
         ok, detail = floor.certify(
@@ -361,51 +663,86 @@ def verify(
     staging: pathlib.Path,
     replica: int | None = None,
     run: Callable[..., Any] = subprocess.run,
+    workers: int = 4,
 ) -> dict:
-    """Steps 2-4 for every retrieved instance; writes ``<staging>/verify.json``. ``ok`` per instance."""
-    from scripts.hf_jobs.registry import DriverSpec, spec_for
+    """Steps 2-4 for every retrieved instance; writes ``<staging>/verify.json``. ``ok`` per instance. Up to
+    ``workers`` instances at once (HFU spec 17.5): each ``[verify]`` line prints when its instance ends; the report
+    is in instance order."""
+    import concurrent.futures
 
     staging = _outside_repo(staging)
     man = mf.load()
     observed = _read_json(mf.OBSERVED) if mf.OBSERVED.is_file() else {}
-    report: dict[str, Any] = {"commit": commit, "campaign": c.name, "instances": {}}
-    for inst in instances(c, commit, replica=replica):
-        rp = _record_path(staging, inst.id)
-        if not rp.is_file():
-            continue
-        record = _read_json(rp)
-        fresh = _artifact_dir(staging, inst.id)
-        spec = spec_for(inst.job)
-        row: dict[str, Any] = {"artifacts": {}}
-        if isinstance(spec, DriverSpec):
-            row["certification"] = _rebaseline(spec, fresh, commit, run=run)
-            row["ok"] = bool(row["certification"]["ok"])
-            report["instances"][inst.id] = row
-            continue
-        targets = artifacts_for(inst, man)
-        if not targets:
-            row.update(ok=False, reason="no manifest artifact for this instance")
-            report["instances"][inst.id] = row
-            continue
-        row["load_error"] = load_check(inst.job, fresh, run=run)
-        # ONE certification per instance, against its committed reference: the wheel bundle when the
-        # instance has one (a Hub mirror / sibling shares it), else the Hub artifact's observed metrics.
-        ref = next((a for a in targets if a.kind == "wheel"), targets[0])
-        fresh_metrics = _read_json(fresh / "metrics.json") if (fresh / "metrics.json").is_file() else {}
-        row["certification"] = _certify(spec, inst, ref, fresh, fresh_metrics, observed, run=run)
-        oks = [row["load_error"] is None, bool(row["certification"]["ok"])]
-        if inst.job in INTEGRITY_FAMILIES:
-            row["integrity"] = _integrity(ref, fresh, record, _committed_metrics(ref, observed), staging, run=run)
-            oks.append(bool(row["integrity"]["go"]))
-        for a in targets:
-            row["artifacts"][a.id] = {"violations": expectation_violations(a, fresh, record, commit)}
-            oks.append(not row["artifacts"][a.id]["violations"])
-        row["ok"] = all(oks)
-        report["instances"][inst.id] = row
+    insts = instances(c, commit, replica=replica)
+
+    def one(item: tuple[int, Instance]) -> dict | None:
+        i, inst = item
+        return _verify_one(inst, i, len(insts), commit=commit, staging=staging, man=man, observed=observed, run=run)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        rows = list(pool.map(one, enumerate(insts, start=1)))
+    report: dict[str, Any] = {
+        "commit": commit,
+        "campaign": c.name,
+        "instances": {inst.id: row for inst, row in zip(insts, rows, strict=True) if row is not None},
+    }
     (staging / "verify.json").write_text(
         json.dumps(report, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8"
     )
     return report
+
+
+def _verify_one(
+    inst: Instance,
+    i: int,
+    n: int,
+    *,
+    commit: str,
+    staging: pathlib.Path,
+    man: mf.Manifest,
+    observed: Mapping[str, Any],
+    run: Callable[..., Any],
+) -> dict | None:
+    """:func:`verify` for instance ``i`` of ``n``: its report row, or ``None`` when it was not retrieved. Every
+    file it writes is this instance's own (the head-to-head, the open-data cache, the integrity verdict)."""
+    from scripts.hf_jobs.registry import DriverSpec, spec_for
+
+    rp = _record_path(staging, inst.id)
+    if not rp.is_file():
+        return None
+    t0 = time.monotonic()
+    record = _read_json(rp)
+    fresh = _artifact_dir(staging, inst.id)
+    spec = spec_for(inst.job)
+    row: dict[str, Any] = {"artifacts": {}}
+    if isinstance(spec, DriverSpec):
+        row["certification"] = _rebaseline(spec, fresh, commit, run=run)
+        row["ok"] = bool(row["certification"]["ok"])
+        _say_verify(i, n, inst.id, row, [] if row["ok"] else ["certification"], t0)
+        return row
+    targets = artifacts_for(inst, man)
+    if not targets:
+        row.update(ok=False, reason="no manifest artifact for this instance")
+        _say_verify(i, n, inst.id, row, ["no manifest artifact"], t0)
+        return row
+    row["load_error"] = load_check(inst.job, fresh, run=run)
+    # ONE certification per instance, against its committed reference: the wheel bundle when the
+    # instance has one (a Hub mirror / sibling shares it), else the Hub artifact's observed metrics.
+    ref = next((a for a in targets if a.kind == "wheel"), targets[0])
+    fresh_metrics = _read_json(fresh / "metrics.json") if (fresh / "metrics.json").is_file() else {}
+    row["certification"] = _certify(spec, inst, ref, fresh, fresh_metrics, observed, run=run)
+    checks = {"load": row["load_error"] is None, "certification": bool(row["certification"]["ok"])}
+    if _dataset_kind_of(inst) == "statsbomb_open":  # the committed side has no ids (HFU spec 14.3)
+        row["coverage_note"] = coverage_note(cv_ok=bool(row["certification"].get("cv_parity", {}).get("ok")))
+    if inst.job in INTEGRITY_FAMILIES:
+        row["integrity"] = _integrity(ref, fresh, record, _committed_metrics(ref, observed), staging, run=run)
+        checks["integrity"] = bool(row["integrity"]["go"])
+    for a in targets:
+        row["artifacts"][a.id] = {"violations": expectation_violations(a, fresh, record, commit)}
+        checks[f"expectations {a.id}"] = not row["artifacts"][a.id]["violations"]
+    row["ok"] = all(checks.values())
+    _say_verify(i, n, inst.id, row, [k for k, ok in checks.items() if not ok], t0)
+    return row
 
 
 # ---- adopt -----------------------------------------------------------------------------------------

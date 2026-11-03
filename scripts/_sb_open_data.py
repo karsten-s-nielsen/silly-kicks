@@ -37,6 +37,15 @@ WORLD_CUP_2022 = (43, 106)
 OPEN_DATA_REVISION_ENV = "SILLY_KICKS_OPEN_DATA_REVISION"
 #: TEST-ONLY: point statsbombpy at a local http server mirroring the open-data tree (never set in a job).
 OPEN_DATA_BASE_ENV = "SILLY_KICKS_OPEN_DATA_BASE"
+#: ``<repo>@<revision>`` of the staged open-data snapshot (HFU spec 14.7). Off-HF (verify's public builders) a
+#: cache miss downloads that one file from the snapshot, never from GitHub. A job mounts the snapshot instead.
+OPEN_DATA_SNAPSHOT_ENV = "SILLY_KICKS_OPEN_DATA_SNAPSHOT"
+
+
+class OpenDataSnapshotMissError(RuntimeError):
+    """An HF job asked for an open-data file its snapshot does not hold; a job never falls back to GitHub."""
+
+
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -94,13 +103,9 @@ def all_open_competitions() -> list[tuple[int, int]]:
     too thin for a team-discrimination ICC / split-half); ``assert_statsbomb_open_data_mode`` guards
     that the manifest is the OPEN one.
     """
-    from statsbombpy import sb  # type: ignore[import-not-found]  # optional network dep; function-local
-
     assert_statsbomb_open_data_mode()
-    comps = sb.competitions(fmt="dict")
-    return sorted(
-        {(int(c["competition_id"]), int(c["season_id"])) for c in _values(comps)}  # type: ignore[index]
-    )
+    comps = _open_competitions(resolve_cache_dir(None))
+    return sorted({(int(c["competition_id"]), int(c["season_id"])) for c in comps})
 
 
 def _values(payload) -> list:
@@ -166,13 +171,12 @@ def list_open_data_refs(
     competitions; ``max_matches`` is a GLOBAL cap -- the walk stops, without listing further
     competitions, once it is reached. Fail-closed public-only first.
     """
-    from statsbombpy import sb  # type: ignore[import-not-found]  # optional network dep; function-local
-
     assert_statsbomb_open_data_mode()
     wanted = None if match_ids is None else {str(m) for m in match_ids}
+    root = resolve_cache_dir(None)
     refs: list[OpenDataRef] = []
     for competition_id, season_id in competitions:
-        manifest = sb.matches(competition_id=int(competition_id), season_id=int(season_id), fmt="dict")
+        manifest = _open_matches(int(competition_id), int(season_id), root)
         for raw_id, m in manifest.items():
             mid = str(raw_id)
             if wanted is not None and mid not in wanted:
@@ -191,15 +195,28 @@ def list_open_data_refs(
     return refs
 
 
-def _cached_json(path: Path | None, fetch) -> list[dict]:
-    """``fetch()`` through a JSON cache file: read it when present, else fetch and write it atomically.
+def _cached_json(root: Path | None, rel: str, fetch) -> list:
+    """``fetch()`` through the JSON cache file ``<root>/<rel>``: read it when present, else fetch and write it
+    atomically.
 
-    With no path this fetches every time (today's behaviour). The first fetch is written atomically
+    With no root this fetches every time (today's behaviour). The first fetch is written atomically
     (temp + ``os.replace``) so a killed run never leaves a torn cache entry; the JSON round-trip of
     a JSON-parsed StatsBomb payload is the identity, so a cached load builds what a fetched one does.
+    In an HF job the root is the read-only snapshot mount: a miss raises :class:`OpenDataSnapshotMissError`.
+    Off-HF with ``$SILLY_KICKS_OPEN_DATA_SNAPSHOT`` set, a miss downloads the file from the snapshot.
     """
+    path = None if root is None else Path(root) / rel
     if path is not None and path.is_file() and path.stat().st_size > 0:
         return json.loads(path.read_text(encoding="utf-8"))
+    if path is not None and os.environ.get("SILLY_KICKS_IN_HF_JOB"):
+        raise OpenDataSnapshotMissError(f"{rel}: not in the open-data snapshot at {root} (a job never fetches)")
+    snapshot = os.environ.get(OPEN_DATA_SNAPSHOT_ENV)
+    if path is not None and snapshot:
+        import huggingface_hub
+
+        repo, _, rev = snapshot.partition("@")
+        got = huggingface_hub.hf_hub_download(repo, rel, repo_type="dataset", revision=rev, local_dir=root)
+        return json.loads(Path(got).read_text(encoding="utf-8"))
     payload = fetch()
     if path is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -213,8 +230,9 @@ def _open_events(match_id: str, cache_root: Path | None) -> list[dict]:
     """The raw events of one match -- from ``<root>/statsbomb_open/<match_id>.json`` when cached."""
     from statsbombpy import sb  # type: ignore[import-not-found]
 
-    path = None if cache_root is None else Path(cache_root) / "statsbomb_open" / f"{match_id}.json"
-    return _cached_json(path, lambda: _values(sb.events(match_id=int(match_id), fmt="dict")))
+    return _cached_json(
+        cache_root, f"statsbomb_open/{match_id}.json", lambda: _values(sb.events(match_id=int(match_id), fmt="dict"))
+    )
 
 
 def _open_frames(match_id: str, cache_root: Path | None) -> list[dict]:
@@ -222,8 +240,44 @@ def _open_frames(match_id: str, cache_root: Path | None) -> list[dict]:
     cached (a distinct filename from the events, so the two never collide in one cache dir)."""
     from statsbombpy import sb  # type: ignore[import-not-found]
 
-    path = None if cache_root is None else Path(cache_root) / "statsbomb_open" / f"{match_id}.360.json"
-    return _cached_json(path, lambda: _values(sb.frames(match_id=int(match_id), fmt="dict")))
+    return _cached_json(
+        cache_root,
+        f"statsbomb_open/{match_id}.360.json",
+        lambda: _values(sb.frames(match_id=int(match_id), fmt="dict")),
+    )
+
+
+def _cached_pairs(root: Path | None, rel: str, fetch) -> dict:
+    """A statsbombpy ``fmt="dict"`` payload (keyed by int ids) through the cache as ``[key, value]`` pairs, a
+    form a JSON round-trip keeps (a JSON object would turn the int keys into strings)."""
+    return {k: v for k, v in _cached_json(root, rel, lambda: [[k, v] for k, v in fetch().items()])}
+
+
+def _open_competitions(cache_root: Path | None) -> list[dict]:
+    """The open-data competition manifest -- ``<root>/statsbomb_open/competitions.json`` when cached."""
+    from statsbombpy import sb  # type: ignore[import-not-found]
+
+    return _cached_json(cache_root, "statsbomb_open/competitions.json", lambda: _values(sb.competitions(fmt="dict")))
+
+
+def _open_matches(competition_id: int, season_id: int, cache_root: Path | None) -> dict:
+    """One competition's match manifest ``{match_id: match}`` -- ``statsbomb_open/matches/<c>_<s>.json``."""
+    from statsbombpy import sb  # type: ignore[import-not-found]
+
+    return _cached_pairs(
+        cache_root,
+        f"statsbomb_open/matches/{competition_id}_{season_id}.json",
+        lambda: sb.matches(competition_id=competition_id, season_id=season_id, fmt="dict"),
+    )
+
+
+def open_lineups(match_id: str, cache_root: Path | None) -> dict:
+    """One match's lineups (the ``sb.lineups(fmt="dict")`` payload) -- ``statsbomb_open/lineups/<id>.json``."""
+    from statsbombpy import sb  # type: ignore[import-not-found]
+
+    return _cached_pairs(
+        cache_root, f"statsbomb_open/lineups/{match_id}.json", lambda: sb.lineups(match_id=int(match_id), fmt="dict")
+    )
 
 
 def fetch_open_360_raw(match_id, *, cache_dir=None) -> tuple[list[dict], list[dict]]:

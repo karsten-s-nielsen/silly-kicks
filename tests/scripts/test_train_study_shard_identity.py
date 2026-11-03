@@ -40,7 +40,7 @@ class _CountingStrategy:
     def __init__(self, cfg, seed):
         self.cfg = cfg
 
-    def run(self, obj, backend):
+    def run(self, obj, backend, observer=None):  # the trainers pass a TrialPrinter (HFU spec 14.8)
         type(self).runs += 1
         params = {"max_depth": 2.0 + type(self).runs, "store_objective_id": self.cfg.store.objective_id}
         return SimpleNamespace(best=SimpleNamespace(candidate=SimpleNamespace(params=params)))

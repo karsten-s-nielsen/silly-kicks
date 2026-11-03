@@ -1,4 +1,4 @@
-"""Toy staged-layout corpora for the stage-contract parity tests and preflight check 5 (ADR-128).
+"""Toy staged-layout corpora for the stage-contract parity tests and the scaffolder (ADR-128).
 
 Every builder writes the SAME layout an HF job reads, so a migrated pipeline's toy ``--run-all`` exercises
 the real data path:
@@ -951,8 +951,8 @@ def build_receiver_corpus(root: str | pathlib.Path, *, n_games: int = 4, heavy_p
 def serve_open_data(root: str | pathlib.Path) -> Iterator[str]:
     """Serve a toy open-data tree over local http; yields the base URL (``SILLY_KICKS_OPEN_DATA_BASE``).
 
-    Lives here (not in ``tests/``) because preflight check 5 runs every open-data module's toy
-    ``--run-all`` through it; ``tests/scripts/_open_data_server.py`` re-exports it for the tests.
+    ``toy_session`` starts it for an open-data module; ``tests/scripts/_open_data_server.py`` re-exports it for
+    the tests.
     """
     import functools
     import http.server
@@ -1047,6 +1047,9 @@ def scaffold_flat_toy(dataset: str) -> Callable[[pathlib.Path], pathlib.Path]:
 #: Module -> the CLI arguments its toy `--run-all` needs (Tasks 10-16 add one entry each).
 TOY_PARAMS: dict[str, tuple[str, ...]] = {
     "scripts.train_win_probability": ("--competition-id", "43", "--season-id", "106"),
+    "scripts.train_match_outcome_dependence": (),  # every release the served toy manifest lists
+    "scripts.train_pass_completion": ("--competition-id", "43", "--season-id", "106"),
+    "scripts.train_xsuccess": ("--competition-id", "43", "--season-id", "106"),
     "scripts.train_receiver_model": (
         "--dataset",
         "toyrecv",
@@ -1120,6 +1123,9 @@ TOY_PARAMS: dict[str, tuple[str, ...]] = {
 #: Module -> the builder that writes its toy dataset under a data root and returns that root.
 TOY_BUILDERS: dict[str, Callable[[pathlib.Path], pathlib.Path]] = {
     "scripts.train_win_probability": _open_data_toy,
+    "scripts.train_match_outcome_dependence": _open_data_toy,
+    "scripts.train_pass_completion": _open_data_toy,
+    "scripts.train_xsuccess": _open_data_toy,
     "scripts.train_receiver_model": _receiver_toy,
     "scripts.train_ghost_outfield": _outfield_toy,
     "scripts.train_ghost_gk": _ghost_toy,
@@ -1130,7 +1136,15 @@ TOY_BUILDERS: dict[str, Callable[[pathlib.Path], pathlib.Path]] = {
 }
 
 #: Modules whose toy input is a served open-data tree (``toy_session`` starts the server).
-TOY_OPEN_DATA: frozenset[str] = frozenset({"scripts.train_win_probability", "scripts.build_territory_ranking_census"})
+TOY_OPEN_DATA: frozenset[str] = frozenset(
+    {
+        "scripts.train_win_probability",
+        "scripts.train_match_outcome_dependence",
+        "scripts.train_pass_completion",
+        "scripts.train_xsuccess",
+        "scripts.build_territory_ranking_census",
+    }
+)
 
 
 @contextlib.contextmanager

@@ -399,9 +399,10 @@ def _lineup_team_map(match_id: str) -> dict:
     A stray non-dict entry INSIDE a resolved players iterable is skipped (a defensive backstop only);
     the primary logic reaches the real player dicts, so real defenders still map.
     """
-    from statsbombpy import sb  # type: ignore[import-not-found]  # optional network dep; function-local
+    from scripts._driver_sources import resolve_cache_dir
+    from scripts._sb_open_data import open_lineups
 
-    lineups = sb.lineups(match_id=int(match_id), fmt="dict")
+    lineups = open_lineups(match_id, resolve_cache_dir(None))  # the snapshot in a job (HFU spec 14.7)
     out: dict = {}
     for top_key, roster in lineups.items():
         # Resolve the iterable of PLAYER DICTS + the roster-level team id (shape 1's "lineup"/"team_id"
@@ -651,13 +652,11 @@ def _score_declare(p) -> dict:
 
 
 def _done_results(ctx, stage: str) -> list[pd.DataFrame]:
-    """An ItemStage's unit results in sorted key order (the legacy sorted shard glob), done units only."""
-    from scripts._stages import read_result, sorted_units, unit_states
+    """An ItemStage's unit results in sorted key order (the legacy sorted shard glob), done units only,
+    from ONE listing of its generation (`_stages.done_results`, HFU spec section 3)."""
+    from scripts._stages import done_results
 
-    st = ctx.pipeline.stage(stage)
-    gen = ctx.generation(stage)
-    states = unit_states(ctx, st, sorted_units(ctx, st), verify=False)
-    return [read_result(ctx.store, f"{gen}/{k}") for k, v in states.items() if v == "done"]
+    return list(done_results(ctx, stage).values())
 
 
 def _prefit_work(key, ctx) -> dict:
@@ -718,7 +717,7 @@ def _replicate_map(pool, work: Path):
     persisted ONCE to ``work``; results returned per replicate key (combined by the caller IN ORDER)."""
     from scripts._stages import int_key
 
-    def rmap(task):
+    def rmap(task, *, on_done):
         _fn, items = task
         keys = sorted(items)
         if not keys:
@@ -731,7 +730,11 @@ def _replicate_map(pool, work: Path):
             int_key(c): (str(work), [items[k][4].tolist() for k in keys[c * _BOOT_CHUNK : (c + 1) * _BOOT_CHUNK]])
             for c in range((len(keys) + _BOOT_CHUNK - 1) // _BOOT_CHUNK)
         }
-        out = pool.map_keyed(_bootstrap_chunk, chunks)
+
+        def _chunk_done(c, vals):  # one finished chunk -> its replicate keys (HFU spec 14.8 progress)
+            on_done(dict(zip(keys[int(c) * _BOOT_CHUNK : (int(c) + 1) * _BOOT_CHUNK], vals, strict=True)))
+
+        out = pool.map_keyed(_bootstrap_chunk, chunks, on_done=_chunk_done)
         flat = [v for c in sorted(out) for v in out[c]]
         return dict(zip(keys, flat, strict=True))
 

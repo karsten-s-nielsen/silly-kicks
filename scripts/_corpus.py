@@ -142,7 +142,9 @@ def rehydrate_public_corpus_ids(metrics: dict, *, providers: tuple[str, ...] = (
     reach a copied ``metrics.json``. A PUBLIC wheel bundle, however, MUST carry the explicit
     ``corpus_match_ids``: the ids are redistributable and ``test_bundled_weights_corpus_policy`` requires
     them. This helper is the single OFF-HF adoption seam that rehydrates them, run where visibility IS
-    known (the launcher staged the pinned public arm).
+    known (the launcher staged the pinned public arm). The xShot/xCross trainers pass ``all_public=False``
+    (HFU spec 17.2, owner 2026-11-09; ``test_in_job_trainers_record_the_corpus_digest``), so this is the only
+    source of a bundle's ids.
 
     Guard: the recorded ``corpus_n_matches`` and ``providers`` MUST equal the pinned public arm, else the
     run used some OTHER corpus (e.g. the widened current ``PUBLIC_CORPUS`` -- a separate, gated decision,

@@ -1,17 +1,19 @@
 """Single source of truth for how each trainer runs as a stage-contract pipeline and how it is certified.
 
-ADR-128: a migrated trainer runs as ``python -m <pipeline>`` (the uniform stage CLI, one ``--out``); an
-unmigrated public trainer runs its own CLI through the one-unit adapter (``adapter``). Every module runs as
-``python -m`` -- the file form raises ``ModuleNotFoundError: No module named 'scripts'`` (there is no
+ADR-128: a trainer runs as ``python -m <pipeline>`` (the uniform stage CLI, one ``--out``). Every module runs
+as ``python -m`` -- the file form raises ``ModuleNotFoundError: No module named 'scripts'`` (there is no
 ``scripts/__init__.py``). The per-variant ``run_args`` are pinned from each committed variant's
 ``metadata.json``; ``fresh_subdir`` is where the artifact lands inside ``--out`` (``""`` for a pipeline).
-The flavor is ONE constant (``launch.FLAVOR``, INV-4); job size and timeout are the planner's (spec 5.4);
-the corpus shape is the dataset's (``datasets.toml``). The campaign controller consumes this.
+The flavor is ONE constant (``launch.FLAVOR``, INV-4); job size and timeout are the driver's (one full box per
+job; ADR-128 amendment 2026-11-02); the corpus shape is the dataset's (``datasets.toml``). The campaign driver
+consumes this.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,10 @@ class VariantBuild:
     #: predict_proba is strict on feature_names (the floor-crash fix, ADR-123 / spec §5). Default
     #: "faithful" for the velocity-bearing variants and the public trainers.
     feature_set: str = "faithful"
+    #: Public certification gates on the in-sample head-to-head too (HFU spec 14.4). ``False`` only for a build whose
+    #: committed params came from another tuning run (ADR-128 item 17: no parameter match), where in-sample scores
+    #: favour the committed params: it certifies on CV parity and records the head-to-head (HFU spec 17.3).
+    in_sample_gate: bool = True
 
 
 @dataclass(frozen=True)
@@ -61,13 +67,14 @@ class TrainerSpec:
     #: criterion-3 identity comparison. ``tier_certification`` overrides it per campaign tier.
     certification: str = "owner"
     tier_certification: dict[str, str] | None = None
-    #: ADR-128: the dotted module path whose ``PIPELINE`` the campaign launches; ``""`` until the module is
-    #: migrated, and for an ``adapter`` trainer (its unmigrated CLI runs as ONE unit, spec 5.6).
+    #: ADR-128: the dotted module path whose ``PIPELINE`` the campaign launches.
     pipeline: str = ""
-    adapter: bool = False
     #: ADR-128 owner certification (CV parity): the dotted path of the CV metric in BOTH the fresh and the
     #: committed ``metrics.json`` (``{shipped_variant}`` is filled from that file); ``""`` = not CV-certified.
     cv_metric: str = ""
+    #: Public CV parity is relative (``floor.PUBLIC_CV_REL_TOL``); a fitted-parameter metric (match-outcome
+    #: ``rho``) sets an absolute two-sided bound here instead (HFU spec 14.4).
+    cv_tolerance: float | None = None
 
     @property
     def weights_paths(self) -> tuple[str, ...]:
@@ -91,14 +98,21 @@ class DriverSpec:
     module: str
     certification: str
     output_rel: str
+    #: The committed recipe's corpus-scope args (HFU spec 14.2): every instance of the driver gets them.
+    base_args: tuple[str, ...] = ()
+    #: A rebaseline that differs only within this passes (HFU spec 17.4; `adopt._within_tolerance`): ``rel`` for
+    #: every number, ``abs`` per dotted field, ``uncompared`` top-level keys, ``fresh_zero`` keys the fresh run
+    #: must record as 0. ``None``: byte identity (after the provenance keys).
+    tolerance: Mapping[str, Any] | None = None
 
 
 # ``primary_metric`` is the metric name the head-to-head scorer (scripts/hf_jobs/headtohead.py) computes
-# IDENTICALLY for both the committed and the fresh model on the same held-out split -- NOT a key read from
-# any committed metrics.json (3 public trainers ship none). The floor gates EVERY variant (no silent
-# regression on a non-default variant). ``delta`` is the pinned per-trainer tolerance; OWNER-RATIFIED,
-# FAIL-CLOSED (missing/NaN blocks). A noisier trainer needs a LARGER delta; tightened by the owner after
-# the first head-to-head deltas, never loosened silently.
+# IDENTICALLY for both the committed and the fresh model on the SAME rows. Those rows lie inside both training
+# sets, so the head-to-head is IN-SAMPLE PARITY (the fresh model agrees with the committed one), not a
+# generalisation check; public certification adds two-sided CV parity on ``cv_metric`` (HFU spec 14.4).
+# The floor gates EVERY variant (no silent regression on a non-default variant). ``delta`` is the pinned
+# per-trainer tolerance; OWNER-RATIFIED, FAIL-CLOSED (missing/NaN blocks). A noisier trainer needs a LARGER
+# delta; tightened by the owner after the first head-to-head deltas, never loosened silently.
 REGISTRY: dict[str, TrainerSpec] = {
     "win_probability": TrainerSpec(
         name="win_probability",
@@ -112,18 +126,21 @@ REGISTRY: dict[str, TrainerSpec] = {
         delta=0.01,
         certification="public",
         pipeline="scripts.train_win_probability",
+        cv_metric="ece",
     ),
     "pass_completion": TrainerSpec(
         name="pass_completion",
         module="scripts.train_pass_completion",
         extras=("statsbombpy",),
-        base_args=("--source", "open-data"),
-        builds=(VariantBuild("default", (), "expected_passing/weights", "weights"),),
+        # The committed recipe (HFU spec 14.2, F6): the whole public open-data corpus.
+        base_args=("--all-competitions",),
+        builds=(VariantBuild("default", (), "expected_passing/weights", ""),),
         certification="public",
-        adapter=True,  # ADR-128 spec 5.6: runs via the one-unit adapter stage until Cycle 2
+        pipeline="scripts.train_pass_completion",  # ADR-128 pipeline (HFU spec 15.5a)
         primary_metric="ece",
         metric_direction="lower_better",
         delta=0.01,
+        cv_metric="ece",
     ),
     "match_outcome_dependence": TrainerSpec(
         name="match_outcome_dependence",
@@ -133,22 +150,27 @@ REGISTRY: dict[str, TrainerSpec] = {
         # match_outcome writes the artifact DIRECTLY to --out (no weights/ subdir) -- verified.
         builds=(VariantBuild("default", (), "match_outcome/weights", ""),),
         certification="public",
-        adapter=True,  # ADR-128 spec 5.6: runs via the one-unit adapter stage until Cycle 2
+        pipeline="scripts.train_match_outcome_dependence",  # ADR-128 pipeline (HFU spec §5)
         primary_metric="log_loss",
         metric_direction="lower_better",
         delta=0.01,
+        # One MLE parameter, no out-of-fold metric: parity is the fitted rho (launch 3 measured 2e-11).
+        cv_metric="rho",
+        cv_tolerance=1e-6,
     ),
     "xsuccess": TrainerSpec(
         name="xsuccess",
         module="scripts.train_xsuccess",
         extras=("statsbombpy",),
-        base_args=(),
-        builds=(VariantBuild("default", (), "xsuccess/weights", "weights"),),
+        # The committed recipe (HFU spec 14.2, F7): the whole public open-data corpus, 30 HPO trials.
+        base_args=("--all-competitions", "--hpo-trials", "30"),
+        builds=(VariantBuild("default", (), "xsuccess/weights", ""),),
         certification="public",
-        adapter=True,  # ADR-128 spec 5.6: runs via the one-unit adapter stage until Cycle 2
+        pipeline="scripts.train_xsuccess",  # ADR-128 pipeline (HFU spec 15.5a)
         primary_metric="ece",
         metric_direction="lower_better",
         delta=0.01,
+        cv_metric="brier",
     ),
     "ghost_gk": TrainerSpec(
         name="ghost_gk",
@@ -255,7 +277,10 @@ REGISTRY: dict[str, TrainerSpec] = {
         # ADR-128: `--run-all --out` writes the bundle files directly (no xcross_attempt_v1/ subdir); the
         # controller adds `--dataset`, `--probe-dataset` and `--arms-json` (the off-HF arm policy).
         builds=(
-            VariantBuild("default", ("--feature-set", "faithful"), "tracking/_xcross_weights/default", ""),
+            # No parameter match (ADR-128 item 17; owner 2026-11-09): CV parity certifies, in-sample is recorded.
+            VariantBuild(
+                "default", ("--feature-set", "faithful"), "tracking/_xcross_weights/default", "", in_sample_gate=False
+            ),
             VariantBuild(
                 "position_only",
                 ("--feature-set", "position_only"),
@@ -278,7 +303,9 @@ REGISTRY: dict[str, TrainerSpec] = {
         # ADR-123 dataset-AGNOSTIC: the job reads the STAGED dataset (--dataset); the controller passes the
         # visibility as parameters (--corpus-visibility / --corpus-n-matches, decision P5). NO pining in-job.
         # --provider still selects the labeling strategy; --feature-set public is the shipped variant.
-        base_args=("--provider", "statsbomb", "--feature-set", "public"),
+        # The pool (HFU spec 14.2, F10): the campaign job names `pool_dataset`; only its Gradient Sports units
+        # pool in (the committed `providers_trained`).
+        base_args=("--provider", "statsbomb", "--feature-set", "public", "--pool-provider", "gradientsports"),
         # ADR-128: `--run-all --out` writes the bundle files directly (no model/ subdir).
         builds=(VariantBuild("default", (), "tracking/_receiver_weights/default", ""),),
         pipeline="scripts.train_receiver_model",
@@ -312,6 +339,16 @@ DRIVERS: dict[str, DriverSpec] = {
         "scripts.build_territory_ranking_census",
         "rebaseline",
         "docs/research/territory_ranking_census",
+        base_args=("--all-competitions",),  # the committed census scope (HFU spec 14.2, F8)
+        # Owner-ratified 2026-11-09 (HFU spec 17.4, F32): launch 6 drifted by icc 3.1e-15 rel, lo 4.5e-6,
+        # n_boot_effective 1 (one bootstrap replicate converged), 4,094 ranking values <= 1.27e-14 rel; the P4 pass
+        # counters describe the run and the committed census predates them.
+        tolerance={
+            "rel": 1e-9,
+            "abs": {"census.tier2.lo": 1e-5, "census.tier2.n_boot_effective": 1},
+            "uncompared": ("n_attempted", "n_failed", "n_counters_unrecorded", "n_excluded"),
+            "fresh_zero": ("n_failed", "n_counters_unrecorded", "n_excluded"),
+        },
     ),
     # --- scaffold: drivers above ---
 }

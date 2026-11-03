@@ -202,7 +202,8 @@ def near_in_phase_counts_at(
 ) -> np.ndarray:
     """Per shift ``s``, how many positions ``t_loc[i]`` have ``Re(a[i] * conj(b[(t_loc[i] - s) mod n])) >= cos_thr``.
 
-    The % near-in-phase surrogate count (spec 7.9: direct, O(N K), numba optional). ``a`` holds A's phasors at the
+    The % near-in-phase surrogate count (spec 7.9: direct, O(N K), numba by default, numpy under the switch).
+    ``a`` holds A's phasors at the
     positions ``t_loc`` of the B segment ``b`` (length ``n``); draw ``s`` rolls the segment by ``s`` (``np.roll``
     semantics). The real part is ``a.re * b.re + a.im * b.im`` in both backends -- two rounded products, one rounded
     sum -- so the counts never depend on whether numba is installed (spec 7.15). A non-finite product never counts.
@@ -304,7 +305,7 @@ def shifted_slice_lagged_pearson(
     The cross-correlation surrogate identity (spec 7.9) for a slice ``a`` lying at ``offset`` inside the B segment
     ``b`` that each draw rolls (``np.roll`` semantics). The circular FFT cross-correlation of ``a`` (zero outside the
     slice) with ``b`` gives every shift's lag sum over the whole slice; the exact correction removes, per lag, the
-    ``|lag|`` terms whose partner falls outside the slice (ascending sums, numba optional, bit-identical backends);
+    ``|lag|`` terms whose partner falls outside the slice (ascending sums, numba by default, bit-identical backends);
     B's overlap sums come from circular prefix sums. ``r`` is ``(K, 2L+1)`` (NaN where a side is constant on the
     overlap), ``n`` the ``(2L+1,)`` overlap sizes. Inputs must be finite: the FFT would carry a non-finite value to
     every shift, where the direct computation NaNs only the draws that roll it into the slice. ``b_side`` is

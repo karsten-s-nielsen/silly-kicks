@@ -24,12 +24,13 @@ def test_reversed_replicate_map_equals_serial():
     serial = bootstrap_icc_and_power(y, d, t, **kw)
     seen: list[str] = []
 
-    def rmap(task):  # deliberately reversed completion; the function must combine by replicate index
+    def rmap(task, *, on_done):  # deliberately reversed completion; the function must combine by replicate index
         fn, items = task
         out = {}
         for k in sorted(items, reverse=True):
             out[k] = fn(*items[k])
             seen.append(k)
+            on_done({k: out[k]})
         return out
 
     assert bootstrap_icc_and_power(y, d, t, replicate_map=rmap, **kw) == serial

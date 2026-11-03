@@ -878,3 +878,21 @@ class TestGkPlayerIdDtypeInvariance:
             compute_gk_influence(
                 standard_frame, attacking_team_id=2, gk_player_id="999", xt=fitted_xt, goal_map=HOME_GOAL_MAP
             )
+
+
+#: Six defenders; the 3rd and 4th closest to either goal tie at x=5 (rows 4 and 5), so with n=3 the tie decides
+#: who is selected. This layout is one the default (unstable) x86 argsort reorders (HFU spec 14.10b).
+_TIE_X = [3.0, 8.0, 7.0, 4.0, 5.0, 5.0]
+
+
+@pytest.mark.parametrize(("defends_x0", "first", "rest"), [(True, 104, {100, 103}), (False, 104, {101, 102})])
+def test_back_line_tie_keeps_input_order(defends_x0, first, rest):
+    """HFU spec 14.10b: two defenders on exactly the same x keep their input row order (a stable sort), on
+    every platform; with the rows reversed, the selection follows the new order."""
+    from silly_kicks.tracking._defensive_line import select_back_line_players
+
+    frames = _make_outfield_frame(positions=[(x, 10.0 * (i + 1)) for i, x in enumerate(_TIE_X)])
+    picked = select_back_line_players(frames, team_id=1, defends_x0=defends_x0, n=3)
+    assert set(picked["player_id"]) == rest | {first}
+    flipped = select_back_line_players(frames.iloc[::-1], team_id=1, defends_x0=defends_x0, n=3)
+    assert set(flipped["player_id"]) == rest | {105}

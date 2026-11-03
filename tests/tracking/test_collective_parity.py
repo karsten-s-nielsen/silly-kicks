@@ -144,7 +144,7 @@ def _cut_tie_count(frames: pd.DataFrame) -> int:
 
 
 def test_parity_fixtures_contain_cut_ties():
-    """ADR-032 precondition: the default-argsort tie path (C1) is actually exercised."""
+    """ADR-032 precondition: the back-line tie path (C1, a stable argsort since HFU 7j) is actually exercised."""
     j03 = _frames("tests/datasets/elastic_sync/j03wmx_slice/frames.parquet")
     assert _cut_tie_count(j03) >= 50
 

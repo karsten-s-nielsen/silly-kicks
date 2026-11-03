@@ -1,5 +1,6 @@
 """ADR-123 Amendment B: the visibility-gated trainers (xshot/xcross) take the public/owner arm policy
-as the neutral ``--arms-json`` parameter and record their corpus identity -- ids only when all-public. The
+as the neutral ``--arms-json`` parameter and record their corpus identity as a digest, never ids (HFU spec 17.2,
+owner 2026-11-09: ``adopt`` rehydrates the canonical public ids off-HF). The
 pre-Amendment-B ``--expect-variant`` / ``--providers`` / ``--probe-match-ids-json`` G1 wiring was removed
 with the in-job pining path, so those tests are gone; the retained behaviour (ship-label from the arm,
 reproducibility, corpus identity, the study enumeration) is exercised here.
@@ -56,13 +57,17 @@ def _metrics(tmp_path, trainer, data, base, arms_json: str) -> dict:
 
 @pytest.mark.slow
 @TRAINERS
-def test_public_run_records_ids_and_public_reproducibility(trainer, tmp_path):
+def test_public_run_records_a_digest_and_public_reproducibility(trainer, tmp_path):
+    from scripts._corpus_identity import corpus_identity
     from scripts._toy_corpora import xshot_arms
 
     data, base = _toy(tmp_path, trainer)
     metrics = _metrics(tmp_path, trainer, data, base, xshot_arms(data / "toy", paired=False))
     assert metrics["shipped_variant"] == "public"
-    assert metrics["corpus_match_ids"] == [list(k) for k in sorted(_keys(data))]
+    assert "corpus_match_ids" not in metrics and metrics["corpus_n_matches"] == len(_keys(data))
+    provs, mids = zip(*sorted(_keys(data)), strict=True)
+    want = corpus_identity(provs, mids, all_public=False)
+    assert metrics["corpus_match_ids_sha256"] == want["corpus_match_ids_sha256"]
     assert metrics["reproducibility"] == "public"
 
 

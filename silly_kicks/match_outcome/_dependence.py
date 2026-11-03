@@ -107,7 +107,7 @@ class DependenceModel:
     training_commit: str
 
     @classmethod
-    def load(cls, weights_dir: pathlib.Path) -> DependenceModel:
+    def load(cls, weights_dir: pathlib.Path | str) -> DependenceModel:
         """Load + verify a bundled artifact; raise :class:`MatchOutcomeIntegrityError` on any failure.
 
         Examples
@@ -120,6 +120,7 @@ class DependenceModel:
             model = DependenceModel.load(pathlib.Path("silly_kicks/match_outcome/weights"))
             model.rho  # the fitted Dixon-Coles correlation
         """
+        weights_dir = pathlib.Path(weights_dir)
         model_path = weights_dir / "model.json"
         sums_path = weights_dir / "SHA256SUMS"
         if not model_path.exists() or not sums_path.exists():

@@ -97,3 +97,20 @@ feature-contract test passes unchanged, no retrain, no re-materialize, no artifa
 - The two discrimination proofs (flip the `go_left` inequality → the bit-identity gate fails; remove
   the values-kernel guard → the >depth-cap "values raises" leg fails) were run and reverted; they
   are documented in the test module docstring, not committed as perturbations.
+
+## Amendment (2026-11-06): numba is a core dependency (option B chosen)
+
+**Owner decision 2026-11-06.** Option B ("make numba a hard dependency"), rejected above, is now chosen. As the
+optional `[numba]` extra, numba was absent from `[train]`, and the HF training jobs of the cycle-1 retrain ran
+this leaf walk in its numpy body until the 2 h timeout (HFU spec §13.1 F1). It was the second time the optional
+extra hid the slowdown. The "bare `import _ghost_gk` is dependency-light" contract stays: the import is still lazy.
+
+- `numba>=0.59.0` is in `[project] dependencies`; `[numba]` stays as an empty alias.
+- `silly_kicks/_numba_dispatch.py` is the one dispatch point for all six kernel families (GHOST, DAS,
+  COORDINATION, PITCH_CONTROL, BALL_CARRIER, XTGK). `use_numba(family)` returns False only under
+  `SILLY_KICKS_<FAMILY>_FORCE_NUMPY=1`; a missing numba raises `NumbaUnavailableError` (an `ImportError`), never a
+  silent fallback. An explicit `kde_backend="cpu-numba"` or DAS `engine="numba"` requires numba
+  (`require_numba`); an explicit numpy backend never imports it.
+- The numpy bodies stay as the parity references (bit-identical, as measured above).
+- Consequence for consumers: each numba release caps numpy (0.65.1: `numpy<2.5`), so a consumer's numpy upgrade
+  waits for a numba release that supports it.

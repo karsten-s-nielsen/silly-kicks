@@ -3,9 +3,9 @@
 DGX only: it needs the pining token in the environment. The weights it writes are NOT guaranteed public or
 redistributable, so they MUST NOT be bundled or published (IMPL-05).
 
-``scripts/train_pass_completion.py`` runs on HF (the one-unit adapter stage, ADR-128), so it never imports the
+``scripts/train_pass_completion.py`` runs on HF (an ADR-128 pipeline), so it never imports the
 pining client: the I1 gate walks every HF job's static import closure and allows no exemption (ADR-123
-Amendment B). This module owns the pining source and injects it into that trainer's ``main``. The CLI, the
+Amendment B). This module owns the pining source and injects it into that trainer's ``pining_main``. The CLI, the
 clean-tree guard, the shards, the token, the fit and the card stay the trainer's own.
 
 Usage (on the box, scripts/ on sys.path, pining token in env):
@@ -54,9 +54,9 @@ def pining_events_source(
 
 
 def main(argv: list[str] | None = None) -> None:
-    from scripts.train_pass_completion import main as train_main
+    from scripts.train_pass_completion import pining_main
 
-    train_main(argv, pining_source=pining_events_source)
+    pining_main(argv, pining_source=pining_events_source)
 
 
 if __name__ == "__main__":

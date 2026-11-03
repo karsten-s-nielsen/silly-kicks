@@ -92,10 +92,12 @@ def select_back_line_players(
 
     xs = outfield["x"].to_numpy(dtype="float64")
 
+    # Stable: defenders on exactly the same x keep their input row order on every platform (the default sort
+    # orders such ties differently on x86 and ARM; HFU spec 14.10b).
     if defends_x0:
-        order = np.argsort(xs)
+        order = np.argsort(xs, kind="stable")
     else:
-        order = np.argsort(-xs)
+        order = np.argsort(-xs, kind="stable")
 
     xs_sorted = xs[order]
     p = len(outfield)

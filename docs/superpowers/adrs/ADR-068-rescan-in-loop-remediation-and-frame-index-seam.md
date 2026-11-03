@@ -48,3 +48,9 @@ Consolidate the rescan-in-loop fix behind **one seam, `silly_kicks/_frame_index.
 ## Attribution
 
 Internal (optimization-audit remediation). Builds on ADR-019 (`id_compat`), ADR-052 (`_driver` resume), ADR-065 (order-insensitive converters).
+
+## Amendment (2026-11-06)
+
+numba is a core dependency (ADR-076 amendment). The turnover scan compiles lazily through
+`silly_kicks._numba_dispatch.use_numba("XTGK")`; the pure-Python kernel runs only under
+`SILLY_KICKS_XTGK_FORCE_NUMPY=1`, and a missing numba raises instead of falling back.

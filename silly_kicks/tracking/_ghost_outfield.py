@@ -228,7 +228,7 @@ def _rows_for_team(
         opp_grx = (_FIELD_LENGTH - ox) if flip else ox
         opp_gry = (_FIELD_WIDTH - oy) if flip else oy
         opp_in_third = int(np.sum(opp_grx < _DEF_THIRD_GR_X))
-        order = np.argsort(opp_grx)  # nearest t_team's defended goal first
+        order = np.argsort(opp_grx, kind="stable")  # nearest t_team's defended goal first; ties keep row order
         fwd = order[: min(_N_OPP_FORWARD, len(opp))]
         opp_deepest_x = float(opp_grx[order[0]])
         opp_deepest_y = float(opp_gry[order[0]])
@@ -576,8 +576,8 @@ class GhostOutfieldModel:
 
     Mirrors :class:`~silly_kicks.tracking._ghost_gk.GhostGkModel`: two
     ``HistGradientBoostingRegressor`` ensembles (x, y) served as the exact pickle-free boosted mean
-    (``baseline + sum_trees leaf_value``; no sklearn at inference, numba-accelerated leaf walk when the
-    ``[numba]`` extra is installed). Parameters-only npz + JSON + SHA256 serialization; chirality +
+    (``baseline + sum_trees leaf_value``; no sklearn at inference, numba-accelerated leaf walk, numba
+    being a core dependency). Parameters-only npz + JSON + SHA256 serialization; chirality +
     feature-contract fail-closed load-guards. No grid, no KDE density.
 
     Examples

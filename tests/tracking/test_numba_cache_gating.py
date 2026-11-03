@@ -19,7 +19,7 @@ default (no env vars) ``cache=False`` → numba never resolves a locator → imp
 safe everywhere. ``cache=False`` keeps full native JIT speed; it only drops
 cross-process cache persistence (a one-time per-process recompile).
 
-numba is a ``[test]`` dependency, so these always run in CI.
+numba is a core dependency (HFU spec 13.2), so these always run in CI.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ KERNELS = [
     ("silly_kicks.tracking._ghost_gk_numba", "_kde_numba_loop"),
     ("silly_kicks.tracking._ghost_gk_numba", "_leaf_values_numba"),
     ("silly_kicks.tracking._ghost_gk_numba", "_leaf_indices_numba"),
-    ("silly_kicks.xtgk._turnover", "_opp_first_shot_scan_fast"),
+    ("silly_kicks.xtgk._turnover", "_turnover_scan()"),  # compiled lazily on first use (HFU spec 13.2)
 ]
 
 
@@ -134,7 +134,9 @@ def test_decorated_kernel_reflects_disabled_cache(monkeypatch, mod_name, attr):
     """
     _clear_cache_env(monkeypatch)
     mod = _reload(mod_name)
-    dispatcher = getattr(mod, attr)
+    dispatcher = getattr(mod, attr.removesuffix("()"))
+    if attr.endswith("()"):  # a lazy compile: the factory returns the dispatcher
+        dispatcher = dispatcher()
     assert type(dispatcher._cache).__name__ == "NullCache"
 
 

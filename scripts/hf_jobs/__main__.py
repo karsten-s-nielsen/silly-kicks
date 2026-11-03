@@ -11,8 +11,11 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: python -m scripts.hf_jobs {campaign,datasets,scaffold} ...", file=sys.stderr)
         return 2
     cmd, rest = args[0], args[1:]
+    from scripts.hf_jobs.hub_client import install_timeouts
+
+    install_timeouts()  # every Hub call of the controller is bounded (HFU spec 13.4)
     if cmd == "campaign":
-        from scripts.hf_jobs.campaign import main as run
+        from scripts.hf_jobs.driver import main as run  # the minimal driver is the controller (ADR-128)
     elif cmd == "datasets":
         from scripts.hf_jobs.datasets import main as run
     else:
