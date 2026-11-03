@@ -6,9 +6,28 @@
 [campaign]
 name = "cycle1"
 bucket = "silly-kicks/hf-refit-scratch"
-target_minutes = 60
-concurrency_cap = 10
+concurrency_cap = 25
 attempts = 3
+# Resource-sharing overhaul (ADR-128 amendment 2026-11-03). Job-sizing (fix 1): few big jobs, not cap-many.
+units_per_job = 20
+max_shards = 12
+# Launch pacing + backoff (fix 5).
+launch_batch = 8
+backoff_max_s = 300.0
+# Mount-fault outage budget (fix 3): transient sidecar 401s per dataset before it is reported an outage.
+mount_fault_budget = 12
+# Per-dataset concurrent-mount cap (fix 2): the private tc3 is mounted by 7 instances; cap well below that so
+# the CSI mount sidecar is not stormed. Other datasets use the default below.
+mount_cap = 25
+
+[campaign.mount_cap_by_dataset]
+tc3 = 6
+
+# Static per-"job/stage" peak-RSS hint (fix 4) for the memory-heavy stages only (no profiler): ghost_gk extract
+# and cache OOM at 8 workers / 32 GB, so size W down (~3) and escalate any residual over-cap unit solo.
+[campaign.peak_rss_by_stage]
+"ghost_gk/extract" = 8589934592
+"ghost_gk/cache" = 8589934592
 
 [[jobs]]
 job = "ghost_gk"

@@ -490,13 +490,11 @@ def _extract_work(item, ctx):
 
 def _cache_work(key, ctx) -> pd.DataFrame:
     """The whole-corpus combined table: every non-empty extract shard in sorted key order (the legacy
-    `res.keys` order: sorted files, then games). Downstream stages `_unpack` it."""
-    from scripts._stages import read_result, sorted_units, unit_states
+    `res.keys` order: sorted files, then games), from ONE listing of the extract generation
+    (`_stages.done_results`, HFU spec section 3). Downstream stages `_unpack` it."""
+    from scripts._stages import done_results
 
-    st = ctx.pipeline.stage("extract")
-    gen = ctx.generation("extract")
-    done = [k for k, v in unit_states(ctx, st, sorted_units(ctx, st), verify=False).items() if v == "done"]
-    parts = [f for f in (read_result(ctx.store, f"{gen}/{k}") for k in done) if len(f)]
+    parts = [f for f in done_results(ctx, "extract").values() if len(f)]
     if not parts:
         raise RuntimeError("no training samples extracted")
     return _combine_packs(parts)

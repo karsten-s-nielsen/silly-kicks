@@ -103,3 +103,10 @@ volume grows past a few hundred matches *and* a GPU venue exists.
 - **ADRs:** extends ADR-008 (pitch-control numba precedent: numpy default + `@njit` mirror + golden
   parity + numba-in-CI); continues ADR-012 (AC-1 hot-path acceleration, GPU gate).
 - **External references:** scipy `stats.gaussian_kde` (Scott bandwidth / weighted covariance); numba `@njit`.
+
+## Amendment (2026-11-06): numba is a core dependency
+
+By owner decision 2026-11-06 (ADR-076 amendment, HFU spec §13.2), numba is a core dependency, so the `cpu-numba`
+backend is available on every healthy install. `kde_backend="auto"` resolves to `cpu-numba` unless
+`SILLY_KICKS_GHOST_FORCE_NUMPY=1`. An explicit `kde_backend="cpu-numba"` raises `NumbaUnavailableError` on a
+broken install instead of failing later inside the loop.

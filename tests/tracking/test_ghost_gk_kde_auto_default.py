@@ -23,8 +23,8 @@ def _fit(n=400):
     return m, X
 
 
-def test_auto_resolves_to_cpu_numba_when_numba_present(monkeypatch):
-    pytest.importorskip("numba")
+def test_auto_resolves_to_cpu_numba_by_default(monkeypatch):
+    monkeypatch.delenv("SILLY_KICKS_GHOST_FORCE_NUMPY", raising=False)
     from silly_kicks.tracking import _ghost_gk as G
 
     m, X = _fit()
@@ -40,11 +40,11 @@ def test_auto_resolves_to_cpu_numba_when_numba_present(monkeypatch):
     assert seen == ["cpu-numba", "cpu-numba"]
 
 
-def test_auto_falls_back_to_vectorized_without_numba(monkeypatch):
+def test_auto_selects_vectorized_under_the_force_switch(monkeypatch):
     from silly_kicks.tracking import _ghost_gk as G
 
     m, X = _fit()
-    monkeypatch.setattr(G, "_HAS_GHOST_NUMBA", False)  # simulate no [numba]
+    monkeypatch.setenv("SILLY_KICKS_GHOST_FORCE_NUMPY", "1")  # the explicit numpy switch (HFU spec 13.2)
     seen = []
     real = G._kde_density_vectorized
     monkeypatch.setattr(G, "_kde_density_vectorized", lambda *a, **k: (seen.append("vec"), real(*a, **k))[1])
@@ -61,7 +61,6 @@ def test_explicit_backends_still_selectable():
 
 
 def test_cpu_numba_backend_explicitly_selectable():
-    pytest.importorskip("numba")
     m, X = _fit()
     out = m.predict_density(X.iloc[:1], kde_backend="cpu-numba")
     assert out[0].probabilities.sum() == pytest.approx(1.0, abs=1e-9)

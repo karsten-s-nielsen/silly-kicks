@@ -84,7 +84,7 @@ _LEGACY_UNMIGRATED: dict[str, dict[str, str]] = {
             "reason": "Cycle 2: real pipeline; runs via the one-unit adapter stage (ADR-128 section 5.6)",
             "approval": _SEED,
         }
-        for n in ("train_match_outcome_dependence", "train_pass_completion", "train_xsuccess")
+        for n in ("train_pass_completion", "train_xsuccess")
     },
     "train_gk_retention": {"reason": "blocked: no non-Databricks data path (registry BLOCKED)", "approval": _SEED},
     # TF-46 merged to main before this gate landed (spec 12 R8): legacy, and the FIRST burn-down item
@@ -209,5 +209,6 @@ def test_the_compliant_set_is_the_cycle1_migration():
         "train_xcross_attempt",
         "train_receiver_model",
         "train_win_probability",
+        "train_match_outcome_dependence",
         "build_territory_ranking_census",
     }

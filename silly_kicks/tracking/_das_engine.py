@@ -11,7 +11,6 @@ bit-identical to reducing the full array).
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -50,14 +49,11 @@ class DasResult:
 
 
 def _numba_available() -> bool:
-    if os.environ.get("SILLY_KICKS_DAS_FORCE_NUMPY", "") == "1":
-        return False
-    try:
-        import numba  # noqa: F401
+    """True unless ``SILLY_KICKS_DAS_FORCE_NUMPY=1``. numba is core (HFU spec 13.2): a missing numba raises
+    ``NumbaUnavailableError`` instead of selecting the numpy reference silently."""
+    from silly_kicks import _numba_dispatch
 
-        return True
-    except ImportError:
-        return False
+    return _numba_dispatch.use_numba("DAS")
 
 
 def _approx_sigmoid(x: np.ndarray) -> np.ndarray:
@@ -258,14 +254,19 @@ def compute_das(
 ) -> DasResult:
     """Compute team + per-player AS/DAS for the packed frames. Non-OK frames get NaN.
 
-    ``engine="auto"`` uses numba when importable (and ``SILLY_KICKS_DAS_FORCE_NUMPY`` unset), else
-    numpy. The numba path lands in Task 5; until then ``auto`` falls back to numpy.
+    ``engine="auto"`` uses numba unless ``SILLY_KICKS_DAS_FORCE_NUMPY=1``; ``engine="numpy"`` always runs the
+    numpy reference; ``engine="numba"`` requires numba. A missing numba raises ``NumbaUnavailableError``; it never
+    falls back to numpy silently (HFU spec 13.2).
     """
-    if engine == "numba" or (engine == "auto" and _numba_available()):
-        from silly_kicks.tracking import _das_numba
+    from silly_kicks import _numba_dispatch
 
-        if _das_numba.AVAILABLE:
-            return _das_numba.compute_das_numba(packed, params, chunk_size=chunk_size, n_threads=n_threads)
+    if engine == "numba":
+        _numba_dispatch.require_numba()
+    if engine == "numba" or (engine == "auto" and _numba_available()):
+        das_numba = _numba_dispatch.import_kernels("silly_kicks.tracking._das_numba")
+        if not das_numba.AVAILABLE:  # numba importable here but not in _das_numba: a broken install
+            raise _numba_dispatch.NumbaUnavailableError("silly_kicks.tracking._das_numba could not import numba")
+        return das_numba.compute_das_numba(packed, params, chunk_size=chunk_size, n_threads=n_threads)
     return _compute_das_numpy(packed, params, chunk_size=chunk_size)
 
 

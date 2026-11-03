@@ -5,16 +5,15 @@ from __future__ import annotations
 import subprocess
 import sys
 
+import numba
 import numpy as np
 import pytest
 
-numba = pytest.importorskip("numba")
-
-from silly_kicks.tracking import _das_numba  # noqa: E402  (imported after the numba importorskip)
-from silly_kicks.tracking._das_engine import compute_das  # noqa: E402
-from silly_kicks.tracking._das_pack import pack_frames  # noqa: E402
-from silly_kicks.tracking._das_params import DAS_PARAMS  # noqa: E402
-from tests.tracking._das_helpers import golden_frames, kernel_args  # noqa: E402
+from silly_kicks.tracking import _das_numba
+from silly_kicks.tracking._das_engine import compute_das
+from silly_kicks.tracking._das_pack import pack_frames
+from silly_kicks.tracking._das_params import DAS_PARAMS
+from tests.tracking._das_helpers import golden_frames, kernel_args
 
 
 def test_float32_arrays_rejected_by_kernel():

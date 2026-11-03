@@ -38,9 +38,6 @@ _PARAMS = (
     Param("fresh_subdir", str, "", help="where the target writes its artifact inside --out ('' = --out itself)"),
 )
 
-#: Targets whose `for_each` shard root defaults to an ephemeral /tmp: pinned under the persistent `--out`.
-_SHARD_ROOT_TARGETS = frozenset({"scripts.train_match_outcome_dependence"})
-
 
 def _run_work(key, ctx) -> FileSet:
     """Run an unmigrated trainer's EXISTING CLI unchanged as ONE unit (spec 5.6). Its `--out` (and
@@ -56,9 +53,9 @@ def _run_work(key, ctx) -> FileSet:
     args = json.loads(ctx.params["target_args"])
     if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
         raise ValueError("--target-args must be a JSON list of strings")
-    argv = [sys.executable, "-m", ctx.params["target"], *args, "--out", str(root)]
-    if ctx.params["target"] in _SHARD_ROOT_TARGETS:
-        argv += ["--shard-root", str(root / "shards")]
+    # Through the liveness runner (HFU spec §11.1): the target's code and arguments do not change.
+    argv = [sys.executable, "-m", "scripts.hf_jobs.liveness", "adapter", "-m", ctx.params["target"], *args]
+    argv += ["--out", str(root)]
     subprocess.run(argv, check=True, env=deterministic_env(), cwd=str(_REPO))  # noqa: S603 -- registry-pinned module + args
     art = root / ctx.params["fresh_subdir"] if ctx.params["fresh_subdir"] else root
     return FileSet({p.name: p.read_bytes() for p in sorted(art.iterdir()) if p.is_file()})

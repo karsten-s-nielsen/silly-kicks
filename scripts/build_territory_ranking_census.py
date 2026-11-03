@@ -651,13 +651,11 @@ def _score_declare(p) -> dict:
 
 
 def _done_results(ctx, stage: str) -> list[pd.DataFrame]:
-    """An ItemStage's unit results in sorted key order (the legacy sorted shard glob), done units only."""
-    from scripts._stages import read_result, sorted_units, unit_states
+    """An ItemStage's unit results in sorted key order (the legacy sorted shard glob), done units only,
+    from ONE listing of its generation (`_stages.done_results`, HFU spec section 3)."""
+    from scripts._stages import done_results
 
-    st = ctx.pipeline.stage(stage)
-    gen = ctx.generation(stage)
-    states = unit_states(ctx, st, sorted_units(ctx, st), verify=False)
-    return [read_result(ctx.store, f"{gen}/{k}") for k, v in states.items() if v == "done"]
+    return list(done_results(ctx, stage).values())
 
 
 def _prefit_work(key, ctx) -> dict:

@@ -48,7 +48,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             coordination = container "silly_kicks.coordination" "TF-58 team-coordination dynamics: relative phase, cross-correlation, vector coding, spectral, cluster phase, relative stretch between the two teams; per-segment surrogate baselines. ADR-110." "Python" "Library"
 
             stageContract = container "scripts/_stages + hf_jobs.executor" "ADR-128 stage/unit contract: PIPELINE DAGs of keyed single-threaded units, checksum-verified resume, W capped workers per job, byte-identical for any (W, N)." "Python" "Library"
-            campaignCtl = container "scripts/hf_jobs campaign" "Stateless campaign controller: preflight, profile, planner, typed launcher, ledger, adopt, publish; drives HF Jobs from committed campaign files; artifact manifest." "Python" "Library"
+            campaignCtl = container "scripts/hf_jobs campaign" "Stateless campaign driver: preflight, launch/resume with sized jobs, per-dataset mount caps, a set+push coverage bound, memory escalation and backoff; drives HF Jobs from committed campaign files." "Python" "Library"
             // Phase-2 agent-support server (shipped). Opt-in [mcp] extra; the core lib never imports it.
             mcp = container "silly_kicks.mcp" "Read-only tripwire MCP server (FastMCP, stdio): check_orientation / diagnose_provider / validate_construct_validity — binds pure read-only seams / committed memos, never run()/main()." "Python (optional [mcp] extra)" "Library"
         }

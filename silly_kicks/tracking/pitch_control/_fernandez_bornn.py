@@ -18,12 +18,16 @@ from ._grids import pitch_grid
 from ._params import FernandezBornnParams
 from ._surface import PitchControlSurface
 
-try:
-    from ._numba_kernels import gaussian_influence_numba
 
-    _HAS_NUMBA = True
-except ImportError:
-    _HAS_NUMBA = False
+def _kernels():
+    """The numba kernels when the PITCH_CONTROL family selects numba, else None (HFU spec 13.2: numba is core; only
+    ``SILLY_KICKS_PITCH_CONTROL_FORCE_NUMPY=1`` selects the numpy reference, and a missing numba raises)."""
+    from silly_kicks import _numba_dispatch
+
+    if not _numba_dispatch.use_numba("PITCH_CONTROL"):
+        return None
+    return _numba_dispatch.import_kernels("silly_kicks.tracking.pitch_control._numba_kernels")
+
 
 # Velocity guards
 SPEED_FLOOR = 0.1  # m/s — below meaningful movement -> isotropic
@@ -49,8 +53,9 @@ def _compute_gaussian_influence(
     -------
     (n_players, n_targets) normalized influence values in [0, 1].
     """
-    if _HAS_NUMBA:
-        return gaussian_influence_numba(targets, mu, inv_cov, det_cov)
+    kernels = _kernels()
+    if kernels is not None:
+        return kernels.gaussian_influence_numba(targets, mu, inv_cov, det_cov)
 
     # diff: (n_players, n_targets, 2)
     diff = targets[np.newaxis, :, :] - mu[:, np.newaxis, :]

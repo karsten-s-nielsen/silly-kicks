@@ -9,7 +9,7 @@ import silly_kicks.spadl.config as spadlconfig
 from silly_kicks.xtgk._turnover import (
     EmpiricalTurnoverValue,
     _opp_first_shot_scan,
-    _opp_first_shot_scan_fast,
+    _turnover_scan,
 )
 from tests._perf_structural import call_counter
 
@@ -102,22 +102,21 @@ def test_scan_kernel_invoked_once_not_per_turnover(monkeypatch):
     # per-turnover rescan would invoke the kernel 5 times.
     import silly_kicks.xtgk._turnover as tv_mod
 
-    calls = call_counter(monkeypatch, tv_mod, "_opp_first_shot_scan_fast")
+    calls = call_counter(monkeypatch, tv_mod, "_turnover_scan")  # one kernel selection + call per fit
     EmpiricalTurnoverValue()._opp_first_shot_after_turnover(_churny_corpus(), "xg", window_seconds=None)
     assert calls["n"] == 1
 
 
-def test_numba_kernel_is_active_when_installed():
-    # AGENTS.md: [numba] is bundled in [test] so CI exercises the @njit path. Guard against a SILENT
-    # permanent fallback to pure-Python (which passes every parity test yet loses the ~100x speedup):
-    # when numba is importable, the COMPILED kernel must be the one that runs.
-    import importlib.util
+def test_numba_kernel_is_active_by_default(monkeypatch):
+    # numba is core (HFU spec 13.2). Guard against a SILENT fallback to pure-Python (which passes every
+    # parity test yet loses the ~100x speedup): by default the COMPILED kernel is the one that runs.
+    # Module attributes at call time: tests/tracking/test_numba_cache_gating.py RELOADS the module, which rebinds them.
+    import silly_kicks.xtgk._turnover as tv
 
-    from silly_kicks.xtgk._turnover import _NUMBA_TURNOVER
-
-    if importlib.util.find_spec("numba") is None:
-        pytest.skip("numba not installed -- the pure-Python fallback is the correct path here")
-    assert _NUMBA_TURNOVER is True
+    monkeypatch.delenv("SILLY_KICKS_XTGK_FORCE_NUMPY", raising=False)
+    assert tv._turnover_scan() is not tv._opp_first_shot_scan
+    monkeypatch.setenv("SILLY_KICKS_XTGK_FORCE_NUMPY", "1")
+    assert tv._turnover_scan() is tv._opp_first_shot_scan
 
 
 def test_numba_and_python_kernels_agree():
@@ -136,7 +135,7 @@ def test_numba_and_python_kernels_agree():
         _SHOT,
         np.inf,
     )
-    np.testing.assert_array_equal(_opp_first_shot_scan_fast(*args), _opp_first_shot_scan(*args))
+    np.testing.assert_array_equal(_turnover_scan()(*args), _opp_first_shot_scan(*args))
 
 
 def test_nan_team_does_not_crash_and_never_matches():

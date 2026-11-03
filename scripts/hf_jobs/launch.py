@@ -21,6 +21,7 @@ from typing import Any, Final
 
 from scripts._dataset_reads import READ_CAP_ENV
 from scripts._thread_pin import DETERMINISTIC_VARS
+from scripts.hf_jobs.liveness import DEADLINE_ENV
 
 FLAVOR: Final = "cpu-upgrade"
 IMAGE: Final = "python:3.12.14-bookworm@sha256:dbbe4ceb97851e2e5fa83798b239811f871cb743b259ba3563737349f6bcfaa0"
@@ -190,6 +191,8 @@ def job_command(spec: JobSpec) -> list[str]:
     extras = "".join(f" --extra {q(e)}" for e in spec.extras)
     lines = [
         "set -euo pipefail",
+        # The job deadline, taken before git and uv; every in-job process inherits it (HFU spec §11.4).
+        f"export {DEADLINE_ENV}=$(( $(date +%s) + {int(spec.timeout_s)} ))",
         "git init -q /work",
         "cd /work",
         f"git remote add origin {q(REPO_URL)}",

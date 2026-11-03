@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import dataclasses
 import json
 import multiprocessing
@@ -42,7 +43,10 @@ _FALLBACK_RAM = 32 * GiB
 
 
 class StageFailedError(RuntimeError):
-    """A stage exceeded its failure tolerance, or a worker kept dying."""
+    """A stage exceeded its failure tolerance, or a worker kept dying. ``report`` holds the stage's unit counts at
+    the failure (set by ``LocalExecutor.run_stage``), so the job's ``[job]`` line counts the units (HFU spec 13.6)."""
+
+    report: StageReport | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -72,7 +76,15 @@ class StageReport:
     completion_order: tuple[str, ...]
 
 
-def _inner_init(cap_bytes: int | None, backend: str) -> None:  # pragma: no cover - runs in pool children
+def _inner_init(
+    cap_bytes: int | None, backend: str, role: str, counter: Any
+) -> None:  # pragma: no cover - pool children
+    from scripts.hf_jobs.liveness import start_job_watch
+
+    with counter.get_lock():  # a `multiprocessing.Value("i")` shared by the pool's children
+        index = counter.value
+        counter.value += 1
+    start_job_watch(f"{role}{index}")  # in an HF job only (HFU spec §11.1): the child reports its own frame and stacks
     if backend == "rlimit" and cap_bytes:
         import resource
 
@@ -88,19 +100,24 @@ class InnerPool:
     ``fn`` must be a module-level function (pickled by reference).
     """
 
-    def __init__(self, workers: int, *, cap_bytes: int | None = None, backend: str = "none") -> None:
+    def __init__(
+        self, workers: int, *, cap_bytes: int | None = None, backend: str = "none", role: str = "pool"
+    ) -> None:
         self.workers = max(1, int(workers))
-        self._cap, self._backend = cap_bytes, backend
+        self._cap, self._backend, self._role = cap_bytes, backend, role
         self._ex: concurrent.futures.ProcessPoolExecutor | None = None
         self._log: list[str] = []
 
     def _executor(self) -> concurrent.futures.ProcessPoolExecutor:
         if self._ex is None:
+            spawn = multiprocessing.get_context("spawn")
             self._ex = concurrent.futures.ProcessPoolExecutor(
                 max_workers=self.workers,
-                mp_context=multiprocessing.get_context("spawn"),
+                mp_context=spawn,
                 initializer=_inner_init,
-                initargs=(self._cap, self._backend),
+                # The counter gives each child its own liveness role (`w0.pool0`, `w0.pool1`, ...), so its own
+                # deadline dump time (owner decision 2026-11-05, 3b).
+                initargs=(self._cap, self._backend, self._role, spawn.Value("i", 0)),
             )
         return self._ex
 
@@ -166,23 +183,15 @@ def _first_k_all_failed(st, rows: list[dict]) -> bool:
     return k > 0 and len(first) == k and all(r["outcome"] == "failed" for r in first)
 
 
-#: Failed-unit markers inside the job-local outcomes directory. Only failures are listed, so a healthy
-#: run reads an empty directory per unit (no rescan-in-loop over the outcome log, ADR-068).
-_FAILED_DIR = "failed"
-
-
 def _worker_should_stop(st, outdir: pathlib.Path, decided: dict) -> bool:
-    """The worker-side mirror of `LocalExecutor._check_failure_rule`.
+    """The worker-side mirror of `LocalExecutor._check_failure_rule` (the systematic first-k stop only;
+    ``max_failures`` is a reduce-time rule, HFU spec §4.1).
 
     The parent checks the rule every poll interval; a worker whose units finish faster than one poll would
     otherwise run the whole slice before the parent can stop it. The worker checks before each claim and
     stops claiming (exit 0); the parent's check stays authoritative and raises. ``decided`` caches that
     the first-k window is full and not all failed, after which that rule can never fire again.
     """
-    failed_dir = outdir / _FAILED_DIR
-    if st.max_failures is not None and failed_dir.is_dir():
-        if sum(1 for _ in failed_dir.iterdir()) > st.max_failures:
-            return True
     if decided.get("first_k"):
         return False
     rows = _read_outcomes(outdir)
@@ -215,6 +224,42 @@ def _terminate(procs: dict[str, subprocess.Popen]) -> None:
             p.kill()
 
 
+def _partial_report(ctx, st, keys: list[str]) -> StageReport:
+    """The stage's unit counts from the store when it stops early (impl review B HFURR-IMPL-13)."""
+    from scripts._stages import unit_states
+
+    final = unit_states(ctx, st, keys, verify=False)
+    return StageReport(
+        st.name,
+        len(keys),
+        sum(v == "done" for v in final.values()),
+        sum(v == "excluded" for v in final.values()),
+        sum(v == "failed" for v in final.values()),
+        0,
+        0,
+        (),
+    )
+
+
+@contextlib.contextmanager
+def _fileset_cache():
+    """The stage owns the job-local FileSet cache (HFU spec 13.3): create it before the workers start, pass it to
+    them in ``FILESET_CACHE_ENV``, remove it after the stage, when no worker is left. A nested or pre-set variable
+    is kept as is (its owner removes it)."""
+    from scripts._stages import FILESET_CACHE_ENV
+
+    if os.environ.get(FILESET_CACHE_ENV):
+        yield
+        return
+    root = tempfile.mkdtemp(prefix="sk-fileset-")
+    os.environ[FILESET_CACHE_ENV] = root
+    try:
+        yield
+    finally:
+        os.environ.pop(FILESET_CACHE_ENV, None)
+        shutil.rmtree(root, ignore_errors=True)
+
+
 class LocalExecutor:
     def __init__(self, cfg: ExecutorConfig, *, rss_of: Callable[[int], tuple[int, int] | None] | None = None) -> None:
         """``rss_of(pid)`` returns ``(pid, bytes)`` of the biggest single process in a worker's tree for
@@ -243,7 +288,13 @@ class LocalExecutor:
     def try_reduce(self, ctx, name: str) -> bool:
         """Reduce ``name`` if every unit is done/excluded (failures within tolerance). Idempotent: two
         jobs that both see a complete stage write identical bytes atomically. Returns presence."""
-        from scripts._stages import deferred_memory_units, output_present, sorted_units, unit_states
+        from scripts._stages import (
+            deferred_memory_units,
+            exceeds_tolerance,
+            output_present,
+            sorted_units,
+            unit_states,
+        )
 
         if output_present(ctx, name, verify=True):
             return True
@@ -254,14 +305,24 @@ class LocalExecutor:
             return False
         if deferred_memory_units(ctx, st, keys):  # waiting for its escalation: a reduce would drop it
             return False
+        if exceeds_tolerance(st.max_failures, sum(v == "failed" for v in states.values())):
+            return False  # the reduce would refuse: no subprocess, and the run job exits 0 (HFU spec §4.1)
         self._subprocess(ctx, ["reduce", "--stage", name])
         return output_present(ctx, name, verify=True)
 
     def require_reduced(self, ctx, name: str) -> None:
-        from scripts._stages import StageIncompleteError
+        from scripts._stages import StageIncompleteError, sorted_units, unit_states
 
-        if not self.try_reduce(ctx, name):
-            raise StageIncompleteError(f"{ctx.pipeline.name}: upstream stage {name!r} is incomplete")
+        if self.try_reduce(ctx, name):
+            return
+        st = ctx.pipeline.stage(name)
+        states = unit_states(ctx, st, sorted_units(ctx, st), verify=False)
+        n_pending = sum(v == "pending" for v in states.values())
+        n_failed = sum(v == "failed" for v in states.values())
+        raise StageIncompleteError(
+            f"{ctx.pipeline.name}: upstream stage {name!r} is incomplete: {n_pending} pending, {n_failed} failed "
+            f"(tolerance {st.max_failures})"
+        )
 
     def _subprocess(self, ctx, args: list[str]) -> None:
         from scripts._stages import context_to_json
@@ -302,9 +363,14 @@ class LocalExecutor:
         if not self.cfg.escalate:  # a deferred memory unit runs only in its escalation job (W=1, whole box)
             deferred = deferred_memory_units(ctx, st, mine)
             mine = [k for k in mine if k not in deferred]
-        if self.cfg.profile_units:
-            return self._profile(ctx, st, mine)
-        return self._run(ctx, st, mine, workers=self.cfg.workers, inner=self.cfg.inner_workers)
+        with _fileset_cache():
+            if self.cfg.profile_units:
+                return self._profile(ctx, st, mine)
+            try:
+                return self._run(ctx, st, mine, workers=self.cfg.workers, inner=self.cfg.inner_workers)
+            except StageFailedError as exc:  # the systematic stop: keep the unit counts for the [job] line
+                exc.report = _partial_report(ctx, st, mine)
+                raise
 
     def _run(self, ctx, st, keys: list[str], *, workers: int, inner: int) -> StageReport:
         from scripts._parallel_launch import size_workers
@@ -331,21 +397,12 @@ class LocalExecutor:
             relaunched,
             order,
         )
-        if st.max_failures is not None and n_failed > st.max_failures:
-            raise StageFailedError(
-                f"{ctx.pipeline.name}/{st.name}: {n_failed} failed unit(s) > tolerance {st.max_failures}; "
-                f"see *.failed.json in {ctx.generation(st.name)}"
-            )
         return report
 
     def _check_failure_rule(self, st, outdir: pathlib.Path, procs) -> None:
+        """The systematic stop: the first ``abort_first_k`` completed units all failed (a loud exit 3 by
+        design). ``max_failures`` is NOT checked here: it is a reduce-time rule (HFU spec §4.1)."""
         rows = _read_outcomes(outdir)
-        failed = [r for r in rows if r["outcome"] == "failed"]
-        if st.max_failures is not None and len(failed) > st.max_failures:
-            _terminate(procs)
-            raise StageFailedError(
-                f"{st.name}: {len(failed)} failed unit(s) > tolerance {st.max_failures} (e.g. {failed[0]['key']})"
-            )
         if _first_k_all_failed(st, rows):
             _terminate(procs)
             raise StageFailedError(f"{st.name}: the first {st.abort_first_k} completed units all failed (systematic)")
@@ -562,7 +619,11 @@ def worker_main(argv: list[str]) -> int:
     st = ctx.pipeline.stage(a.stage)
     pending = json.loads(pathlib.Path(a.pending).read_text(encoding="utf-8"))
     refs = st.ref_map(ctx) if isinstance(st, ItemStage) else {}
-    pool = InnerPool(a.inner_workers, cap_bytes=a.cap_bytes, backend=a.mem_backend) if st.inner_parallel else None
+    pool = (
+        InnerPool(a.inner_workers, cap_bytes=a.cap_bytes, backend=a.mem_backend, role=f"{a.worker_id}.pool")
+        if st.inner_parallel
+        else None
+    )
     outdir = pathlib.Path(a.outcomes)
     log = outdir / f"{a.worker_id}.jsonl"
     claims = pathlib.Path(a.claims)
@@ -574,14 +635,16 @@ def worker_main(argv: list[str]) -> int:
             if not _claim(claims, key, a.worker_id):
                 continue
             outcome = run_unit(ctx, st, key, worker=a.worker_id, pool=pool, ref=refs.get(key))
-            if outcome == "failed":
-                (outdir / _FAILED_DIR).mkdir(exist_ok=True)
-                (outdir / _FAILED_DIR / key).touch()
             with open(log, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps({"key": key, "outcome": outcome, "finished_ns": time.time_ns()}) + "\n")
     finally:
         if pool is not None:
             pool.shutdown()
+    from scripts import _write_confirm
+
+    # After the units: repair a rename the HF bucket mount lost (HFU spec §12). A loss it cannot repair raises,
+    # this worker exits non-zero, and `_dispatch` relaunches it on the units that are now pending.
+    _write_confirm.confirm_job_writes()
     return 0
 
 
@@ -598,11 +661,24 @@ def reduce_main(argv: list[str]) -> int:
     except StageIncompleteError as exc:
         print(f"STAGE FAILED: {exc}", file=sys.stderr)
         return 3
+    from scripts import _write_confirm
+
+    _write_confirm.confirm_job_writes()  # the reduce output and its marker (HFU spec §12)
     return 0
+
+
+def _role(argv: list[str]) -> str:
+    """The liveness role of an executor subprocess: the worker id, or ``reduce`` (HFU spec §11.1)."""
+    if argv[:1] == ["worker"] and "--worker-id" in argv[:-1]:
+        return argv[argv.index("--worker-id") + 1]
+    return argv[0] if argv else "executor"
 
 
 if __name__ == "__main__":
     _CMDS = {"worker": worker_main, "reduce": reduce_main}
+    from scripts.hf_jobs.liveness import start_job_watch
+
+    start_job_watch(_role(sys.argv[1:]))  # before argument parsing: in an HF job only (HFU spec §11)
     if len(sys.argv) < 2 or sys.argv[1] not in _CMDS:
         raise SystemExit(f"usage: python -m scripts.hf_jobs.executor {{{','.join(_CMDS)}}} ...")
     raise SystemExit(_CMDS[sys.argv[1]](sys.argv[2:]))

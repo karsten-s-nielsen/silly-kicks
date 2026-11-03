@@ -88,22 +88,27 @@ def _opp_first_shot_scan(
     return out
 
 
-# The numba dispatcher and the pure-Python fn share this call signature; annotate so callers
-# (and pyright) see one callable regardless of whether numba resolved.
-_opp_first_shot_scan_fast: Callable[..., np.ndarray]
 #: numba's on-disk cache is OPT-IN (``tests/tracking/test_numba_cache_gating.py``): an unconditional on-disk cache
-#: resolves a writable locator at decoration, and on a read-only install the resulting ``RuntimeError`` was swallowed
-#: by the ``except`` below -- silently dropping to the ~100x slower pure-Python scan. ``SILLY_KICKS_NUMBA_CACHE=1``
-#: or ``NUMBA_CACHE_DIR`` opts in.
+#: resolves a writable locator at decoration, and on a read-only install that ``RuntimeError`` once dropped the scan
+#: silently to the ~100x slower pure-Python loop. ``SILLY_KICKS_NUMBA_CACHE=1`` or ``NUMBA_CACHE_DIR`` opts in.
 _NUMBA_CACHE = os.environ.get("SILLY_KICKS_NUMBA_CACHE", "0") == "1" or bool(os.environ.get("NUMBA_CACHE_DIR"))
-try:  # numba accelerates the O(n*k) scan ~100x; pure-Python fallback stays byte-identical (ADR-068)
-    from numba import njit as _njit
+_SCAN_NUMBA: Callable[..., np.ndarray] | None = None  # the compiled scan, bound on first use
 
-    _opp_first_shot_scan_fast = _njit(cache=_NUMBA_CACHE)(_opp_first_shot_scan)
-    _NUMBA_TURNOVER = True
-except ImportError:  # numba absent (it is an optional extra) -> the pure-Python kernel above
-    _opp_first_shot_scan_fast = _opp_first_shot_scan
-    _NUMBA_TURNOVER = False
+
+def _turnover_scan() -> Callable[..., np.ndarray]:
+    """The forward-scan kernel: the ``@njit`` compile of :func:`_opp_first_shot_scan` (~100x, byte-identical, ADR-068)
+    unless ``SILLY_KICKS_XTGK_FORCE_NUMPY=1`` selects the pure-Python reference. numba is core (HFU spec 13.2): a
+    missing numba raises ``NumbaUnavailableError``. The compile is lazy, so ``import silly_kicks.xtgk`` stays light."""
+    global _SCAN_NUMBA
+    from silly_kicks import _numba_dispatch
+
+    if not _numba_dispatch.use_numba("XTGK"):
+        return _opp_first_shot_scan
+    if _SCAN_NUMBA is None:
+        from numba import njit
+
+        _SCAN_NUMBA = njit(cache=_NUMBA_CACHE)(_opp_first_shot_scan)
+    return _SCAN_NUMBA
 
 
 @runtime_checkable
@@ -248,7 +253,8 @@ class EmpiricalTurnoverValue:
         boundary (``game_id``) always; the ball returning to the loser always; the time cap only if finite.
 
         ADR-068: the O(n*k) forward scan runs in :func:`_opp_first_shot_scan` on equality-preserving int
-        codes (numba-compiled when available; byte-identical pure-Python fallback otherwise). ``a`` is
+        codes (numba-compiled by default; the byte-identical pure-Python reference only under
+        ``SILLY_KICKS_XTGK_FORCE_NUMPY=1``). ``a`` is
         pre-sorted chronologically by ``fit`` (item A), which the scan relies on."""
         xg = a[xg_column].fillna(0.0).to_numpy(dtype=float)
         t = a["time_seconds"].to_numpy(dtype=float)
@@ -256,7 +262,7 @@ class EmpiricalTurnoverValue:
         typ = a["type_id"].to_numpy(dtype=np.int64)
         # window_seconds=None => inf, so `(t[j]-t[i]) > inf` is always False (== the None branch).
         window = np.inf if window_seconds is None else float(window_seconds)
-        return _opp_first_shot_scan_fast(
+        return _turnover_scan()(
             turn,
             _equality_codes(a["game_id"]),
             _equality_codes(a["possession_id"]),

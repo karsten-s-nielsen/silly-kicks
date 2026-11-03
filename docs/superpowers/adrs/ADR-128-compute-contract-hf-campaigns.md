@@ -120,10 +120,14 @@ on the typed `huggingface_hub` API from preflight to adoption and publish.
   missing declaration); an ItemStage declares through its refs' `files` plus `home_teams.json`.
   `datasets.stage_files` is the one source for the fetch and for the read-audit gate. An LPT partition names
   its keys, so it needs mounted datasets (`campaign.lpt_allowed`).
-- Preflight runs six no-spend checks and uploads the report the launch gate requires: the commit is pushed
+- Preflight runs six no-spend checks (five until the 2026-11-06 amendment added `check_numba`) and uploads the report the launch gate requires: the commit is pushed
   and green (`check_ref`), the lockfile and the image (`check_lock`), the API contract -- the `run_job`
-  signature and the flavor catalog (`check_api`), the staged datasets (`check_datasets`), every instance's
-  `--plan` (`check_plans`), and the planner's estimate (stages predicted above the target are flagged).
+  signature and the flavor catalog (`check_api`), the staged datasets (`check_datasets`) and every instance's
+  `--plan` (`check_plans`, in parallel). Amendment 2026-11-05 (owner): the per-module toy `--run-all` is removed
+  from `check_plans` (~15 min per preflight, and CI's parity tests already run every trainer on toy data; a
+  local toy run reproduces none of the failures that stopped real HF runs), and each check prints a timed line. The
+  driver's `step` reads the instances' `--plan` in parallel too (it read them one after another, minutes per
+  step and silent) and prints one timed `[driver] step` line (a FATAL step prints its `FATAL` line instead).
 
 ### Campaign controller, ledger, planner, profile (spec 5.5)
 
@@ -302,6 +306,233 @@ deletion); the throughput cycle reads their unit ledgers once to seed its cost h
 **Numbering.** The campaign-throughput cycle uses **ADR-129** (claimed here; next free on `origin/main` and every
 remote branch on 2026-10-21). By owner ruling (2026-10-21) it is named **Cycle 1b**, so section 11's roadmap keeps
 its numbers: Cycle 2 stays the three public trainers on real pipelines, and Cycle 3+ the corpus-driver burn-down.
+
+## Amendment (2026-11-02): the minimal driver replaces the campaign controller
+
+**Context.** The Cycle 1 controller (`campaign.step` / `next_actions` / `planner`) never completed a re-fit end
+to end. The open defects above are operational: unbounded crash handling, a planner that fills jobs to a time
+target, one stage at a time, and no clean resume past a transient fault. A first rewrite on the
+full-utilization branch (PR #296, PR-S204) grew to about 24,000 lines; the owner closed it as abandoned
+(2026-11-02). Its code stays on `feat/controller-step-reads` for reference.
+
+**Decision.** A minimal, stateless driver (`scripts/hf_jobs/driver.py`) is the controller, on the ADR-128 engine
+as it is on `main` (D1). The package entry (`python -m scripts.hf_jobs campaign ...`) routes to it. The engine
+is unchanged in behaviour: `launch`, `executor`, the trainers and the wheel are untouched, and `_stages` changes
+only in two docstrings that named the deleted planner and ledger function. `campaign.py` keeps only the model
+(`load_campaign`, `instances`, `read_plan`) and the operator commands `preflight` / `status` / `cancel`;
+`ledger.py` keeps only `job_record`.
+
+**How it works.**
+- **Launch gate.** Every step first calls `preflight.require_preflight`: a passing preflight report for THIS
+  commit and THIS campaign-file hash, or refuse. No job is spent on an unpushed, CI-red or edited campaign.
+- **One pure decision.** `decide` reads each instance's `--plan` and the live job labels, walks the stages in DAG
+  order, and launches the pending units of the first ready, un-reduced stage (the stage barrier). An instance
+  whose `--plan` fails is reported and skipped; the others proceed. `launch --dry-run` decides on the same state.
+- **Jobs.** Up to `concurrency_cap` jobs in flight and `concurrency_cap` shards per stage. Each job is a full
+  `cpu-upgrade` box: 8 unit workers, or one `inner_parallel` unit with `min(8, inner_width)` inner workers. Jobs
+  match on the labels main's launcher writes, `(run_key, variant, stage)`; `run_key` encodes the tier, and
+  `jobs_for` scopes to one commit, so there is one generation of each stage.
+- **Per-unit coverage bound.** `step` writes a per-job manifest (the units a job holds, keyed by its HF job id) at
+  launch. A unit that `attempts` terminal RUN jobs of this run covered without completing is SPENT and reported.
+  One bound covers a recorded failure, a worker death and a pod crash. A crash charges only the units it held
+  that are not yet spent, recorded failures first (a strict stage's abort never ran the others), then its other
+  live units; jobs are counted in `created_at` order. So every crash moves a live unit toward its report, on the
+  keyed and the round-robin path alike. A `Job timeout` is not counted, so a unit that needs more than the
+  backstop keeps riding.
+- **Known limits (owner awareness).** A job record never names the unit that crashed it, so a unit can be spent
+  by crashes a co-sharded unit caused, and a stale recorded failure can absorb a charge; the bound stays finite.
+  A round-robin (download) slice re-runs its spent units every wave, because the executor runs every pending or
+  failed unit of its slice; that costs compute only.
+- **Inline reduce.** The executor reduces a stage once every unit is terminal. When no unit is left to run, the
+  driver triggers the reduce with a run over an EMPTY `--shard-keys` (it runs no unit). The trigger is bounded by
+  `attempts` terminal empty-manifest jobs of the un-reduced stage, a COMPLETED one included (a declined
+  `try_reduce`), so it cannot relaunch for ever.
+- **Download datasets.** A `download` dataset is fetched in-job by `--shard I/N`, so a download instance's run
+  shards are round-robin `--shard I/N` slices, not keyed; each manifest records the slice's candidate units.
+- **Retries.** Every job gets ONE HF attempt (`run_job(attempts=1)`): the driver is the only retry authority.
+- **Baseline-recoverable resume.** `run` seeds every job already terminal at start into `baseline_error_ids`.
+  `decide` looks past them for the FATAL stop and `step` for coverage, so a resume after the operator frees a
+  fault (a storage 403) re-attempts the work.
+- **Failure classification.** `failures.classify` maps a job record to FATAL (stop) / RERUN (timeout, rides) /
+  RETRY (crash, bounded) / terminal by the status MESSAGE, never `started_at`, verified against real captured HF
+  `JobInfo` records (`tests/scripts/hf_jobs/fixtures/real_jobinfo.json`).
+
+**Superseded in this ADR.** The section "Campaign controller, ledger, planner, profile (spec 5.5)" and the
+preflight "planner's estimate" check: `planner.py`, the profile action, the cost-history ledger, the
+`plan` / `profile` / `summary` commands and `target_minutes` are deleted. Preflight runs five checks (six since the 2026-11-06 amendment).
+
+**Owner rulings (2026-11-02).**
+0. D1 is the base: the minimal driver on the ADR-128 engine as it is on `main`; PR #296 is abandoned, and its
+   full-utilization machinery and wheel changes are not part of this change.
+1. Timeouts are bounded by the controller only; a unit timeout rides (HFU-TIMEOUT-05).
+2. The crash bound is per unit, attributed through the per-job manifests, for the current generation.
+3. A FATAL is recoverable: it blocks only current work, and a resume looks past the jobs terminal at its
+   start (the baseline). The same baseline applies to crashes and to the reduce.
+4. Reduce timeouts are bounded (a reduce is deterministic whole-stage work).
+5. Delete the old controller from this branch; it stays on the abandoned branch for reference.
+6. Support `download` datasets with round-robin `--shard`, as main did.
+7. Accept no per-worker memory cap and no escalation job: a unit that runs out of memory is a RETRY that counts
+   toward its `attempts`; a sizing fix is a new commit.
+8. HF `run_job(attempts=1)`; the driver is the only retry authority.
+9. At most three review rounds per artifact; only a BLOCKING finding reopens review.
+
+**Version.** Scripts-only. No wheel change, so the package version stays 4.139.1.
+
+## Amendment (2026-11-03): resource-sharing overhaul
+
+**Context.** The first retrain on the minimal driver did not complete: ~1836 jobs, 0/21 instances reduced, the
+owner tier crawling. Root cause — the driver fired too many small jobs without sharing rate-limited resources
+("machine-gunning"): private-dataset mount-sidecar 401 flakes, HTTP 429 throttling of the bucket API, OOM churn
+on `ghost_gk` extract, and O(N)-per-step coverage reads. Spec `2026-11-03-hfu-resource-sharing-design.md`, plan
+`2026-11-03-hfu-resource-sharing-plan.md` (both A+B APPROVED).
+
+**Decision.** Five driver-only fixes (the engine — `launch` / `executor` / `_stages` / trainers / wheel — is
+unchanged; `JobSpec` already carried the memory/escalate fields), all tunable in `cycle1.toml`:
+
+1. **Bounded job-sizing.** A stage launches `ceil(units / units_per_job)` jobs, capped at `max_shards` — few big
+   jobs, not one-per-unit to the concurrency cap. This is the root fix; it shrinks mounts, coverage reads and
+   OOM surface together.
+2. **Per-dataset mount cap.** `decide` launches at most `mount_cap(dataset)` concurrently-mounting jobs per
+   dataset, counting in-flight PLUS same-pass launches, over EVERY `access=="mount"` dataset of an instance
+   (an `xcross` instance mounts two). The private `tc3` sidecar is no longer stormed.
+3. **Coverage set+push.** Coverage / reduce-trigger failures / per-dataset mount faults are RECOMPUTED in
+   `created_at` order from a per-`run_key` read-once cache (`_partitions/_coverage/state.json`, a
+   reconstructable cache) instead of re-reading every manifest each step — O(active work), not O(all terminal);
+   the HTTP 429s are gone. The recompute preserves the committed charging rule (COMPLETED credits; a crash RETRY
+   charges only not-yet-spent units, recorded-first).
+4. **Failure attribution by LOCUS (owner ruling 2026-11-03).** A `mount_auth_flake` is a per-DATASET fault — a
+   dataset over `mount_fault_budget` is reported a mount outage — NEVER a per-unit `attempts` charge; a unit
+   crash / OOM / disk-evict counts per unit; a timeout rides. This separates two faults that classify both calls
+   RETRY, by their reason.
+5. **Memory sizing + escalation, and launch pacing + backoff.** `cap_bytes` + the auto-detected `rss` backend +
+   a static per-`job/stage` `peak_rss_bytes` hint size the workers and defer an over-cap unit to a solo
+   whole-box (`--escalate`, W=1) job — no OOM churn. A step launches at most `launch_batch` jobs; a contention
+   signal — a 429 from `list_jobs`/`launch`, or a rising `mount_auth_flake` rate — backs off the next poll
+   (bounded by `backoff_max_s`) and resets on a clean step.
+
+**Scope.** Driver-only (`driver.py` + `campaign.py` config + `cycle1.toml`). Lands as the single amend to the
+minimal-driver commit; the version stays 4.139.1 (no wheel change). Reviewed spec and plan A/B, 0 blocking.
+
+## Amendment (2026-11-04): two validation bugs — the gen depended on untracked files; a bare mount fault FATAL-stopped
+
+The first cycle-1 retrain on the fixed driver PLATEAUED: ~660 jobs COMPLETED but `done_units` stuck and 0/21
+instances reduced. Two root causes, both found during validation:
+
+1. **The stage generation depended on the working tree, including untracked files (the wedge).** `code_identity`
+   (decision P9) returned `dirty-<git_tree_hash()>` for ANY dirty tree, and `git_tree_hash()` `git add -A`s
+   untracked files. The controller runs the per-instance `--plan` in its own cwd, which accumulates untracked
+   files (its `_retrain.log`, `_preflight.log`, operator probes), so the gen it computed CHANGED between launch
+   and status. The HF jobs run a clean HEAD clone (`code_identity` = the commit), so the controller read a gen
+   the job never wrote → `done=0` → relaunch forever. Only `cross_commit_version`-pinned extract stages (gen
+   tree-independent) survived. **Fix:** a tree dirty ONLY by untracked files yields the commit (the compute
+   clones HEAD and never sees untracked files, so they do not change what runs); a TRACKED modification still
+   yields the content tree-hash (a dev edit still invalidates a stale store). New `_provenance._has_tracked_changes`
+   (`git diff --quiet HEAD`); `git_provenance`'s keys and the artifact-provenance tree-state are UNCHANGED (that
+   correctly flags untracked files for provenance). Reproduced + fixed: an untracked file no longer moves the gen.
+2. **A bare `volume mount failed` FATAL-stopped the campaign.** `failures.classify` sent any unmatched
+   `volume mount failed` → FATAL `mount_failed`. That is the same TRANSIENT CSI mount-sidecar class as the 401
+   (the specific storage-403 / init-retries faults are matched earlier and STAY FATAL). **Fix:** → RETRY
+   `mount_failed`, routed per-DATASET in `_attribute` like `mount_auth_flake` (never charges a unit); a
+   persistent mount problem exhausts `attempts` and is reported, never FATAL-stops the whole campaign. (In
+   practice every observed mount fault carried a 401 and already RETRIED; this closes the latent branch.)
+
+**Scope.** `scripts/_provenance.py` (engine; `code_identity` only — a genuine determinism bug) + `failures.py` +
+`driver.py` `_attribute` routing. Folded into the same amend; version stays 4.139.1 (no wheel change). Impl A/B
+reviewed (partial, these fixes).
+
+## Amendment (2026-11-05): reduce reads, the job exit rule, match-outcome as a pipeline, job liveness
+
+The cycle-1 retrain on `f03f4753` converged on 11 of 21 instances, then stalled on timeouts and ERROR emails.
+The job logs and the store gave the real causes (spec `2026-11-04-hfu-reduce-reads-and-job-exit-design.md`
+§1.1, E1-E12). **The 2026-11-04 hypothesis that jobs were sized too large for the 2 h timeout was wrong**: the
+`Nof4` win_probability shards held 19 units each, extracted in about 2 s per unit, then died in the reduce.
+
+1. **A reduce read the store quadratically (E3-E6).** `reduce_stage` called `read_result` once per done unit, and
+   each call listed and stat'ed the whole generation directory (11,901 entries for 3,961 units: ~47 M stats on
+   the HF bucket mount, which serves ~24 small files/s). Each done unit was also read 5 times. **Decision:** a
+   reduce site lists its generation ONCE and reads each file ONCE: `read_listed(store, rel_dir, key, names)`
+   takes the caller's listing; `done_results(ctx, stage)` serves a unit work that loops over another stage's
+   keys (census, ghost_gk, the xcross probe loop); `reduce_stage` reads and verifies every unit (INV-3) before
+   it writes `_summary.json`, so a failure leaves no orphan summary. `LocalStore.names` uses `os.scandir`, and
+   `read_bytes` opens directly (no stat per read). The run-job reduce path costs a constant 5 listings and
+   2 reads per unit plus 2, whatever the unit count (`tests/scripts/test_stage_reads.py`).
+2. **A recorded unit failure failed its job (E7, E8).** `max_failures` was enforced at run time: the parent
+   killed the sibling units and exited 3, so every recorded EIO fold became an HF ERROR job and an email.
+   **Decision:** `max_failures` is a REDUCE-time rule only, through one predicate `exceeds_tolerance`
+   (`_stages`), shared by `reduce_stage`, `LocalExecutor.try_reduce` (refuses over tolerance without starting
+   a reduce subprocess; the job exits 0) and the driver's `_reduce_or_report`. The run-time check, the worker
+   mirror and the `_FAILED_DIR` markers are removed. `abort_first_k` (the first k completed units all failed)
+   stays a loud exit 3 by design. A local `--run-all` still fails at `require_reduced`, now with the counts.
+   The driver's bound is unchanged: it counts every terminal reduce trigger, COMPLETED included.
+3. **A failure record named no site (E9).** **Decision:** `.failed.json` gains an additive `traceback`
+   (`_driver.format_failure_traceback`: the 20 frames nearest the raise, their last 6,000 characters, plus the
+   message cut to 1,000), for plain `Stage` units and for `ItemStage` units (`CorpusPassResult.tracebacks`).
+   The `error` string keeps its exact format.
+4. **`match_outcome_dependence` ran as ONE adapter unit (E10: 5,543 s for 3,961 matches).** **Decision:** it
+   declares `PIPELINE` (`refs` -> `extract` ItemStage per match -> `fit`), the `train_win_probability` shape;
+   `fit_artifact` writes the legacy `model.json` bytes. The adapter's `_SHARD_ROOT_TARGETS` is removed.
+5. **A cv job timed out silent (E12).** A plain `Stage` printed nothing per unit, so a stall and a slow fold
+   looked the same. **Decision (diagnosis only, owner 2026-11-05):** every covered in-job Python process (stage
+   main, executor worker, reduce subprocess, `datasets fetch`, each `InnerPool` child, the adapter's legacy
+   trainer through `python -m scripts.hf_jobs.liveness`) prints an `[alive]` start line and a line every 300 s
+   (unit, unit age, the main thread's innermost Python frame, its direct children from `/proc`), and arms a
+   `faulthandler` dump 600 s or more before the job deadline (`SILLY_KICKS_JOB_DEADLINE_EPOCH`, exported by
+   `job_command` at bash start), in a different second per process so the dumps do not interleave (owner
+   decision 2026-11-05). Third-party pool children (loky under scikit-learn) are reported by their parent's
+   `children=` field (owner decision 2026-11-05; a joblib hook only if a log shows a stall inside them).
+   Nothing starts without the variable, so local runs are unchanged. A fix for E12 is a new owner scope
+   question once the evidence exists.
+6. **The HF bucket mount loses renames silently.** Task 8 and two 12-job probes measured ~0.3-0.4% of
+   `os.replace` renames lost under load; the writer still saw the file and `fsync` did not help, but the
+   container's listing showed the loss within 5 s and the `.tmp` part kept the bytes. **Decision (owner
+   2026-11-05, 2c):** each process journals its atomic writes (`scripts/_write_confirm.py`) and, at its end
+   (executor worker, reduce, stage main), settles 30 s, lists and repeats `os.replace` from the `.tmp` part, up
+   to 3 rounds; a loss it cannot repair fails the worker, which the job relaunches on the now-pending units.
+
+**Scope.** Scripts and engine only (`_stages`, `_driver`, `_write_confirm`, `hf_jobs/{executor,driver,launch,adapter,datasets,
+registry,liveness}`, three trainers, `_toy_corpora`). Folded into the same amend of `f03f4753`; the version
+stays 4.139.1 (no wheel change). Spec A/B approved (round 4; the Change 4 delta approved by the owner after
+rounds 5-6); plan A/B approved (round 2; the Change 4 delta after rounds 3-4); implementation A/B review as it
+lands. Measured on HF before the commit (spec §6 A-D).
+
+## Amendment (2026-11-06): the retrain launch 2 failures
+
+Retrain launch 2 on `e9301e04` ran 270 jobs (258 COMPLETED, 12 ERROR; 9 of 21 instances done) before the driver
+hung. All job logs, the HF job records and py-spy stacks of the hung processes gave five faults (spec
+`2026-11-04-hfu-reduce-reads-and-job-exit-design.md` §13.1, F1-F5). The settle-and-repair of item 6 above worked
+(85 lost renames repaired in 30 jobs, 0 `LOST`), and every timed-out job left its `[alive]` lines and dumps.
+
+7. **numba was absent in every training job (F1).** `[train]` never carried numba, so ghost_gk `importance` and
+   ghost_outfield `fit` ran the numpy leaf walk (11.8x slower, ADR-076) into the 2 h timeout. **Decision (owner
+   2026-11-06):** numba is a core dependency, every kernel family dispatches through
+   `silly_kicks._numba_dispatch.use_numba`, and a missing numba raises (ADR-076 amendment). Each `[alive]` start
+   line names `numba=<version>`; preflight's `check_numba` checks that numba is in the locked job install set (a
+   `uv export --extra train --group hfjobs`, markers evaluated for Linux CPython 3.12).
+8. **Five processes read one 388 MB FileSet through the mount (F2).** One reader is past the read in < 300 s;
+   five concurrent readers took over 6,600 s. **Decision:** `materialize_fileset` reads a FileSet from the store
+   ONCE per job: `LocalExecutor.run_stage` owns a job-local cache (`SILLY_KICKS_FILESET_CACHE`), the first
+   process fills it under a `filelock` (an OS lock, released when its holder dies) through a `.part-<pid>`
+   rename, and the others copy it. Store reads of 8 MB or more print `[read] <rel> <MB> MB in <s> s (<MB/s>
+   MB/s)`, with a progress line every 60 s.
+9. **The driver hung 2 h 10 min on `--plan` reads (F3).** huggingface_hub 2.2.0 builds its client with
+   `timeout=None`, and `paginate` passes `timeout=None` explicitly, which wins over any client default.
+   **Decision:** `scripts/hf_jobs/hub_client.install_timeouts` adds a request event hook that fills each `None`
+   timeout value (connect 10 s, read 60 s, write 60 s, pool 10 s), so the library's backoff retries a stalled
+   read. `campaign.read_plan` kills a `--plan` read after 600 s (`PlanTimeoutError`, never a rate limit); the
+   plan process arms a `faulthandler` dump 30 s before that deadline, so the report holds the stack.
+10. **A timed-out unit was relaunched without limit (F4).** **Decision (owner 2026-11-06), replacing
+    HFU-TIMEOUT-05 ("a unit timeout rides"):** a timeout charges only the units that STARTED in that job (from
+    its `[unit]` log lines, fetched once per timed-out job); a unit charged by 2 timed-out jobs is STUCK and not
+    relaunched. Coverage is unchanged (a timeout still spends none).
+11. **No log trail (F5).** **Decision:** the driver prints one `[driver] job <id> ... <reason> after <s> s` line
+    per job that ends ERROR or CANCELED (once per run) and one `[driver] launch ...` line per launch; each unit
+    prints `[unit] <stage>/<key> start` and `[unit] <stage>/<key> <outcome> in <s> s`; each run exit prints
+    `[job] <done>/<units> done, <failed> failed, exit <rc>, <s> s`.
+
+**Scope.** `silly_kicks/_numba_dispatch.py` and the six kernel families (no kernel arithmetic changes; every
+parity test stays green), `pyproject.toml` (numba core, `filelock` in `[train]`), `_stages`,
+`hf_jobs/{executor,driver,campaign,preflight,liveness,hub_client,__main__}`. The wheel's dependencies change;
+the version stays 4.139.1 in this amend (owner decision 2026-11-06: no version bump in this amend). Folded into the same cycle amend. Spec A/B approved (round 8), plan A/B approved (A r7, B r6).
 
 ## Related
 

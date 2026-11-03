@@ -20,6 +20,9 @@ KERNELS = COORD / "_kernels"
 
 _STDLIB = set(sys.stdlib_module_names)
 _KERNEL_ALLOWED_TOP = {"numpy", "scipy", "numba"}
+#: The one numba dispatch point (HFU spec 13.2): a kernel module asks it whether numba serves. It is numba's
+#: own seam, not an outward reach, so the kernel rule allows it like `numba` itself.
+_KERNEL_ALLOWED_MODULES = {"silly_kicks._numba_dispatch"}
 
 # coordination MAY reach into these tracking privates (public seam does not exist / it is an array kernel).
 # Each entry is (importing module stem, imported private module) with a reason (C10; PRIVATE_CONSUMERS.md).
@@ -50,7 +53,7 @@ def _kernel_violations(path: pathlib.Path) -> list[str]:
     bad: list[str] = []
     for m in _imported_modules(path):
         top = m.split(".", 1)[0]
-        if top in _KERNEL_ALLOWED_TOP or top in _STDLIB:
+        if top in _KERNEL_ALLOWED_TOP or top in _STDLIB or m in _KERNEL_ALLOWED_MODULES:
             continue
         if m == "silly_kicks.coordination._kernels" or m.startswith("silly_kicks.coordination._kernels."):
             continue  # sibling kernels only -- the subpackage composes internally; it never reaches OUT (spec §7.6)

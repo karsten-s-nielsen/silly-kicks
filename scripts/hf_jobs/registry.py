@@ -5,8 +5,9 @@ unmigrated public trainer runs its own CLI through the one-unit adapter (``adapt
 ``python -m`` -- the file form raises ``ModuleNotFoundError: No module named 'scripts'`` (there is no
 ``scripts/__init__.py``). The per-variant ``run_args`` are pinned from each committed variant's
 ``metadata.json``; ``fresh_subdir`` is where the artifact lands inside ``--out`` (``""`` for a pipeline).
-The flavor is ONE constant (``launch.FLAVOR``, INV-4); job size and timeout are the planner's (spec 5.4);
-the corpus shape is the dataset's (``datasets.toml``). The campaign controller consumes this.
+The flavor is ONE constant (``launch.FLAVOR``, INV-4); job size and timeout are the driver's (one full box per
+job; ADR-128 amendment 2026-11-02); the corpus shape is the dataset's (``datasets.toml``). The campaign driver
+consumes this.
 """
 
 from __future__ import annotations
@@ -133,7 +134,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         # match_outcome writes the artifact DIRECTLY to --out (no weights/ subdir) -- verified.
         builds=(VariantBuild("default", (), "match_outcome/weights", ""),),
         certification="public",
-        adapter=True,  # ADR-128 spec 5.6: runs via the one-unit adapter stage until Cycle 2
+        pipeline="scripts.train_match_outcome_dependence",  # ADR-128 pipeline (HFU spec §5)
         primary_metric="log_loss",
         metric_direction="lower_better",
         delta=0.01,

@@ -56,9 +56,6 @@ def test_parity_gate_discriminates_periodic_quadrature():
         np.testing.assert_allclose(got, exp, rtol=1e-12, atol=1e-12)
 
 
-_HAS_NUMBA = pytest.importorskip("numba", reason="numba engine parity") is not None
-
-
 @pytest.mark.parametrize("scene", NORMAL_SCENES)
 def test_numba_engine_reproduces_reference(scene):
     exp = load_golden().reference_for(scene)

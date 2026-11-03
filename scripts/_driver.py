@@ -34,6 +34,7 @@ from collections.abc import Mapping, Sized
 from pathlib import PurePath, PurePosixPath
 
 from scripts._item_outcome import ItemExcluded  # leaf module (imports nothing from scripts/); no cycle
+from scripts._write_confirm import forget, record  # leaf module (imports nothing from scripts/); no cycle
 
 # NOTE: `ruthless` and `pandas` are imported INSIDE the functions that need them, not here.
 # `ruthless-efficiency` ships only in the [calibration] / [test] / [train] extras, so a
@@ -253,9 +254,13 @@ def _write_bytes_atomically(path: pathlib.Path, data: bytes) -> None:
     # bucket mount refuses to create (real HF, Cycle 1: PermissionError on `._profile.json.<uuid>.part`).
     tmp = path.with_name(f".tmp-{path.name}.{uuid.uuid4().hex}.part")
     tmp.write_bytes(data)
+    # Journaled only once the rename RETURNED: the HF bucket mount can still lose it silently, and
+    # `confirm_job_writes` repairs it from this temp part at the end of the process (HFU spec section 12). A
+    # rename that raised is a failed write: never journaled, so the confirm cannot finish it (impl review A-IMPL-02).
     for attempt in range(_REPLACE_ATTEMPTS - 1):
         try:
             os.replace(tmp, path)
+            record(path, tmp)
             return
         except PermissionError:
             # Windows only: a concurrent writer is replacing (or reading) the same target -- the idempotent
@@ -264,11 +269,13 @@ def _write_bytes_atomically(path: pathlib.Path, data: bytes) -> None:
             try:
                 if path.read_bytes() == data:
                     tmp.unlink(missing_ok=True)
+                    record(path, tmp)
                     return
             except OSError:
                 pass
             time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
     os.replace(tmp, path)  # the last attempt raises a persistent failure, never swallows it
+    record(path, tmp)
 
 
 def shard_select(seq, index, n):
@@ -341,6 +348,7 @@ def already_done(generation, key) -> bool:
                 f"untrusted shard {shard} (no checksum sidecar in a checksummed generation); redoing it", stacklevel=2
             )
             shard.unlink()
+            forget(shard)
             return False
         return True
     want = side.read_text(encoding="ascii").strip()
@@ -349,6 +357,8 @@ def already_done(generation, key) -> bool:
     warnings.warn(f"checksum mismatch for {shard}; deleting it and redoing the item", stacklevel=2)
     shard.unlink()
     side.unlink()
+    forget(shard)
+    forget(side)
     return False
 
 
@@ -414,16 +424,15 @@ def write_exclusion(generation, key, exc) -> None:
 
     Atomic (temp + ``os.replace``) because the marker is commit-relevant: one truncated by a kill
     must never read back as a valid, differently-worded exclusion. No ``tag`` parameter -- a marker
-    is per-item, so (like the counters sidecar) it never enters the path.
+    is per-item, so (like the counters sidecar) it never enters the path. Through
+    `_write_bytes_atomically`, so the end-of-process confirm repairs a rename the HF bucket mount lost
+    (HFU spec section 12; impl review B HFURR-IMPL-01).
     """
     import json
-    import os
 
     path = exclusion_path(generation, key)
     payload = {"reason": exc.reason, "details": dict(getattr(exc, "details", {}) or {})}
-    tmp = path.with_name(f"{path.name}.partial")
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    os.replace(tmp, path)
+    _write_bytes_atomically(path, json.dumps(payload).encode("utf-8"))
 
 
 def read_exclusion(generation, key) -> dict | None:
@@ -660,6 +669,24 @@ def _known_total(items) -> int | None:
     return len(items) if isinstance(items, Sized) else None
 
 
+#: The failure-record traceback caps (HFU spec §4.3): the frames and the message are capped SEPARATELY, so a
+#: huge message can never push out the frames that say where the failure happened.
+_TB_FRAMES = 20
+_TB_FRAMES_CHARS = 6_000
+_TB_MESSAGE_CHARS = 1_000
+
+
+def format_failure_traceback(exc: BaseException) -> str:
+    """Where ``exc`` happened, bounded: the frames nearest the raise (at most `_TB_FRAMES`, their LAST
+    `_TB_FRAMES_CHARS` characters), a newline, then ``Type: message`` cut to its FIRST `_TB_MESSAGE_CHARS`
+    characters. At most 7,001 characters."""
+    import traceback
+
+    frames = "".join(traceback.format_tb(exc.__traceback__, limit=-_TB_FRAMES))[-_TB_FRAMES_CHARS:].rstrip("\n")
+    message = f"{type(exc).__name__}: {exc}"[:_TB_MESSAGE_CHARS]
+    return f"{frames}\n{message}"
+
+
 @dataclasses.dataclass(frozen=True)
 class CorpusPassResult:
     """What a pass did. ``shard_dir`` is the generation directory callers glob and reconcile.
@@ -682,6 +709,9 @@ class CorpusPassResult:
     counters_unrecorded: int = 0
     excluded: int = 0
     exclusions: dict = dataclasses.field(default_factory=dict)  # joined key -> reason (this pass + replayed)
+    #: joined key -> `format_failure_traceback` of the failure (this pass); additive beside ``failures``,
+    #: whose strings keep their exact legacy format (HFU spec §4.3).
+    tracebacks: dict = dataclasses.field(default_factory=dict)
 
     @property
     def shard_keys(self) -> tuple[str, ...]:
@@ -748,6 +778,7 @@ def for_each(
     seen: set[str] = set()
     attempted = skipped = counters_unrecorded = 0
     failures: dict = {}
+    tracebacks: dict = {}
     exclusions: dict = {}
     totals: dict = {}
     run = 0
@@ -792,6 +823,7 @@ def for_each(
             # Present but unreadable (read_exclusion warned). Remove it so the item is re-decided
             # cleanly -- a failure below must not leave a stale marker that conservation would count.
             exclusion_path(generation, k).unlink()
+            forget(exclusion_path(generation, k))
 
         attempted += 1
         t0 = time.perf_counter()
@@ -809,6 +841,7 @@ def for_each(
             continue
         except Exception as exc:  # broad BY DESIGN: recorded and counted, never swallowed silently
             failures[k] = f"{type(exc).__name__}: {exc}"
+            tracebacks[k] = format_failure_traceback(exc)
             run += 1
             progress(f"{label} {k}", i, n_total, elapsed_s=time.perf_counter() - t0, note=f"FAILED {exc}")
             if run >= max_consecutive_failures:
@@ -849,6 +882,7 @@ def for_each(
         counters_unrecorded,
         len(exclusions),
         exclusions,
+        tracebacks=tracebacks,
     )
 
 

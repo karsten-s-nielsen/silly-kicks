@@ -237,3 +237,11 @@ def test_an_lpt_part_runs_its_keys_without_a_round_robin_shard():
     argv = shlex.split(L.job_command(s)[2].splitlines()[-1])
     assert argv[argv.index("--shard-keys") + 1].endswith("1of4.json") and "--shard" not in argv
     assert L.labels_for(s)["shard"] == "1of4"
+
+
+def test_job_command_exports_the_deadline_first():
+    """HFU spec §11.4: the job's deadline is taken at bash start, before git and uv, for every process."""
+    s = _spec()
+    assert L.job_command(s)[2].splitlines()[1] == (
+        f"export SILLY_KICKS_JOB_DEADLINE_EPOCH=$(( $(date +%s) + {s.timeout_s} ))"
+    )

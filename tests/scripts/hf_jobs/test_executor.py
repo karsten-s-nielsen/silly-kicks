@@ -166,11 +166,58 @@ def test_a_poisoned_unit_is_redone_on_resume(tmp_path):
     assert {r["key"]: r["attempt"] for r in _ledger(tmp_path, "gen")}["toy__0005"] == 2
 
 
-def test_zero_tolerance_stage_aborts_on_a_failure(tmp_path):
-    p = _cli(tmp_path, "--stages", "strict", "--workers", "1", "--fail-keys", "0002", check=False)
-    assert p.returncode == 3 and "STAGE FAILED" in p.stderr
-    gen = next(s["generation"] for s in _plan(tmp_path, "--fail-keys", "0002")["stages"] if s["name"] == "strict")
-    assert (tmp_path / gen / "0002.failed.json").is_file()
+def _strict_gen(store) -> pathlib.Path:
+    gen = next(s["generation"] for s in _plan(store, "--fail-keys", "0002")["stages"] if s["name"] == "strict")
+    return pathlib.Path(store) / gen
+
+
+def _keys_file(tmp_path, keys: list[str]) -> str:
+    path = tmp_path / f"keys{len(keys)}.json"
+    path.write_text(json.dumps(keys), encoding="utf-8")
+    return str(path)
+
+
+def test_a_recorded_failure_does_not_fail_a_run_job(tmp_path):
+    """HFU spec §4.1: `max_failures` is a reduce-time rule. A run job records the failure, runs its other units
+    and exits 0 (no HF ERROR, no email); the stage stays unreduced for the driver to report."""
+    store = tmp_path / "s"
+    keys = _keys_file(tmp_path, [f"{i:04d}" for i in range(6)])
+    p = _cli(store, "--stages", "strict", "--shard-keys", keys, "--workers", "2", "--fail-keys", "0002", check=False)
+    assert p.returncode == 0, p.stderr
+    gen = _strict_gen(store)
+    assert (gen / "0002.failed.json").is_file()
+    assert sorted(q.name for q in gen.glob("*.json") if q.name[:4].isdigit() and q.name.count(".") == 1) == [
+        f"{i:04d}.json" for i in range(6) if i != 2
+    ]
+    assert not list(gen.glob("_output*"))
+
+
+def test_a_reduce_trigger_over_tolerance_exits_0(tmp_path):
+    """HFU spec §4.1: the driver's reduce trigger (an empty key list) over a stage whose failures exceed its
+    tolerance refuses WITHOUT starting a reduce subprocess, and exits 0. The driver bounds such triggers."""
+    store = tmp_path / "s"
+    good = _keys_file(tmp_path, [f"{i:04d}" for i in range(6) if i != 2])
+    _cli(store, "--stages", "strict", "--shard-keys", good, "--workers", "2", "--fail-keys", "0002")
+    _cli(
+        store, "--stages", "strict", "--shard-keys", _keys_file(tmp_path, ["0002"]), "--fail-keys", "0002", check=False
+    )
+    gen = _strict_gen(store)  # precondition: every unit decided (5 done, 0002 failed), so a trigger reaches the rule
+    assert len([q for q in gen.glob("*.sha256") if not q.name.startswith("_")]) == 5
+    assert (gen / "0002.failed.json").is_file()
+    p = _cli(store, "--stages", "strict", "--shard-keys", _keys_file(tmp_path, []), "--fail-keys", "0002", check=False)
+    assert p.returncode == 0, p.stderr
+    assert "reduce --stage" not in p.stderr
+    assert not list(_strict_gen(store).glob("_output*"))
+
+
+def test_run_all_over_tolerance_fails_with_counts(tmp_path):
+    """HFU spec §4.1: a local `--run-all` still fails loudly, at `require_reduced`, with the counts."""
+    store = tmp_path / "s"
+    p = _cli(store, "--run-all", "--workers", "1", "--fail-keys", "0002", check=False)
+    assert p.returncode == 3, p.stderr
+    assert "upstream stage 'strict' is incomplete: 0 pending, 1 failed (tolerance 0)" in p.stderr
+    gen = _strict_gen(store)
+    assert len([q for q in gen.glob("*.sha256") if not q.name.startswith("_")]) == 5
 
 
 def test_first_k_all_failed_aborts_early(tmp_path):
