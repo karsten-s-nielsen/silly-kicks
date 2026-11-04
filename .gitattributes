@@ -43,3 +43,10 @@ silly_kicks/win_probability/weights/SHA256SUMS binary
 # the digest was computed on a CRLF working copy and ubuntu read LF. Same reason as the three
 # model-artifact pins above; recorded because this is now the fourth time.
 tests/datasets/statsbomb/three-sixty/*.json binary
+# TF-46 Arm 1 slim fixtures (SkillCorner opendata + IDSSE): SHA-256 verified against
+# tests/datasets/tf46_fixture_sha256sums.txt by tests/datasets/test_tf46_fixture_hashes.py, which hashes
+# the RAW bytes (no CRLF normalization). Same reason as the three-sixty pin above: without this, Windows
+# autocrlf rewrites the .csv/.json to CRLF on checkout and the digest no longer matches the manifest
+# (computed on LF) -- a Windows-local failure, linux CI green. The .parquet are binary either way.
+tests/datasets/skillcorner/opendata/** binary
+tests/datasets/idsse/** binary

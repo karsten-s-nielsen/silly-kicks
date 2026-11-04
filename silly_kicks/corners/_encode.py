@@ -2,8 +2,9 @@
 
 For each DIRECT corner, slice the attacking team's player positions at ``t_init`` and ``t_target`` from
 the tracking frames, reflect them to the canonical side (Y-flip for right-flag corners), align the two
-snapshots by player, and encode via ``RunZoneModel`` into the ``n_initial x n_target`` run vector. Short
-and unclear corners are skipped (kept as NaN rows, ADR-042). The columns are the NMF term-matrix columns.
+snapshots by player, and encode via ``RunZoneModel`` into the ``n_initial x n_target`` run vector. Short,
+unclear and derived (NaN-window) corners are skipped (kept as NaN rows, ADR-042). The columns are the NMF
+term-matrix columns.
 """
 
 from __future__ import annotations
@@ -59,11 +60,22 @@ def _encode_one(corner: pd.Series, frames: pd.DataFrame, model: RunZoneModel, pa
     # continuous snapshot -- consistent with the fit driver (spec §7; divergence measured in §12.7).
     sb360 = "corner_source" in corner and str(corner["corner_source"]) == "sb360_event"
     init_t = float(corner["t_kick"]) if sb360 else float(corner["t_init"])
+    t_target = float(corner["t_target"])
+    # A derived (events-only) corner has a NaN window; _nearest_frame_xy(t=NaN) would argmin over an
+    # all-NaN distance and pick an ARBITRARY frame. Return a NaN run row (ADR-042 / spec section 9.4),
+    # never an arbitrary vector.
+    if np.isnan(init_t) or np.isnan(t_target):
+        return None
+    # A NaN start_y yields a NaN corner_side (spec section 9.4, every provider); the canonical-side
+    # reflection is then undefined and str(NaN) != "left" would silently flip it as "right". Skip to a
+    # NaN run row (ADR-042), never a fabricated orientation.
+    side = str(corner["corner_side"])
+    if side not in ("left", "right"):
+        return None
     init = _nearest_frame_xy(frames, period, init_t, team)
-    target = _nearest_frame_xy(frames, period, float(corner["t_target"]), team)
+    target = _nearest_frame_xy(frames, period, t_target, team)
     if init is None or target is None:
         return None
-    side = str(corner["corner_side"])
     init, target = _reflect_y(init, side), _reflect_y(target, side)
     # align the two snapshots by player (a run is one player's init -> target)
     merged = init.merge(target, on="player_id", suffixes=("_i", "_t"))

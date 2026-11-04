@@ -389,6 +389,15 @@ def resolve_restart_geometry(
     is_corner = np.isin(tid, _CORNER_TYPES)
     is_throw = tid == _THROW_IN
     eligible = np.ones(n, dtype=bool) if impute_types is None else np.isin(tid, tuple(impute_types))
+    # Derived (events-only) restart rows (spec section 9.1): never give them a frame-sampled or
+    # next-event coordinate. A derived goal kick still gets the rule-point restart_prior below; a derived
+    # free kick / corner / throw-in stays unresolved and is counted. Tracking providers with no such
+    # rows (action_provenance absent) are unaffected.
+    derived = (
+        (actions["action_provenance"].to_numpy() == "derived")
+        if "action_provenance" in actions.columns
+        else np.zeros(n, dtype=bool)
+    )
 
     # ---------- origin ----------
     ox, oy = sx.copy(), sy.copy()
@@ -417,47 +426,51 @@ def resolve_restart_geometry(
             else np.full((n, 2), np.nan)
         )
         for i in np.where(is_gk)[0]:
-            if np.isfinite(gk_det[i, 0]):
+            if not derived[i] and np.isfinite(gk_det[i, 0]):
                 ox[i], oy[i] = gk_det[i]
                 osrc[i], oconf[i] = "tracking_gk", _CONF_TRACKING_GK
             else:
+                # A derived goal kick never takes a frame-sampled (detected-keeper) origin (section 9.1);
+                # it keeps the rule-point restart_prior.
                 ox[i], oy[i] = _RULE_POINT
                 osrc[i], oconf[i] = "restart_prior", _PRIOR_CONF[_GOALKICK]
         # lock goal-kicks out of the native-first ORIGIN cascade (destination still uses ``eligible``).
         origin_eligible = eligible & ~is_gk
 
     need = (osrc == "unresolved") & origin_eligible
-    # tier 2a: goalkick in-area tracking-GK (goalkick ONLY; no tracking_ball for goalkick)
-    if frames is not None and (need & is_gk).any():
+    # tier 2a: goalkick in-area tracking-GK (goalkick ONLY; no tracking_ball for goalkick). Derived rows
+    # are excluded -- they never get a frame-sampled origin (section 9.1).
+    if frames is not None and (need & is_gk & ~derived).any():
         gk = _tracking_gk_xy(actions, frames, links, flip=_flip)
-        use = need & is_gk & np.isfinite(gk[:, 0])
+        use = need & is_gk & ~derived & np.isfinite(gk[:, 0])
         ox[use], oy[use] = gk[use, 0], gk[use, 1]
         osrc[use], oconf[use] = "tracking_gk", _CONF_TRACKING_GK
         need = (osrc == "unresolved") & origin_eligible
     # tier 2b: tracking-ball (NON-goalkick eligible rows). Skipped entirely on the goalkick-only
-    # (frozen) path -- (need & ~is_gk) is empty there, so _tracking_ball_xy is never called.
-    if frames is not None and (need & ~is_gk).any():
+    # (frozen) path and for derived rows -- (need & ~is_gk & ~derived) is empty there.
+    if frames is not None and (need & ~is_gk & ~derived).any():
         ball = _tracking_ball_xy(actions, frames, links, flip=_flip)
-        use = need & ~is_gk & np.isfinite(ball[:, 0])
+        use = need & ~is_gk & ~derived & np.isfinite(ball[:, 0])
         ox[use], oy[use] = ball[use, 0], ball[use, 1]
         osrc[use], oconf[use] = "tracking_ball", _CONF_TRACKING_BALL
         need = (osrc == "unresolved") & origin_eligible
-    # tier 3: restart rule-points (restart-prior types only). _side_y / _throwin_x computed ONLY
-    # when a corner/throw-in actually needs them (avoids wasted _tracking_ball_xy on the frozen path).
-    side = _side_y(actions, frames, links, flip=_flip) if (need & (is_corner | is_throw)).any() else None
-    twx = _throwin_x(actions, frames, links, flip=_flip) if (need & is_throw).any() else None
+    # tier 3: restart rule-points (restart-prior types only). _side_y / _throwin_x computed ONLY when a
+    # NON-derived corner/throw-in needs them (they sample frames; a derived corner/throw-in gets no
+    # frame-sampled side and stays unresolved, section 9.1).
+    side = _side_y(actions, frames, links, flip=_flip) if (need & (is_corner | is_throw) & ~derived).any() else None
+    twx = _throwin_x(actions, frames, links, flip=_flip) if (need & is_throw & ~derived).any() else None
     for i in np.where(need)[0]:
         t = int(tid[i])
         if t == _GOALKICK:
-            ox[i], oy[i] = _RULE_POINT
+            ox[i], oy[i] = _RULE_POINT  # derived goal kick keeps the rule-point (no frame needed)
         elif t == _PENALTY:
             ox[i], oy[i] = _PENALTY_SPOT
         elif t in _CORNER_TYPES:
-            if side is None or not np.isfinite(side[i]):
-                continue  # cannot determine side -> leave unresolved
+            if derived[i] or side is None or not np.isfinite(side[i]):
+                continue  # derived, or no resolvable side -> leave unresolved
             ox[i], oy[i] = _CORNER_X, (_TOUCHLINE_LO if side[i] < _MID_Y else _TOUCHLINE_HI)
         elif t == _THROW_IN:
-            if side is None or twx is None or not (np.isfinite(side[i]) and np.isfinite(twx[i])):
+            if derived[i] or side is None or twx is None or not (np.isfinite(side[i]) and np.isfinite(twx[i])):
                 continue
             ox[i], oy[i] = twx[i], (_TOUCHLINE_LO if side[i] < _MID_Y else _TOUCHLINE_HI)
         else:
@@ -472,18 +485,20 @@ def resolve_restart_geometry(
     dsrc = np.where(np.isfinite(ex) & np.isfinite(ey), "native", "unresolved").astype(object)
     dconf = np.where(dsrc == "native", 1.0, 0.0).astype(float)
     dneed = (dsrc == "unresolved") & eligible
-    # tier 2: next_event (eligible rows; full-frame positional). On the goalkick-only path this fires
-    # for goalkicks only -> matches the frozen contract's goalkick-gated next_event.
-    if dneed.any():
+    # tier 2: next_event (eligible rows; full-frame positional). Derived rows are excluded -- a derived
+    # restart never gets a next-event destination (section 9.1); a derived row whose end is already set
+    # keeps it as native, and a chain derived row (NaN end) stays unresolved.
+    if (dneed & ~derived).any():
         nx, ny = _next_event_start(actions)
-        use = dneed & np.isfinite(nx) & np.isfinite(ny)
+        use = dneed & ~derived & np.isfinite(nx) & np.isfinite(ny)
         dx[use], dy[use] = nx[use], ny[use]
         dsrc[use], dconf[use] = "next_event", _CONF_NEXT_EVENT
         dneed = (dsrc == "unresolved") & eligible
-    # tier 3: tracking-ball dest (NON-goalkick eligible rows). Empty on the goalkick-only path.
-    if frames is not None and (dneed & ~is_gk).any():
+    # tier 3: tracking-ball dest (NON-goalkick eligible rows). Empty on the goalkick-only path and for
+    # derived rows.
+    if frames is not None and (dneed & ~is_gk & ~derived).any():
         ball = _tracking_ball_xy(actions, frames, links, flip=_flip)
-        use = dneed & ~is_gk & np.isfinite(ball[:, 0])
+        use = dneed & ~is_gk & ~derived & np.isfinite(ball[:, 0])
         dx[use], dy[use] = ball[use, 0], ball[use, 1]
         dsrc[use], dconf[use] = "tracking_ball", _CONF_TRACKING_BALL_DEST
 

@@ -59,6 +59,26 @@ def test_corner_with_no_shots_keeps_zero_row():
     assert c1["sum_xg"] == 0.0
 
 
+def test_derived_corner_nan_t_kick_yields_nan_not_zero():
+    # B13 / spec section 9.4: a derived (events-only) corner has a NaN t_kick -> an undefined window, so its
+    # metrics are NaN with the row KEPT (ADR-042), never fabricated zeros. Distinct from a real window with
+    # no shots (test_corner_with_no_shots_keeps_zero_row, which is a true 0).
+    corners = pd.DataFrame(
+        {
+            "game_id": ["g1"],
+            "corner_id": [0],
+            "period_id": [1],
+            "t_kick": [float("nan")],
+            "t_outcome": [float("nan")],
+        }
+    )
+    out = compute_corner_chance_quality(corners, _actions(), xg_column="xg")
+    assert len(out) == 1  # the row is kept, not dropped
+    row = out.iloc[0]
+    assert pd.isna(row["n_shots"]) and pd.isna(row["n_goals"])  # NaN, not fabricated 0
+    assert pd.isna(row["sum_xg"])
+
+
 def test_missing_xg_column_raises():
     try:
         compute_corner_chance_quality(_corners(), _actions(), xg_column="post_shot_xg")

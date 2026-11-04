@@ -61,7 +61,7 @@ def _frames_with_ball_state(period_patterns: dict[int, list[str]], *, game_id=1,
                         "player_id": pdid,
                     }
                 )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).assign(source_provider="sportec")  # R-C2 gate (spec 27.19): IDSSE-like optical
 
 
 def _make_alignable_bs(dead_frames=frozenset()):
@@ -137,7 +137,7 @@ def _make_alignable_bs(dead_frames=frozenset()):
                 "ball_state": state,
             }
         )
-    frames = pd.DataFrame(rows)
+    frames = pd.DataFrame(rows).assign(source_provider="sportec")  # R-C2 gate (spec 27.19): IDSSE-like optical
     actions = pd.DataFrame(
         {
             "action_id": [0, 1, 2],

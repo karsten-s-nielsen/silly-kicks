@@ -76,9 +76,15 @@ from silly_kicks.tracking import direction
 
 from . import config as spadlconfig
 from .base import _derive_end_coordinates, sort_actions_chronologically
-from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
+from .orientation import PER_PERIOD_ABSOLUTE, DetectionResult, to_spadl_ltr, validate_input_convention
 from .schema import GRADIENTSPORTS_SPADL_COLUMNS, ConversionReport
-from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
+from .utils import (
+    _blocked_flag,
+    _ensure_base_signal_columns,
+    _finalize_output,
+    _validate_input_columns,
+    _validate_preserve_native,
+)
 
 # ---------------------------------------------------------------------------
 # Required input columns (raise ValueError if any are missing)
@@ -411,6 +417,45 @@ def _impute_time_seconds_by_start_time(events: pd.DataFrame) -> np.ndarray:
     return work["time_seconds"].to_numpy(dtype="float64")
 
 
+def _input_convention_check(events: pd.DataFrame) -> DetectionResult | None:
+    """The Gradient Sports input-convention guard of :func:`convert_to_actions`: the detector on the raw events'
+    ``ball_x`` at the shots (``possession_event_type == "SH"``), against the declared ``PER_PERIOD_ABSOLUTE``.
+
+    Returns the detector's result (``validate_input_convention`` warns, or raises under the strict env var, on a
+    confident disagreement), or ``None`` when the events carry no ``ball_x`` / ``team_id`` / ``period_id``.
+    ``scripts/measure_gs_shot_distribution.py`` calls THIS function, so its verdict is the guard's own (owner
+    decision 2026-10-27).
+
+    PR-S23 / silly-kicks 3.0.1: validator re-enabled after TF-22 detector hardening. Gradient Sports events ship
+    PER_PERIOD_ABSOLUTE; the detector now correctly defers (convention=None) on sparse-shot matches rather than
+    false-positiving ABSOLUTE_FRAME_HOME_RIGHT. ball_x is centered (-52.5 to +52.5); shift to the 0-105 frame for the
+    detector's high-x / low-x logic.
+
+    Examples
+    --------
+    ::
+
+        verdict = _input_convention_check(events)  # the raw GS events, before conversion
+        verdict.convention, verdict.confidence
+    """
+    if not ("ball_x" in events.columns and "team_id" in events.columns and "period_id" in events.columns):
+        return None
+    detector_input = events.assign(
+        _sk_ball_x_shifted=events["ball_x"].astype("float64") + 52.5,
+        _sk_is_shot=(events["possession_event_type"].fillna("") == "SH"),
+    )
+    return validate_input_convention(
+        detector_input,
+        declared=PER_PERIOD_ABSOLUTE,
+        match_col="game_id",
+        x_col="_sk_ball_x_shifted",
+        team_col="team_id",
+        period_col="period_id",
+        is_shot_col="_sk_is_shot",
+        x_max=spadlconfig.field_length,
+    )
+
+
 def convert_to_actions(
     events: pd.DataFrame,
     home_team_id: int,
@@ -469,26 +514,7 @@ def convert_to_actions(
 
     total_events_input = len(events)
 
-    # PR-S23 / silly-kicks 3.0.1: validator re-enabled after TF-22 detector
-    # hardening. Gradient Sports events ship PER_PERIOD_ABSOLUTE; the detector now
-    # correctly defers (convention=None) on sparse-shot matches rather than
-    # false-positiving ABSOLUTE_FRAME_HOME_RIGHT. ball_x is centered (-52.5
-    # to +52.5); shift to 0-105 frame for the detector's high-x/low-x logic.
-    if "ball_x" in events.columns and "team_id" in events.columns and "period_id" in events.columns:
-        _detector_input = events.assign(
-            _sk_ball_x_shifted=events["ball_x"].astype("float64") + 52.5,
-            _sk_is_shot=(events["possession_event_type"].fillna("") == "SH"),
-        )
-        validate_input_convention(
-            _detector_input,
-            declared=PER_PERIOD_ABSOLUTE,
-            match_col="game_id",
-            x_col="_sk_ball_x_shifted",
-            team_col="team_id",
-            period_col="period_id",
-            is_shot_col="_sk_is_shot",
-            x_max=spadlconfig.field_length,
-        )
+    _input_convention_check(events)
 
     # ------------------------------------------------------------------
     # Per-period direction lookup (ET fallback validation)
@@ -894,6 +920,7 @@ def convert_to_actions(
     # ------------------------------------------------------------------
     # Finalize
     # ------------------------------------------------------------------
+    actions = _ensure_base_signal_columns(actions)
     actions = _finalize_output(
         actions,
         schema=GRADIENTSPORTS_SPADL_COLUMNS,

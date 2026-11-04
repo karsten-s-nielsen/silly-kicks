@@ -166,6 +166,7 @@ def test_undeclared_missing_velocity_raises_informatively() -> None:
     )
 
 
+@pytest.mark.usefixtures("legacy_xs_xc_bundles")  # interim until the R-C3 retrain (legacy_override weights)
 def test_velocity_bearing_frames_are_unaffected() -> None:
     """Non-vacuity: the guard must not swallow the case it is NOT about.
 

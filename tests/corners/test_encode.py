@@ -70,6 +70,52 @@ def test_direct_corner_encodes_short_is_nan():
     assert short[run_cols].isna().all()  # short corner excluded (NaN row kept)
 
 
+def test_derived_corner_nan_window_yields_nan_run():
+    # B13 / spec section 9.4: a derived corner has a NaN window (NaN t_init/t_target) and a NaN side. The
+    # encoder must return a NaN run row -- never pick an arbitrary frame via argmin over an all-NaN
+    # distance, and never reflect str(NaN)=="nan" as "right". Non-vacuous: with a real window it encodes
+    # (test_direct_corner_encodes_short_is_nan).
+    model = _model()
+    corners = pd.DataFrame(
+        {
+            "game_id": ["g1"],
+            "corner_id": [0],
+            "period_id": [1],
+            "attacking_team_id": ["tA"],
+            "corner_side": pd.Series([None], dtype="category"),  # NaN side (derived corner)
+            "corner_kind": pd.Series(["direct"], dtype="category"),
+            "t_init": [float("nan")],
+            "t_target": [float("nan")],
+        }
+    )
+    out = compute_corner_run_encoding(corners, _frames(), model=model)
+    run_cols = _run_column_names(model)
+    assert out.iloc[0][run_cols].isna().all()  # NaN run row, no arbitrary frame
+
+
+def test_nan_corner_side_real_window_yields_nan_run():
+    # B18 / spec section 9.4: a NaN start_y yields a NaN corner_side even on a REAL (non-derived) window.
+    # The canonical reflection is then undefined; str(NaN) must NOT silently flip as "right". The encoder
+    # returns a NaN run row (ADR-042), not a fabricated vector. Non-vacuous: the SAME window with a "left"
+    # side encodes (test_direct_corner_encodes_short_is_nan).
+    model = _model()
+    corners = pd.DataFrame(
+        {
+            "game_id": ["g1"],
+            "corner_id": [0],
+            "period_id": [1],
+            "attacking_team_id": ["tA"],
+            "corner_side": pd.Series([None], dtype="category"),  # NaN side, real window
+            "corner_kind": pd.Series(["direct"], dtype="category"),
+            "t_init": [98.0],
+            "t_target": [101.5],
+        }
+    )
+    out = compute_corner_run_encoding(corners, _frames(), model=model)
+    run_cols = _run_column_names(model)
+    assert out.iloc[0][run_cols].isna().all()  # NaN run row, not a reflected-as-right vector
+
+
 def test_non_vacuous_spread():
     model = _model()
     out = compute_corner_run_encoding(_corners(), _frames(), model=model)

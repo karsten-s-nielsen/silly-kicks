@@ -72,15 +72,16 @@ TRACKING_FRAMES_COLUMNS: dict[str, str] = {
 Z_SOURCE_VALUES: tuple[str, ...] = ("measured", "estimated", "absent")
 
 #: Per-provider ball-z provenance (ADR-125; the spike's measured-vs-estimated finding). DECLARED, not
-#: inferred: IDSSE/Sportec + Metrica are dense optical (measured 3D); Gradient Sports measures z (its
-#: negatives are ground-level noise below the 1.8 m aerial boundary -> still "measured", not demoted);
-#: SkillCorner is broadcast + extrapolated (``*_tracking_extrapolated``) -> "estimated". Anything with
-#: no continuous ball z (SB360 snapshots) is "absent".
+#: inferred: IDSSE/Sportec + Metrica are dense optical (measured 3D); SkillCorner is broadcast + extrapolated
+#: (``*_tracking_extrapolated``) -> "estimated"; Gradient Sports is broadcast-derived tracking (one camera gives
+#: a ray, not a height: an aerial ball's z needs a trajectory model even when the ball is VISIBLE; z reaches
+#: -3.2 m at ground level) -> "estimated" for the whole match (ADR-125 amended 2026-10-26, TF-46 Part 2
+#: section 27.15 G3). Anything with no continuous ball z (SB360 snapshots) is "absent".
 Z_PROVENANCE: dict[str, str] = {
     "sportec": "measured",
     "idsse": "measured",
     "metrica": "measured",
-    "gradientsports": "measured",
+    "gradientsports": "estimated",
     "skillcorner": "estimated",
 }
 
@@ -98,10 +99,37 @@ SPORTEC_TRACKING_FRAMES_COLUMNS: dict[str, str] = KLOPPY_TRACKING_FRAMES_COLUMNS
 """Sportec native output: same shape as kloppy variant --- DFL TeamId / PersonId
 are string identifiers."""
 
-SKILLCORNER_TRACKING_FRAMES_COLUMNS: dict[str, str] = KLOPPY_TRACKING_FRAMES_COLUMNS
+SKILLCORNER_TRACKING_FRAMES_COLUMNS: dict[str, str] = {
+    **KLOPPY_TRACKING_FRAMES_COLUMNS,
+    # TF-46 Arm 1 Part 2 adapter fields (spec section 17.7). NO LONGER a KLOPPY alias.
+    "sc_possession_player_id": "category",  # DL ruling R1: category over the RAW provider ids (team_id pattern,
+    # ADR-106/103); <NA> for no possession, never a sentinel category; id identity via id_compat._decat (ADR-019)
+    "sc_possession_group": "category",  # static, set-once, low-cardinality (ADR-103)
+    "in_camera_view": "boolean",  # nullable; <NA> when the frame footprint is null / degenerate (spec 17.7)
+}
 """SkillCorner native bronze->frame output: object identifiers (SkillCorner numeric
 ids are stringified to match the SPADL ``player_id_native`` convention and the
-kloppy-gateway oracle). Same shape as the kloppy variant."""
+kloppy-gateway oracle). The kloppy variant PLUS the TF-46 Arm 1 Part 2 adapter fields
+(``sc_possession_player_id`` / ``sc_possession_group`` frame-level possession, ``in_camera_view``);
+no longer an alias of ``KLOPPY_TRACKING_FRAMES_COLUMNS`` (spec section 17.7)."""
+
+SKILLCORNER_CAMERA_FOOTPRINT_COLUMNS: dict[str, str] = {
+    "game_id": "object",
+    "period_id": "int64",
+    "frame_id": "int64",
+    "cam_tl_x": "float32",
+    "cam_tl_y": "float32",
+    "cam_tr_x": "float32",
+    "cam_tr_y": "float32",
+    "cam_br_x": "float32",
+    "cam_br_y": "float32",
+    "cam_bl_x": "float32",
+    "cam_bl_y": "float32",
+}
+"""SkillCorner camera-footprint companion table (TF-46 Arm 1 Part 2, spec section 17.7 / CL-15): one row per
+(game_id, period_id, frame_id); the four image-footprint corners scaled to the SPADL 105x68 frame
+(float32 storage, float64 compute). Kept as a companion table, not frame-level columns, to stay inside the
+TF-58 / F1b memory budget. A null footprint row stays null."""
 
 METRICA_TRACKING_FRAMES_COLUMNS: dict[str, str] = KLOPPY_TRACKING_FRAMES_COLUMNS
 """Metrica native bronze->frame output: object identifiers (``"Home"``/``"Away"`` team
@@ -254,9 +282,47 @@ class TrackingConversionReport:
     """Fraction of BALL rows whose post-transform coords fall >10 m off the pitch (spec 4.4 gate
     input). ~0 on clean data (the largest real ball excursion measured is 9.0 m). Default 0.0."""
 
+    ltr_flip_by_period: dict[int, bool | None] = dataclasses.field(default_factory=lambda: {})
+    """The per-period LTR orientation flip DECISION (TF-46 Arm 1 Part 2, spec section 17.7 amendment, DL
+    ruling): ``{period_id: True (flipped) | False (not flipped) | None (no GK anchor, left as-is)}``. Decided
+    ONCE by the geometric orienter and recorded here so the camera-footprint companion
+    (``convert_camera_footprint``) applies the SAME flip -- frames and footprint cannot disagree. Empty mapping
+    under ``output_convention="absolute_frame"`` (no orientation). SkillCorner only; other providers leave it
+    ``{}`` (populating theirs is an owner scope question). Also makes the normally-silent flips auditable."""
+
+    n_degenerate_footprint_frames: int = 0
+    """Count of camera-footprint frames whose quadrilateral was non-convex or zero-area, so ``in_camera_view``
+    is ``<NA>`` for every object in them (spec section 17.7 amendment). ~0 on clean data; a non-zero count flags
+    degenerate near-horizon projections. Default 0."""
+
+    game_id: object = None
+    """The match's ``game_id`` (spec section 17.7 amendment). Set by the SkillCorner adapter so
+    ``convert_camera_footprint`` can refuse a report that belongs to a DIFFERENT match (frames and footprint
+    must share the orientation decision). ``None`` on providers that do not populate it."""
+
+    provider_period_frame_ranges: dict[int, tuple[int, int]] | None = None
+    """The PROVIDER period range per period (TF-46 Arm 1 Part 2, spec sections 6.1 / 17.7, amended 2026-10-25):
+    ``{period_id: (first, last)}`` raw frame the provider labels with that period, empty frames included,
+    period-``None`` frames excluded. The bronze carries only frames with objects, so the reader of the raw feed
+    supplies it (``skillcorner.provider_period_frame_ranges``) to ``convert_to_frames(period_frame_ranges=)``.
+    ``None`` when not supplied, and on other providers. The joint-release GI pairing Range test reads it."""
+
     @property
     def has_unrecognized(self) -> bool:
         return len(self.unrecognized_player_ids) > 0
+
+
+#: The ``frames.attrs`` key under which the SkillCorner adapter stamps the orientation flip it APPLIED per
+#: period: a JSON-safe list of ``[game_id, period_id, flip]`` triples (``flip`` True / False / None; attrs cross a
+#: parquet round trip only as JSON). ``"absolute_frame"`` stamps False for every period (no flip applied). The
+#: joint-release GI direction check reads it (declared keyword first, then this stamp; R.2 2026-10-23).
+FRAME_FLIPS_ATTR = "ltr_flip_by_period"
+
+#: The ``frames.attrs`` key under which the SkillCorner adapter stamps the PROVIDER period range when one was
+#: supplied: a JSON-safe list of ``[game_id, period_id, first_frame, last_frame]`` (spec section 17.7, amended
+#: 2026-10-25). The joint-release GI pairing reads it (declared keyword first, then this stamp, then the retained
+#: range).
+PERIOD_FRAME_RANGES_ATTR = "provider_period_frame_ranges"
 
 
 @dataclasses.dataclass(frozen=True)

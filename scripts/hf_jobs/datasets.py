@@ -360,6 +360,20 @@ def fetch(
     return patterns
 
 
+def fetch_locked(name: str, *, dest: pathlib.Path, download: Any = None) -> pathlib.Path:
+    """Download the WHOLE locked dataset ``name`` (its repo at the PINNED lock revision) into ``dest``; reuse
+    ``dest`` when it already holds that revision. Off-HF (the adopt head-to-head eval corpus)."""
+    rec = locked(name)
+    stamp = dest / ".locked_revision"
+    if stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == rec["revision"]:
+        return dest
+    if download is None:
+        from huggingface_hub import snapshot_download as download
+    download(rec["repo"], repo_type="dataset", revision=rec["revision"], local_dir=str(dest))
+    stamp.write_text(f"{rec['revision']}\n", encoding="utf-8")
+    return dest
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m scripts.hf_jobs datasets")
     sub = ap.add_subparsers(dest="cmd", required=True)

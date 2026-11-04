@@ -74,7 +74,7 @@ def _alignable():
                     "is_ball": False,
                 }
             )
-    frames = pd.DataFrame(rows)
+    frames = pd.DataFrame(rows).assign(source_provider="sportec")  # R-C2 gate (spec 27.19): IDSSE-like optical
     actions = pd.DataFrame(
         {
             "action_id": [0, 1, 2],

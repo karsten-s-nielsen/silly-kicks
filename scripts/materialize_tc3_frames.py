@@ -59,7 +59,9 @@ _KEY_COLUMNS = ("game_id", "period_id", "frame_id", "player_id", "x", "y", "team
 #: different", not "when a column changed".**
 # tc3-frames-3: TF-65 dense-grid preprocess adds accel_x/accel_y/accel + pos_var/vel_var/accel_var
 # and moves vx/vy/x_smoothed (shape + content change -> a new generation).
-_SHARD_SCHEMA_VERSION = "tc3-frames-3"
+# tc3-frames-4: TF-46 adds the stoppage columns (stoppage_state/stoppage_source) via the loader's
+# stoppage staging flag (derive_stoppage_state on raw frames before _preprocess); shape change -> new gen.
+_SHARD_SCHEMA_VERSION = "tc3-frames-4"
 
 
 def _checksum(df: pd.DataFrame) -> str:
@@ -230,6 +232,30 @@ def _guard_provider_frames(frames: pd.DataFrame, provider: str) -> None:
     assert_detection_aware_visibility(frames["visibility"], provider=provider)
 
 
+def _assert_full_corpus(res, match_ids: dict | None) -> None:
+    """Refuse a silently-shrunk staging corpus (r4 section4.3 / plan Task 2, B-11).
+
+    ``for_each`` records a raising item (e.g. the stoppage-column ``AssertionError`` in ``_work``) as a
+    FAILURE and carries on -- only ``max_consecutive_failures`` IN A ROW abort -- so a non-consecutive
+    attach failure would drop a match and the pass would still exit 0 (the section3 path-1 silent-shrink). Fail
+    hard on ANY failure, and, when a roster was requested, assert the shard count equals that roster net of
+    the deterministic ``MatchExcluded`` exclusions. ``SystemExit`` so the staging process exits non-zero."""
+    if res.failures:
+        raise SystemExit(
+            f"materialize: {len(res.failures)} match(es) FAILED and were dropped "
+            f"(silent-shrink, r4 section3 path 1): {dict(sorted(res.failures.items()))}"
+        )
+    if match_ids is not None:
+        requested = sum(len(ids) for ids in match_ids.values())
+        expected = requested - res.excluded
+        if len(res.shard_keys) != expected:
+            raise SystemExit(
+                f"materialize: staged {len(res.shard_keys)} shards, expected {expected} "
+                f"(roster {requested} net of {res.excluded} MatchExcluded). The corpus shrank; "
+                f"refusing to stage a short set (r4 section4.3)."
+            )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Materialize pining frames into a resumable corpus cache.")
     ap.add_argument("--cache-dir", type=pathlib.Path, required=True)
@@ -265,9 +291,16 @@ def main() -> None:
     # BEFORE the loop, and before any corpus work is paid for: a parity breach must STOP the pass,
     # and `for_each` would only record it as one failed item and carry on. See
     # `preflight_reference_parity` for the two measured failure modes of the in-loop version.
+    from functools import partial
+
     checked_match = (
         preflight_reference_parity(
-            args.reference_parquet, cache_dir=cache_dir, list_match_refs=list_match_refs, load_match=load_match
+            args.reference_parquet,
+            cache_dir=cache_dir,
+            list_match_refs=list_match_refs,
+            # SPEC-13: load the reference flag-on (same as the write path) so parity covers the stoppage
+            # columns the tc3-frames-4 shards carry; a flag-off load would raise "missing column(s)".
+            load_match=partial(load_match, stoppage=True),
         )
         if args.reference_parquet
         else None
@@ -309,6 +342,14 @@ def main() -> None:
         if actions is not None and len(actions) > 0:
             actions_dir.mkdir(parents=True, exist_ok=True)
             actions.to_parquet(actions_dir / f"{stem}.parquet")
+        # TF-46 (tc3-frames-4): the staged shard MUST carry the stoppage columns. Compare the keys the
+        # frame ACTUALLY carries, never columns=DECLARED (which would NaN-fill a dropped one).
+        missing = {"stoppage_state", "stoppage_source"} - set(frames.columns)
+        if missing:
+            raise AssertionError(
+                f"{stem}: materialized frames missing stoppage column(s) {sorted(missing)} -- the loader "
+                "stoppage staging flag did not attach (expected tc3-frames-4)"
+            )
         return frames
 
     # ADR-052: this walks a corpus and each item costs minutes, so it MUST persist per item.
@@ -321,6 +362,9 @@ def main() -> None:
         match_ids=match_ids,
         max_per_provider=args.max_per_provider,
         cache_dir=cache_dir,
+        # TF-46 (tc3-frames-4): attach stoppage_state/stoppage_source on raw frames before _preprocess,
+        # so the staged flat_tc3 shards carry the dead-ball domain for xShot/xCross (and every consumer).
+        stoppage=True,
     )
     res = for_each(
         refs,
@@ -350,6 +394,8 @@ def main() -> None:
         },
         label="match",
     )
+    # r4 section4.3 / plan Task 2 (B-11): refuse a silently-shrunk corpus BEFORE writing the manifest.
+    _assert_full_corpus(res, match_ids)
     # Write the manifest beside the shards. Every other `for_each` adopter does, and here it is what
     # gives the corpus CACHE its provenance: a consumer that trains on these frames can check which
     # commit produced them and whether the pass conserved, rather than trusting a directory.

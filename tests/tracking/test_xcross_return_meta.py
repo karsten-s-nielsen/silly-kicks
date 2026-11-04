@@ -59,7 +59,7 @@ def _match_with_behind_line_defender():
                 )
             )
     frames = pd.DataFrame(rows)
-    frames["source_provider"] = "test"
+    frames["source_provider"] = "sportec"  # the R-C2 reader gate (spec 27.19) needs a classified provider; was "test"
     actions = pd.DataFrame(
         {
             "game_id": ["g"],

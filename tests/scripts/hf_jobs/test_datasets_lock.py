@@ -160,3 +160,56 @@ def test_measure_id_kinds_reads_one_frames_and_one_actions_file_per_provider(tmp
         "gradientsports": "int",
         "skillcorner": "str",
     }
+
+
+# ---- record round trip (plan Task 2, spec section 7): a re-stage records its NEW generation ----------------
+
+
+def _staged_flat_repo(tmp_path, generation: str, stems: list[tuple[str, str]]):
+    """A local stand-in for a staged flat_tc3 dataset at one revision: ``shards/<gen>/<stem>.parquet`` +
+    ``_actions/<stem>.parquet`` + ``home_teams.json``. ``stems`` pairs each stem with its frames' source_provider."""
+    import types
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    root = tmp_path / generation
+    for stem, provider in stems:
+        table = pa.table({"source_provider": [provider], "game_id": ["g"], "player_id": ["p"], "team_id": ["t"]})
+        for rel in (f"shards/{generation}/{stem}.parquet", f"_actions/{stem}.parquet"):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(table, root / rel)
+    (root / "home_teams.json").write_text("{}", encoding="utf-8")
+    files = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+
+    class _Api:
+        def dataset_info(self, repo, revision=None):
+            return types.SimpleNamespace(sha=f"{generation}-sha")
+
+        def list_repo_files(self, repo, repo_type=None, revision=None):
+            return files
+
+    class _Fs:
+        def open(self, path, mode="rb"):  # "datasets/<repo>@<rev>/<rel>"
+            return open(root / path.split("@", 1)[1].split("/", 1)[1], mode)
+
+    return _Api(), _Fs()
+
+
+def test_datasets_record_round_trip(tmp_path):
+    # Regression guard (mostly unchanged code, B-10): record measures the staged dataset into the lock, a
+    # re-stage (tc3-frames-3 -> tc3-frames-4) overwrites it with the NEW generation and revision, and locked()
+    # reads back exactly what record wrote. The DFL stem keeps its identity name; its frames say "sportec".
+    lock = tmp_path / "lock.json"
+    stems = [("idsse__DFL-MAT-J03WMX", "sportec"), ("skillcorner__1886347", "skillcorner")]
+    api, fs = _staged_flat_repo(tmp_path, "tc3-frames-3-aaa", stems)
+    old = D.record("xshot17", api=api, fs=fs, now="t0", lock_path=lock)
+    api, fs = _staged_flat_repo(tmp_path, "tc3-frames-4-bbb", stems)
+    new = D.record("xshot17", api=api, fs=fs, now="t1", lock_path=lock)
+    assert D.locked("xshot17", path=lock) == new
+    assert (old["generation"], new["generation"]) == ("tc3-frames-3-aaa", "tc3-frames-4-bbb")
+    assert (new["revision"], new["recorded_at"]) == ("tc3-frames-4-bbb-sha", "t1")
+    assert [u["source_provider"] for u in new["units"]] == ["sportec", "skillcorner"]
+    assert new["public_ids"] == [["idsse", "DFL-MAT-J03WMX"], ["skillcorner", "1886347"]]
+    assert new["identity"] == old["identity"] and set(new["identity"]) == {"flat", "pergame"}  # same matches
+    assert new["provider_id_kinds"] == {"idsse": "str", "skillcorner": "str"}

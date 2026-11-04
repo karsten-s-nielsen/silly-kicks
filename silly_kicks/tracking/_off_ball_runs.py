@@ -23,6 +23,7 @@ from silly_kicks.id_compat import (
 
 from ._action_orientation import acting_team_attacks_rtl, validate_period_directions
 from ._gk_resolve import GoalMap
+from ._stoppages import has_stoppage_state
 
 _OFF_BALL_RUNS_COLS = [
     "n_off_ball_runners_pre_window",
@@ -87,7 +88,9 @@ def _prepare_run_candidates(sliced: pd.DataFrame) -> pd.DataFrame:
         & (~sliced["is_goalkeeper"].astype(bool)).to_numpy()
     ].copy()
     teammates = teammates.dropna(subset=["x", "y"])
-    if "ball_state" in teammates.columns:
+    if "stoppage_state" in teammates.columns:  # dead and UNKNOWN are not live (TF-46 Part 2 section 27.19)
+        teammates = teammates[teammates["stoppage_state"].astype(object).to_numpy() == "live"]
+    elif "ball_state" in teammates.columns:
         teammates = teammates[teammates["ball_state"] != "dead"]
     return teammates
 
@@ -102,7 +105,11 @@ def _off_ball_runs_kernel(
 ) -> pd.DataFrame:
     """Per-action off-ball-run metrics for attacking teammates.
 
-    Returns DataFrame aligned with actions.index, columns: _OFF_BALL_RUNS_COLS.
+    Returns DataFrame aligned with actions.index, columns: _OFF_BALL_RUNS_COLS. Dead-ball frames leave the
+    candidacy and a dead-ball action stays NaN: a provider without an observed dead-ball state (SkillCorner, Gradient
+    Sports, Metrica) REQUIRES the ``stoppage_state`` column of ``derive_stoppage_state`` (else ``ValueError``), whose
+    dead and UNKNOWN frames are not live (TF-46 Part 2 spec section 27.19); IDSSE / Sportec without the column keep
+    the ``ball_state == "dead"`` test.
     """
     from .utils import slice_around_event
 
@@ -121,6 +128,9 @@ def _off_ball_runs_kernel(
         return empty
 
     _validate_ltr(frames)
+    # The dead-ball gate (TF-46 Part 2 spec section 27.19): a provider without an observed dead-ball state needs the
+    # derive_stoppage_state column (fail closed); the candidacy and the action dead-ball tag read it first.
+    has_stoppage_state(frames, where="off_ball_runs")
 
     # Partition by game_id to prevent period_id collisions across games
     # ADR-068: build the per-game lookup ONCE instead of re-filtering `frames` per game (replaces a
@@ -138,15 +148,20 @@ def _off_ball_runs_kernel(
             results.append(empty.reindex(game_actions.index))
             continue
 
-        # Extract dead-ball state from sliced BEFORE removing ball rows
+        # Extract dead-ball state from sliced BEFORE removing ball rows (the stoppage_state column first: dead and
+        # UNKNOWN are not live, TF-46 Part 2 section 27.19; else the observed ball_state)
         action_end_ball_state: dict = {}
-        if "ball_state" in game_frames.columns:
+        if "stoppage_state" in game_frames.columns or "ball_state" in game_frames.columns:
             ball_in_window = sliced[sliced["is_ball"].astype(bool)]
             if not ball_in_window.empty:
                 abs_offset = ball_in_window["time_offset_seconds"].abs()
                 closest_idx = abs_offset.groupby(ball_in_window["action_id"]).idxmin()
                 closest = ball_in_window.loc[closest_idx]
-                dead_actions = closest.loc[closest["ball_state"] == "dead", "action_id"]
+                if "stoppage_state" in game_frames.columns:
+                    not_live = closest["stoppage_state"].astype(object).to_numpy() != "live"
+                else:
+                    not_live = (closest["ball_state"] == "dead").to_numpy()
+                dead_actions = closest.loc[not_live, "action_id"]
                 action_end_ball_state = {aid: "dead" for aid in dead_actions}
 
         # NOW remove ball rows

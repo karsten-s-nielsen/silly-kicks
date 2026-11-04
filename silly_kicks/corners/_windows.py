@@ -79,6 +79,10 @@ def add_corner_windows(
     src_col = out["corner_source"].astype(object)
     for i in range(n):
         t_kick = float(out["t_kick"].iloc[i])
+        if np.isnan(t_kick):
+            # A derived corner with no resolved kick time: NaN window outputs, source NaN -- never a
+            # fabricated kick_plus_2s fallback (ADR-042, spec section 9.4).
+            continue
         period = int(out["period_id"].iloc[i])
         t_init[i] = t_kick - params.init_lead_s
         t_outcome[i] = t_kick + params.outcome_window_s

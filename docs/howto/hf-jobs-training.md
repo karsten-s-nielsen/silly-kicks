@@ -47,9 +47,14 @@ for a public dataset the canonical id list) into `scripts/hf_jobs/datasets.lock.
 ## The campaign file
 
 `scripts/hf_jobs/campaigns/<name>.toml` (committed, INV-7): the bucket, `target_minutes` (60),
-`concurrency_cap`, `attempts`, and per job the trainer or driver, its tier, its dataset (plus
-`probe_dataset` for xcross) and its variants. Run keys are derived: `{campaign}-{commit7}-{job}-{tier}`;
-`--replica N` adds `-rN`, a FRESH store for the same-commit re-run (INV-1 gate, decision P18).
+`concurrency_cap`, `attempts`, an optional `mode` (default `"rematerialize"`), and per job the trainer or
+driver, its tier, its dataset (plus `probe_dataset` for xcross) and its variants. Run keys are derived:
+`{campaign}-{commit7}-{job}-{tier}`; `--replica N` adds `-rN`, a FRESH store for the same-commit re-run
+(INV-1 gate, decision P18). `mode = "refit"` (ADR-131) tells `verify` the run SUPERSEDES the committed
+bundle: it skips the `_integrity`/`reproduces` gate (which a refit's new corpus/weights never pass) and
+judges each arm by certification alone (owner cv-parity; public floor falls back to the fresh acceptance
+gates when the committed bundle no longer loads). `"rematerialize"` keeps the `_integrity` gate (the O-7
+`_OWED` regen, values unchanged).
 
 ## The command sequence
 

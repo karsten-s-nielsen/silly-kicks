@@ -19,6 +19,7 @@ import pytest
 
 from silly_kicks.spadl import config as spc
 from silly_kicks.tracking import _xcross_attempt as xc
+from silly_kicks.tracking import derive_stoppage_state
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SLIM = REPO_ROOT / "tests" / "datasets" / "tracking" / "action_context_slim"
@@ -52,14 +53,17 @@ def _load(provider: str) -> pd.DataFrame:
     frames = frames[[c for c in frames.columns if c in _KEEP]].copy()
     frames["vx"] = 0.0
     frames["vy"] = 0.0
-    return frames
+    # TF-46 Part 2 section 27.19 (R-C2): the ball_state readers need the stoppage column; the slim excerpt is
+    # full-rate, so the library builds it from the SPADL actions these tests run on (the excerpt's own action rows are
+    # lakehouse-shaped, without type_id / result_id).
+    return derive_stoppage_state(frames, actions=_synthesize_cross_actions(frames))
 
 
 def _synthesize_cross_actions(frames: pd.DataFrame, n: int = 8) -> pd.DataFrame:
     """Stamp a few cross actions on real (game, period, frame, team) anchors so prepare runs end to
     end (labels + the score-lookup path). The geometry under test is the REAL frames, not these."""
     cand = frames[~frames["is_ball"].astype(bool)].drop_duplicates(["period_id", "frame_id"]).head(n)
-    return pd.DataFrame(
+    actions = pd.DataFrame(
         {
             "game_id": cand["game_id"].to_numpy(),
             "period_id": cand["period_id"].to_numpy(),
@@ -70,6 +74,10 @@ def _synthesize_cross_actions(frames: pd.DataFrame, n: int = 8) -> pd.DataFrame:
             "action_id": np.arange(len(cand)),
         }
     )
+    if set(frames["source_provider"].dropna().astype(str)) == {"skillcorner"}:
+        # the SkillCorner converter's raw GI tag (stoppage rule version 3, spec section 27.19); no penalty marker
+        actions["gi_interruption_after"] = pd.Series(pd.NA, index=actions.index, dtype=object)
+    return actions
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)

@@ -1,0 +1,39 @@
+# TF-46 adopt-for-refit campaign (spec 2026-11-03-adopt-for-refit-seam-design). The xShot/xCross refit
+# supersedes the stale committed bundles, so `mode = "refit"`: verify skips the _integrity/reproduces gate
+# and judges each arm by certification alone (owner cv-parity; public §6.4 floor). Run with:
+#   .venv-hfjobs/Scripts/python -m scripts.hf_jobs campaign scripts/hf_jobs/campaigns/tf46_refit.toml <command>
+# The commit is HEAD at preflight (pushed, CI green). Run keys are derived; never hand-picked.
+
+[campaign]
+name = "tf46_refit"
+mode = "refit"
+bucket = "silly-kicks/hf-refit-scratch"
+target_minutes = 60
+concurrency_cap = 10
+attempts = 3
+
+[[jobs]]
+job = "xshot_occurrence"
+tier = "public"
+dataset = "xshot17"
+variants = ["default", "position_only"]
+
+[[jobs]]
+job = "xshot_occurrence"
+tier = "sc_extended"
+dataset = "xshot115"
+variants = ["default", "position_only"]
+
+[[jobs]]
+job = "xcross_attempt"
+tier = "public"
+dataset = "xshot17"
+probe_dataset = "xcross_probe"
+variants = ["default", "position_only"]
+
+[[jobs]]
+job = "xcross_attempt"
+tier = "sc_extended"
+dataset = "xshot115"
+probe_dataset = "xcross_probe"
+variants = ["default", "position_only"]

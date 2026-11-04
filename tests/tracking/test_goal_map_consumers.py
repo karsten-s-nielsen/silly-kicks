@@ -34,6 +34,9 @@ from silly_kicks.id_compat import ids_match
 from silly_kicks.tracking import GoalMap, resolve_defended_goals
 from tests.tracking._mirror_registry import FIELD_LENGTH, canonical_scene
 
+# interim until the R-C3 retrain: the xS / xCross gates run on the shipped weights under legacy_override
+pytestmark = pytest.mark.usefixtures("legacy_xs_xc_bundles")
+
 
 def _flipped(gm: GoalMap) -> GoalMap:
     """Both ends swapped -- a COHERENT rival map, not a corrupted one.

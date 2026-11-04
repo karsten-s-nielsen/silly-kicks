@@ -57,6 +57,10 @@ class Campaign:
     jobs: tuple[CampaignJob, ...]
     path: pathlib.Path | None
     sha256: str
+    #: Campaign judging mode (adopt-for-refit seam): ``"rematerialize"`` (default; same model/corpus, values
+    #: unchanged -- `verify` keeps the `_integrity`/`reproduces` gate) or ``"refit"`` (new corpus/weights
+    #: supersede the committed model -- `verify` skips `_integrity` and gates on `_certify` alone).
+    mode: str = "rematerialize"
 
     def constraints(self, *, startup_s: float | None = None) -> Constraints:
         base = Constraints(target_s=float(self.target_minutes) * 60.0, concurrency_cap=self.concurrency_cap)
@@ -110,6 +114,9 @@ def load_campaign(path: str | pathlib.Path) -> Campaign:
     path = pathlib.Path(path)
     raw = load_toml(path)
     c = raw["campaign"]
+    mode = c.get("mode", "rematerialize")
+    if mode not in ("refit", "rematerialize"):
+        raise ValueError(f"campaign mode {mode!r} not in {{refit, rematerialize}}")
     jobs = tuple(
         CampaignJob(j["job"], j["tier"], j["dataset"], tuple(j["variants"]), j.get("probe_dataset"))
         for j in raw.get("jobs", [])
@@ -123,6 +130,7 @@ def load_campaign(path: str | pathlib.Path) -> Campaign:
         jobs=jobs,
         path=path,
         sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        mode=mode,
     )
 
 

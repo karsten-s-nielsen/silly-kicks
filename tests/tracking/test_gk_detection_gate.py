@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.id_compat import ids_match
+from tests._stoppage_fixtures import mark_all_live
 from tests.tracking._goal_map_helpers import goal_map_like_home_team_id
 from tests.tracking._provider_inputs import SLIM_DIR, load_provider_frames, synthesize_actions
 
@@ -149,6 +150,9 @@ def _skillcorner_restdefense(keeper_visible):
     frames["visibility"] = True
     gk = frames["is_goalkeeper"].astype("boolean").fillna(False).to_numpy()
     frames.loc[gk, "visibility"] = keeper_visible
+    # SkillCorner has no observed dead-ball state: the R-C2 reader gate needs the stoppage column (spec 27.19); the
+    # rest-defence fixture is sparse, so the test-only helper marks it live.
+    frames = mark_all_live(frames)
     samples, report = compute_rest_defense(actions, frames, xt=make_fitted_xt())
     return samples, report
 

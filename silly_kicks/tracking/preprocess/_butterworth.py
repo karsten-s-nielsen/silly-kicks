@@ -44,7 +44,7 @@ def exact_prewarped_cutoff(cutoff_hz: float, fs: float, order: int = 3) -> float
     Examples
     --------
     >>> round(exact_prewarped_cutoff(0.4, 10.0, 3), 6)  # near DC: ~ the linear design
-    0.462389
+    0.462466
     """
     if not 0.0 < cutoff_hz < fs / 2.0:
         raise ValueError(f"exact_prewarped_cutoff: cutoff {cutoff_hz} Hz must be in (0, Nyquist={fs / 2.0}) Hz")
@@ -335,6 +335,10 @@ def residual_analysis_cutoff(
 
 _RESAMPLE_ENTITY = ["game_id", "period_id", "is_ball", "player_id"]  # one entity never spans two games
 _RESAMPLE_OVERWRITE = {"frame_id", "time_seconds", "frame_rate", "x", "y", "speed", "vx", "vy"}
+#: The per-frame stoppage columns of ``derive_stoppage_state``: one state per (game, period, frame), carried from the
+#: ball row, never step-held per entity (owner decision 2026-10-26; TF-46 Part 2 spec section 27.19).
+_RESAMPLE_FRAME_STATE = ("stoppage_state", "stoppage_source")
+_FRAME_KEYS = ["game_id", "period_id", "frame_id"]
 
 
 def _cast_stored(arr: np.ndarray, dtype_str: str):
@@ -349,12 +353,33 @@ def _cast_stored(arr: np.ndarray, dtype_str: str):
     return arr.astype(dtype_str)
 
 
+def _carry_ball_frame_state(out: pd.DataFrame) -> pd.DataFrame:
+    """Give every row of a resampled (game, period, grid frame) the stoppage state of that frame's ball row (the
+    ball's held source frame). A grid frame without a ball row gets a missing value, which every reader treats as not
+    live; no default is filled in (owner decision 2026-10-26; TF-46 Part 2 spec section 27.19, condition 5)."""
+    cols = [c for c in _RESAMPLE_FRAME_STATE if c in out.columns]
+    if not cols:
+        return out
+    ball = out.loc[out["is_ball"].astype(bool), [*_FRAME_KEYS, *cols]]
+    if ball.duplicated(subset=_FRAME_KEYS).any():
+        raise ValueError("resample_frames: more than one ball row in a frame; the frame stoppage state is ambiguous")
+    # same frame, same key dtypes on both sides (both are rows of `out`): an index lookup, not a merge
+    held = ball.set_index(_FRAME_KEYS)
+    where = pd.MultiIndex.from_frame(out[_FRAME_KEYS])
+    out = out.copy()
+    for c in cols:
+        out[c] = held[c].reindex(where).to_numpy()
+    return out
+
+
 def resample_frames(frames: pd.DataFrame, target_hz: float, *, max_gap_seconds: float = 0.5) -> pd.DataFrame:
     """Resample tracking frames onto a uniform per-period ``target_hz`` grid. Per ``(game, period, is_ball,
     player_id)`` entity: ``x``/``y`` are linearly interpolated within runs split at gaps longer than
     ``max_gap_seconds``; every other column is step-held from the latest native row at or before the grid
     time; ``speed``/``vx``/``vy`` (if present) are set NaN (re-derive after resampling). ``frame_id`` is the
-    grid index ``k`` and ``time_seconds`` is ``k / target_hz``.
+    grid index ``k`` and ``time_seconds`` is ``k / target_hz``. The frame stoppage columns (``stoppage_state`` /
+    ``stoppage_source`` of ``derive_stoppage_state``) are one value per frame: every row of a grid frame takes the
+    value of that frame's ball row, and a grid frame without a ball row gets a missing value (not live).
 
     Examples
     --------
@@ -416,4 +441,4 @@ def resample_frames(frames: pd.DataFrame, target_hz: float, *, max_gap_seconds: 
         parts.append(sub)
     if not parts:
         return frames.iloc[:0].copy()
-    return pd.concat(parts, ignore_index=True)[list(frames.columns)]
+    return _carry_ball_frame_state(pd.concat(parts, ignore_index=True)[list(frames.columns)])

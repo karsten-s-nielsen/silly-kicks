@@ -23,9 +23,17 @@ def _single_match(provider: str = "skillcorner", n_actions: int = 10):
     carrier inference work — the calibration loaders must do the same (derive_velocities) for
     providers that don't emit native velocities.
     """
+    from silly_kicks.tracking._provider_visibility import dead_ball_observed
     from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
 
     frames = derive_velocities(smooth_frames(load_provider_frames(provider)))
+    # TF-46 section 27.19: a non-observed provider's frames (SkillCorner here) need a current stoppage_state
+    # or add_off_ball_runs / the reader gates raise; the slim match is all-live. An observed provider keeps
+    # its real ball_state.
+    if not dead_ball_observed(provider):
+        from tests._stoppage_fixtures import mark_all_live
+
+        frames = mark_all_live(frames)
     actions = synthesize_actions(frames, n_actions=n_actions)
     return actions, frames, _HOME
 
@@ -267,8 +275,12 @@ def _slim_subset(n_frames: int = 40):
     global _SLIM_SUB
     if _SLIM_SUB is None:
         from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
+        from tests._stoppage_fixtures import mark_all_live
 
         f = derive_velocities(smooth_frames(load_provider_frames("skillcorner")))
+        # TF-46 section 27.19: SkillCorner has no observed dead-ball state, so the slim subset needs a
+        # current stoppage_state or add_off_ball_runs / the reader gates raise; the subset is all-live.
+        f = mark_all_live(f)
         p1 = f[f["period_id"] == 1]
         keep_ids = sorted(p1["frame_id"].unique())[:n_frames]
         _SLIM_SUB = p1[p1["frame_id"].isin(keep_ids)].copy()

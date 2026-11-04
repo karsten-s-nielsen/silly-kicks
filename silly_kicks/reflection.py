@@ -148,12 +148,30 @@ _TRACKING_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "source_provider": "invariant",
     "is_goalkeeper_source": "invariant",
     "z_source": "invariant",  # ADR-125: ball-z provenance token; non-geometric, unchanged by reflection
+    # --- TF-46 Arm 1 Part 2 SkillCorner adapter fields (spec section 17.7). Frame columns invariant; the eight
+    #     camera-footprint companion-table corners are POINT PAIRS (ADR-045), reflected by orient_camera_footprint. ---
+    "sc_possession_player_id": "invariant",
+    "sc_possession_group": "invariant",
+    "in_camera_view": "invariant",
+    "cam_tl_x": "point_x",
+    "cam_tl_y": "point_y",
+    "cam_tr_x": "point_x",
+    "cam_tr_y": "point_y",
+    "cam_br_x": "point_x",
+    "cam_br_y": "point_y",
+    "cam_bl_x": "point_x",
+    "cam_bl_y": "point_y",
     # --- TF-79 ball-contact table (detect_ball_contacts output; a separate schema, declared here so a
     #     consumer reflecting the contacts table through the tracking kinds handles its geometry) ---
     "contact_x": "point_x",
     "contact_y": "point_y",
     "velocity_change_ms": "invariant",
     "contact_source": "invariant",
+    # TF-46 Arm 1 Part 2 attribution ambiguity (spec section 17.4): distances (isometry-invariant) + flags.
+    "attribution_margin": "invariant",
+    "attribution_margin_player": "invariant",
+    "attribution_other_visible": "invariant",
+    "attribution_other_unseen_reason": "invariant",
 }
 """Transform kind per tracking-frame column. Covers TRACKING_FRAMES_COLUMNS plus the
 preprocess-added columns (and the TF-79 contacts-table geometry). Completeness is
@@ -197,24 +215,45 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     # --- block-detection columns (TF-51 prereq): boolean flags, not geometric -> invariant ---
     "shot_blocked": "invariant",
     "cross_blocked": "invariant",
+    # --- TF-46 Arm 1 base signal columns (ADR-046 pattern): string tokens, not geometric -> invariant ---
+    "result_source": "invariant",  # native/inferred/stopgap (moved from provider-variant; now base)
+    "restart_evidence": "invariant",  # tagged/untagged/chain/chain_ambiguous/tag_only
+    "type_source": "invariant",  # native/inferred/default/tracking
+    "repair_kind": "invariant",  # skillcorner + sportec reconciliation / penalty-outcome provenance; base (D1)
     # --- add_names() output. add_names attaches these routinely, and a DECLARED column is
     #     the only one whose kind is guaranteed right, so they belong here. ---
     "type_name": "invariant",
     "result_name": "invariant",
     "bodypart_name": "invariant",
-    # --- provider-variant columns, union over the four *_SPADL_COLUMNS dicts ---
-    "action_provenance": "invariant",  # kloppy family
+    # --- provider-variant columns, union over the *_SPADL_COLUMNS dicts ---
+    "action_provenance": "invariant",  # kloppy family (skillcorner, sportec)
     "is_synthetic": "invariant",  # gradientsports (ADR-018 synthesized rows)
-    "result_source": "invariant",  # skillcorner (ADR-024 native/inferred/stopgap)
+    "ball_claim_type": "invariant",  # sportec F4 DFL BallClaiming claim_type token (TF-46 Arm 1)
+    "penalty_result_method": "invariant",  # sportec §25 DFL Penalty result-method token (TF-46 Arm 1 Part 2)
+    "shot_woodwork_type": "invariant",  # sportec §25 woodwork-deflection token (TF-46 Arm 1 Part 2)
     "tackle_winner_player_id": "invariant",  # sportec (ADR-001 qualifier-derived)
     "tackle_winner_team_id": "invariant",
     "tackle_loser_player_id": "invariant",
     "tackle_loser_team_id": "invariant",
+    # skillcorner GI facts (TF-46 Arm 1 Part 2, spec section 17.2): frame ids + provenance tokens, invariant.
+    "gi_marker_possession_frame_end": "invariant",
+    "gi_next_possession_frame_start": "invariant",
+    "gi_attacking_side": "invariant",
+    "gi_possession_frame_start": "invariant",
+    "gi_possession_frame_end": "invariant",
+    "gi_event_id": "invariant",
+    "gi_interruption_after": "invariant",  # skillcorner GI possession tag (e.g. "penalty_for"); non-geometric marker
+    "period_source": "invariant",  # skillcorner GI period-label repair provenance token (spec section 26.5)
 }
 """Transform kind per SPADL action column.
 
-34 columns: the 16 canonical (incl. the 2 TF-51-prereq block-detection columns), the 3
-``add_names`` outputs, the 7 provider-variant columns (union over ``*_SPADL_COLUMNS``), and the 8
+47 columns: the 20 canonical (incl. the 2 TF-51-prereq block-detection columns and the 4 TF-46 Arm 1
+base signal columns result_source / restart_evidence / type_source / repair_kind, repair_kind promoted to
+base by decision D1), the 3 ``add_names`` outputs, the 16 provider-variant columns (union over
+``*_SPADL_COLUMNS``; result_source + repair_kind moved to canonical, sportec ball_claim_type + the §25
+sportec penalty_result_method / shot_woodwork_type, the 6 skillcorner GI facts gi_marker_possession_frame_end /
+gi_next_possession_frame_start / gi_attacking_side / gi_possession_frame_start / gi_possession_frame_end /
+gi_event_id, and the skillcorner period_source of the §26 GI period-label repair added), and the 8
 ADR-025 enrichment columns. Completeness is a CI
 contract (tests/test_reflection.py), NOT a runtime one -- ``preserve_native``
 (``spadl/utils.py:1651``) lets a caller attach arbitrarily-named provider fields, so the SPADL

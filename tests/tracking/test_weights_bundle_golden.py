@@ -13,6 +13,8 @@ import importlib
 
 import pytest
 
+from tests._stoppage_fixtures import assert_bundle_refused
+
 
 @pytest.mark.parametrize(
     "mod,cls_name",
@@ -23,6 +25,8 @@ import pytest
     ],
 )
 def test_bundled_default_loads_and_chirality_reverifies(mod, cls_name):
+    if assert_bundle_refused(cls_name):  # interim until the R-C3 retrain (owner decision 2026-10-26)
+        return
     m = importlib.import_module(mod)
     # clear the memo cache so the load + strict chirality re-verification actually runs
     if hasattr(m, "_VARIANT_CACHE"):

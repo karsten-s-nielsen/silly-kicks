@@ -17,7 +17,7 @@ import pandas as pd
 
 from silly_kicks.id_compat import align_join_keys, canonical_id_series, ids_equal
 from silly_kicks.spadl import add_possessions
-from silly_kicks.tracking import link_actions_to_frames
+from silly_kicks.tracking import has_stoppage_state, link_actions_to_frames
 
 from ._columns import RD_FRAME_KEYS, RD_SAMPLE_KEYS
 from ._config import RestDefenseParams
@@ -82,7 +82,15 @@ def select_rest_defense_samples(
     in-possession team A on scored rows), ``possession_id``, ``frame_id``, ``ball_x`` (the ball's x in
     the linked frame), ``own_goal_x`` / ``attacked_goal_x`` (from ``goal_map``), ``is_possession_loss``
     (bool), and ``gate_drop_reason`` (``pd.NA`` on scored rows; else a :data:`GATE_DROP_REASONS` token).
+
+    A provider without an observed dead-ball state (SkillCorner, Gradient Sports, Metrica) REQUIRES the
+    ``stoppage_state`` column of :func:`silly_kicks.tracking.derive_stoppage_state` (else ``ValueError``): its dead
+    and UNKNOWN frames gate as ``dead_ball`` (TF-46 Part 2 spec section 27.19). IDSSE / Sportec without the column
+    keep the ``ball_state == "dead"`` test.
     """
+    # The dead-ball gate (TF-46 Part 2 spec section 27.19): a provider without an observed dead-ball state needs the
+    # derive_stoppage_state column (fail closed); its dead and UNKNOWN frames drop as dead_ball.
+    use_stoppage = has_stoppage_state(frames, where="select_rest_defense_samples")
     acts = add_possessions(actions).reset_index(drop=True)
 
     # --- team in possession (the possession owner) + moment-of-loss flag ------------------------
@@ -116,8 +124,9 @@ def select_rest_defense_samples(
     stride_skip = stride_skip.to_numpy()
 
     # --- ball x + ball_state from the linked frame ----------------------------------------------
+    ball_cols = ["game_id", "period_id", "frame_id", "x", "ball_state", *(["stoppage_state"] if use_stoppage else [])]
     ball = (
-        frames.loc[frames["is_ball"], ["game_id", "period_id", "frame_id", "x", "ball_state"]]
+        frames.loc[frames["is_ball"], ball_cols]
         .rename(columns={"x": "ball_x"})
         .drop_duplicates(subset=RD_FRAME_KEYS, keep="first")
     )
@@ -140,13 +149,17 @@ def select_rest_defense_samples(
 
     # --- gate: assign the first applicable drop reason (precedence) ------------------------------
     reason = pd.Series(pd.NA, index=acts.index, dtype="object")
-    ball_state = acts["ball_state"] if "ball_state" in acts.columns else pd.Series(pd.NA, index=acts.index)
+    if use_stoppage:  # dead and UNKNOWN are not live
+        dead_ball = pd.Series(acts["stoppage_state"].astype(object).to_numpy() != "live", index=acts.index)
+    else:
+        ball_state = acts["ball_state"] if "ball_state" in acts.columns else pd.Series(pd.NA, index=acts.index)
+        dead_ball = ball_state.eq("dead")
     advance = (acts["ball_x"] - acts["own_goal_x"]).abs()
     ordered = [
         (~pd.Series(in_possession, index=acts.index), _NOT_IN_POSSESSION),
         (pd.Series(stride_skip, index=acts.index), _STRIDE_SKIP),
         (acts["frame_id"].isna(), _UNLINKED),
-        (ball_state.eq("dead"), _DEAD_BALL),
+        (dead_ball, _DEAD_BALL),
         (acts["own_goal_x"].isna(), _GOAL_UNRESOLVED),
         (~(advance >= params.min_ball_advance_m).fillna(False), _NOT_COMMITTED),
     ]

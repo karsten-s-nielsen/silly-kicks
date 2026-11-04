@@ -216,6 +216,7 @@ def _positioning_scene():
     """A tiny in-domain two-team velocity frame (the conftest geometry) + a toy xt + tiny params."""
     from silly_kicks.positioning import PositioningParams, SAParams
     from silly_kicks.xthreat import ExpectedThreat
+    from tests._stoppage_fixtures import mark_all_live
     from tests.tracking._gk_test_helpers import _make_two_team_frame
 
     xt = ExpectedThreat(l=16, w=12)
@@ -237,6 +238,11 @@ def _positioning_scene():
     frame["speed"] = np.hypot(frame["vx"].astype(float), frame["vy"].astype(float))
     if "time_seconds" not in frame.columns:
         frame["time_seconds"] = 100.0
+    # TF-46 section 27.19: the positioning reader needs an observed dead-ball state. This live in-play scene
+    # is a non-observed tracking provider, so it is all-live (mark_all_live). The helper stamps "synthetic"
+    # (unclassified), so declare SkillCorner (a real non-observed provider) before marking.
+    frame["source_provider"] = "skillcorner"
+    frame = mark_all_live(frame)
     params = PositioningParams(sa=SAParams(num_iterations=25, patience=25))
     return frame, xt, params
 

@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.tracking import skillcorner as sk
-from silly_kicks.tracking.schema import KLOPPY_TRACKING_FRAMES_COLUMNS
+from silly_kicks.tracking.schema import KLOPPY_TRACKING_FRAMES_COLUMNS, SKILLCORNER_TRACKING_FRAMES_COLUMNS
 
 
 def _bronze_row(frame, period, ts, player, team, x, y, is_gk, ball_x, ball_y, ball_z, is_vis):
@@ -94,9 +94,13 @@ def test_ids_are_object_strings():
     assert frames["player_id"].dropna().map(lambda v: isinstance(v, str)).all()
 
 
-def test_output_schema_matches_kloppy_variant():
+def test_output_schema_is_kloppy_plus_the_tf46_adapter_fields():
+    # TF-46 Arm 1 Part 2 (spec section 17.7): SKILLCORNER_TRACKING_FRAMES_COLUMNS NO LONGER aliases KLOPPY --
+    # it adds the three adapter fields (frame-level possession + in_camera_view).
     frames, _ = sk.convert_to_frames(_bronze(), home_team_id="31", output_convention="absolute_frame")
-    assert list(frames.columns) == list(KLOPPY_TRACKING_FRAMES_COLUMNS)
+    assert list(frames.columns) == list(SKILLCORNER_TRACKING_FRAMES_COLUMNS)
+    extra = set(SKILLCORNER_TRACKING_FRAMES_COLUMNS) - set(KLOPPY_TRACKING_FRAMES_COLUMNS)
+    assert extra == {"sc_possession_player_id", "sc_possession_group", "in_camera_view"}
 
 
 def test_ltr_orientation_applied_by_default():

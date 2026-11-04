@@ -469,3 +469,163 @@ def test_cross_blocked_false_when_no_block_related():
         assert crosses["cross_blocked"].notna().all()
         assert (crosses["cross_blocked"] == False).all()  # noqa: E712
         assert actions[actions["type_name"] != "cross"]["cross_blocked"].isna().all()
+
+
+# ---------------------------------------------------------------------------
+# K2 — set-piece passes with Unknown outcome + the cross-provider chain convention
+# (spec section 8.1/8.2, decisions K2/B4). Synthetic StatsBomb-shaped fixture.
+# ---------------------------------------------------------------------------
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from silly_kicks.spadl import config as _spadlcfg  # noqa: E402
+
+_K2_FIXTURE = Path(__file__).parents[1] / "datasets" / "statsbomb" / "k2_synthetic.json"
+
+
+def _k2_records() -> list[dict]:
+    """Synthetic StatsBomb raw events exercising every K2 branch (section 8.1/8.2).
+
+    Chronological, home team 100. Each set-piece-Unknown restart is resolved from its next MEANINGFUL event
+    (bookkeeping / Foul Committed-Won are skipped, TF46C-IMPL-21):
+      c1 corner (Unknown)   -> next = same-team FREE KICK           -> chain: success + chain_ambiguous;
+      c2 free kick (Unknown)-> next = same-team PENALTY             -> chain: success + chain_ambiguous;
+      c3 goal kick (Unknown)-> Foul Committed (skipped) -> FREE KICK-> chain THROUGH A FOUL (success + chain_ambiguous);
+      c4 throw-in (Unknown) -> next = same-team open pass           -> success (retained), no chain;
+      c5 corner (Unknown)   -> next = other-team pass               -> fail (lost), no chain;
+      e  non-set-piece pass (Unknown)                               -> non_action (dropped).
+    """
+
+    def _pass(evid, t, player, pass_type, outcome, nxt=(80.0, 40.0)):
+        extra_pass: dict = {"end_location": list(nxt), "outcome": {"name": outcome}, "height": {"name": "Ground Pass"}}
+        if pass_type is not None:
+            extra_pass["type"] = {"name": pass_type}
+        return {
+            "game_id": 1,
+            "event_id": evid,
+            "period_id": 1,
+            "timestamp": t,
+            "team_id": player[0],
+            "player_id": player[1],
+            "type_name": "Pass",
+            "location": [60.0, 40.0],
+            "extra": {"pass": extra_pass},
+        }
+
+    def _pen_shot(evid, t):
+        return {
+            "game_id": 1,
+            "event_id": evid,
+            "period_id": 1,
+            "timestamp": t,
+            "team_id": 100,
+            "player_id": 210,
+            "type_name": "Shot",
+            "location": [108.0, 40.0],
+            "extra": {
+                "shot": {"type": {"name": "Penalty"}, "outcome": {"name": "Saved"}, "end_location": [120.0, 40.0]}
+            },
+        }
+
+    def _foul(evid, t, team):
+        # Foul Committed is a successor-SKIP type: it sits between a restart and the free kick it wins.
+        return {
+            "game_id": 1,
+            "event_id": evid,
+            "period_id": 1,
+            "timestamp": t,
+            "team_id": team,
+            "player_id": 900,
+            "type_name": "Foul Committed",
+            "location": [50.0, 40.0],
+            "extra": {},
+        }
+
+    return [
+        _pass("c1_corner", "00:00:01.000", (100, 200), "Corner", "Unknown"),  # -> c1_fk (chain, corner->FK)
+        _pass("c1_fk", "00:00:02.000", (100, 201), "Free Kick", "Complete"),
+        _pass("c2_fk", "00:00:03.000", (100, 202), "Free Kick", "Unknown"),  # -> c2_pen (chain, FK->penalty)
+        _pen_shot("c2_pen", "00:00:04.000"),
+        _pass("c3_gk", "00:00:05.000", (100, 203), "Goal Kick", "Unknown"),  # -> (foul skipped) -> c3_fk chain
+        _foul("c3_foul", "00:00:06.000", 200),
+        _pass("c3_fk", "00:00:07.000", (100, 204), "Free Kick", "Complete"),
+        _pass("c4_ti", "00:00:08.000", (100, 205), "Throw-in", "Unknown"),  # -> c4_pass (same team, not FK) success
+        _pass("c4_pass", "00:00:09.000", (100, 206), None, "Complete"),
+        _pass("c5_corner", "00:00:10.000", (100, 207), "Corner", "Unknown"),  # -> c5_pass (other team) fail
+        _pass("c5_pass", "00:00:11.000", (200, 300), None, "Complete"),
+        _pass("e_nonsp", "00:00:12.000", (100, 208), None, "Unknown"),  # non-set-piece Unknown -> non_action
+    ]
+
+
+def _k2_synthetic_events() -> pd.DataFrame:
+    return pd.DataFrame(_k2_records())
+
+
+def _convert_k2():
+    return statsbomb.convert_to_actions(
+        _k2_synthetic_events(), home_team_id=100, xy_fidelity_version=1, shot_fidelity_version=1
+    )
+
+
+def _k2_by_event(actions: pd.DataFrame) -> pd.DataFrame:
+    out = actions.copy()
+    out["type_name"] = out["type_id"].map({i: n for i, n in enumerate(_spadlcfg.actiontypes)})
+    return out.set_index("original_event_id")
+
+
+def test_k2_generator_reproduces_committed_fixture():
+    # The committed fixture equals the in-code generator byte-for-byte (regen reproducibility).
+    committed = json.loads(_K2_FIXTURE.read_text(encoding="utf-8"))
+    assert committed == _k2_records()
+
+
+_K2_KEPT = ("c1_corner", "c2_fk", "c3_gk", "c4_ti", "c5_corner")
+
+
+def test_k2_setpiece_unknown_keeps_type_and_infers_result():
+    actions, _ = _convert_k2()
+    by = _k2_by_event(actions)
+    # Each set-piece Unknown pass survived (not non_action) and kept its set-piece type.
+    assert by.loc["c1_corner", "type_name"] in ("corner_crossed", "corner_short")
+    assert by.loc["c2_fk", "type_name"] in ("freekick_crossed", "freekick_short")
+    assert by.loc["c3_gk", "type_name"] == "goalkick"
+    assert by.loc["c4_ti", "type_name"] == "throw_in"
+    assert by.loc["c5_corner", "type_name"] in ("corner_crossed", "corner_short")
+    # Every kept set-piece Unknown pass is result_source="inferred".
+    for evid in _K2_KEPT:
+        assert by.loc[evid, "result_source"] == "inferred", evid
+    # Result inferred from the next MEANINGFUL event: c4 retained same team (success), c5 lost (fail).
+    assert by.loc["c4_ti", "result_id"] == _spadlcfg.result_id["success"]
+    assert by.loc["c5_corner", "result_id"] == _spadlcfg.result_id["fail"]
+
+
+def test_k2_non_setpiece_unknown_stays_non_action():
+    actions, _ = _convert_k2()
+    # The non-set-piece Unknown pass is dropped (non_action), so its event_id is absent from the output.
+    assert "e_nonsp" not in set(actions["original_event_id"].astype(str))
+
+
+def test_k2_chain_case_success_and_chain_ambiguous():
+    # Chain (spec section 8.2): a set-piece Unknown restart whose next MEANINGFUL event is a FREE KICK or
+    # PENALTY by the same team -> result_id="success", restart_evidence="chain_ambiguous". Covers corner->FK
+    # (c1), FK->penalty (c2) and goal kick -> (Foul Committed skipped) -> FK through a foul (c3, TF46C-IMPL-21).
+    actions, _ = _convert_k2()
+    by = _k2_by_event(actions)
+    for evid in ("c1_corner", "c2_fk", "c3_gk"):
+        assert by.loc[evid, "result_id"] == _spadlcfg.result_id["success"], evid
+        assert by.loc[evid, "restart_evidence"] == "chain_ambiguous", evid
+        assert by.loc[evid, "result_source"] == "inferred", evid
+    # Non-chain set-piece restarts (retained c4, lost c5) leave restart_evidence <NA>.
+    assert pd.isna(by.loc["c4_ti", "restart_evidence"])
+    assert pd.isna(by.loc["c5_corner", "restart_evidence"])
+
+
+def test_k2_rows_excluded_by_training_helper():
+    # The shared helper (section 11.3) drops every K2 inferred / chain_ambiguous row.
+    from silly_kicks.spadl._training_exclusion import training_exclusion_mask
+
+    actions, _ = _convert_k2()
+    mask = training_exclusion_mask(actions)
+    mask.index = actions["original_event_id"].astype(str)
+    for evid in _K2_KEPT:
+        assert bool(mask.loc[evid]) is True, evid

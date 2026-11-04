@@ -12,6 +12,7 @@ import pandas as pd
 
 import silly_kicks.keeper_identity as _keeper_identity_mod
 from silly_kicks.tracking import features as F
+from tests._stoppage_fixtures import mark_all_live
 
 
 def make_actions() -> pd.DataFrame:
@@ -68,7 +69,9 @@ def make_frames() -> pd.DataFrame:
     f = pd.DataFrame(rows)
     f["player_id"] = f["player_id"].astype("Int64")
     f["team_id"] = f["team_id"].astype("Int64")
-    return f
+    # TF-46 Part 2 section 27.19 (R-C2): Gradient Sports has no observed dead-ball state, so the ball_state readers
+    # need the stoppage column; the windows are sparse, so the test-only helper marks them live.
+    return mark_all_live(f)
 
 
 def _frow(pid, team, gk, x, y, t, t_a, *, is_ball=False):
@@ -99,7 +102,9 @@ def _frow(pid, team, gk, x, y, t, t_a, *, is_ball=False):
         # SINGLE team self-contradicts in a period; snapshot frames use uniform "ltr" by convention.)
         team_attacking_direction="ltr" if _is_home_team else "rtl",
         confidence=None,
-        visibility=None,
+        # GS is detection-aware (ADR-069 amended 2026-10-26): every present row is a DETECTED observation (a null
+        # flag would be a discarded one and fail loud); the ESTIMATED -> NaN gate has its own controlled tests.
+        visibility=True,
         source_provider="gradientsports",
         is_goalkeeper_source="native",
     )

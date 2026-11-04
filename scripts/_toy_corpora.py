@@ -107,6 +107,64 @@ def staged_home(team, kind: str):
     return _as_int_id(team) if kind == "int" else _as_str_id(team)
 
 
+def _add_detection_visibility(frames: pd.DataFrame, provider: str) -> pd.DataFrame:
+    """A DETECTION-AWARE provider's shard MUST carry a boolean ``visibility`` column or
+    ``validate_corpus_visibility`` refuses it (spec 4.3; B-28: Gradient Sports became detection-aware, so its
+    toy shards now need the column too). Add an all-detected (``True``) column when it is absent; a caller
+    that models a detection gap (``_game_frames`` keeper-hidden pattern) sets it first, so this is a no-op
+    there. A non-detection-aware provider (Sportec / IDSSE / Metrica) carries no detection flag."""
+    from silly_kicks.tracking._provider_visibility import _DETECTION_AWARE_PROVIDERS
+
+    if provider not in _DETECTION_AWARE_PROVIDERS or "visibility" in frames.columns:
+        return frames
+    out = frames.copy()
+    out["visibility"] = pd.array([True] * len(out), dtype="boolean")
+    return out
+
+
+def mark_all_live(frames: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of ``frames`` with ``stoppage_state = "live"`` and the current event ``stoppage_source``
+    on every row. Stands for a match segment with no restart; for toy corpora and module tests only, not for
+    stoppage logic.
+
+    The canonical definition lives here (scripts), not in the tests package, because the parity subprocess
+    imports this module and a scripts module must not import tests (see ``scripts/validate_hub_variants``);
+    ``tests._stoppage_fixtures`` re-exports it.
+
+    Raises ``ValueError`` when a row's ``source_provider`` observes ``ball_state`` (IDSSE, Sportec: the readers
+    use ``ball_state`` there and need no helper), or when any row has ``ball_state == "dead"`` (the fixture
+    then models a dead span: build the column with ``derive_stoppage_state`` on full-rate frames).
+    """
+    from silly_kicks.tracking import FRAME_STOPPAGE_STATES, STOPPAGE_SOURCES
+    from silly_kicks.tracking._provider_visibility import dead_ball_observed_known
+
+    provs = sorted({str(p) for p in frames["source_provider"].dropna().unique()})
+    observed = [p for p in provs if dead_ball_observed_known(p)]
+    if observed:
+        raise ValueError(f"mark_all_live: {observed} observe ball_state; the readers need no stoppage column there")
+    if "ball_state" in frames.columns and bool((frames["ball_state"].astype(object) == "dead").any()):
+        raise ValueError("mark_all_live: the fixture has dead ball_state rows; use derive_stoppage_state")
+    live, events_source = FRAME_STOPPAGE_STATES[0], STOPPAGE_SOURCES[1]
+    out = frames.copy()
+    out["stoppage_state"] = pd.Categorical([live] * len(out), categories=list(FRAME_STOPPAGE_STATES))
+    out["stoppage_source"] = pd.Categorical([events_source] * len(out), categories=list(STOPPAGE_SOURCES))
+    return out
+
+
+def _mark_toy_live(frames: pd.DataFrame, provider: str) -> pd.DataFrame:
+    """Attach the all-live stoppage columns to a toy of a NON-OBSERVED provider (SkillCorner / GS /
+    Metrica), which a reader gate (``has_stoppage_state``) needs since their ``ball_state`` is the constant
+    ``"alive"`` (TF-46 Part 2 section 27.19). An OBSERVED provider (Sportec / IDSSE) carries the real
+    dead-ball state in ``ball_state`` and needs no column, so ``mark_all_live`` (correctly) refuses it --
+    return the frames unchanged there. The toy has no restart, so it is all-live, not real
+    ``derive_stoppage_state`` (the scene lacks ``gi_interruption_after`` + ``frame_rate``)."""
+    from silly_kicks.tracking._provider_visibility import dead_ball_observed_known
+
+    if dead_ball_observed_known(provider):
+        return frames
+    return mark_all_live(frames)
+
+
 def ghost_gk_frames(
     *,
     home_team_id: int = 1,
@@ -229,7 +287,10 @@ def ghost_gk_frames(
             "team_attacking_direction": "rtl",
         }
     )
-    return pd.DataFrame(rows)
+    # TF-46 Part 2 section 27.19: a non-observed-provider toy needs a current stoppage_state or a reader
+    # gate raises; an observed provider keeps its ball_state. ONE synthesis for the toy corpora and the unit
+    # tests (ADR-128), so every consumer of ghost_gk_frames / _make_ghost_gk_frames gets the right column.
+    return _mark_toy_live(pd.DataFrame(rows), source_provider)
 
 
 def _game_frames(
@@ -250,7 +311,9 @@ def _game_frames(
             hidden = scene["is_goalkeeper"].to_numpy(dtype=bool) & (f % 3 == 0)
             scene["visibility"] = pd.array(~hidden, dtype="boolean")
         frames.append(scene)
-    return pd.concat(frames, ignore_index=True)
+    # B-28: a detection-aware provider (SkillCorner, GS) needs a visibility column even without the
+    # keeper-hidden pattern above, or validate_corpus_visibility refuses the shard (spec 4.3).
+    return _add_detection_visibility(pd.concat(frames, ignore_index=True), provider)
 
 
 def _game_actions(game: str, *, n_frames: int, home: int, away: int) -> pd.DataFrame:
@@ -278,6 +341,13 @@ def _game_actions(game: str, *, n_frames: int, home: int, away: int) -> pd.DataF
                 "bodypart_id": 0,
                 "shot_blocked": pd.NA,
                 "cross_blocked": pd.NA,
+                # TF-46 Part 1/2 base-signal columns (object; <NA> = not classified / clean toy row).
+                # Same precedent as shot_blocked/cross_blocked above, so .astype(SPADL_COLUMNS) finds every
+                # key (these are the only SPADL_COLUMNS keys the minimal toy rows otherwise omit).
+                "result_source": pd.NA,
+                "restart_evidence": pd.NA,
+                "type_source": pd.NA,
+                "repair_kind": pd.NA,
             }
         )
     # The toy frames key games by string id; the actions keep the SAME key (game_id is not cast).
@@ -499,6 +569,8 @@ def build_xshot_corpus(
         n_ep = heavy_episodes if (heavy_episodes is not None and g == 0) else episodes
         frames, shots = xshot_game(game, episodes=n_ep, degenerate=degenerate)
         frames["source_provider"] = provider
+        frames = _mark_toy_live(frames, provider)  # all-live toy; no-op for an observed provider (section 27.19)
+        frames = _add_detection_visibility(frames, provider)  # B-28: a detection-aware shard carries visibility
         stem = f"{provider}__{game}"
         staged_frames(frames, kind).to_parquet(shards / f"{stem}.parquet", index=False)
         staged_actions(shots, kind).to_parquet(actions_dir / f"{stem}.parquet", index=False)
@@ -520,7 +592,10 @@ def xshot_arms(root: str | pathlib.Path, *, paired: bool) -> str:
 
 def _xshot_arms_payload(providers: Sequence[str], *, paired: bool) -> str:
     """`xshot_arms` from the per-game providers alone (game ``100 + g`` of ``providers[g]``)."""
-    keys = [f"{prov}__{prov}-{100 + g}" for g, prov in enumerate(providers)]
+    from scripts._corpus_identity import _IDENTITY_TO_CONVERTER
+
+    # the in-job key (arm_policy._injob_key): the converter source_provider, then the identity-named per-game dir
+    keys = [f"{_IDENTITY_TO_CONVERTER.get(prov, prov)}__{prov}-{100 + g}" for g, prov in enumerate(providers)]
     if not paired:
         return json.dumps({"arms": {"public": keys}, "ship_order": ["public"]}, sort_keys=True)
     public = keys[:4]
@@ -630,6 +705,8 @@ def build_xcross_corpus(
         kind = PROVIDER_ID_KIND[provider]
         n_ep = heavy_episodes if (heavy_episodes is not None and g == 0) else episodes
         frames, actions = xcross_game(game, episodes=n_ep, learnable=learnable, provider=provider)
+        frames = _mark_toy_live(frames, provider)  # all-live toy; no-op for an observed provider (section 27.19)
+        frames = _add_detection_visibility(frames, provider)  # B-28: a detection-aware shard carries visibility
         stem = f"{provider}__{game}"
         staged_frames(frames, kind).to_parquet(shards / f"{stem}.parquet", index=False)
         staged_actions(actions, kind).to_parquet(actions_dir / f"{stem}.parquet", index=False)
@@ -650,6 +727,8 @@ def build_xcross_probe_corpus(
     for g in range(n_games):
         game = 200 + g
         frames, actions = xcross_game(game, episodes=episodes, provider=provider)
+        frames = _mark_toy_live(frames, provider)  # all-live toy; no-op for an observed provider (section 27.19)
+        frames = _add_detection_visibility(frames, provider)  # B-28: a detection-aware shard carries visibility
         kind = PROVIDER_ID_KIND[provider]
         gdir = root / pergame_name(provider, str(game))
         gdir.mkdir(parents=True, exist_ok=True)
@@ -872,7 +951,8 @@ def build_outfield_corpus(
         provider = "gradientsports" if g % 2 == 0 else "skillcorner"
         kind = PROVIDER_ID_KIND[provider]
         n = heavy_frames if g == 0 else n_frames
-        frames = staged_frames(outfield_frames(game, provider=provider, n_frames=n), kind)
+        oframes = _add_detection_visibility(outfield_frames(game, provider=provider, n_frames=n), provider)
+        frames = staged_frames(oframes, kind)
         frames.to_parquet(shards / f"{provider}__{game}.parquet", index=False)
         home[game] = staged_home(1, kind)
     (root / "home_teams.json").write_text(json.dumps(home, indent=2, sort_keys=True) + "\n", encoding="utf-8")

@@ -775,3 +775,31 @@ def test_shot_blocked_true_on_blocked_subtype():
     assert (shots["shot_blocked"] == True).sum() == 1  # noqa: E712  (event 668)
     assert shots["shot_blocked"].notna().all()
     assert actions["cross_blocked"].isna().all()
+
+
+_BAD_TOUCH = spadlconfig.actiontype_id["bad_touch"]
+_OWNGOAL = spadlconfig.result_id["owngoal"]
+_METRICA_DIR = Path(__file__).parent.parent / "datasets" / "metrica"
+
+
+def test_sample_game_1_ball_out_goal_becomes_own_goal():
+    # TF-46 Arm 1 Part 2 decision D2: Sample Game 1 event 1094 (BALL OUT / WOODWORK-GOAL by Home Player5)
+    # was silently dropped; it is now an ADR-018 own goal (Away gains the goal).
+    events = pd.read_parquet(_METRICA_DIR / "per_period_match.parquet")
+    actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
+    own_goals = actions[(actions["type_id"] == _BAD_TOUCH) & (actions["result_id"] == _OWNGOAL)]
+    assert len(own_goals) == 1
+    assert own_goals.iloc[0]["team_id"] == "Home"
+    assert own_goals.iloc[0]["player_id"] == "Player5"
+
+
+def test_ball_out_goal_maps_to_own_goal_synthetic():
+    # The kloppy Metrica fixture (Sample Game 2) has no own goal, so a synthetic bronze proves the mapping.
+    a_pass = _df_metrica("PASS", None)
+    own_goal = _df_metrica("BALL OUT", "WOODWORK-GOAL", event_id=2, start_time_s=20.0, player="Home_5")
+    events = pd.concat([a_pass, own_goal], ignore_index=True)
+    actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
+    own_goals = actions[(actions["type_id"] == _BAD_TOUCH) & (actions["result_id"] == _OWNGOAL)]
+    assert len(own_goals) == 1
+    assert own_goals.iloc[0]["team_id"] == "Home"
+    assert own_goals.iloc[0]["player_id"] == "Home_5"

@@ -12,6 +12,7 @@ import warnings
 import pytest
 
 import silly_kicks.spadl.config as spadlconfig
+from tests._stoppage_fixtures import assert_bundle_refused, bundle_pinned
 
 
 @pytest.mark.parametrize("name", ["MissingFeatureContractWarning", "UnverifiableFeatureContractWarning"])
@@ -318,6 +319,7 @@ def test_builder_refuses_a_non_finite_feature_vector():
 # --------------------------------------------------------------------------------------------
 
 
+@bundle_pinned("XShotOccurrenceModel")  # interim until the R-C3 retrain: the shipped bundle is refused
 def test_xshot_records_and_verifies_a_contract(tmp_path, monkeypatch):
     """save() stamps it; load() on the same library passes; a LIBRARY change then raises.
 
@@ -352,6 +354,7 @@ def test_xshot_records_and_verifies_a_contract(tmp_path, monkeypatch):
         XShotOccurrenceModel.load(out)
 
 
+@bundle_pinned("XCrossAttemptModel")  # interim until the R-C3 retrain: the shipped bundle is refused
 def test_xcross_records_and_verifies_a_contract(tmp_path, monkeypatch):
     """Mirror of the xS test; see its docstring for why the library is mutated, not the artifact."""
     import json
@@ -439,6 +442,8 @@ def test_every_bundled_artifact_carries_a_verified_contract(cls_path, weights_di
 
     mod_name, cls_name = cls_path.split(":")
     cls = getattr(importlib.import_module(mod_name), cls_name)
+    if assert_bundle_refused(cls_name):  # interim until the R-C3 retrain (owner decision 2026-10-26)
+        return
 
     assert cls.from_variant("default") is not None
     assert not [w for w in recwarn if issubclass(w.category, MissingFeatureContractWarning)]

@@ -465,6 +465,7 @@ _entry(
         "shot_fit_rmse",
         "shot_fit_end_reason",
         "shot_z_profile",
+        "shot_z_source",
     ),
     velocity={
         "shot_crossing_y": AxisVerdict("all_nan", "honest_nan"),
@@ -494,6 +495,7 @@ _entry(
         "shot_fit_rmse": AxisVerdict("all_nan", "honest_nan"),
         "shot_fit_end_reason": AxisVerdict("all_nan", "honest_nan"),
         "shot_z_profile": AxisVerdict("all_nan", "honest_nan"),
+        "shot_z_source": AxisVerdict("all_nan", "honest_nan"),
     },
     visibility={
         "gk_absent": {
@@ -524,6 +526,7 @@ _entry(
             "shot_fit_rmse": AxisVerdict("all_nan", "honest_nan"),
             "shot_fit_end_reason": AxisVerdict("all_nan", "honest_nan"),
             "shot_z_profile": AxisVerdict("all_nan", "honest_nan"),
+            "shot_z_source": AxisVerdict("all_nan", "honest_nan"),
         },
         "defender_absent": {
             "shot_crossing_y": AxisVerdict("all_nan", "honest_nan"),
@@ -553,6 +556,7 @@ _entry(
             "shot_fit_rmse": AxisVerdict("all_nan", "honest_nan"),
             "shot_fit_end_reason": AxisVerdict("all_nan", "honest_nan"),
             "shot_z_profile": AxisVerdict("all_nan", "honest_nan"),
+            "shot_z_source": AxisVerdict("all_nan", "honest_nan"),
         },
         "gk_one_end": {
             "shot_crossing_y": AxisVerdict("all_nan", "honest_nan"),
@@ -582,6 +586,7 @@ _entry(
             "shot_fit_rmse": AxisVerdict("all_nan", "honest_nan"),
             "shot_fit_end_reason": AxisVerdict("all_nan", "honest_nan"),
             "shot_z_profile": AxisVerdict("all_nan", "honest_nan"),
+            "shot_z_source": AxisVerdict("all_nan", "honest_nan"),
         },
     },
     applicability={
@@ -596,6 +601,7 @@ _entry(
         "shot_fit_rmse": "no_support",
         "shot_fit_end_reason": "no_support",
         "shot_z_profile": "no_support",
+        "shot_z_source": "no_support",
     },
     applicability_deltas={
         "shot_crossing_y": {"extreme": 0.0, "near": 0.0},
@@ -609,6 +615,7 @@ _entry(
         "shot_fit_rmse": {"extreme": 0.0, "near": 0.0},
         "shot_fit_end_reason": {"extreme": 0.0, "near": 0.0},
         "shot_z_profile": {"extreme": 0.0, "near": 0.0},
+        "shot_z_source": {"extreme": 0.0, "near": 0.0},
     },
 )
 

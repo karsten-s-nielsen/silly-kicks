@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from silly_kicks.tracking._provider_visibility import dead_ball_observed
+from tests._stoppage_fixtures import mark_all_live
 from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
 
 #: Away (team 2) attacks the x=0 goal, so an in-domain ball sits near x=0.
@@ -47,7 +49,14 @@ def in_domain_frames(**kwargs) -> pd.DataFrame:
     frames.loc[ball, "y"] = _BALL_XY[1]
     for pid, xy in {**_ATTACKER_XY, **_DEFENDER_XY}.items():
         _place(frames, pid, xy)
-    return frames
+    # Gradient Sports / SkillCorner are detection-aware (ADR-069/109): every row carries the detection flag.
+    # All keepers detected, so the TF-64 GKDV detection-gate (gk_ok["visibility"]) is a no-op (gk_det == gk_ok)
+    # and the anchor stays about its own concern. Without the column the gate raises KeyError.
+    frames["visibility"] = True
+    # TF-46 Part 2 section 27.19 (R-C2): a provider without an observed dead-ball state (the anchor's Gradient
+    # Sports) needs the stoppage column at the GKDV domain gate; an observed provider keeps ball_state.
+    provs = {str(p) for p in frames["source_provider"].dropna().unique()}
+    return frames if all(dead_ball_observed(p) for p in provs) else mark_all_live(frames)
 
 
 def multi_frame_in_domain(n_frames: int = 6) -> pd.DataFrame:

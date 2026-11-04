@@ -112,7 +112,10 @@ test = [
     "pytest>=7.4.2",
     "pytest-mock>=3.11.1",
     "pytest-cov>=4.1.0",
-    "pytest-benchmark>=4.0.0",
+    # pytest-benchmark >=5.3.1: every release through 5.3.0 reads the pytest ``item._nodeid`` attribute
+    # removed in pytest 9, so a floating pytest (the test jobs stay unpinned for coverage, ci.yml) errors
+    # every benchmark at collection with ``'Function' object has no attribute '_nodeid'``. 5.3.1 fixes it.
+    "pytest-benchmark>=5.3.1",
     # pytest-split shards the suite into duration-balanced groups across parallel CI jobs
     # (--splits/--group), keyed on the committed .test_durations. Dev/test-only; NOT a runtime
     # dependency. Without the durations file the count-mode split is non-deterministic (measured:

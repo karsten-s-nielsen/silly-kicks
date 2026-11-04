@@ -7035,7 +7035,10 @@ def add_shot_goalmouth(
       ``insufficient_frames`` / ``no_crossing`` / ``unresolved``.
     - ``shot_crossing_confidence`` (``float64``), ``shot_fit_n_frames`` (``int64``),
       ``shot_fit_rmse`` (``float64``), ``shot_fit_end_reason`` (``object``),
-      ``shot_z_profile`` (``object`` — ``rolling`` / ``airborne`` / ``bounced``).
+      ``shot_z_profile`` (``object`` — ``rolling`` / ``airborne`` / ``bounced``), ``shot_z_source``
+      (``object`` — the ``z_source`` of the ball rows, ``measured`` / ``estimated`` / ``absent``; NA where neither
+      ``shot_crossing_z`` nor ``shot_z_profile`` is set). Read it before the crossing height: a broadcast provider's
+      z is an estimate, never a measurement (ADR-125; Gradient Sports since 2026-10-26).
 
     Pure geometry over the ball trajectory -- NOT a VAEP feature
     (post-contact outcome leakage; ADR-030 guard). NaN identifiers resolve to

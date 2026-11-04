@@ -48,6 +48,30 @@ def test_rt_only_output_value_identical_to_3_30_golden(case):
     # golden and gone from current output. Removing a column that was uniformly null is not a value
     # change, so it is carved out of the invariance claim (mirrors the additive carve-out above).
     golden = golden.drop(columns=["confidence"], errors="ignore")
+    # TF-46 Arm-1 Part 1/2 ADDED provenance columns absent from the 3.30 golden, all additive (new
+    # provenance, no existing value changes): Part 1 (§11.2) result_source / restart_evidence /
+    # type_source and Part 2 repair_kind (D1) on every event converter; plus, for sportec_events only,
+    # action_provenance / ball_claim_type / penalty_result_method / shot_woodwork_type (§25). The expected
+    # set is PER CASE (gs/metrica = 4, sportec = 8, tracking = none), not one blanket allow-list: a per-case
+    # set also catches a slice column that VANISHES from one case or WRONGLY appears in another (B11). The
+    # two asserts below are the anti-drift guard -- every expected column must be present-and-new, and no
+    # other new column may appear -- so a real future drop/rename/leak surfaces instead of being swallowed.
+    _EVENT_SLICE = {"result_source", "restart_evidence", "type_source", "repair_kind"}
+    _SLICE_ADDITIVE_BY_CASE = {
+        "sportec_tracking": set(),
+        "gs_tracking": set(),
+        "gs_events": set(_EVENT_SLICE),
+        "metrica_events": set(_EVENT_SLICE),
+        "sportec_events": _EVENT_SLICE
+        | {"action_provenance", "ball_claim_type", "penalty_result_method", "shot_woodwork_type"},
+    }
+    expected = _SLICE_ADDITIVE_BY_CASE[case]
+    extra = set(current.columns) - set(golden.columns)
+    unaccounted = sorted(extra - expected)
+    assert not unaccounted, f"unaccounted new column(s) vs the 3.30 golden [{case}]: {unaccounted}"
+    missing = sorted(expected - extra)
+    assert not missing, f"expected slice-additive column(s) absent from current [{case}]: {missing}"
+    current = current.drop(columns=list(expected), errors="ignore")
     pd.testing.assert_frame_equal(
         _norm_nulls(current.reset_index(drop=True)),
         _norm_nulls(golden.reset_index(drop=True)),

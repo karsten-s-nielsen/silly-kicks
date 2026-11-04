@@ -49,5 +49,5 @@ def test_window_columns_are_additive_not_overlapping_identify():
 def test_closed_vocabularies_are_frozensets():
     assert CORNER_SIDE_VALUES == frozenset({"left", "right"})
     assert CORNER_KIND_VALUES == frozenset({"direct", "short", "unclear"})
-    assert CORNER_SOURCE_VALUES == frozenset({"skillcorner_gi", "spadl_corner", "sb360_event"})
+    assert CORNER_SOURCE_VALUES == frozenset({"skillcorner_marker", "spadl_corner", "sb360_event"})
     assert TARGET_SNAPSHOT_SOURCE_VALUES == frozenset({"first_contact", "kick_plus_2s", "sb360_event"})

@@ -82,21 +82,46 @@ def test_velocity_break_frame_rate_invariant():
 # --------------------------------------------------------------------------- #
 # Task 3: attribution + merge/representative
 # --------------------------------------------------------------------------- #
-def test_attribution_rejects_overhead_ball():
+def test_attribution_overhead_gate_is_conditional(bc_params=None):
+    # TF-46 Arm 1 Part 2 (spec section 14.1): an overhead ball removes a contact ONLY when the z_overhead gate
+    # is ACTIVE for the data profile AND z_source is "measured". Previously the gate was always-on; this is a
+    # value change (its CHANGELOG entry lands at the C4 release commit, owner ruling 2026-10-22). _attribute
+    # gained `zsrc` + the keyword-only `overhead_active`.
     players = pd.DataFrame({"player_id": [7], "x": [10.0], "y": [10.0]})
-    pid, _dist = bc._attribute(0, np.array([10.0]), np.array([10.0]), np.array([4.0]), players, bc.BallContactParams())
-    assert pd.isna(pid)
+    bx, by, bz = np.array([10.0]), np.array([10.0]), np.array([4.0])  # z above the 2.6 ceiling
+    p = bc.BallContactParams()
+    assert pd.isna(bc._attribute(0, bx, by, bz, np.array(["measured"]), players, p, overhead_active=True)[0])
+    assert bc._attribute(0, bx, by, bz, np.array(["measured"]), players, p, overhead_active=False)[0] == 7
+    assert bc._attribute(0, bx, by, bz, np.array(["estimated"]), players, p, overhead_active=True)[0] == 7
 
 
 def test_attribution_nearest_playable():
     players = pd.DataFrame({"player_id": [7, 9], "x": [10.5, 20.0], "y": [10.0, 10.0]})
-    pid, dist = bc._attribute(0, np.array([10.0]), np.array([10.0]), np.array([0.1]), players, bc.BallContactParams())
+    pid, dist = bc._attribute(
+        0,
+        np.array([10.0]),
+        np.array([10.0]),
+        np.array([0.1]),
+        np.array(["measured"]),
+        players,
+        bc.BallContactParams(),
+        overhead_active=True,
+    )
     assert pid == 7 and dist < 1.0
 
 
 def test_attribution_no_player_in_range_is_unresolved():
     players = pd.DataFrame({"player_id": [7], "x": [50.0], "y": [50.0]})
-    pid, _dist = bc._attribute(0, np.array([10.0]), np.array([10.0]), np.array([0.1]), players, bc.BallContactParams())
+    pid, _dist = bc._attribute(
+        0,
+        np.array([10.0]),
+        np.array([10.0]),
+        np.array([0.1]),
+        np.array(["measured"]),
+        players,
+        bc.BallContactParams(),
+        overhead_active=True,
+    )
     assert pd.isna(pid)
 
 
@@ -214,6 +239,11 @@ def test_detect_contacts_recovers_planted_touches():
         "is_aerial",
         "aerial_source",
         "contact_source",
+        # TF-46 Arm 1 Part 2 attribution ambiguity (spec section 17.4)
+        "attribution_margin",
+        "attribution_margin_player",
+        "attribution_other_visible",
+        "attribution_other_unseen_reason",
     }
     resolved = out[out["contact_source"] != "unresolved"]
     assert resolved["player_id"].notna().all()

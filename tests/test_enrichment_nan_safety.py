@@ -591,8 +591,13 @@ def test_tracking_helper_nan_safe(helper, tracking_nan_laced_fixture) -> None:
 
 
 @pytest.mark.parametrize("helper", _TRACKING_EXTRA_KWARGS, ids=lambda h: h.__name__)
-def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixture) -> None:
+def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixture, request) -> None:
     """Tracking helpers needing extra kwargs or columns survive NaN-laced input."""
+    if helper.__name__ in ("add_xshot_occurrence", "add_xcross_attempt"):
+        # TF-46 R-C3 interim (owner decision 2026-10-26): the shipped xS / xCross bundle refuses to load
+        # without stoppage provenance, so this nan-safety gate loads the real weights under legacy_override.
+        # Task 8 removes this once the refit bundle loads clean.
+        request.getfixturevalue("legacy_xs_xc_bundles")
     actions, frames = tracking_nan_laced_fixture
     name = helper.__name__
     if name in (

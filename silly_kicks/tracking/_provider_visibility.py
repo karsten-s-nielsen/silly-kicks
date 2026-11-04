@@ -19,17 +19,23 @@ import pandas as pd
 # none is needed"; for a detection-aware provider it means "the pipeline DISCARDED the flag"
 # (the kloppy gateway hard-codes visibility=None). Reading the second as the first would train
 # ghost-GK on interpolator output -- ~80% of SkillCorner keeper positions are extrapolated.
-_DETECTION_AWARE_PROVIDERS = frozenset({"skillcorner"})
+# Gradient Sports is broadcast-derived tracking (ADR-069 amended 2026-10-26, TF-46 Part 2 section 27.15):
+# every raw object carries `visibility` VISIBLE / ESTIMATED; in match 10502 only 0.31 of the player positions
+# and 0.63 of the ball records are VISIBLE. Detection-aware does NOT imply a camera footprint: GS has a
+# detection flag and no footprint, so a footprint consumer tests for the footprint itself.
+_DETECTION_AWARE_PROVIDERS = frozenset({"skillcorner", "gradientsports"})
 # metrica is full optical tracking (all players every frame, NO detection flag) -- fully observed
 # like the native providers. Classifying it here keeps ghost-GK trainable on metrica (a pre-PR
 # capability the always-run detected-only filter would otherwise crash); metrica's exclusion from
 # the registered GKDV corpora is a separate corpus-composition decision (Tier-2 data quality).
-_FULLY_OBSERVED_PROVIDERS = frozenset({"gradientsports", "sportec", "idsse", "metrica"})
+_FULLY_OBSERVED_PROVIDERS = frozenset({"sportec", "idsse", "metrica"})
 
 # TF-58 D20: which providers' native feeds carry a RELIABLE dead-ball signal (`ball_state`). skillcorner and
 # metrica hard-code ball_state="alive" (tracking/skillcorner.py, tracking/metrica.py), so a stoppage split
-# reading only `ball_state` would silently do nothing on them -- they are unobserved BY CONSTRUCTION.
-_DEAD_BALL_OBSERVED_PROVIDERS = frozenset({"sportec", "idsse", "gradientsports"})
+# reading only `ball_state` would silently do nothing on them -- they are unobserved BY CONSTRUCTION. Gradient
+# Sports left the set 2026-10-26 (ADR-069 amended; TF-46 Part 2 section 27.15 G4): its only loader writes a
+# constant "alive" (the schema has no null); a dead-ball state derived from `game_event` has no validation truth.
+_DEAD_BALL_OBSERVED_PROVIDERS = frozenset({"sportec", "idsse"})
 
 
 def dead_ball_observed(provider: str) -> bool:
@@ -42,10 +48,32 @@ def dead_ball_observed(provider: str) -> bool:
     --------
     >>> dead_ball_observed("sportec")
     True
-    >>> dead_ball_observed("skillcorner")
-    False
+    >>> dead_ball_observed("skillcorner"), dead_ball_observed("gradientsports")
+    (False, False)
     """
     validate_provider(provider)
+    return provider in _DEAD_BALL_OBSERVED_PROVIDERS
+
+
+def dead_ball_observed_known(provider: str) -> bool:
+    """True iff ``provider`` is a KNOWN dead-ball-observed feed (sportec, idsse).
+
+    The NON-RAISING companion to :func:`dead_ball_observed`, for a GENERATOR that builds its own
+    ground-truth frames (the ``scripts._toy_corpora`` all-live stamper), not a consumer of a real feed.
+    An unclassified source -- a synthetic test provider, a not-yet-wired feed -- returns ``False``: it
+    carries no observed dead-ball truth, so stamping an all-live stoppage column cannot contradict a real
+    observation. This mirrors :func:`detection_aware_provider`, which already reads an unclassified
+    ``source_provider`` as-observed instead of raising.
+
+    Does NOT call :func:`validate_provider`: the fail-closed taxonomy gate guards a CONSUME path (training
+    on interpolator output, spec 4.3), not a toy generator. A real dead-ball-observed feed (sportec, idsse)
+    still returns ``True`` here, so the generator still refuses to fabricate ``"live"`` over it.
+
+    Examples
+    --------
+    >>> dead_ball_observed_known("sportec"), dead_ball_observed_known("synthetic")
+    (True, False)
+    """
     return provider in _DEAD_BALL_OBSERVED_PROVIDERS
 
 
@@ -77,15 +105,21 @@ def _detection_discarded_message(provider: str) -> str:
     """The remedy message shared by every layer that catches a discarded detection flag.
 
     Single-sourced so the ghost mask, the materializer guard, and the trainer pre-flight name the
-    SAME fix (rebuild via ``tracking.skillcorner``) -- deliberately provider-generic (no
-    ``keeper_detection_mask:`` prefix), because it is now surfaced from three call sites where that
+    SAME fix (rebuild via the provider's native adapter WITH its flag) -- deliberately provider-generic
+    (no ``keeper_detection_mask:`` prefix), because it is now surfaced from three call sites where that
     prefix would misdescribe where the failure was caught.
     """
+    remedy = {
+        "skillcorner": "Build these frames with tracking.skillcorner instead",
+        "gradientsports": (
+            "Build these frames with tracking.gradientsports and its optional `visibility_native` input "
+            "column (the raw VISIBLE / ESTIMATED flag) instead"
+        ),
+    }.get(provider, "Rebuild these frames with the provider's native adapter carrying its detection flag")
     return (
         f"provider {provider!r} carries a detection flag, but `visibility` is entirely null -- "
-        "the pipeline discarded it (the kloppy gateway hard-codes visibility=None). Build these "
-        "frames with tracking.skillcorner instead; training on undetected keepers means training "
-        "on the interpolator (spec 4.3)."
+        f"the pipeline discarded it (the kloppy gateway hard-codes visibility=None). {remedy}; "
+        "training on undetected keepers means training on the interpolator (spec 4.3)."
     )
 
 
@@ -151,7 +185,7 @@ def detection_aware_provider(frames: pd.DataFrame) -> str | None:
     """The detection-aware provider of a frame slice, or ``None`` when the slice is not gated.
 
     The keeper detection-gate ACTIVATES only for a provider in :data:`_DETECTION_AWARE_PROVIDERS`
-    (currently ``skillcorner``). Every other frame set -- fully observed, SB360 ``snapshot``, or a
+    (``skillcorner``, ``gradientsports``). Every other frame set -- fully observed, SB360 ``snapshot``, or a
     ``source_provider`` this taxonomy does not classify (synthetic test fixtures, a not-yet-wired
     feed) -- is read AS-OBSERVED, byte-identical to the pre-gate behaviour (spec §2 scope = SkillCorner;
     test 5 "fully-observed unaffected"). Returns the detection-aware provider name present in the

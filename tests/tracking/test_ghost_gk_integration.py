@@ -143,9 +143,9 @@ def _build_synthetic_parquets(
                 time_seconds=ts,
                 frame_rate=25.0,
                 ball_state="alive",
-                source_provider="gradientsports",  # classified fully-observed provider (PR-S115 detected-only filter)
+                source_provider="gradientsports",  # detection-aware provider (ADR-069 amended); keepers detected
                 confidence=None,
-                visibility=None,
+                visibility=True,
                 is_goalkeeper_source="native",
                 z=0.0,
             )
@@ -261,9 +261,9 @@ class TestRoundTripTrainPredict:
                 time_seconds=ts,
                 frame_rate=25.0,
                 ball_state="alive",
-                source_provider="gradientsports",  # classified fully-observed provider (PR-S115 detected-only filter)
+                source_provider="gradientsports",  # detection-aware provider (ADR-069 amended); keepers detected
                 confidence=None,
-                visibility=None,
+                visibility=True,
                 is_goalkeeper_source="native",
                 z=0.0,
             )

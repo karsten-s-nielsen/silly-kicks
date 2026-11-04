@@ -30,7 +30,8 @@ from silly_kicks.tracking._ball_carrier import (
     derive_team_in_possession,
     infer_ball_carrier,
 )
-from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
+from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels, occurrence_labels_and_censor
+from silly_kicks.tracking._stoppages import has_stoppage_state, stoppage_provenance_problem, verify_stoppage_provenance
 from silly_kicks.tracking._velocity_availability import (
     variant_key_for_velocity as _variant_key_for_velocity,
 )
@@ -291,6 +292,11 @@ def extract_xshot_features(
 #: ``build_xshot_labels`` so it can be the default ``shot_types`` argument.
 _DEFAULT_SHOT_TYPES = ("shot", "shot_penalty", "shot_freekick")
 
+#: Provenance dimensions this trainer READS (TF-46 Arm 1 Part 2, spec section 18.2.1). xShot labels FRAMES by
+#: a same-team shot in [t, t+horizon]; an unvalidated-time shot censors its window (no type gating -- every
+#: shot type_id is a shot regardless of subtype).
+TRAINING_READS = frozenset({"time"})
+
 
 def build_xshot_labels(
     frames_index: pd.DataFrame,
@@ -298,7 +304,8 @@ def build_xshot_labels(
     *,
     horizon_seconds: float = 1.0,
     shot_types: tuple[str, ...] = _DEFAULT_SHOT_TYPES,
-) -> pd.Series:
+    return_censor: bool = False,
+) -> pd.Series | tuple[pd.Series, np.ndarray]:
     """Per-row xS label: 1 iff a same-team shot occurs in [t, t+horizon] same period.
 
     Compares the shot action's own ``time_seconds`` directly against each frame
@@ -335,7 +342,16 @@ def build_xshot_labels(
     # Filter to shot type_ids FIRST (ADR-126), then the shared occurrence helper (M-3). frames
     # carry the possessing team as `team_in_possession`; shots carry the acting team as `team_id`.
     type_ids = {_spc.actiontype_id[t] for t in shot_types}
-    shots_f = shots[shots["type_id"].isin(type_ids)][["game_id", "period_id", "team_id", "time_seconds"]]
+    shots_t = shots[shots["type_id"].isin(type_ids)]
+    if return_censor:
+        # TF-46 Arm 1 Part 2 (spec section 18.2.1): a shot with an unvalidated TIME (a derived missing_goal
+        # shot without a gated t_kick) is NOT dropped -- it censors its episode window. A gated derived shot
+        # labels at its t_kick. xShot reads TIME only (every shot type_id is a shot regardless of subtype).
+        y, censor = occurrence_labels_and_censor(
+            frames_index, shots_t, horizon=horizon_seconds, frame_team_col="team_in_possession", reads_type=False
+        )
+        return pd.Series(y, index=frames_index.index), censor
+    shots_f = shots_t[["game_id", "period_id", "team_id", "time_seconds"]]
     y = _build_occurrence_labels(frames_index, shots_f, horizon=horizon_seconds, frame_team_col="team_in_possession")
     return pd.Series(y, index=frames_index.index)
 
@@ -468,6 +484,9 @@ class XShotOccurrenceModel:
         # bundled artifacts previously carried a hand-patched value (ADR-054 c487c49); this closes
         # that gap so the trainer produces it end-to-end, matching train_ghost_gk (ADR-106).
         self.training_commit: str | None = None
+        # The stoppage provenance of the training frames (owner decision 2026-10-26: a reader-built model records
+        # it; load() refuses a model without it). Set by the trainer from `stoppage_provenance` before save().
+        self.stoppage_provenance: dict | None = None
 
     def fit(
         self,
@@ -528,6 +547,13 @@ class XShotOccurrenceModel:
 
         import xgboost as xgb
 
+        prov = self.stoppage_provenance
+        problem = stoppage_provenance_problem(prov)
+        if problem is not None or prov is None:
+            raise RuntimeError(
+                f"xShotOccurrence: the model {problem}; set model.stoppage_provenance from "
+                "silly_kicks.tracking.stoppage_provenance(training frames) before save() (spec section 27.19)"
+            )
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
         self._booster.save_model(str(path / "model.json"))
@@ -555,6 +581,9 @@ class XShotOccurrenceModel:
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),
             "feature_contract": _feature_contract_block(self.feature_set),
+            # the stoppage provenance of the training frames (owner decision 2026-10-26; load() refuses without it)
+            "stoppage_rule_version": prov["stoppage_rule_version"],
+            "stoppage_sources": list(prov["stoppage_sources"]),
             # LAST, matching the bundled artifacts' key order (the ADR-054 c487c49 hand-patch
             # appended it) so a re-save stays byte-identical (test_weights_bundle_golden).
             "training_commit": self.training_commit,
@@ -574,6 +603,9 @@ class XShotOccurrenceModel:
         A behavioral chirality fingerprint is enforced (ADR-037 § 9, TF-19 PR-2): a
         pre-PR-2 artifact with no fingerprint is REFUSED unless ``legacy_override=True``
         (which warns), and an output/probe-frame mismatch raises. See ``_chirality``.
+        A model without a current stoppage provenance (``stoppage_rule_version`` / ``stoppage_sources``;
+        TF-46 Part 2 spec section 27.19) is REFUSED the same way: ``legacy_override=True`` loads it with a
+        ``StoppageProvenanceWarning``, for audit use only.
 
         Examples
         --------
@@ -641,6 +673,13 @@ class XShotOccurrenceModel:
             model_name="xShotOccurrence",
             error_cls=IntegrityError,
         )
+        # LAST: a reader-built model without a current stoppage provenance is refused (owner decision 2026-10-26);
+        # the structural guards above run first, so a tampered artifact still fails on its own guard
+        verify_stoppage_provenance(
+            meta, model_name="xShotOccurrence", legacy_override=legacy_override, error_cls=IntegrityError
+        )
+        if stoppage_provenance_problem(meta) is None:
+            model.stoppage_provenance = {k: meta[k] for k in ("stoppage_rule_version", "stoppage_sources")}
         return model
 
     @classmethod
@@ -769,6 +808,16 @@ def _ball_in_attacking_third(ball_x: float, goal_x: float) -> bool:
     return abs(ball_x - goal_x) <= _ATTACKING_THIRD_M
 
 
+def _sum_unknown_labels(u_labels, u_censor, *, apply_provenance_censor: bool) -> int:
+    """Sum the positive labels of the UNKNOWN-span would-be rows (the section 27.19 diagnostic count). When the
+    section 18.2.1 censoring is applied, the censored rows are dropped first; otherwise every would-be row counts
+    (the uncensored path this cycle, so ``features.attrs["n_stoppage_unknown_labels"]`` is the full count)."""
+    u_pos = np.asarray(u_labels)
+    if apply_provenance_censor:
+        u_pos = u_pos[~np.asarray(u_censor, dtype=bool)]
+    return int(u_pos.sum())
+
+
 @overload
 def prepare_xshot_training_data(
     frames: pd.DataFrame,
@@ -780,6 +829,7 @@ def prepare_xshot_training_data(
     attacking_third_only: bool = ...,
     shot_types: tuple[str, ...] | None = ...,
     carrier_params: dict | None = ...,
+    apply_provenance_censor: bool = ...,
     return_keys: Literal[False] = ...,
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]: ...
 
@@ -795,6 +845,7 @@ def prepare_xshot_training_data(
     attacking_third_only: bool = ...,
     shot_types: tuple[str, ...] | None = ...,
     carrier_params: dict | None = ...,
+    apply_provenance_censor: bool = ...,
     return_keys: Literal[True],
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, pd.DataFrame]: ...
 
@@ -809,13 +860,20 @@ def prepare_xshot_training_data(
     attacking_third_only: bool = True,
     shot_types: tuple[str, ...] | None = None,
     carrier_params: dict | None = None,
+    apply_provenance_censor: bool = False,
     return_keys: bool = False,
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray] | tuple[pd.DataFrame, np.ndarray, np.ndarray, pd.DataFrame]:
     """Build (features, labels, groups) for one match's frames -- the shared,
     public train/serve-parity entry point (spec §3.5).
 
     Applies the paper's data-curation domain filter (spec §4): keep only frames
-    where (a) ``ball_state == "alive"``, (b) a possession team is resolvable via
+    where (a) the ball is live -- a provider without an observed dead-ball state
+    (SkillCorner, Gradient Sports, Metrica) REQUIRES the ``stoppage_state`` column of
+    :func:`~silly_kicks.tracking.derive_stoppage_state` (else ``ValueError``); its
+    dead frames leave and its UNKNOWN frames are never trained on, but counted in
+    ``features.attrs["n_stoppage_unknown_rows"]`` / ``["n_stoppage_unknown_labels"]``
+    (TF-46 Part 2 spec section 27.19); IDSSE / Sportec without the column keep
+    ``ball_state == "alive"`` -- (b) a possession team is resolvable via
     ``infer_ball_carrier`` -> ``derive_team_in_possession`` (carrier params from
     ``carrier_params``, default the library default), and (c) when
     ``attacking_third_only`` (default True) the ball is in the in-possession
@@ -838,6 +896,11 @@ def prepare_xshot_training_data(
         ``time_seconds`` (+ optionally ``type_name`` for shot-type filtering).
     home_team_id : int | str
         Accepted for call-site symmetry with the ``add_*``/``compute_*`` surfaces.
+    apply_provenance_censor : bool, default False
+        Apply the TF-46 spec section 18.2.1 time-censoring: drop the frames whose shot anchor has an unvalidated
+        time. Off by default until the joint release fills the restart gate table; with the empty table it
+        would drop every derived or repaired shot's frames. ``features.attrs["n_provenance_censored"]`` counts
+        the dropped rows (0 when off).
 
     Returns
     -------
@@ -859,9 +922,16 @@ def prepare_xshot_training_data(
     cp: dict = dict(carrier_params) if carrier_params else dict(_DEFAULT_CARRIER_PARAMS)
     types = _DEFAULT_SHOT_TYPES if shot_types is None else tuple(shot_types)
 
+    # The dead-ball domain filter (spec section 27.19, owner decision R-C2): a provider without an observed dead-ball
+    # state needs the derive_stoppage_state column (fail closed); its dead frames leave, its UNKNOWN frames are
+    # counted (rows and labels, never trained on). Without the column, an observed provider keeps ball_state.
+    use_stoppage = has_stoppage_state(frames, where="prepare_xshot_training_data")
     work = frames
-    if "ball_state" in frames.columns:
+    if use_stoppage:
+        work = frames[frames["stoppage_state"].astype(object).to_numpy() != "dead"]
+    elif "ball_state" in frames.columns:
         work = frames[frames["ball_state"].astype(str) == "alive"]
+    unknown_idx: list[dict] = []  # the would-be training rows inside an UNKNOWN span (label counting only)
     if len(work) == 0:
         empty = pd.DataFrame(
             columns=(
@@ -901,6 +971,16 @@ def prepare_xshot_training_data(
             ball_x = float(ball["x"].iloc[0]) if len(ball) else float("nan")
             if not _ball_in_attacking_third(ball_x, goal_x):
                 continue
+        if use_stoppage and str(grp["stoppage_state"].iloc[0]) != "live":
+            unknown_idx.append(
+                {
+                    "game_id": gid,
+                    "period_id": pid,
+                    "time_seconds": float(grp["time_seconds"].iloc[0]),
+                    "team_in_possession": tip,
+                }
+            )
+            continue
         feat_rows.append(extract_xshot_features(grp, gk_team_id=def_team, goal_x=goal_x, feature_set=feature_set))
         labels_idx.append(
             {
@@ -918,8 +998,18 @@ def prepare_xshot_training_data(
     # (a FAITHFUL select on a position_only frame raises KeyError: ['speed'] -- caught by the smoke).
     _names = XSHOT_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XSHOT_FEATURE_NAMES_FAITHFUL
 
+    # The cost of the UNKNOWN spans (DL ruling R-C1 item 2): the would-be rows and their positive labels, excluded.
+    n_unknown_labels = 0
+    if unknown_idx:
+        u_labels, u_censor = build_xshot_labels(
+            pd.DataFrame(unknown_idx), shots, horizon_seconds=horizon_seconds, shot_types=types, return_censor=True
+        )
+        n_unknown_labels = _sum_unknown_labels(u_labels, u_censor, apply_provenance_censor=apply_provenance_censor)
+
     if not feat_rows:
         empty = pd.DataFrame(columns=_names)
+        empty.attrs["n_stoppage_unknown_rows"] = len(unknown_idx)
+        empty.attrs["n_stoppage_unknown_labels"] = n_unknown_labels
         if return_keys:
             return (
                 empty,
@@ -933,10 +1023,38 @@ def prepare_xshot_training_data(
     fidx = pd.DataFrame(labels_idx)
 
     # ADR-126: the shot-type filter lives in build_xshot_labels (by type_id); pass the raw table.
-    labels = build_xshot_labels(fidx, shots, horizon_seconds=horizon_seconds, shot_types=types).to_numpy()
+    # TF-46 Arm 1 Part 2 (spec section 18.2.1): CENSOR frames whose shot anchor has an unvalidated time (a
+    # derived missing_goal shot without a gated t_kick) rather than dropping the shot (which would make the
+    # pre-shot frames false negatives). Byte-identical for a native provider (empty censor mask).
+    keys = pd.DataFrame(key_rows, columns=["game_id", "period_id", "frame_id"])
+    # Section 18.2.1 time-censoring is OFF by default (owner decision 2026-10-31, plan B-40): the gate table ships
+    # EMPTY, so every derived row would be censored. The default False keeps the pre-18.2.1 all-events labels;
+    # the joint release fills the gate table and turns the censoring on. True opts in now.
+    if apply_provenance_censor:
+        labels_s, censor = build_xshot_labels(
+            fidx, shots, horizon_seconds=horizon_seconds, shot_types=types, return_censor=True
+        )
+        labels = labels_s.to_numpy()
+        n_censored = int(censor.sum())
+        if censor.any():
+            keep = ~censor
+            features = features[keep].reset_index(drop=True)
+            labels = labels[keep]
+            fidx = fidx[keep].reset_index(drop=True)
+            # `keys` is populated ONLY under return_keys (key_rows is appended in that branch); when a caller
+            # (the extract path, return_keys=False) leaves it empty, `keys[keep]` would raise "Item wrong length
+            # <len(keep)> instead of 0" the first time a match has a censored frame. Subset it only when it exists.
+            if return_keys:
+                keys = keys[keep].reset_index(drop=True)
+    else:
+        labels = np.asarray(build_xshot_labels(fidx, shots, horizon_seconds=horizon_seconds, shot_types=types))
+        n_censored = 0
+    features.attrs["n_provenance_censored"] = n_censored  # read at the call site (spec section 18.2.1)
+    features.attrs["n_stoppage_unknown_rows"] = len(unknown_idx)  # excluded; read at the call site (section 27.19)
+    features.attrs["n_stoppage_unknown_labels"] = n_unknown_labels
     groups = fidx["game_id"].to_numpy()
     if return_keys:
-        return features, labels, groups, pd.DataFrame(key_rows, columns=["game_id", "period_id", "frame_id"])
+        return features, labels, groups, keys
     return features, labels, groups
 
 

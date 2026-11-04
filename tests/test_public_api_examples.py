@@ -139,6 +139,9 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/tracking/_ghost_outfield.py",
     "silly_kicks/tracking/_provider_visibility.py",
     "silly_kicks/tracking/_visibility.py",
+    # TF-46 Arm 1 stoppage/restart modules, documented on creation (public symbols carry Examples; any
+    # that cannot be exercised standalone are deferred one at a time in _EXAMPLES_DEBT below).
+    "silly_kicks/tracking/_stoppages.py",
     "silly_kicks/reporting.py",
     "silly_kicks/feature_glossary.py",
     "silly_kicks/metric_contracts.py",

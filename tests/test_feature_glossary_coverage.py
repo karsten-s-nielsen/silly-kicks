@@ -28,12 +28,15 @@ _NON_CONFORMING_PRODUCERS = {  # recorded exception: vaep fs.* aren't add_*/*_xf
 _FEATURES_HOMED_ALLOWLIST: set[str] = set()
 
 
-def test_no_undocumented_columns():
+def test_no_undocumented_columns(legacy_xs_xc_bundles):
+    # TF-46 R-C3 interim: emitted_columns() runs add_xshot_occurrence / add_xcross_attempt, which load the
+    # shipped bundle; it refuses without stoppage provenance, so load the real weights under legacy_override
+    # to enumerate their emitted columns. Task 8 removes the seam once the refit bundle loads clean.
     missing = emitted_columns() - set(FEATURE_GLOSSARY)
     assert not missing, f"emitted columns with no glossary entry: {sorted(missing)}"
 
 
-def test_no_stale_entries():
+def test_no_stale_entries(legacy_xs_xc_bundles):
     stale = set(FEATURE_GLOSSARY) - emitted_columns()
     assert not stale, f"glossary entries for non-emitted columns: {sorted(stale)}"
 

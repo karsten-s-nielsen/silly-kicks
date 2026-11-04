@@ -33,10 +33,13 @@ def compute_corner_chance_quality(
 ) -> pd.DataFrame:
     """Per-corner shots / goals / summed xG inside ``[t_kick, t_outcome]``. Grain ``(game_id, corner_id)``.
 
-    ``n_shots`` and ``n_goals`` are MODEL-FREE (fully observed) and are always computed. ``sum_xg`` needs
-    an injected xG column (silly-kicks ships no xG model, ADR-110/ADR-085): pass ``xg_column`` to populate
-    it, else ``sum_xg`` is honest-NaN (never a fabricated 0.0). A NAMED-but-absent ``xg_column`` still
-    raises -- that is a caller error, distinct from "this provider supplies no xG".
+    ``n_shots`` and ``n_goals`` are MODEL-FREE (fully observed) and are computed for every corner with a
+    resolved window. A DERIVED (events-only) corner has a NaN ``t_kick``, so its window is undefined and
+    ``n_shots``/``n_goals``/``sum_xg`` are NaN with the row kept (ADR-042 / spec section 9.4) -- distinct
+    from a real window with no shots (``n_shots=0``). ``sum_xg`` needs an injected xG column (silly-kicks
+    ships no xG model, ADR-110/ADR-085): pass ``xg_column`` to populate it, else ``sum_xg`` is honest-NaN
+    (never a fabricated 0.0). A NAMED-but-absent ``xg_column`` still raises -- a caller error, distinct from
+    "this provider supplies no xG".
 
     Examples
     --------
@@ -58,6 +61,20 @@ def compute_corner_chance_quality(
     for _, c in corners.iterrows():
         period = int(c["period_id"])
         t0 = float(c["t_kick"])
+        if np.isnan(t0):
+            # A derived (events-only) corner has a NaN t_kick, so its outcome window is undefined: keep the
+            # row with NaN metrics and a reason (ADR-042 / spec section 9.4), never fabricated zeros.
+            rows.append(
+                {
+                    "game_id": c["game_id"],
+                    "corner_id": int(c["corner_id"]),
+                    CC_N_SHOTS: pd.NA,
+                    CC_N_GOALS: pd.NA,
+                    CC_SUM_XG: float("nan"),
+                    CC_SOURCE: xg_column,
+                }
+            )
+            continue
         t1 = float(c["t_outcome"]) if "t_outcome" in corners.columns and pd.notna(c["t_outcome"]) else t0 + 6.0
         in_win = (actions["period_id"] == period) & (actions["time_seconds"] >= t0) & (actions["time_seconds"] <= t1)
         shot_win = in_win & is_shot

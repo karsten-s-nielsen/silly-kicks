@@ -203,10 +203,11 @@ def test_validate_corpus_visibility_ok_on_native_skillcorner(tmp_path):
 
 
 def test_validate_corpus_visibility_noop_for_fully_observed(tmp_path):
-    # A fully-observed provider legitimately carries no `visibility` column -> no-op (not a raise).
-    shard = _write_shard(tmp_path / "gradientsports__m3.parquet", provider="gradientsports", visibility=None)
+    # A fully-observed provider legitimately carries no `visibility` column -> no-op (not a raise). Gradient
+    # Sports is now DETECTION-AWARE (ADR-069 amended 2026-10-26), so metrica is the fully-observed example.
+    shard = _write_shard(tmp_path / "metrica__m3.parquet", provider="metrica", visibility=None)
     t = _load("train_ghost_gk")
-    assert t.validate_corpus_visibility({shard: "gradientsports"}) is None
+    assert t.validate_corpus_visibility({shard: "metrica"}) is None
 
 
 def test_validate_corpus_visibility_raises_when_column_absent_for_skillcorner(tmp_path):

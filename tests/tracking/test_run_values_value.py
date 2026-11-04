@@ -56,7 +56,7 @@ def _frow(pid, team, gk, x, y, t, *, speed=0.0, is_ball=False):
         "team_attacking_direction": None if is_ball else ("ltr" if team == _HOME else "rtl"),
         "confidence": None,
         "visibility": None,
-        "source_provider": "synthetic",
+        "source_provider": "sportec",  # R-C2 (spec 27.19): was the unclassified "synthetic"
         "is_goalkeeper_source": "native",
     }
 

@@ -16,13 +16,17 @@ pytestmark = [
 ]
 
 
-def test_union_has_known_tracking_columns():
+def test_union_has_known_tracking_columns(legacy_xs_xc_bundles):
+    # TF-46 R-C3 interim: emitted_columns() runs add_xshot/xcross, whose shipped bundle refuses to load
+    # without stoppage provenance; load the real weights under legacy_override. Task 8 removes the seam.
     cols = E.emitted_columns()  # union across all legs, base-normalised
     assert "packing_made" in cols and "defensive_credit_net" in cols
     assert all(isinstance(c, str) for c in cols)
 
 
-def test_each_leg_is_non_vacuous():
+def test_each_leg_is_non_vacuous(legacy_xs_xc_bundles):
+    # TF-46 R-C3 interim: _tracking_add_star_columns() runs add_xshot/xcross, whose shipped bundle refuses
+    # to load without stoppage provenance; load the real weights under legacy_override (Task 8 removes it).
     # THE anti-lie guard: a stubbed leg (return set()) would silently under-cover with green CI. Each
     # leg must be non-empty with a known-column anchor. LIMITATION (honest): an anchor proves
     # non-empty + contains-that-column; a leg returning {anchor} + only HALF its real columns STILL

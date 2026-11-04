@@ -260,6 +260,7 @@ def test_load_matches_default_is_unchanged_full_path(monkeypatch):
         cache_dir=None,
         events_only=False,
         with_velocity=True,
+        stoppage=False,
     ):
         seen.append(events_only)
         return pd.DataFrame(), pd.DataFrame({"f": [1]}), "H", None, None

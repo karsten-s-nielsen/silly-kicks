@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from scripts import validate_hub_variants as H
+from tests._stoppage_fixtures import REFUSED_UNTIL_RETRAIN, assert_bundle_refused
 
 
 def test_registry_covers_the_org_exactly():
@@ -62,6 +63,9 @@ def test_score_fn_runs_on_the_bundled_variants(cls_name):
     variant of each class to non-empty finite values (B r2 C1: a wrong signature fails CI, not the DGX)."""
     import silly_kicks.tracking as T
 
+    if cls_name in REFUSED_UNTIL_RETRAIN:
+        assert_bundle_refused(cls_name)  # TF-46 R-C3 interim; Task 8 removes this
+        return
     scores = H._score_fn(cls_name)(getattr(T, cls_name).from_variant("default"))
     vals = np.asarray(scores, dtype=float).tolist()
     assert vals and all(math.isfinite(v) for v in vals)

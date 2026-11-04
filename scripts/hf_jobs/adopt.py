@@ -59,6 +59,64 @@ class AdoptionRefusedError(RuntimeError):
     """An expectation, a guard or a certification refused the adoption (nothing was written)."""
 
 
+# ---- TF-46 Task 6: per-SHIPPED-ARM contributing-unit floor -----------------------------------------
+
+
+def _arms_json_from_args(args: Sequence[str]) -> str | None:
+    """The ``--arms-json`` value an instance's launch args carry (the off-HF arm policy), or None."""
+    args = list(args)
+    return args[args.index("--arms-json") + 1] if "--arms-json" in args else None
+
+
+def _intended_units(arms_json: str, shipped: str) -> dict[str, int]:
+    """The INTENDED per-provider unit count of the SHIPPED arm, from the arm policy (``--arms-json``): the
+    arm key is ``{source_provider}__{provider}-{game}``, so the part before ``__`` is the SPADL converter
+    ``source_provider`` -- the same name the post-drop actual counts by. This is a
+    DIFFERENT source from the post-drop metrics ACTUAL, so the compare is not circular (A PLAN-03)."""
+    from scripts.hf_jobs.arms import parse_arms
+
+    out: dict[str, int] = {}
+    for key in parse_arms(arms_json).arms.get(shipped, frozenset()):
+        out[str(key).split("__", 1)[0]] = out.get(str(key).split("__", 1)[0], 0) + 1
+    return out
+
+
+def check_contributing_units(arms_json: str, shipped: str | None, metrics: Mapping[str, Any]) -> None:
+    """TF-46 Task 6: refuse (FAIL CLOSED, no ``{}`` fallback -- SPEC-19) when a shipped-arm provider's POST-DROP
+    contributing-unit count (the ACTUAL in ``metrics.json``) is below its INTENDED arm membership, or when the
+    count is absent. A dropped/empty match silently shrank the corpus; the ACTUAL and INTENDED come from
+    DIFFERENT sources, so the compare is not circular (A PLAN-03)."""
+    if shipped is None:
+        raise AdoptionRefusedError("metrics.json records no shipped_variant: cannot check the contributing-unit floor")
+    from scripts.hf_jobs.arms import parse_arms
+
+    # FAIL CLOSED on an unknown shipped arm (SPEC-19): a shipped_variant that names no arm in the policy
+    # would give an EMPTY intended membership and pass open, defeating the floor. Refuse instead.
+    policy = parse_arms(arms_json).arms
+    if shipped not in policy:
+        raise AdoptionRefusedError(
+            f"shipped_variant {shipped!r} names no arm in the --arms-json policy (arms: {sorted(policy)}); the "
+            "contributing-unit floor cannot be verified (SPEC-19, fail closed, no empty-intended fallback)"
+        )
+    actual = metrics.get("contributing_units")
+    if not isinstance(actual, Mapping):
+        raise AdoptionRefusedError(
+            f"metrics.json records no per-provider contributing_units (shipped {shipped!r}); a refit must emit the "
+            "POST-DROP count (SPEC-19, fail closed, no empty fallback)"
+        )
+    intended = _intended_units(arms_json, shipped)
+    short = {
+        p: {"intended": want, "actual": int(actual.get(p, 0))}
+        for p, want in intended.items()
+        if int(actual.get(p, 0)) < want
+    }
+    if short:
+        raise AdoptionRefusedError(
+            f"contributing units below the INTENDED shipped-arm membership (shipped {shipped!r}): {short} -- a "
+            "dropped or emptied match silently shrank the corpus (A PLAN-03)"
+        )
+
+
 # ---- shared ----------------------------------------------------------------------------------------
 
 
@@ -298,6 +356,26 @@ def _rebaseline(spec: Any, fresh: pathlib.Path, commit: str, *, run: Callable[..
     }
 
 
+def _eval_corpus_args(inst: Instance, staging: pathlib.Path, *, download: Any = None) -> tuple[str, ...]:
+    """``("--corpus-dir", <dir>)`` when the instance's head-to-head eval reads its staged corpus, else ``()``.
+
+    The corpus is the instance's own locked ``--dataset`` at its pinned revision, fetched once into
+    ``<staging>/_eval/<name>/`` (outside the repo). Without it the eval raises ``EvalDataUnavailableError`` and a
+    public-tier xshot/xcross certification can never pass."""
+    from scripts.hf_jobs.datasets import fetch_locked
+    from scripts.hf_jobs.headtohead import eval_needs_corpus
+
+    if not eval_needs_corpus(inst.job):
+        return ()
+    args = list(inst.args)
+    if "--dataset" not in args:
+        raise AdoptionRefusedError(
+            f"{inst.id}: the head-to-head eval needs a corpus, but the instance has no --dataset"
+        )
+    name = args[args.index("--dataset") + 1]
+    return ("--corpus-dir", str(fetch_locked(name, dest=staging / "_eval" / name, download=download)))
+
+
 def _certify(
     spec: Any,
     inst: Instance,
@@ -307,15 +385,40 @@ def _certify(
     observed: Mapping[str, Any],
     *,
     run: Callable[..., Any],
+    mode: str = "rematerialize",
 ) -> dict:
     """Step 3 (`floor.certify`, the registry policy): ``public`` -> the head-to-head CLI against the
-    committed wheel bundle; ``owner`` -> CV parity on the registry ``cv_metric``. Missing inputs FAIL."""
+    committed wheel bundle; ``owner`` -> CV parity on the registry ``cv_metric``. Missing inputs FAIL.
+
+    adopt-for-refit seam: in ``mode == "refit"``, if the committed public bundle fails its own contract
+    ``load()`` (a drifted fingerprint -- the stale model a refit replaces), there is no valid baseline, so
+    the floor is the FRESH model's fail-closed acceptance gates (never auto-pass). The load is checked with
+    the SUBPROCESS :func:`load_check` -- the same env the head-to-head loads in -- so the verdict cannot
+    diverge from the head-to-head's. ``rematerialize`` never takes this fallback."""
     from scripts.hf_jobs import floor
 
     if spec.certification_for(inst.tier) == "public":
         if ref.kind != "wheel":
             return {"ok": False, "reason": f"{ref.id}: a public head-to-head needs a committed wheel bundle"}
+        if mode == "refit":
+            drift = load_check(inst.job, REPO_ROOT / ref.path, run=run)
+            if drift is not None:
+                gates = fresh_metrics.get("acceptance") or {}
+                ok = bool(gates) and all(bool(v) for v in gates.values())
+                return {
+                    "ok": ok,
+                    "basis": "refit_fresh_acceptance",
+                    "reason": (
+                        f"{ref.id}: committed baseline unusable ({drift[:200].strip()}); refit floor = "
+                        f"fresh acceptance gates (ok={ok})"
+                    ),
+                    "acceptance": gates,
+                }
         h2h = fresh.parent / f"{inst.variant}.headtohead.json"
+        try:
+            corpus = _eval_corpus_args(inst, fresh.parent)
+        except (AdoptionRefusedError, KeyError) as exc:
+            return {"ok": False, "reason": f"head-to-head eval corpus unavailable: {exc}"}
         p = run(
             [
                 str(HFJOBS_PYTHON),
@@ -326,6 +429,7 @@ def _certify(
                 str(REPO_ROOT / ref.path),
                 "--fresh-dir",
                 str(fresh),
+                *corpus,
                 "--feature-set",
                 "position_only" if "position_only" in inst.variant else "faithful",
                 "--metrics-json",
@@ -392,9 +496,17 @@ def verify(
         # instance has one (a Hub mirror / sibling shares it), else the Hub artifact's observed metrics.
         ref = next((a for a in targets if a.kind == "wheel"), targets[0])
         fresh_metrics = _read_json(fresh / "metrics.json") if (fresh / "metrics.json").is_file() else {}
-        row["certification"] = _certify(spec, inst, ref, fresh, fresh_metrics, observed, run=run)
+        # TF-46 Task 6: a visibility-gated trainer carries --arms-json; enforce the per-SHIPPED-ARM
+        # contributing-unit floor (fail closed, A PLAN-03) before any further verification spends compute.
+        arms_json = _arms_json_from_args(inst.args)
+        if arms_json is not None:
+            check_contributing_units(arms_json, fresh_metrics.get("shipped_variant"), fresh_metrics)
+        row["certification"] = _certify(spec, inst, ref, fresh, fresh_metrics, observed, run=run, mode=c.mode)
         oks = [row["load_error"] is None, bool(row["certification"]["ok"])]
-        if inst.job in INTEGRITY_FAMILIES:
+        # adopt-for-refit seam: the `_integrity`/`reproduces` gate is a re-materialize check (fresh must
+        # reproduce the committed model); a refit supersedes that model, so skip it in refit mode (the floor
+        # is certification alone -- owner cv-parity / public fresh-acceptance). rematerialize keeps the gate.
+        if inst.job in INTEGRITY_FAMILIES and c.mode != "refit":
             row["integrity"] = _integrity(ref, fresh, record, _committed_metrics(ref, observed), staging, run=run)
             oks.append(bool(row["integrity"]["go"]))
         for a in targets:

@@ -34,7 +34,14 @@ def test_non_null_detection_aware_ok():
 
 
 def test_fully_observed_all_null_noop():
-    assert assert_detection_aware_visibility(pd.Series([None, None]), provider="gradientsports") is None
+    assert assert_detection_aware_visibility(pd.Series([None, None]), provider="sportec") is None
+
+
+def test_gradientsports_is_detection_aware_and_names_its_own_remedy():
+    # ADR-069 amended 2026-10-26 (TF-46 Part 2 section 27.15 G1 / G6): GS is broadcast-derived tracking with a
+    # VISIBLE / ESTIMATED flag; a null flag is a discarded one and the remedy names its own adapter column
+    with pytest.raises(ValueError, match="visibility_native"):
+        assert_detection_aware_visibility(pd.Series([None, None], dtype="object"), provider="gradientsports")
 
 
 def test_keeper_detection_mask_mask_output_unchanged():
@@ -101,7 +108,15 @@ def test_guard_provider_frames_noop_for_fully_observed():
     # Fully-observed provider: no-op even with no visibility column (returns before the column check).
     m = _materializer_module()
     frames = pd.DataFrame({"x": [1.0, 2.0]})
-    assert m._guard_provider_frames(frames, "gradientsports") is None
+    assert m._guard_provider_frames(frames, "sportec") is None
+
+
+def test_guard_provider_frames_raises_on_gradientsports_without_its_flag():
+    # G6: no detection consumer is exempt on GS -- frames built without `visibility_native` fail loud
+    m = _materializer_module()
+    frames = pd.DataFrame({"visibility": pd.Series([None, None], dtype="object"), "x": [1.0, 2.0]})
+    with pytest.raises(ValueError, match="visibility_native"):
+        m._guard_provider_frames(frames, "gradientsports")
 
 
 def test_work_calls_guard_provider_frames():
@@ -121,7 +136,7 @@ def test_work_calls_guard_provider_frames():
 # `keeper_detection_mask`'s body is player-agnostic; it is extracted here as the shared seam that
 # TF-58 (outfield) + the deferred GK-gate consume. `keeper_detection_mask` delegates, byte-identical.
 
-_FULLY_OBSERVED = ("gradientsports", "sportec", "idsse", "metrica")
+_FULLY_OBSERVED = ("sportec", "idsse", "metrica")
 
 
 def test_detected_mask_general_per_row():
@@ -217,7 +232,7 @@ def _frame(provider, *, gk_vis: object = True, gk_present=True, n_keepers=1, gk_
     )
 
 
-_KEEPER_GATE_OBSERVED = ("gradientsports", "sportec", "idsse", "metrica", "snapshot")
+_KEEPER_GATE_OBSERVED = ("sportec", "idsse", "metrica", "snapshot")
 
 
 @pytest.mark.parametrize("provider", _KEEPER_GATE_OBSERVED)
@@ -226,6 +241,16 @@ def test_keeper_wrappers_observed_providers_return_position(provider):
     fr = _frame(provider, gk_vis=False)  # even a False flag is ignored on a non-detection-aware feed
     assert resolve_detected_keeper_xy(fr) == (5.0, 34.0)
     assert keeper_detected(fr, 7) is True
+
+
+@pytest.mark.parametrize("provider", ["skillcorner", "gradientsports"])
+def test_keeper_wrappers_gate_a_detection_aware_provider(provider):
+    # G6 (ADR-069 amended 2026-10-26): a GS keeper that is ESTIMATED (visibility False) is honest-NaN, as on
+    # SkillCorner; the mutant (GS fully observed) returned the estimated position
+    assert resolve_detected_keeper_xy(_frame(provider, gk_vis=True)) == (5.0, 34.0)
+    x, y = resolve_detected_keeper_xy(_frame(provider, gk_vis=False))
+    assert math.isnan(x) and math.isnan(y)
+    assert keeper_detected(_frame(provider, gk_vis=False), 7) is False
 
 
 def test_keeper_wrappers_skillcorner_detected():
@@ -285,6 +310,7 @@ def test_keeper_wrappers_opt_out_reproduces_observed():
 
 def test_detection_aware_provider_resolution():
     assert detection_aware_provider(_frame("skillcorner")) == "skillcorner"
+    assert detection_aware_provider(_frame("gradientsports")) == "gradientsports"  # G6: gated
     assert detection_aware_provider(_frame("sportec")) is None  # fully observed -> not gated
     assert detection_aware_provider(_frame("snapshot")) is None  # SB360 freeze frame -> not gated
     # mixed snapshot + skillcorner -> the detection-aware provider is surfaced

@@ -23,6 +23,9 @@ from tests.tracking._mirror_registry import (
     mirror_frames,
 )
 
+# interim until the R-C3 retrain: the xS / xCross gates run on the shipped weights under legacy_override
+pytestmark = pytest.mark.usefixtures("legacy_xs_xc_bundles")
+
 NONSENSE_HOME_ID = 999_999
 
 

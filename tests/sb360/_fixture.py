@@ -27,7 +27,7 @@ import inspect
 import numpy as np
 import pandas as pd
 
-from silly_kicks.tracking import link_actions_to_frames, snapshot_to_tracking_frames
+from silly_kicks.tracking import derive_stoppage_state, link_actions_to_frames, snapshot_to_tracking_frames
 
 FIXTURE_VERSION = "sb360-fixture-3"
 
@@ -250,6 +250,14 @@ def _actions_frame() -> pd.DataFrame:
     out = pd.DataFrame(rows)
     from silly_kicks.spadl.schema import SPADL_COLUMNS
 
+    # Base signal columns (result_source / restart_evidence / type_source / repair_kind) are emitted by
+    # every converter via _ensure_base_signal_columns; this fixture builds actions by hand, so fill
+    # exactly those with NA. repair_kind joined the base block in TF-46 Arm 1 Part 2 (decision D1). Any
+    # OTHER missing SPADL column must still raise in the astype loop below -- that is the drift canary --
+    # so the fill is scoped to these, never to every absent column.
+    for col in ("result_source", "restart_evidence", "type_source", "repair_kind"):
+        if col not in out.columns:
+            out[col] = pd.NA
     for col, dtype in SPADL_COLUMNS.items():
         out[col] = out[col].astype(dtype)  # type: ignore[arg-type]
     return out
@@ -409,6 +417,9 @@ def build_leg_a(*, roster: str = "full", id_dtype: str = "int64"):
     possession = {aid: team for aid, _, team, _, _, _, _, _, _ in _ACTIONS}
     frames = frames.copy()
     frames["team_in_possession"] = frames["frame_id"].map(possession)
+    # TF-46 Part 2 section 27.19 (R-C2, owner decision 2026-10-26): the ball_state readers need the stoppage column; a
+    # freeze frame is an action instant, live by the span rules (stoppage_source "event_instant"). Both legs get it.
+    frames = derive_stoppage_state(frames)
     return actions, frames, links
 
 
@@ -458,7 +469,7 @@ def build_leg_b(*, roster: str = "full", id_dtype: str = "int64"):
                         "team_attacking_direction": "ltr",
                         "confidence": np.nan,
                         "visibility": np.nan,
-                        "source_provider": "synthetic",
+                        "source_provider": "sportec",  # R-C2 (spec 27.19): the feed leg B models
                         "is_goalkeeper_source": "native",
                     }
                 )
@@ -487,7 +498,7 @@ def build_leg_b(*, roster: str = "full", id_dtype: str = "int64"):
                     "team_attacking_direction": "ltr",
                     "confidence": np.nan,
                     "visibility": np.nan,
-                    "source_provider": "synthetic",
+                    "source_provider": "sportec",  # R-C2 (spec 27.19): the feed leg B models
                     "is_goalkeeper_source": "native",
                 }
             )
@@ -518,6 +529,10 @@ def build_leg_b(*, roster: str = "full", id_dtype: str = "int64"):
         f"{unlinked}/{len(actions)} actions did not link in Leg B (report={report}). An "
         f"unlinked action produces NaN geometry that would be misread as a library property."
     )
+    # TF-46 Part 2 section 27.19 (R-C2, owner decision 2026-10-26): leg B models an optical feed (every player present,
+    # an observed ball_state), so it is labelled sportec (was the unclassified "synthetic") and gets the stoppage column
+    # (copied from ball_state), as leg A does.
+    frames = derive_stoppage_state(frames)
     return actions, frames, links
 
 

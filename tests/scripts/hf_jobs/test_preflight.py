@@ -104,3 +104,38 @@ def test_ref_check_requires_head_pushed_and_green():
         return type("R", (), {"returncode": 0, "stdout": out.get(key, ""), "stderr": ""})()
 
     assert P.check_ref(SHA, run=run).ok
+
+
+def test_preflight_live_vs_lock(monkeypatch):
+    # Regression guard (plan Task 2, spec section 7; mostly unchanged code, B-10): check_datasets reads the LIVE
+    # files AT the lock's pinned revision and compares them with the lock's units. A matching revision passes;
+    # a unit shard missing at that revision fails and is named.
+    from scripts.hf_jobs import datasets as D
+
+    gen = "tc3-frames-4-bbb"
+    rec = {
+        "revision": "r" * 40,
+        "generation": gen,
+        "home_teams": True,
+        "units": [{"stem": "idsse__DFL-MAT-J03WMX"}, {"stem": "skillcorner__1886347"}],
+    }
+    monkeypatch.setattr(D, "locked", lambda name: rec)
+    live = {
+        f"shards/{gen}/idsse__DFL-MAT-J03WMX.parquet",
+        f"shards/{gen}/skillcorner__1886347.parquet",
+        "home_teams.json",
+    }
+
+    class _Api:
+        def __init__(self, files):
+            self.files, self.revisions = files, []
+
+        def list_repo_files(self, repo, repo_type=None, revision=None):
+            self.revisions.append(revision)
+            return sorted(self.files)
+
+    ok = _Api(live)
+    assert P.check_datasets(["xshot17"], api=ok).ok
+    assert ok.revisions == [rec["revision"]]  # read at the PINNED revision, never the moving head
+    stale = P.check_datasets(["xshot17"], api=_Api(live - {f"shards/{gen}/skillcorner__1886347.parquet"}))
+    assert not stale.ok and "skillcorner__1886347.parquet missing at the pinned revision" in stale.detail

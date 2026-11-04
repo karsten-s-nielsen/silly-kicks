@@ -56,3 +56,20 @@ The ball-`z` investigation found z is **present (non-NaN) on all tracking provid
 ### Guards (z-provenance)
 
 `test_tracking_schema` 20-col count + `z_source` in key set / category list / `TRACKING_CATEGORICAL_DOMAINS` + the `Z_PROVENANCE` map; per-provider z_source build tests (incl. SkillCorner-estimated); `_cast_to_declared_schema` cast; the category-dtype static-column gate; `feature_glossary` + contact-columns contract + SB360 verdict for `aerial_source`; `validate_z_provenance` unit tests both directions (estimated-signature-declared-measured flagged; measured clean; GS-negatives clean); the is_aerial honest-NaN two-sided test.
+
+## Amendment 2026-10-26 -- Gradient Sports z is ESTIMATED (TF-46 Part 2 spec section 27.15, finding G3)
+
+Source: the DL design G3 (2026-10-26; owner decision: finding G in the C2 amend, in full). Decision 5's classification
+of Gradient Sports as `measured` was wrong. GS is broadcast-derived tracking: `VISIBLE` means the ball was found in
+the broadcast image, and one camera gives a ray, not a height, so an aerial ball's z (and its x / y) needs a
+trajectory model even when the ball is VISIBLE. Evidence that GS z is not a measurement: z reaches -3.2 m at ground
+level (this ADR's own spike), and the overhead gate made GS `first_contact` worse (team agreement 0.48 with the gate,
+0.58 without; TF-46 Part 2 section 5.3).
+
+- `Z_PROVENANCE["gradientsports"] = "estimated"`, static for the whole match (decision 5's form is unchanged: the
+  provider declares, never per row; a per-row default from the VISIBLE flag was rejected).
+- `is_aerial` is `<NA>` and `aerial_source` is `estimated` on GS contacts (decision 6 unchanged). Hyrum's law: GS
+  `is_aerial` / `aerial_source` change from booleans / `measured`; every GS reader is classified (G7) before any
+  re-run.
+- `validate_z_provenance` passes on a declared `estimated` (the guard flags a declared `measured` with an estimated
+  signature, not the reverse).

@@ -620,6 +620,19 @@ class TestComputeEngine:
         # crossing at t*=0.8: y = 30 + 2*0.8 = 31.6 (already attacked-goal-at-105)
         assert r["shot_crossing_y"] == pytest.approx(31.6, abs=0.05)
 
+    @pytest.mark.parametrize("z_source", ["estimated", "measured", None])
+    def test_z_source_carries_the_ball_height_provenance(self, z_source):
+        # owner decision 2026-10-26 (G7 trace ruling B): the crossing height carries its provenance; a broadcast z is
+        # an estimate (GS since G3). No z_source column = "absent" (the ADR-125 fail-safe, as TF-79 does).
+        actions, frames = make_match()
+        if z_source is not None:
+            frames = frames.assign(z_source=z_source)
+        out = compute_shot_goalmouth(actions, frames)
+        fitted = out["shot_z_profile"].notna() | out["shot_crossing_z"].notna()
+        assert fitted.any()
+        assert set(out.loc[fitted, "shot_z_source"]) == {z_source or "absent"}
+        assert out.loc[~fitted, "shot_z_source"].isna().all()  # no z-dependent output: no provenance
+
     def test_orientation_invariance_byte_identical(self):
         a1, f1 = make_match(flip=False)
         a2, f2 = make_match(flip=True)
@@ -780,6 +793,7 @@ class TestAddAggregator:
             "shot_fit_rmse",
             "shot_fit_end_reason",
             "shot_z_profile",
+            "shot_z_source",
         ):
             assert c in out.columns
         assert len(out) == len(actions)

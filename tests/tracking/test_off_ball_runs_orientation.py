@@ -46,7 +46,7 @@ def _frames(*, away_direction: str = "rtl", home_direction: str = "ltr") -> pd.D
                 y=34.0,
                 ball_state="alive",
                 team_attacking_direction=None,
-                source_provider="synthetic",
+                source_provider="sportec",  # R-C2 (spec 27.19): was the unclassified "synthetic"
             )
         )
         movers = [
@@ -72,7 +72,7 @@ def _frames(*, away_direction: str = "rtl", home_direction: str = "ltr") -> pd.D
                     y=34.0,
                     ball_state="alive",
                     team_attacking_direction=direction,
-                    source_provider="synthetic",
+                    source_provider="sportec",  # R-C2 (spec 27.19): was the unclassified "synthetic"
                 )
             )
     return pd.DataFrame(rows)

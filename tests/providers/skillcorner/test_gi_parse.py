@@ -85,8 +85,10 @@ def test_parse_passing_options_schema_and_semantics():
         "is_chosen",
         "completion",
         "opponents_bypassed",
+        "period_source",  # TF-46 Part 2 spec section 26.5: the GI period-label repair provenance (appended)
     ]
     assert len(out) == 3  # only passing_option rows
+    assert set(out["period_source"]) == {"native"}  # no GI frame facts: the label is the source
     assert out["decision_id"].nunique() == 1
     assert out["is_chosen"].sum() == 1  # exactly one targeted
     assert out["is_chosen"].dtype == bool
@@ -109,5 +111,6 @@ def test_parse_passing_options_empty_yields_declared_columns():
         "is_chosen",
         "completion",
         "opponents_bypassed",
+        "period_source",  # TF-46 Part 2 spec section 26.5: the GI period-label repair provenance (appended)
     ]
     assert len(out) == 0

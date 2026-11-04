@@ -45,7 +45,7 @@ def _make_multi_frame_fixture(
                 y=34.0,
                 ball_state="alive",
                 team_attacking_direction="ltr",
-                source_provider="synthetic",
+                source_provider="sportec",  # R-C2 (spec 27.19): was the unclassified "synthetic"
             )
         )
         for p in players:
@@ -71,7 +71,7 @@ def _make_multi_frame_fixture(
                     # per-team labels were used. (validate_period_directions accepts uniform
                     # "ltr"; it rejects only a SINGLE team self-contradicting.)
                     team_attacking_direction="ltr" if p["team_id"] == home_team_id else "rtl",
-                    source_provider="synthetic",
+                    source_provider="sportec",  # R-C2 (spec 27.19): was the unclassified "synthetic"
                 )
             )
     return pd.DataFrame(rows)

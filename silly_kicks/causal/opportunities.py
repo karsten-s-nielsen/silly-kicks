@@ -34,6 +34,7 @@ from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as _spc
 from silly_kicks.tracking._ball_carrier import derive_team_in_possession, infer_ball_carrier
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
+from silly_kicks.tracking._stoppages import has_stoppage_state
 from silly_kicks.tracking._xcross_attempt import (
     _ADVANCE_M,
     _CONFOUNDERS,
@@ -226,6 +227,11 @@ def build_opportunities(
     """Return one row per continuous in-domain possession-spell: the configured confounders + GK
     block, treatment ``Z``, outcome ``Y``, and provenance. Pure; no I/O.
 
+    A dead-ball frame is out of the domain. A provider without an observed dead-ball state (SkillCorner, Gradient
+    Sports, Metrica) REQUIRES the ``stoppage_state`` column of :func:`~silly_kicks.tracking.derive_stoppage_state`
+    (else ``ValueError``); its dead and UNKNOWN frames are out of the domain (TF-46 Part 2 spec section 27.19).
+    IDSSE / Sportec without the column keep the ``ball_state`` test.
+
     ``config=None`` constructs ``xcross_config(model_metadata)`` -- the legacy xCross path,
     byte-identical to the pre-config builder. Pass ``shot_arm_config(...)`` (or any
     ``OpportunityConfig``) to re-target treatment/outcome/domain/extractor.
@@ -246,6 +252,9 @@ def build_opportunities(
         raise ValueError(f"OpportunityConfig.domain must be 'wide_area' or 'attacking_third', got {cfg.domain!r}")
     if cfg.extractor not in ("xcross", "xs"):
         raise ValueError(f"OpportunityConfig.extractor must be 'xcross' or 'xs', got {cfg.extractor!r}")
+    # The dead-ball domain (TF-46 Part 2 spec section 27.19): a provider without an observed dead-ball state needs
+    # the derive_stoppage_state column (fail closed); _frame_domain_state reads it in preference to ball_state.
+    has_stoppage_state(frames, where="build_opportunities")
     carrier_params = dict(model_metadata.get("carrier_params", {}))
     carrier = infer_ball_carrier(frames, **carrier_params)
     poss = derive_team_in_possession(frames, carrier)
@@ -310,7 +319,11 @@ def _frame_domain_state(grp, goal_map, gid, per, advance_m, cfg):
         return None, None, False
     poss_team = in_poss.iloc[0]
     ball = grp[grp["is_ball"]]
-    if "ball_state" in grp.columns and len(ball) and str(ball["ball_state"].iloc[0]) == "dead":
+    if "stoppage_state" in grp.columns:  # dead and UNKNOWN are not live (section 27.19)
+        s_row = ball if len(ball) else grp
+        if len(s_row) and str(s_row["stoppage_state"].iloc[0]) != "live":
+            return poss_team, None, False
+    elif "ball_state" in grp.columns and len(ball) and str(ball["ball_state"].iloc[0]) == "dead":
         return poss_team, None, False
     non_ball = grp[~grp["is_ball"].astype(bool)]
     defending = [d for d in non_ball["team_id"].dropna().unique() if not same_id(d, poss_team)]

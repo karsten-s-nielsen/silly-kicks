@@ -67,6 +67,10 @@ class TestPeriodRelativeTime:
 
 
 class TestGoalkickResult:
+    # Post-F2 (spec section 5): the goal kick is a DERIVED restart row (action_provenance "derived"),
+    # keyed off the interruption marker on the possession before the stoppage -- not a relabel of the
+    # receiving possession. result_id still follows the next-possession team (retained -> success,
+    # lost -> fail), now on the derived row.
     def test_goalkick_lost_to_opponent_is_fail(self):
         events = _events(
             [
@@ -74,16 +78,22 @@ class TestGoalkickResult:
                     period=1,
                     time_start="10:00.0",
                     team_id="team_home",
-                    player_id="gk1",
-                    game_interruption_before="goal_kick_for",
-                    x_start=-45.0,
-                    x_end=-20.0,
+                    player_id="p0",
+                    game_interruption_after="goal_kick_for",  # marker: team_home awarded a goal kick
                 ),
-                dict(period=1, time_start="10:05.0", team_id="team_away", player_id="p12"),
+                dict(
+                    period=1,
+                    time_start="10:05.0",
+                    team_id="team_away",
+                    player_id="p12",
+                    game_interruption_before="goal_kick_against",  # team_away first-touches it (lost)
+                ),
             ]
         )
         actions, _ = convert_to_actions(events, _META)
         gk = actions[actions["type_id"] == spadlconfig.actiontype_id["goalkick"]].iloc[0]
+        assert gk["action_provenance"] == "derived"
+        assert gk["team_id"] == "team_home"
         assert gk["result_id"] == spadlconfig.result_id["fail"]  # opponent next -> lost
 
     def test_goalkick_retained_is_success(self):
@@ -93,12 +103,60 @@ class TestGoalkickResult:
                     period=1,
                     time_start="10:00.0",
                     team_id="team_home",
-                    player_id="gk1",
-                    game_interruption_before="goal_kick_for",
+                    player_id="p0",
+                    game_interruption_after="goal_kick_for",
                 ),
-                dict(period=1, time_start="10:05.0", team_id="team_home", player_id="p2"),
+                dict(
+                    period=1,
+                    time_start="10:05.0",
+                    team_id="team_home",
+                    player_id="p2",
+                    game_interruption_before="goal_kick_for",  # team_home retains
+                ),
             ]
         )
         actions, _ = convert_to_actions(events, _META)
         gk = actions[actions["type_id"] == spadlconfig.actiontype_id["goalkick"]].iloc[0]
+        assert gk["action_provenance"] == "derived"
         assert gk["result_id"] == spadlconfig.result_id["success"]  # teammate next -> retained
+
+
+class TestDerivedRestartPostProcessors:
+    """Spec section 5.8: the post-processors must leave a derived restart row alone."""
+
+    def _convert_corner(self):
+        events = _events(
+            [
+                dict(
+                    period=1,
+                    time_start="10:00.0",
+                    team_id="team_home",
+                    player_id="p0",
+                    game_interruption_after="corner_for",
+                ),
+                dict(
+                    period=1,
+                    time_start="10:05.0",
+                    team_id="team_home",
+                    player_id="p1",
+                    game_interruption_before="corner_for",
+                    x_start=40.0,
+                    x_end=42.0,
+                ),
+            ]
+        )
+        return convert_to_actions(events, _META)[0]
+
+    def test_derive_end_coordinates_leaves_derived_start_nan(self):
+        actions = self._convert_corner()
+        corner = actions[actions["type_id"] == spadlconfig.actiontype_id["corner_crossed"]].iloc[0]
+        assert corner["action_provenance"] == "derived"
+        # _derive_end_coordinates must not fill the NaN start of a derived restart (its end is set).
+        assert pd.isna(corner["start_x"]) and pd.isna(corner["start_y"])
+        assert pd.notna(corner["end_x"])
+
+    def test_add_dribbles_does_not_bridge_derived_row(self):
+        actions = self._convert_corner()
+        dribbles = actions[actions["type_id"] == spadlconfig.actiontype_id["dribble"]]
+        # A dribble bridging the NaN-start derived row would carry a NaN coordinate; none may.
+        assert dribbles[["start_x", "start_y", "end_x", "end_y"]].notna().all().all()

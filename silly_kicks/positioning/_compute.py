@@ -26,6 +26,7 @@ from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import (
     SPEED_SOURCE_UNAVAILABLE,
     GoalEndUnresolvedError,
+    has_stoppage_state,
     infer_ball_carrier,
     resolve_defended_goals,
 )
@@ -156,6 +157,11 @@ def compute_positioning_gap(
     exploratory, e.g. a carrier-locating :class:`PressureObjective`). The RNG is seeded from
     ``(game_id, period_id, frame_id)`` so the column is a pure function of inputs.
 
+    Alive ball: a provider without an observed dead-ball state (SkillCorner, Gradient Sports, Metrica) REQUIRES the
+    ``stoppage_state`` column of :func:`silly_kicks.tracking.derive_stoppage_state`, built on the full-rate frames
+    (else ``ValueError``); its dead and UNKNOWN frames are out of domain (TF-46 Part 2 spec section 27.19). IDSSE /
+    Sportec without the column keep the ``ball_state`` test.
+
     Velocity (ADR-063): a declared-velocity-unavailable frame (``speed_source`` marker) is excluded
     as ``velocity_unavailable``; frames with ``vx``/``vy`` columns entirely absent and NOT declared
     unavailable RAISE (the forgot-``derive_velocities()`` caller bug, fail-loud).
@@ -184,6 +190,9 @@ def compute_positioning_gap(
             "declared velocity-unavailable (speed_source). Run "
             "silly_kicks.tracking.preprocess.derive_velocities(frames) first (ADR-063)."
         )
+    # The dead-ball domain (TF-46 Part 2 spec section 27.19): fail closed BEFORE the down-sample (the column is built on
+    # full-rate frames); _classify_and_score reads the column in preference to ball_state.
+    has_stoppage_state(frames, where="compute_positioning_gap")
 
     work = _downsample(frames, params.sample_fps)
     if len(work) == 0:
@@ -256,9 +265,13 @@ def _classify_and_score(grp, key, *, goal_map, possession, params, xt, movable, 
     if len(ball) == 0:
         return _drop_row(key, "excluded_out_of_domain", defending)
     br = ball.iloc[0]
-    ball_state = br.get("ball_state") if "ball_state" in grp.columns else None
-    if ball_state is not None and pd.notna(ball_state) and str(ball_state) != "alive":
-        return _drop_row(key, "excluded_out_of_domain", defending)
+    if "stoppage_state" in grp.columns:  # dead and UNKNOWN are not live (section 27.19)
+        if str(br.get("stoppage_state")) != "live":
+            return _drop_row(key, "excluded_out_of_domain", defending)
+    else:
+        ball_state = br.get("ball_state") if "ball_state" in grp.columns else None
+        if ball_state is not None and pd.notna(ball_state) and str(ball_state) != "alive":
+            return _drop_row(key, "excluded_out_of_domain", defending)
     bx, by = float(br["x"]), float(br["y"])
     dist = float(np.hypot(bx - float(defended_x), by - _GOAL_Y))
     if not np.isfinite(dist) or dist > float(params.domain_ball_to_goal_m):

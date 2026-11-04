@@ -11,12 +11,20 @@ from scripts.hf_jobs.headtohead import (
     stamp,
     synthetic_bundle,
 )
+from tests._stoppage_fixtures import assert_bundle_refused
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.parametrize("name", sorted(reg.REGISTRY))
 def test_every_trainer_has_a_feasible_scorer(name):
+    # TF-46 R-C3 interim: synthetic_bundle loads the COMMITTED xS / xCross bundle, which refuses without
+    # stoppage provenance; assert the refusal instead of the scorer path. Task 8 removes this once the refit
+    # bundle loads clean (the scorer path is then re-proved against the retrained bundle).
+    _refused = {"xshot_occurrence": "XShotOccurrenceModel", "xcross_attempt": "XCrossAttemptModel"}
+    if name in _refused:
+        assert assert_bundle_refused(_refused[name])
+        return
     # Scoring PATH proof: load the COMMITTED model as BOTH operands on an injected synthetic bundle ->
     # finite, equal paired scalar. Proves load + predict + metric + fold is feasible per trainer at build
     # time, with no corpus / statsbombpy. (The REAL bundle comes from build_eval at P1; see below.)

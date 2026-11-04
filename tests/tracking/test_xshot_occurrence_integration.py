@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.spadl import config as _spc
+from tests._stoppage_fixtures import bundle_pinned, with_toy_stoppage_provenance
 
 _SHOT_TID = _spc.actiontype_id["shot"]  # ADR-126: build_xshot_labels filters shots by type_id
 
@@ -189,6 +190,7 @@ def test_frozen_fixture_is_not_degenerate():
     assert df["speed"].nunique() > 1, "ball speed is CONSTANT across the fixture (the PR-S118 bug)"
 
 
+@bundle_pinned("XShotOccurrenceModel")  # TF-46 R-C3 interim: the shipped bundle refuses to load; Task 8 removes this
 def test_bundled_model_is_live_not_degenerate():
     """LIVENESS tripwire (H2/N2/P4): the bundled model is not dead or constant.
 
@@ -215,6 +217,7 @@ def test_bundled_model_is_live_not_degenerate():
     assert len(np.unique(np.round(p, 9))) > 1, "bundled model output is CONSTANT -- dead model"
 
 
+@bundle_pinned("XShotOccurrenceModel")  # TF-46 R-C3 interim: the shipped bundle refuses to load; Task 8 removes this
 def test_bundled_model_responds_to_geometry():
     """The model-level analogue of non-constant: output must MOVE when a driving feature moves.
 
@@ -234,6 +237,7 @@ def test_bundled_model_responds_to_geometry():
     assert max(probs) - min(probs) > 1e-3, f"output flat across r: {probs}"
 
 
+@bundle_pinned("XShotOccurrenceModel")  # TF-46 R-C3 interim: the shipped bundle refuses to load; Task 8 removes this
 def test_from_variant_default_loads_and_predicts_in_bounds():
     from silly_kicks.tracking._xshot_occurrence import XSHOT_FEATURE_NAMES_FAITHFUL, XShotOccurrenceModel
 
@@ -405,6 +409,7 @@ def test_carrier_params_in_metadata(tmp_path):
     y = pd.Series((rng.random(40) < 0.2).astype(int))
     cp = {"tolerance_m": 7.0, "beta": 0.25, "gamma": 1.5}
     model = XShotOccurrenceModel().fit(X, y, carrier_params=cp)
+    with_toy_stoppage_provenance(model)  # TF-46 R-C3: save() refuses a model with no stoppage provenance
     from pathlib import Path
 
     art = Path(tmp_path) / "m"
@@ -611,7 +616,7 @@ def test_publish_verify_only(tmp_path):
     X = pd.DataFrame(rng.normal(size=(40, 27)), columns=XSHOT_FEATURE_NAMES_FAITHFUL)
     y = pd.Series((rng.random(40) < 0.3).astype(int))
     art = Path(tmp_path) / "xshot_occurrence_v1"
-    XShotOccurrenceModel().fit(X, y).save(art)
+    with_toy_stoppage_provenance(XShotOccurrenceModel().fit(X, y)).save(art)  # TF-46 R-C3: save() needs provenance
     repo_root = Path(__file__).resolve().parents[2]
     result = subprocess.run(  # noqa: S603
         [sys.executable, "scripts/publish_xshot_occurrence.py", "--artifact-dir", str(art), "--verify-only"],
@@ -787,6 +792,9 @@ def _match_frames_and_shots(n_frames=30, game_id=1):
     frames["z"] = 0.0
     frames["frame_rate"] = 10.0
     frames["ball_state"] = "alive"
+    # sportec observes a dead-ball state (dense optical), so the stoppage reader keeps the ball_state path
+    # (TF-46 Part 2 section 27.19); without a source_provider the fail-closed reader now raises.
+    frames["source_provider"] = "sportec"
     # team-2 shots late in the match (when in the attacking third)
     shots = pd.DataFrame(
         {
@@ -811,6 +819,65 @@ def test_prepare_returns_features_labels_groups():
     assert set(np.unique(y)).issubset({0, 1})
     # groups are the game_id for GroupKFold
     assert (groups == frames["game_id"].iloc[0]).all()
+
+
+def _censor_first_frame(monkeypatch) -> None:
+    """Force the section 18.2.1 censor on the first labelled frame (its shot anchor has an unvalidated time)."""
+    import silly_kicks.tracking._xshot_occurrence as xo
+
+    real = xo.build_xshot_labels
+
+    def fake(frames_index, shots_arg, *, horizon_seconds, shot_types, return_censor=False):
+        out = real(
+            frames_index, shots_arg, horizon_seconds=horizon_seconds, shot_types=shot_types, return_censor=return_censor
+        )
+        if return_censor and len(frames_index):
+            labels_s, censor = out
+            censor = np.asarray(censor, dtype=bool).copy()
+            censor[0] = True
+            return labels_s, censor
+        return out
+
+    monkeypatch.setattr(xo, "build_xshot_labels", fake)
+
+
+def test_prepare_with_return_keys_false_survives_a_censored_frame(monkeypatch):
+    # TF-46 regression: the section-18.2.1 censor-subset block subset `keys` unconditionally, but `keys` is
+    # empty under return_keys=False (the extract path). The first real match with a censored frame
+    # (skillcorner 1886347) raised `ValueError: Item wrong length <len> instead of 0`. Force one censored row
+    # with the censoring opted in; the extract-style call (return_keys=False) must RETURN, not raise.
+    import silly_kicks.tracking._xshot_occurrence as xo
+
+    frames, shots = _match_frames_and_shots()
+    _censor_first_frame(monkeypatch)
+    # return_keys defaults to False -- exactly the extract path that crashed.
+    X, y, groups = xo.prepare_xshot_training_data(
+        frames, shots, home_team_id=1, horizon_seconds=1.0, apply_provenance_censor=True
+    )
+    assert len(X) == len(y) == len(groups)  # consistent shapes after the censored row is dropped
+    assert X.attrs["n_provenance_censored"] >= 1  # non-vacuous: a row was actually censored
+
+
+def test_prepare_apply_provenance_censor_false_keeps_the_censored_frame(monkeypatch):
+    # TF-46 (plan B-40): the section 18.2.1 censoring is OFF by default until the joint release fills the gate
+    # table, so a frame whose shot anchor has an unvalidated time is KEPT. Force a censor: the default and the
+    # flag False keep the row (n_provenance_censored == 0); the flag True censors it -- the flag gates the drop.
+    import silly_kicks.tracking._xshot_occurrence as xo
+
+    frames, shots = _match_frames_and_shots()
+    _censor_first_frame(monkeypatch)
+    x_on, _, _ = xo.prepare_xshot_training_data(
+        frames, shots, home_team_id=1, horizon_seconds=1.0, apply_provenance_censor=True
+    )
+    x_off, _, _ = xo.prepare_xshot_training_data(
+        frames, shots, home_team_id=1, horizon_seconds=1.0, apply_provenance_censor=False
+    )
+    x_default, _, _ = xo.prepare_xshot_training_data(frames, shots, home_team_id=1, horizon_seconds=1.0)
+    assert x_on.attrs["n_provenance_censored"] >= 1  # the flag ON censors (joint-release behaviour)
+    assert x_off.attrs["n_provenance_censored"] == 0  # the flag OFF keeps the row (provenance-only)
+    # exactly the censored rows return when the flag is off (none else changes)
+    assert len(x_off) == len(x_on) + int(x_on.attrs["n_provenance_censored"])
+    assert len(x_default) == len(x_off) and x_default.attrs["n_provenance_censored"] == 0  # OFF is the default
 
 
 def test_prepare_attacking_third_filter_reduces_rows():
@@ -915,3 +982,17 @@ def test_cv_metrics_subsample_is_train_fold_only():
     assert abs(m_off["positive_rate"] - base) < 1e-9
     assert abs(m_on["positive_rate"] - base) < 1e-9
     assert abs(m_on["base_rate_brier"] - base * (1 - base)) < 1e-9
+
+
+def test_sum_unknown_labels_gates_the_censor_on_the_flag():
+    # B27(b) / R7-A-01: the section 27.19 n_stoppage_unknown_labels count drops the censored positives ONLY when
+    # the section 18.2.1 censoring is applied. This cycle the flag is off, so the published count is the FULL
+    # count. Reverting the gate to an unconditional subtraction regresses the flag-off count (this goes red).
+    import numpy as np
+
+    from silly_kicks.tracking._xshot_occurrence import _sum_unknown_labels
+
+    labels = np.array([1, 1, 0, 1])
+    censor = np.array([True, False, False, True])  # 2 of the 3 positive would-be rows are censored
+    assert _sum_unknown_labels(labels, censor, apply_provenance_censor=False) == 3  # flag off: full count
+    assert _sum_unknown_labels(labels, censor, apply_provenance_censor=True) == 1  # flag on: censored dropped
