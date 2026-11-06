@@ -1,27 +1,31 @@
 """Fit the TF-53 Dixon-Coles dependence rho on the PUBLIC StatsBomb open-data corpus (owner-run).
 
 1-D MLE (scipy ``minimize_scalar``, bounded) of the realized scoreline under the tau-corrected
-Poisson-binomial joint (spec section 5). Writes a pickle-free ``weights/{model.json, SHA256SUMS}`` stamping
+Poisson-binomial joint (spec section 5). Writes a pickle-free ``{model.json, SHA256SUMS}`` stamping
 ``training_commit`` on a CLEAN tree (ADR-037). ``statsbombpy`` is a scripts-only network dep; no Optuna
-(the likelihood is smooth and one-dimensional). NOT exercised in CI beyond the pure ``fit_rho`` kernel.
+(the likelihood is smooth and one-dimensional).
+
+An ADR-128 stage pipeline (HFU spec section 5): ``refs`` (the competition set + every match ref) -> ``extract`` (one
+unit per match: its scoreline slice) -> ``fit`` (the whole-corpus rho). The pure kernels below are unchanged
+from the pre-pipeline trainer; ``validate_match_outcome_calibration.py`` and the tests import them.
 
 Usage (owner):
-    python scripts/train_match_outcome_dependence.py --out silly_kicks/match_outcome/weights
+    python -m scripts.train_match_outcome_dependence --run-all --store <store> --out silly_kicks/match_outcome/weights
 """
 
 from __future__ import annotations
 
-import argparse
+import dataclasses
 import hashlib
 import json
-import tempfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parent.parent
+from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, main
 
 
 def _nll(rho: float, matches: Sequence[tuple]) -> float:
@@ -107,66 +111,113 @@ def matches_from_shards(frames: Iterable[pd.DataFrame]) -> list[tuple]:
     return out
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out", default="silly_kicks/match_outcome/weights")
-    ap.add_argument("--competitions-json", default=None, help="JSON [[competition_id, season_id], ...]")
-    ap.add_argument("--max-matches", type=int, default=None)
-    ap.add_argument(
-        "--shard-root",
-        default=None,
-        help="per-match shard dir (default: a temp dir OUTSIDE the repo; resumable across runs).",
-    )
-    ap.add_argument(
-        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
-    )
-    ap.add_argument("--allow-dirty", action="store_true", help="dev only; artifact records dirty:true")
-    args = ap.parse_args()
+#: The columns of one match's scoreline slice (`extract_match_slice`).
+_SLICE_COLUMNS = ["home_xgs", "away_xgs", "home_goals", "away_goals"]
 
-    from scripts._driver import for_each
-    from scripts._provenance import git_provenance, require_clean_tree
-    from scripts._sb_open_data import all_open_competitions, open_data_source
+_PARAMS = (
+    Param("dataset", str, "sb_open", help="declared dataset name (scripts/hf_jobs/datasets.toml)"),
+    Param("competitions_json", str, None, help="JSON file [[competition_id, season_id], ...] (default: every release)"),
+    Param("max_matches", int, None, help="cap the number of matches"),
+    Param("cache_dir", str, None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"),
+)
 
-    prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
-    competitions = (
-        [tuple(c) for c in json.loads(Path(args.competitions_json).read_text(encoding="utf-8"))]
-        if args.competitions_json
-        else all_open_competitions()
-    )
-    # ADR-052 resume: shard each match's scoreline slice behind for_each's resume check (a 3,961-match
-    # load re-downloaded everything on a crash before this). The whole-corpus rho fit is the reduce.
-    refs, load = open_data_source(competitions, max_matches=args.max_matches, cache_dir=args.cache_dir)
-    shard_root = (
-        Path(args.shard_root) if args.shard_root else Path(tempfile.gettempdir()) / "sk_match_outcome_dependence_shards"
-    )
-    res = for_each(
-        refs,
-        key=lambda ref: ref.key,
-        load=load,
-        work=lambda item: extract_match_slice(item[2], "xg"),
-        shard_root=shard_root,
-        token_inputs={"model": "match_outcome_dependence", "competitions": sorted(tuple(c) for c in competitions)},
-        label="match",
-    )
-    shards = [pd.read_parquet(s) for s in sorted(res.shard_dir.glob("*.parquet"))]
-    matches = matches_from_shards(shards)
 
-    rho = fit_rho(matches)
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
+def _competitions_file(path: str | None) -> list[list[int]] | None:
+    """The CONTENT of ``--competitions-json``, in file order (the legacy walk order); None without one."""
+    if not path:
+        return None
+    return [[int(c), int(s)] for c, s in json.loads(Path(path).read_text(encoding="utf-8"))]
+
+
+def _refs_work(key, ctx) -> dict:
+    """The competition set + every match reference, as one JSON unit (the legacy `open_data_source` walk)."""
+    import scripts._sb_open_data as sbod
+
+    sbod.assert_statsbomb_open_data_mode()
+    listed = _competitions_file(ctx.params["competitions_json"])
+    comps = [tuple(c) for c in listed] if listed is not None else [tuple(c) for c in sbod.all_open_competitions()]
+    refs = sbod.list_open_data_refs(comps, max_matches=ctx.params["max_matches"])
+    return {"competitions": [list(c) for c in comps], "refs": [dataclasses.asdict(r) for r in refs]}
+
+
+def _extract_refs(ctx):
+    from scripts._sb_open_data import OpenDataRef
+
+    return [OpenDataRef(**d) for d in ctx.upstream("refs")["refs"]]
+
+
+def _load_match(ref, ctx):
+    """Resume-before-download: the executor calls this only for a pending unit (ADR-052 D14)."""
+    import scripts._sb_open_data as sbod
+    from scripts._driver_sources import resolve_cache_dir
+
+    sbod.assert_statsbomb_open_data_mode()  # pins the revision in THIS worker process (decision P6)
+    return sbod.load_open_data_match(ref, cache_dir=resolve_cache_dir(ctx.params["cache_dir"]))
+
+
+def _extract_reduce(results: Mapping[str, pd.DataFrame], ctx) -> pd.DataFrame:
+    """The per-match slices in sorted key order (the legacy sorted shard glob); none -> an empty slice."""
+    from scripts._stages import combine_frames
+
+    frames = list(results.values())
+    return combine_frames(frames, ids=()) if frames else pd.DataFrame(columns=_SLICE_COLUMNS)
+
+
+def fit_artifact(pooled: pd.DataFrame, prov: Mapping[str, Any]) -> FileSet:
+    """The ``{model.json, SHA256SUMS}`` artifact from the pooled scoreline slices: the legacy fit and its exact
+    serialization (``json.dumps(indent=2)``, no trailing newline; ``SHA256SUMS`` names ``model.json``)."""
+    matches = matches_from_shards([pooled])
     payload = {
-        "rho": rho,
+        "rho": fit_rho(matches),
         "training_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
         "corpus": "statsbomb-open",
         "n_matches": len(matches),
     }
-    model_path = out / "model.json"
-    model_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    sha = hashlib.sha256(model_path.read_bytes()).hexdigest()
-    (out / "SHA256SUMS").write_text(f"{sha}  model.json\n", encoding="utf-8")
+    model = json.dumps(payload, indent=2).encode("utf-8")
+    sha = hashlib.sha256(model).hexdigest()
     print(json.dumps({**payload, "sha256": sha}, indent=2))
+    return FileSet({"model.json": model, "SHA256SUMS": f"{sha}  model.json\n".encode("ascii")})
 
+
+PIPELINE = Pipeline(
+    name="match_outcome_dependence",
+    module="scripts.train_match_outcome_dependence",
+    params=_PARAMS,
+    stages=(
+        Stage(
+            name="refs",
+            units=lambda ctx: ["only"],
+            work=_refs_work,
+            reduce=lambda r, ctx: r["only"],
+            params=("competitions_json", "max_matches"),
+            # The CONTENT of the competitions file keys the token (a path alone would not key a changed file).
+            declare=lambda p: {"competitions": _competitions_file(p["competitions_json"])},
+            uses_dataset=True,
+            dataset_files=lambda ctx: (),  # open data over HTTP: no dataset file
+        ),
+        ItemStage(
+            name="extract",
+            refs=_extract_refs,
+            key=lambda ref: ref.key,
+            load=_load_match,
+            work=lambda lm, ctx: extract_match_slice(lm.actions, "xg"),
+            needs=("refs",),
+            reduce=_extract_reduce,
+            cross_commit_version="match-outcome-shard-1",
+            uses_dataset=True,
+            max_failures=None,  # the legacy for_each recorded failures and fit over the rest
+        ),
+        Stage(
+            name="fit",
+            units=lambda ctx: ["only"],
+            work=lambda key, ctx: fit_artifact(ctx.upstream("extract"), ctx.prov),
+            needs=("refs", "extract"),
+            reduce=lambda r, ctx: r["only"],
+        ),
+    ),
+    output="fit",
+)
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main(PIPELINE))

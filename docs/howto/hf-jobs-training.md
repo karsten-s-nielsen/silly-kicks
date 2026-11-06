@@ -46,26 +46,58 @@ for a public dataset the canonical id list) into `scripts/hf_jobs/datasets.lock.
 
 ## The campaign file
 
-`scripts/hf_jobs/campaigns/<name>.toml` (committed, INV-7): the bucket, `target_minutes` (60),
-`concurrency_cap`, `attempts`, and per job the trainer or driver, its tier, its dataset (plus
+`scripts/hf_jobs/campaigns/<name>.toml` (committed, INV-7): the bucket, `concurrency_cap` (the in-flight
+ceiling), `attempts` (the per-unit bound; each HF job itself gets one attempt), the resource-sharing knobs
+(`units_per_job`/`max_shards` size a stage into few big jobs; `mount_cap` + `mount_cap_by_dataset` bound
+concurrent mounts of a dataset; `mount_fault_budget`; `launch_batch` + `backoff_max_s` pace launches; a
+`peak_rss_by_stage` hint sizes memory-heavy stages — ADR-128 amendment 2026-11-03), and per job the trainer or
+driver, its tier, its dataset (plus
 `probe_dataset` for xcross) and its variants. Run keys are derived: `{campaign}-{commit7}-{job}-{tier}`;
 `--replica N` adds `-rN`, a FRESH store for the same-commit re-run (INV-1 gate, decision P18).
 
 ## The command sequence
 
-Run long commands in the background; `--watch` steps every 60 s until done or failed.
+Run long commands in the background. The controller is the minimal driver (`scripts/hf_jobs/driver.py`,
+ADR-128 amendment 2026-11-02).
 
-1. `preflight` -- six no-spend checks (commit pushed and green, lockfile and image, API contract, datasets,
-   every instance's `--plan`, the planner's estimate). It uploads the report the launch gate requires and
-   flags any stage predicted above the target.
-2. `plan` -- each instance's next action (`profile` / `run` / `reduce`) and predicted wall; launches nothing.
-3. `profile` -- measures a sample of every unprofiled multi-unit stage (unit wall, peak RSS).
-4. `launch` / `resume --watch` -- the stateless controller: each step rebuilds state from the store
-   (`--plan` per instance) and the job labels, then launches each instance's next stage, sized by the
-   planner (N jobs x W workers to meet the target; LPT partition by measured cost). A killed job loses at
-   most its in-flight units; `resume` never redoes a finished unit.
-5. `status` -- per instance, stage progress and the running jobs. A failed instance: read its job logs and
+1. `preflight` -- six no-spend checks (commit pushed and green, lockfile and image, numba in the locked job
+   install set, API contract, datasets, every instance's `--plan`, run in parallel). `check_numba` reads
+   `uv export --frozen --no-hashes --extra train --group hfjobs` and evaluates each line's marker for Linux
+   CPython 3.12: the job must install numba (a core dependency since 2026-11-06; without it the ghost leaf walk
+   ran 12x slower into the 2 h timeout). Each check prints one `[preflight] <check> ok|FAIL <s>s` line as it
+   ends, and each `--plan` prints its own line. It trains nothing: CI's parity tests already run every trainer on
+   toy data. It uploads the report the launch gate requires: every `launch` / `resume` step
+   refuses without a passing report for THIS commit and THIS campaign-file hash, so re-run `preflight` after
+   any edit to the campaign file.
+2. `launch --dry-run` -- prints what the driver would do now (FATAL stop, the launches, the stuck stages);
+   launches nothing.
+3. `launch` / `resume` -- the stateless driver loop (`--poll-s`, default 30 s). Each step rebuilds state from
+   the store (`--plan` per instance) and the job labels, then launches the pending units of each instance's
+   first ready, un-reduced stage: up to `concurrency_cap` jobs, each a full `cpu-upgrade` box (8 unit
+   workers; an `inner_parallel` stage runs one unit with the box's threads inside) over its explicit keys (an
+   instance with a `download` dataset runs round-robin `--shard I/N` slices instead, since that dataset is
+   fetched by shard). An instance whose `--plan` fails is reported; the others go on (a `--plan` that fails with
+   an HF rate limit, `Too Many Requests`, makes the step back off instead). The `--plan` reads run
+   in parallel, and each step prints one line to stderr: `[driver] step: plans <n> in <s>s (<k> failed); in
+   flight <i>; launched <l>; stuck <r>`. A FATAL step prints its `FATAL` line instead, and a rate-limited step
+   a `[driver] step: rate-limited ...; backing off` line. Each launch prints `[driver] launch
+   <instance>/<stage> <i>of<n> units=<k>`, and each job of this commit that ends ERROR or CANCELED prints one
+   `[driver] job <id> <instance>/<stage> <shard> <reason> after <s> s` line, once per run, so a failure shows
+   in the driver log before the HF email arrives. Every Hub call is bounded (connect 10 s, read 60 s; a stalled
+   read is retried), and a `--plan` read is killed after 600 s: the instance is reported `--plan failed
+   (timeout after 600 s)` with the plan process's stack dump, and the step goes on (it is not a rate limit).
+   The reduce is inline: the job that finds the stage complete reduces it, and the driver triggers a reduce
+   with an empty key set when no unit is left to run. No per-worker memory cap is set, so a unit that runs
+   out of memory kills its job (`oom`, a RETRY). A unit that `attempts` jobs covered without completing is
+   reported, not retried. A `Job timeout` spends no coverage, but it charges the units that started in that job
+   and did not finish (the driver reads them from the job log's `[unit]` lines); a unit charged by 2 timed-out
+   jobs is reported `STUCK <instance>: <stage>/<key> timed out 2x (jobs <id>, <id>)` and not relaunched, while a
+   held unit that never started is relaunched as before; a storage `403` or another FATAL stops the loop. Exit code: 0 done, 1 stuck, 2
+   FATAL. After the operator fixes a FATAL, `resume` re-attempts the work (every job already terminal is
+   the baseline). A killed job loses at most its in-flight units; `resume` never redoes a finished unit.
+4. `status` -- per instance, stage progress and the running jobs. A failed instance: read its job logs and
    the unit `*.failed.json`; a code defect is a new owner-approved commit, then `resume`.
+5. `cancel` -- cancels every non-terminal job of the campaign commit.
 6. `retrieve --staging DIR` -- copies each reduced output (and `<instance>.record.json`: what the job read,
    the extract counters) into DIR, OUTSIDE the repo.
 7. `verify --staging DIR` -- loads every artifact in `.venv-hfjobs`, checks the five expectations (training
@@ -84,8 +116,6 @@ Run long commands in the background; `--watch` steps every 60 s until done or fa
 10. `publish --sandbox --staging DIR` (owner go) -- private `silly-kicks/sandbox-<name>` repos, then the
     post-verification (model-only file set, remote `SHA256SUMS` = local, README = the rendered card, a
     `from_hub` round-trip). A public publish is a separate owner go after the artifact commit.
-11. `summary` -- writes the committed ledger summary `docs/research/hf_campaigns/<campaign>.json` (unit
-    costs the planner learns from).
 
 ## The DGX as an executor
 
@@ -95,5 +125,5 @@ and runs each stage through the stage CLI with peak-RSS measurement against the 
 
 ## Cost
 
-Per-second billing on `cpu-upgrade` ($0.03 per hour): N short jobs cost the same as one long job; the
-planner prints the predicted cost per action. The scratch bucket adds a small per-GB-month cost.
+Per-second billing on `cpu-upgrade` ($0.03 per hour): N short jobs cost the same as one long job. The scratch
+bucket adds a small per-GB-month cost.

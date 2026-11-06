@@ -37,10 +37,10 @@ import re
 import sys
 import time
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any, Protocol
 
-from scripts._driver import _token, _write_bytes_atomically, join_key
+from scripts._driver import _token, _write_bytes_atomically, format_failure_traceback, join_key
 from scripts._item_outcome import ItemExcluded
 
 #: Numeric key components are zero-padded to this width, so lexicographic key order == numeric order.
@@ -48,9 +48,10 @@ KEY_WIDTH = 4
 _RESULT_SUFFIXES = (".parquet", ".json", ".fileset.json")
 _OUTPUT = "_output"
 MISSING = object()
-#: A failed unit is retried until it has failed this many times (single-sourced with the campaign
-#: controller, `planner.Constraints.unit_attempts`). A memory failure below it is DEFERRED: the unit waits
-#: for its escalation job (W=1, the whole box), so it neither fails its stage nor lets it reduce.
+#: The memory-deferral threshold: a unit whose last failure was the memory cap and that has failed fewer than
+#: this many times is DEFERRED -- it waits for an escalation job (W=1, the whole box), so it neither fails its
+#: stage nor lets it reduce. The HF campaign driver passes no memory cap, so it records no memory failure; its
+#: own per-unit bound is `campaign.attempts` (ADR-128 amendment 2026-11-02).
 UNIT_ATTEMPTS = 2
 
 
@@ -124,8 +125,9 @@ class Stage:
     any further declared inputs (the ADR-052 rule: a token closes silent omission, not mis-declaration).
     ``cross_commit_version`` opts the stage into resume across commits (decision P9); default None
     means the run commit is part of the token. ``max_failures`` (None = unlimited) is the failed-unit
-    tolerance: the executor aborts when it is exceeded and the reduce refuses. ``abort_first_k``: the
-    executor aborts when the first k units that complete in this job have all failed (systematic bug).
+    tolerance, a reduce-time rule (`exceeds_tolerance`): the reduce refuses over it; a run job does not
+    abort. ``abort_first_k``: the executor aborts when the first k units that complete in this job have all
+    failed (systematic bug).
     """
 
     name: str
@@ -234,6 +236,39 @@ class Pipeline:
             raise ValueError(f"{self.name}: output stage {self.output!r} is not declared")
 
 
+#: A store read of this many bytes or more prints a `[read]` line with its size and rate (HFU spec 13.3, F5: a slow
+#: and a hung 388 MB read looked the same in launch 2's logs).
+READ_LOG_BYTES = 8 * 1024 * 1024
+READ_CHUNK_BYTES = 8 * 1024 * 1024
+#: A logged read that takes longer prints a progress line at this interval.
+READ_PROGRESS_S = 60.0
+#: The executor sets this to a job-local directory; `materialize_fileset` then reads each FileSet from the store
+#: once per job and the job's other processes copy the local cache (HFU spec 13.3, F2).
+FILESET_CACHE_ENV = "SILLY_KICKS_FILESET_CACHE"
+
+
+def _read_logged(f, rel: str, size: int) -> bytes:
+    """Read an open file in chunks; print progress every READ_PROGRESS_S and one rate line at the end."""
+    mb = size / 1e6
+    chunks: list[bytes] = []
+    done = 0
+    t0 = last = time.monotonic()
+    while True:
+        chunk = f.read(READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        done += len(chunk)
+        now = time.monotonic()
+        if now - last >= READ_PROGRESS_S and done < size:
+            print(f"[read] {rel} {done / 1e6:.1f}/{mb:.1f} MB after {now - t0:.0f} s", file=sys.stderr, flush=True)
+            last = now
+    secs = time.monotonic() - t0
+    rate = mb / secs if secs > 0 else float("inf")
+    print(f"[read] {rel} {mb:.1f} MB in {secs:.1f} s ({rate:.1f} MB/s)", file=sys.stderr, flush=True)
+    return b"".join(chunks)
+
+
 class Store(Protocol):
     """POSIX-relative byte store. `LocalStore` executes; `hf_jobs.store.BucketStore` only reads."""
 
@@ -252,8 +287,21 @@ class LocalStore:
         return pathlib.Path(self.root) / pathlib.PurePosixPath(rel)
 
     def read_bytes(self, rel: str) -> bytes | None:
+        # Open directly: a stat before every read doubles the per-file cost on the HF bucket mount (~42 ms
+        # each, HFU spec E5-E6). The result is the old `is_file()` rule: None for a missing path or a directory,
+        # and a real I/O error on a real file still raises. The size comes from `fstat` on the open fd (no extra
+        # path stat); a read of READ_LOG_BYTES or more logs its size and rate (HFU spec 13.3).
         p = self._p(rel)
-        return p.read_bytes() if p.is_file() else None
+        try:
+            with open(p, "rb") as f:
+                size = os.fstat(f.fileno()).st_size
+                if size < READ_LOG_BYTES:
+                    return f.read()
+                return _read_logged(f, rel, size)
+        except OSError:
+            if p.is_file():
+                raise
+            return None
 
     def write_bytes(self, rel: str, data: bytes) -> None:
         p = self._p(rel)
@@ -261,11 +309,18 @@ class LocalStore:
         _write_bytes_atomically(p, data)
 
     def names(self, rel_dir: str) -> set[str]:
-        p = self._p(rel_dir)
-        return {c.name for c in p.iterdir() if c.is_file()} if p.is_dir() else set()
+        # `scandir` returns the entry type with the listing, so a file test needs no stat per entry.
+        try:
+            with os.scandir(self._p(rel_dir)) as it:
+                return {e.name for e in it if e.is_file()}
+        except (FileNotFoundError, NotADirectoryError):
+            return set()
 
     def delete(self, rel: str) -> None:
+        from scripts._write_confirm import forget
+
         self._p(rel).unlink(missing_ok=True)
+        forget(self._p(rel))  # no longer expected: the end-of-process confirm must not look for it (HFU spec §12)
 
     def local_path(self, rel: str) -> pathlib.Path | None:
         return self._p(rel)
@@ -275,10 +330,30 @@ def open_store(uri: str | os.PathLike) -> Store:
     """``hf://buckets/<ns>/<bucket>/<prefix>`` -> read-only BucketStore; anything else -> LocalStore."""
     text = str(uri)
     if text.startswith("hf://buckets/"):
+        from scripts.hf_jobs.hub_client import install_timeouts
         from scripts.hf_jobs.store import BucketStore
 
+        install_timeouts()  # every Hub call of a `--plan` read is bounded (HFU spec 13.4)
         return BucketStore.from_uri(text)
     return LocalStore(pathlib.Path(text))
+
+
+#: Seconds before the `--plan` deadline at which the plan process dumps its stacks (HFU spec 13.4).
+PLAN_DUMP_LEAD_S = 30
+
+
+def arm_plan_deadline(env: Mapping[str, str] = os.environ) -> bool:
+    """When the driver set ``SILLY_KICKS_PLAN_DEADLINE_S`` (``campaign.read_plan``), arm a faulthandler dump
+    ``PLAN_DUMP_LEAD_S`` before it, so a plan read the driver kills leaves its stack in the driver's report.
+    Returns True when armed; a missing or malformed value arms nothing."""
+    import faulthandler
+
+    try:
+        deadline = float(env["SILLY_KICKS_PLAN_DEADLINE_S"])
+    except (KeyError, ValueError):
+        return False
+    faulthandler.dump_traceback_later(timeout=max(1.0, deadline - PLAN_DUMP_LEAD_S), repeat=False)
+    return True
 
 
 @dataclasses.dataclass
@@ -446,40 +521,58 @@ def write_result(store: Store, base: str, result: Any) -> str:
     return digest
 
 
-def _present_suffix(names: set[str], stem: str) -> str | None:
+def _present_suffix(names: Collection[str], stem: str) -> str | None:
     hits = [sfx for sfx in _RESULT_SUFFIXES if f"{stem}{sfx}" in names]
     return hits[0] if hits else None
 
 
-def _verified(store: Store, base: str, suffix: str) -> bool:
+def _load_verified(store: Store, base: str, suffix: str) -> tuple[bytes, dict[str, bytes]] | None:
+    """THE INV-3 check: the payload, its ``.sha256`` and (for a FileSet) every member, each read ONCE and
+    verified in memory. Returns ``(payload, members)``, or None when anything is absent or fails its hash."""
     data = store.read_bytes(base + suffix)
     side = store.read_bytes(base + ".sha256")
     if data is None or side is None or _sha(data) != side.decode("ascii").strip():
-        return False
+        return None
+    members: dict[str, bytes] = {}
     if suffix == ".fileset.json":
         for name, want in json.loads(data)["files"].items():
             payload = store.read_bytes(f"{base}.files/{name}")
             if payload is None or _sha(payload) != want:
-                return False
-    return True
+                return None
+            members[name] = payload
+    return data, members
 
 
-def read_result(store: Store, base: str) -> Any:
-    """The verified result at ``base``, or ``MISSING`` (absent or failing its checksum)."""
-    rel_dir, _, stem = base.rpartition("/")
-    suffix = _present_suffix(store.names(rel_dir), stem)
-    if suffix is None or not _verified(store, base, suffix):
+def _verified(store: Store, base: str, suffix: str) -> bool:
+    return _load_verified(store, base, suffix) is not None
+
+
+def read_listed(store: Store, rel_dir: str, key: str, names: Collection[str]) -> Any:
+    """The verified result of ``key`` in ``rel_dir``, or ``MISSING`` (absent or failing its checksum).
+
+    ``names`` is the caller's ONE listing of ``rel_dir``: a reduce site lists its generation once and reads
+    each file once (HFU spec §3). Never lists, never deletes; decodes from the bytes it verified."""
+    suffix = _present_suffix(names, key)
+    if suffix is None:
         return MISSING
-    data = store.read_bytes(base + suffix)
-    assert data is not None  # noqa: S101 -- _verified read it a moment ago
+    loaded = _load_verified(store, f"{rel_dir}/{key}", suffix)
+    if loaded is None:
+        return MISSING
+    data, members = loaded
     if suffix == ".parquet":
         import pandas as pd
 
         return pd.read_parquet(io.BytesIO(data))
     if suffix == ".json":
         return json.loads(data)
-    names = json.loads(data)["files"]
-    return FileSet({n: store.read_bytes(f"{base}.files/{n}") or b"" for n in names})
+    return FileSet(members)
+
+
+def read_result(store: Store, base: str) -> Any:
+    """The verified result at ``base``, or ``MISSING`` (absent or failing its checksum). One listing per
+    call: a loop over unit keys lists once and calls `read_listed` instead (`done_results`)."""
+    rel_dir, _, stem = base.rpartition("/")
+    return read_listed(store, rel_dir, stem, store.names(rel_dir))
 
 
 #: A joined key is a file stem: letters, digits, '_' and '-' only. No '.', so `<key>.json` (a result) can
@@ -509,12 +602,16 @@ def profile_sample(keys: Sequence[str], k: int | None) -> list[str]:
     return sorted({keys[(i * len(keys)) // k] for i in range(k)})
 
 
-def unit_states(ctx: RunContext, st: AnyStage, keys: Sequence[str], *, verify: bool) -> dict[str, str]:
+def unit_states(
+    ctx: RunContext, st: AnyStage, keys: Sequence[str], *, verify: bool, names: Collection[str] | None = None
+) -> dict[str, str]:
     """``done`` | ``excluded`` | ``failed`` | ``pending`` per key. ``verify`` re-hashes every present
     result (the in-job resume check, INV-3); a failing one is deleted with a warning and is pending.
-    Without ``verify`` (the controller's plan) presence of result + sidecar counts as done."""
+    Without ``verify`` (the controller's plan) presence of result + sidecar counts as done. ``names`` is
+    the caller's listing of the generation; given, this lists nothing."""
     gen = ctx.generation(st.name)
-    names = ctx.store.names(gen)
+    if names is None:
+        names = ctx.store.names(gen)
     out: dict[str, str] = {}
     for k in keys:
         suffix = _present_suffix(names, k)
@@ -662,7 +759,8 @@ def combine_frames(parts: Sequence[Any], *, ids: Sequence[str]) -> Any:
     return out
 
 
-def _run_item(ctx: RunContext, st: ItemStage, key: str, ref: Any) -> tuple[str, str | None]:
+def _run_item(ctx: RunContext, st: ItemStage, key: str, ref: Any) -> tuple[str, str | None, str | None]:
+    """Run ONE ItemStage unit through `for_each`: (outcome, error, traceback)."""
     from scripts._driver import for_each
 
     root = ctx.store.local_path(ctx.stage_dir(st.name))
@@ -685,24 +783,48 @@ def _run_item(ctx: RunContext, st: ItemStage, key: str, ref: Any) -> tuple[str, 
     if res.shard_dir.name != ctx.tokens[st.name]:
         raise RuntimeError(f"{st.name}: for_each generation {res.shard_dir.name} != stage token {ctx.tokens[st.name]}")
     if res.failures:
-        return "failed", str(next(iter(res.failures.values())))
+        return "failed", str(next(iter(res.failures.values()))), next(iter(res.tracebacks.values()), None)
     if res.exclusions:
-        return "excluded", None
-    return "done", None
+        return "excluded", None, None
+    return "done", None, None
+
+
+#: The unit this process runs now: (stage, key, `time.monotonic()` at its start), or None. Set and cleared by
+#: `run_unit` only; the job-liveness thread (`scripts.hf_jobs.liveness`) only reads it (HFU spec §11.2).
+_CURRENT_UNIT: tuple[str, str, float] | None = None
+
+
+def current_unit() -> tuple[str, str, float] | None:
+    """The unit this process runs now (stage, key, monotonic start), or None between units."""
+    return _CURRENT_UNIT
 
 
 def run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any = None, ref: Any = None) -> str:
     """Run ONE unit, persist its result (or exclusion / failure) and its ledger record. Returns the outcome."""
+    global _CURRENT_UNIT
+    t0 = time.monotonic()
+    _CURRENT_UNIT = (st.name, key, t0)
+    # The unit's log trail (HFU spec 13.6): the driver's 2-timeout rule reads the start lines without an end line.
+    print(f"[unit] {st.name}/{key} start", file=sys.stderr, flush=True)
+    try:
+        outcome = _run_unit(ctx, st, key, worker=worker, pool=pool, ref=ref)
+    finally:
+        _CURRENT_UNIT = None
+    print(f"[unit] {st.name}/{key} {outcome} in {time.monotonic() - t0:.1f} s", file=sys.stderr, flush=True)
+    return outcome
+
+
+def _run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any, ref: Any) -> str:
     gen = ctx.generation(st.name)
     base = f"{gen}/{key}"
     attempt = _previous_attempts(ctx.store, base) + 1
     reset_ok = _reset_peak_rss()
     started = time.time_ns()
-    outcome, error = "done", None
+    outcome, error, tb = "done", None, None
     unit_ctx = dataclasses.replace(ctx, pool=pool)
     try:
         if isinstance(st, ItemStage):
-            outcome, error = _run_item(unit_ctx, st, key, ref)
+            outcome, error, tb = _run_item(unit_ctx, st, key, ref)
         else:
             write_result(ctx.store, base, st.work(key, unit_ctx))
     except ItemExcluded as exc:
@@ -714,13 +836,16 @@ def run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any 
         local.mkdir(parents=True, exist_ok=True)
         write_exclusion(local, key, exc)
         outcome = "excluded"
-    except MemoryError:
-        outcome, error = "failed", "MemoryError: unit exceeded its memory cap"
+    except MemoryError as exc:
+        outcome, error, tb = "failed", "MemoryError: unit exceeded its memory cap", format_failure_traceback(exc)
     except Exception as exc:  # broad BY DESIGN: recorded per unit, never swallowed (the for_each rule)
-        outcome, error = "failed", f"{type(exc).__name__}: {exc}"
+        outcome, error, tb = "failed", f"{type(exc).__name__}: {exc}", format_failure_traceback(exc)
     finished = time.time_ns()
     if outcome == "failed":
-        ctx.store.write_bytes(base + ".failed.json", _canon_json({"error": error, "attempt": attempt}))
+        failure = {"error": error, "attempt": attempt}
+        if tb is not None:  # WHERE it failed (HFU spec §4.3): additive; `error` keeps its exact format
+            failure["traceback"] = tb
+        ctx.store.write_bytes(base + ".failed.json", _canon_json(failure))
     else:
         ctx.store.delete(base + ".failed.json")
     peak, scope = _peak_rss(reset_ok)
@@ -752,27 +877,45 @@ def output_present(ctx: RunContext, name: str, *, verify: bool) -> bool:
     return (not verify) or _verified(ctx.store, f"{gen}/{_OUTPUT}", suffix)
 
 
+def exceeds_tolerance(max_failures: int | None, n_failed: int) -> bool:
+    """THE failed-unit tolerance rule (``None`` = unlimited). A REDUCE-time rule only (HFU spec §4.1): a run
+    job records a unit failure and goes on; the reduce, the reduce trigger and the driver refuse over it."""
+    return max_failures is not None and n_failed > max_failures
+
+
 def reduce_stage(ctx: RunContext, name: str) -> None:
     """Write the stage output from every unit result, in ``reduce_order``. Idempotent and atomic, so
     two jobs that both see a complete stage may both reduce: they write identical bytes."""
     st = ctx.pipeline.stage(name)
     keys = sorted_units(ctx, st)
-    states = unit_states(ctx, st, keys, verify=True)
+    gen = ctx.generation(name)
+    names = ctx.store.names(gen)  # the ONE listing of this reduce (HFU spec §3): every read below uses it
+    states = unit_states(ctx, st, keys, verify=False, names=names)
     pending = [k for k, v in states.items() if v == "pending"]
     failed = [k for k, v in states.items() if v == "failed"]
     if pending:
         raise StageIncompleteError(f"{ctx.pipeline.name}/{name}: {len(pending)} unit(s) pending, e.g. {pending[:3]}")
-    if st.max_failures is not None and len(failed) > st.max_failures:
+    if exceeds_tolerance(st.max_failures, len(failed)):
         raise StageIncompleteError(
             f"{ctx.pipeline.name}/{name}: {len(failed)} unit(s) failed (tolerance {st.max_failures}): {failed[:5]}"
         )
-    gen = ctx.generation(name)
+    done = sorted((k for k, v in states.items() if v == "done"), key=st.reduce_order or (lambda k: k))
+    # INV-3 before anything is written: each done unit is read and verified ONCE; a unit failing its
+    # checksum is deleted (it reruns) and the reduce refuses, as the in-job resume check does.
+    results = {k: read_listed(ctx.store, gen, k, names) for k in done}
+    bad = [k for k, v in results.items() if v is MISSING]
+    if bad:
+        for k in bad:
+            suffix = _present_suffix(names, k)
+            warnings.warn(f"checksum failure for {gen}/{k}{suffix}; deleting it and redoing the unit", stacklevel=2)
+            for sfx in (suffix, ".sha256"):
+                ctx.store.delete(f"{gen}/{k}{sfx}")
+        raise StageIncompleteError(f"{ctx.pipeline.name}/{name}: {len(bad)} unit(s) pending, e.g. {bad[:3]}")
     excluded = {}
     for k in keys:
         if states[k] == "excluded":
             raw = ctx.store.read_bytes(f"{gen}/{k}.excluded.json")
             excluded[k] = json.loads(raw)["reason"] if raw else "unknown"
-    done = sorted((k for k, v in states.items() if v == "done"), key=st.reduce_order or (lambda k: k))
     summary = {
         "stage": name,
         "token": ctx.tokens[name],
@@ -787,9 +930,19 @@ def reduce_stage(ctx: RunContext, name: str) -> None:
     # The job's own record of WHAT it read (dataset name/repo/revision, params, upstream tokens): `adopt`
     # checks the recorded dataset revision against the pin (ADR-128 spec 5.7 step 4). Never a unit key.
     ctx.store.write_bytes(f"{gen}/_inputs.json", _canon_json(ctx.token_inputs[name]))
-    results = {k: read_result(ctx.store, f"{gen}/{k}") for k in done}
     output = st.reduce(results, ctx) if st.reduce is not None else summary
     write_result(ctx.store, f"{gen}/{_OUTPUT}", output)
+
+
+def done_results(ctx: RunContext, stage: str) -> dict[str, Any]:
+    """The done units' verified results of ``stage``, in sorted key order, from ONE listing of its
+    generation (HFU spec §3): the read for a unit work that loops over another stage's unit keys.
+    A value is ``MISSING`` when its unit fails its checksum (as `read_result` gives)."""
+    st = ctx.pipeline.stage(stage)
+    gen = ctx.generation(stage)
+    names = ctx.store.names(gen)
+    states = unit_states(ctx, st, sorted_units(ctx, st), verify=False, names=names)
+    return {k: read_listed(ctx.store, gen, k, names) for k, v in states.items() if v == "done"}
 
 
 def ordered_values(results: Mapping[str, Any]) -> list:
@@ -799,15 +952,57 @@ def ordered_values(results: Mapping[str, Any]) -> list:
 
 def materialize_fileset(ctx: RunContext, stage: str, key: str, dest: pathlib.Path) -> pathlib.Path:
     """Copy a verified FileSet (unit ``key``, or the stage output when ``key == "_output"``) to local
-    ``dest`` -- e.g. so a worker can memory-map a persisted design matrix. Returns ``dest``."""
-    res = read_result(ctx.store, f"{ctx.generation(stage)}/{key}")
+    ``dest`` -- e.g. so a worker can memory-map a persisted design matrix. Returns ``dest``.
+
+    With ``FILESET_CACHE_ENV`` set (the executor sets it for its workers), the FileSet is read from the store ONCE
+    per job: the first process materializes it into the job-local cache under a file lock, and every other process
+    copies that cache (HFU spec 13.3, F2)."""
+    rel = f"{ctx.generation(stage)}/{key}"
+    cache_root = os.environ.get(FILESET_CACHE_ENV)
+    if cache_root:
+        import shutil
+
+        src = _cached_fileset(ctx.store, rel, f"{stage}/{key}", pathlib.Path(cache_root))
+        shutil.copytree(src, dest, dirs_exist_ok=True)
+        return pathlib.Path(dest)
+    _write_fileset_files(_read_fileset(ctx.store, rel, f"{stage}/{key}"), pathlib.Path(dest))
+    return pathlib.Path(dest)
+
+
+def _read_fileset(store: Store, rel: str, label: str) -> FileSet:
+    res = read_result(store, rel)
     if not isinstance(res, FileSet):
-        raise TypeError(f"{stage}/{key} is not a FileSet result")
+        raise TypeError(f"{label} is not a FileSet result")
+    return res
+
+
+def _write_fileset_files(res: FileSet, dest: pathlib.Path) -> None:
     for name, data in res.files.items():
-        p = pathlib.Path(dest) / pathlib.PurePosixPath(name)
+        p = dest / pathlib.PurePosixPath(name)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
-    return pathlib.Path(dest)
+
+
+def _cached_fileset(store: Store, rel: str, label: str, cache_root: pathlib.Path) -> pathlib.Path:
+    """The job-local copy of FileSet ``rel`` (the generation token is in ``rel``, so a new generation is a new
+    entry). One process reads it from the store under an OS file lock (released when its holder dies), writes it to
+    ``<entry>.part-<pid>`` and renames that into place, so no reader sees a partial set; a dead holder's part is
+    removed by the next holder."""
+    import shutil
+
+    from filelock import FileLock
+
+    entry = cache_root / pathlib.PurePosixPath(rel)
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(entry) + ".lock"):
+        if entry.is_dir():
+            return entry
+        for stale in entry.parent.glob(entry.name + ".part-*"):
+            shutil.rmtree(stale, ignore_errors=True)
+        part = entry.parent / f"{entry.name}.part-{os.getpid()}"
+        _write_fileset_files(_read_fileset(store, rel, label), part)
+        os.replace(part, entry)
+    return entry
 
 
 def item_counters(ctx: RunContext, stage: str) -> tuple[dict, int]:
@@ -831,8 +1026,8 @@ def item_counters(ctx: RunContext, stage: str) -> tuple[dict, int]:
 
 
 def _history_key(token_inputs: Mapping) -> str:
-    """Decision P14 (single-sourced with `hf_jobs.ledger.history_key`, which delegates here): costs are
-    keyed by WHAT a stage computes, never by the commit or the upstream tokens."""
+    """Decision P14 (the plan JSON's per-stage ``history_key``): costs are keyed by WHAT a stage computes,
+    never by the commit or the upstream tokens."""
     keep = {k: token_inputs.get(k) for k in ("pipeline", "stage", "params", "declared", "dataset")}
     return _sha(json.dumps(keep, sort_keys=True).encode("utf-8"))[:16]
 
@@ -1017,7 +1212,12 @@ def _parse_shard(text: str) -> tuple[int, int]:
 
 def main(pipeline: Pipeline, argv: Sequence[str] | None = None) -> int:
     """The uniform CLI every migrated trainer and driver exposes (spec 5.1)."""
+    from scripts.hf_jobs.liveness import start_job_watch
+
+    start_job_watch("main")  # in an HF job only (HFU spec §11): first, so a hang in any later step shows
     args = build_parser(pipeline).parse_args(argv)
+    if args.plan:
+        arm_plan_deadline()  # a plan read past the driver's deadline leaves its stack (HFU spec 13.4)
     params = {p.name: getattr(args, p.name) for p in pipeline.params}
     from scripts._provenance import code_identity, env_provenance, git_provenance, require_clean_tree
 
@@ -1042,13 +1242,20 @@ def main(pipeline: Pipeline, argv: Sequence[str] | None = None) -> int:
             escalate=args.escalate,
         )
     )
+    from scripts import _write_confirm
+
+    reports: list[Any] = []
+    t0 = time.monotonic()
+    rc: int | None = None
     try:
         if args.run_all:
             for st in pipeline.stages:
-                ex.run_stage(ctx, st.name, shard=(0, 1))
+                reports.append(ex.run_stage(ctx, st.name, shard=(0, 1)))
                 ex.require_reduced(ctx, st.name)
             if args.out is not None:
                 export_output(ctx, args.out)
+            _write_confirm.confirm_job_writes()  # this process's own writes (HFU spec §12)
+            rc = 0
             return 0
         names = [n for n in args.stages.split(",") if n]
         shard = _parse_shard(args.shard)
@@ -1060,12 +1267,30 @@ def main(pipeline: Pipeline, argv: Sequence[str] | None = None) -> int:
                 raise SystemExit("--shard-keys runs exactly ONE stage and excludes --shard (it IS the job's slice)")
             keys = json.loads(args.shard_keys.read_text(encoding="utf-8"))
         for i, name in enumerate(names):
-            ex.run_stage(ctx, name, shard=shard if i == 0 else (0, 1), keys=keys if i == 0 else None)
+            reports.append(ex.run_stage(ctx, name, shard=shard if i == 0 else (0, 1), keys=keys if i == 0 else None))
             ex.try_reduce(ctx, name)
+        _write_confirm.confirm_job_writes()  # this process's own writes (HFU spec §12)
+        rc = 0
         return 0
     except RefusalError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
+        rc = 2
         return 2
     except (StageFailedError, StageIncompleteError) as exc:
         print(f"STAGE FAILED: {exc}", file=sys.stderr)
+        partial = getattr(exc, "report", None)
+        if partial is not None:  # the stopped stage's counts (impl review B HFURR-IMPL-13)
+            reports.append(partial)
+        rc = 3
         return 3
+    finally:
+        _print_job_summary(reports, rc, time.monotonic() - t0)
+
+
+def _print_job_summary(reports: Sequence[Any], rc: int | None, secs: float) -> None:
+    """One `[job]` line at every exit of a run (HFU spec 13.6); `exit error` when an exception escapes."""
+    done = sum(r.n_done for r in reports)
+    units = sum(r.n_mine for r in reports)
+    failed = sum(r.n_failed for r in reports)
+    code = "error" if rc is None else str(rc)
+    print(f"[job] {done}/{units} done, {failed} failed, exit {code}, {secs:.0f} s", file=sys.stderr, flush=True)

@@ -1,6 +1,6 @@
 ---
 name: hf-campaign
-description: Use when running, resuming, inspecting or adopting an HF Jobs campaign — `python -m scripts.hf_jobs campaign <file> …`, preflight, profile, launch/resume, status, retrieve, verify, adopt, publish (--sandbox), the run ledger, datasets record — always on cpu-upgrade, with owner gates on every commit, push and Hub publish.
+description: Use when running, resuming, inspecting or adopting an HF Jobs campaign — `python -m scripts.hf_jobs campaign <file> …`, preflight, launch/resume (--dry-run), status, cancel, retrieve, verify, adopt, publish (--sandbox), the run ledger, datasets record — always on cpu-upgrade, with owner gates on every commit, push and Hub publish.
 ---
 
 # HF campaigns

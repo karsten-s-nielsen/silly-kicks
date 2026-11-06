@@ -5,8 +5,6 @@ numba is a test dependency (pyproject.toml [test] extra) — these always run in
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import numpy as np
 import pytest
 
@@ -221,10 +219,16 @@ class TestNumbaParity:
                 np.testing.assert_allclose(numpy_dist[i], numba_dist[i], rtol=1e-12)
 
 
-class TestFallbackPath:
-    """Verify Python fallback produces correct results when _HAS_NUMBA=False."""
+@pytest.fixture
+def _force_numpy(monkeypatch):
+    """The numpy reference loop, selected by its explicit switch (HFU spec 13.2: numba is core)."""
+    monkeypatch.setenv("SILLY_KICKS_BALL_CARRIER_FORCE_NUMPY", "1")
 
-    @patch("silly_kicks.tracking._ball_carrier._HAS_NUMBA", False)
+
+@pytest.mark.usefixtures("_force_numpy")
+class TestFallbackPath:
+    """Verify the numpy reference loop (SILLY_KICKS_BALL_CARRIER_FORCE_NUMPY=1) produces correct results."""
+
     def test_basic_carrier_without_numba(self):
         from silly_kicks.tracking._ball_carrier import infer_ball_carrier
         from tests.tracking.test_ball_carrier import _make_carrier_frame
@@ -241,7 +245,6 @@ class TestFallbackPath:
         assert result["ball_carrier_player_id"].iloc[0] == 10
         assert result["ball_carrier_team_id"].iloc[0] == 1
 
-    @patch("silly_kicks.tracking._ball_carrier._HAS_NUMBA", False)
     def test_hysteresis_without_numba(self):
         from silly_kicks.tracking._ball_carrier import infer_ball_carrier
         from tests.tracking.test_ball_carrier import _concat_frames, _make_carrier_frame
@@ -269,7 +272,6 @@ class TestFallbackPath:
         carriers = result.sort_values("frame_id")["ball_carrier_player_id"].tolist()
         assert carriers == [10, 10]
 
-    @patch("silly_kicks.tracking._ball_carrier._HAS_NUMBA", False)
     def test_dead_ball_without_numba(self):
         import pandas as pd
 
@@ -328,7 +330,8 @@ def test_numba_numpy_parity_real_gs_match():
     result_numba = infer_ball_carrier(frames)
 
     # Run with numpy fallback
-    with patch("silly_kicks.tracking._ball_carrier._HAS_NUMBA", False):
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("SILLY_KICKS_BALL_CARRIER_FORCE_NUMPY", "1")
         result_numpy = infer_ball_carrier(frames)
 
     pd.testing.assert_frame_equal(result_numba, result_numpy)

@@ -662,11 +662,12 @@ def _probe_comparison_work(key, ctx) -> FileSet:
     """The reported-not-gated comparison cohort (M5): the first `PROBE_KEEP` TRAINING matches of a
     ``--probe-comparison-providers`` provider whose extraction yielded rows, in the legacy iteration order
     (the legacy main pass captured it in-line). Read from the extract unit results, so nothing re-extracts."""
-    from scripts._stages import read_result, sorted_units
+    from scripts._stages import read_listed, sorted_units
 
     st = ctx.pipeline.stage("extract")
     assert isinstance(st, ItemStage)  # noqa: S101 -- the pipeline declares it so
     gen = ctx.generation("extract")
+    names = ctx.store.names(gen)  # ONE listing for the loop (HFU spec section 3); the reads below stay lazy
     providers = _csv(ctx.params["probe_comparison_providers"])
     refs = st.ref_map(ctx)
     records = []
@@ -674,7 +675,7 @@ def _probe_comparison_work(key, ctx) -> FileSet:
         ref = refs[k]
         if ref.prov not in providers or len(records) >= PROBE_KEEP:
             continue
-        rows = read_result(ctx.store, f"{gen}/{k}")
+        rows = read_listed(ctx.store, gen, k, names)
         if not isinstance(rows, pd.DataFrame) or not len(rows):
             continue
         records.append(_capture_record(ref.prov, ref.mid, rows["_group"].to_numpy()))

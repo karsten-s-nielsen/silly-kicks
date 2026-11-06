@@ -5,6 +5,139 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — minimal HF Jobs driver + resource-sharing overhaul + numba core (ADR-128 amendments 2026-11-02 to 2026-11-06, ADR-076 amendment 2026-11-06)
+
+> The wheel's dependencies change on 2026-11-06 (numba becomes a core dependency). The version stays 4.139.1
+> in this cycle's amend (owner decision 2026-11-06: no version bump in this amend); the bump comes with the release. Every earlier entry in this
+> section is scripts-only.
+
+### Added
+
+- `scripts/hf_jobs/driver.py`: the minimal, stateless HF Jobs campaign driver, now the controller
+  (`python -m scripts.hf_jobs campaign ...` routes to it). It runs on the ADR-128 engine unchanged (`launch`,
+  `executor`, `_stages`) and adds the preflight launch gate on every step, a per-unit coverage crash bound, an
+  inline-reduce trigger (a run over an empty `--shard-keys`), round-robin `--shard` jobs for `download`
+  datasets, per-instance `--plan` isolation, and a baseline-recoverable resume. `launch --dry-run` decides on
+  the same state as `launch`. See the ADR-128 amendment (2026-11-02) and its owner rulings.
+- `scripts/hf_jobs/failures.py`: message-driven job failure classification (FATAL / RERUN / RETRY / terminal),
+  verified against real captured HF `JobInfo` records.
+
+### Changed
+
+- Every HF job gets ONE `run_job` attempt: the driver is the only retry authority, so `attempts` bounds the runs
+  of a unit.
+- `preflight` runs five checks (six since 2026-11-06); the planner's estimate is gone.
+
+### Changed — resource-sharing overhaul (2026-11-03)
+
+The first retrain stalled because the driver fired too many small jobs without sharing rate-limited resources
+(mount-sidecar 401s, HTTP 429 on the bucket, OOM churn, O(N)-per-step coverage reads). Five driver-only fixes,
+tunable in `cycle1.toml` (`units_per_job`, `max_shards`, `mount_cap`, `mount_fault_budget`, `launch_batch`,
+`backoff_max_s`, `peak_rss_by_stage`):
+
+- **Job-sizing:** a stage launches `ceil(units / units_per_job)` jobs capped at `max_shards` — few big jobs, not
+  one per unit to the concurrency cap (the root of the job-count explosion).
+- **Per-dataset mount cap:** at most `mount_cap(dataset)` in-flight jobs mount a dataset at once (counting
+  in-flight plus same-pass launches, every `access=="mount"` dataset of an instance), so the CSI mount sidecar
+  is not stormed.
+- **Coverage set+push:** per-step coverage is recomputed in `created_at` order from a per-`run_key` read-once
+  cache (`_partitions/_coverage/state.json`) instead of re-reading every job's manifest each step — O(active
+  work), not O(all terminal jobs); no more bucket 429s.
+- **Failure attribution by locus:** a `mount_auth_flake` is a per-dataset fault (a dataset over
+  `mount_fault_budget` is reported a mount outage), never a per-unit `attempts` charge; unit crashes/OOM still
+  count per unit; timeouts ride.
+- **Memory sizing + escalation:** `cap_bytes` + the `rss` backend + a static `peak_rss_by_stage` hint size the
+  workers and defer an over-cap unit to a solo whole-box (`--escalate`, W=1) job — no OOM churn.
+- **Launch pacing + backoff:** a step launches at most `launch_batch` jobs; a contention signal — a 429 from
+  `list_jobs`/`launch`, or a rising `mount_auth_flake` rate — backs off the next poll (to `backoff_max_s`) and
+  resets on a clean step.
+- Docs: `docs/howto/hf-jobs-training.md` (command sequence), `docs/howto/compute-pipelines.md` (sizing), the
+  `hf-campaign` skill and the C4 `campaignCtl` container describe the driver.
+
+### Fixed — validation bugs found on the first cycle-1 retrain (2026-11-04)
+
+- **The stage generation depended on the working tree, including untracked files (the plateau).**
+  `_provenance.code_identity` returned `dirty-<git tree hash>` for ANY dirty tree, and the hash `git add -A`s
+  untracked files; the controller's own logs (`_retrain.log`, …) in its cwd kept changing the gen it computed
+  between launch and status, so it read a generation the clean HEAD-clone jobs never wrote → `done=0` → relaunch
+  forever. Now a tree dirty ONLY by untracked files yields the commit (the compute clones HEAD; untracked files
+  aren't in it), while a TRACKED edit still yields the content hash (new `_has_tracked_changes`). `git_provenance`
+  keys and artifact provenance are unchanged (ADR-128 amendment 2026-11-04, decision P9).
+- **A bare `volume mount failed` FATAL-stopped the campaign.** `failures.classify` now RETRIES it (`mount_failed`,
+  routed per-dataset in `_attribute` like `mount_auth_flake`, never charging a unit) instead of FATAL; the
+  specific storage-403 / init-retries mount faults stay FATAL.
+
+### Changed — reduce reads, job exit rule, match-outcome pipeline, job liveness (2026-11-05)
+
+- **A reduce reads the store once.** `reduce_stage` listed and stat'ed the whole generation directory once per
+  unit (~47 M stats for 3,961 units on the HF bucket mount), which timed out the win_probability reduce. A
+  reduce site now lists once and reads each file once (`_stages.read_listed`, `_stages.done_results`; census,
+  ghost_gk and the xcross probe loop too), and verifies every unit before it writes `_summary.json`.
+- **A recorded unit failure no longer fails its HF job.** `max_failures` is a reduce-time rule
+  (`_stages.exceeds_tolerance`): the run job records the failure, runs its other units and exits 0, so it sends
+  no ERROR email; the reduce trigger refuses without a subprocess. `abort_first_k` still exits 3. A local
+  `--run-all` reports `upstream stage '<name>' is incomplete: <n> pending, <n> failed (tolerance <n>)`.
+- **A failure record says where it failed.** `<key>.failed.json` gains a bounded `traceback`; `error` is unchanged.
+- **`match_outcome_dependence` is an ADR-128 pipeline** (`refs` -> per-match `extract` -> `fit`), no longer one
+  5,543 s adapter unit; its `model.json` bytes are the legacy fit's.
+- **Every HF job shows it is alive.** Each in-job process prints an `[alive]` line every 5 minutes (unit, age,
+  code location, child processes) and a `faulthandler` stack dump 10 minutes or more before the job timeout, in
+  a different second per process so the dumps do not interleave (`scripts/hf_jobs/liveness.py`;
+  `SILLY_KICKS_JOB_DEADLINE_EPOCH` exported by the job command). Diagnosis for the silent cv timeout E12;
+  nothing changes outside HF jobs.
+- **A rename the HF bucket mount lost is repaired in the job.** The mount silently lost ~0.3-0.4% of result
+  renames under load (55 in the match-outcome canary; 100 and 148 in two 12-job probes); the writer still saw the
+  file, and `fsync` did not help. Each process now journals its atomic writes (`scripts/_write_confirm.py`) and,
+  at its end, settles 30 s, lists, and repeats `os.replace` from the intact `.tmp` part; a loss it cannot repair
+  fails the worker, and the job relaunches it on the now-pending units. Local runs do not wait.
+- **Preflight takes about a minute, not ~20, and shows its progress.** `check_plans` no longer runs a toy
+  `--run-all` training per module (CI's parity tests already do; a local toy run reproduces none of the real-HF
+  failures); the per-instance `--plan` runs in parallel; every check and every plan prints a timed
+  `[preflight]` line. The report drops the always-empty planner `flags`.
+- **A driver step reads the plans in parallel and says what it did.** Each `launch`/`resume` step read the
+  21 instances' `--plan` one after another (minutes, no output) before it launched anything; it now reads them
+  in parallel (same order, same decisions) and prints one timed `[driver] step` line (a FATAL step prints
+  its `FATAL` line instead).
+
+### Changed — numba is a core dependency; the retrain launch 2 failures (2026-11-06)
+
+- **numba is a core runtime dependency** (`numba>=0.59.0` in `[project] dependencies`; ADR-076 amendment,
+  ADR-008 D3 and ADR-013 amended). As the optional `[numba]` extra it was absent from `[train]`, so HF training
+  jobs ran the ghost-GK leaf walk in its ~12x slower numpy body until the 2 h timeout. `[numba]` stays as an empty
+  alias, so `silly-kicks[numba]` pins still resolve. **Consumer note:** each numba release caps numpy (the locked
+  0.65.1 declares `numpy<2.5`; numba 0.68.1 supports numpy 2.5), so a numpy upgrade waits for a numba release.
+- `silly_kicks/_numba_dispatch.py` is the one dispatch point for the six kernel families (GHOST, DAS,
+  COORDINATION, PITCH_CONTROL, BALL_CARRIER, XTGK): `use_numba(family)` is False only under
+  `SILLY_KICKS_<FAMILY>_FORCE_NUMPY=1` (three switches are new: `PITCH_CONTROL`, `BALL_CARRIER`, `XTGK`), and a
+  missing numba raises `NumbaUnavailableError` (an `ImportError`) instead of a silent numpy fallback. An explicit
+  `compute_das(engine="numba")` or `predict_density(kde_backend="cpu-numba")` requires numba; an explicit numpy
+  engine never imports it. No kernel arithmetic changes: every parity test is unchanged and green.
+- `materialize_fileset` reads a FileSet from the store once per job (a job-local cache owned by
+  `LocalExecutor.run_stage`, filled under a `filelock`; `filelock` is now explicit in `[train]`). Five concurrent
+  cv workers had each read the same 388 MB prep FileSet through the bucket mount for over 6,600 s.
+- Every huggingface_hub request is bounded (`scripts/hf_jobs/hub_client.py`: a request hook fills the `None`
+  timeouts that `paginate` passes explicitly), and a `--plan` read is killed after 600 s with the plan process's
+  stack in the report (`PlanTimeoutError`). Three `--plan` reads had hung the driver for 2 h 10 min.
+- A unit charged by 2 timed-out jobs is STUCK, not relaunched (replaces HFU-TIMEOUT-05); a timeout charges only
+  the units that started in that job, read from its `[unit]` log lines.
+- `preflight` gains `check_numba`: numba must be in the locked job install set for Linux CPython 3.12.
+
+### Added — the job log trail (2026-11-06)
+
+- `[driver] job <id> ... <reason> after <s> s` per job that ends ERROR or CANCELED (once per run) and
+  `[driver] launch ...` per launch; `[unit] <stage>/<key> start` and `... <outcome> in <s> s` per unit;
+  `[job] <done>/<units> done, <failed> failed, exit <rc>, <s> s` at every run exit; `[read] <rel> <MB> MB in <s> s
+  (<MB/s> MB/s)` for every store read of 8 MB or more; `numba=<version>` on every `[alive]` start line.
+
+### Removed
+
+- The executor's run-time `max_failures` check, its worker mirror and the `_FAILED_DIR` markers; the adapter's
+  `_SHARD_ROOT_TARGETS` (only `match_outcome_dependence` used it).
+- The Cycle 1 controller: `scripts/hf_jobs/planner.py`, `campaign.step` / `next_actions` / `_job_specs` and the
+  `plan` / `profile` / `summary` commands (use `launch --dry-run` for a plan), the cost-history functions of
+  `ledger.py` (only `job_record` stays), and the campaign file's `target_minutes`. The code stays on the
+  abandoned branch `feat/controller-step-reads` (owner ruling 2026-11-02).
+
 ## [4.139.1] — 2026-10-22 — pandas 3.1 compatibility fix + compute contract harness (ADR-128) (PR-S202)
 
 > **Why a patch release:** pandas 3.1.0 broke `add_gradientsports_player_ids` (see Fixed). The release also

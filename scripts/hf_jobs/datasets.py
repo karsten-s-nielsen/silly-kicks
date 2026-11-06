@@ -361,6 +361,9 @@ def fetch(
 
 
 def main(argv: list[str] | None = None) -> int:
+    from scripts.hf_jobs.liveness import start_job_watch
+
+    start_job_watch("fetch")  # in an HF job only (the download pre-step, HFU spec §11.1)
     ap = argparse.ArgumentParser(prog="python -m scripts.hf_jobs datasets")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("record")

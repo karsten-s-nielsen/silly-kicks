@@ -250,7 +250,6 @@ def test_shifted_rho_group_means_rejects_malformed_runs(runs, match):
 @pytest.mark.parametrize("k", [1, 3, 4, 8, 11, 16])
 @pytest.mark.parametrize("p_hole", [0.0, 0.2])
 def test_cluster_null_backends_agree_bit_for_bit(monkeypatch, k, p_hole):
-    pytest.importorskip("numba")
     rng = np.random.default_rng(500 + 10 * k + int(p_hole * 10))
     n_finite = 0
     for n_draws in (1, 9, 23):
@@ -379,7 +378,6 @@ def test_pearson_rows_matches_corrcoef(monkeypatch, force_numpy):
 
 
 def test_pearson_rows_backends_agree_bit_for_bit(monkeypatch):
-    pytest.importorskip("numba")
     rng = np.random.default_rng(52)
     a = rng.normal(0.0, 1.0, 257)
     b = rng.normal(0.0, 1.0, (11, 257))

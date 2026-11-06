@@ -594,3 +594,9 @@ commit 1 on the feature branch -> the DGX gate against that exact commit -> noth
 - **Reviews:** `D:\Development\_reviews\2026-09-28-tf58-team-coordination-{d1-impl,d1-impl-r2,d2-impl,d2-impl-r2,d3-impl}.md`.
 - **External references:** Bourbousson 2010; Moura 2012/2013/2016; Duarte 2013; Folgado 2014; Richardson 2012;
   Shewchuk 1997 (orientation predicate); Winter 2009 (residual analysis).
+
+## Amendment (2026-11-06)
+
+D16's "optional `numba` kernels" now reads "numba kernels by default": numba is a core dependency (ADR-076
+amendment), `coordination._kernels._numba.use_numba()` delegates to `silly_kicks._numba_dispatch`, the numpy
+references run only under `SILLY_KICKS_COORDINATION_FORCE_NUMPY=1`, and a missing numba raises.

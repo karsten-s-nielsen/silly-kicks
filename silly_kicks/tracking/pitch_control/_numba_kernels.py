@@ -1,14 +1,11 @@
-"""Optional numba-accelerated kernels for pitch control computation.
+"""numba kernels for pitch control computation.
 
 These mirror the NumPy implementations in _spearman.py and _fernandez_bornn.py
 but use @numba.njit for ~5-10x speedup on large grids.
 
-Import pattern:
-    try:
-        from ._numba_kernels import tti_numba, influence_numba, gaussian_influence_numba
-        _HAS_NUMBA = True
-    except ImportError:
-        _HAS_NUMBA = False
+numba is a core dependency (HFU spec 13.2). ``_spearman._kernels`` / ``_fernandez_bornn._kernels`` load this module
+through ``silly_kicks._numba_dispatch.import_kernels`` unless ``SILLY_KICKS_PITCH_CONTROL_FORCE_NUMPY=1`` selects the
+numpy references; a missing numba raises ``NumbaUnavailableError``, never a silent fallback.
 
 See docs/superpowers/specs/2026-05-05-tf7-pitch-control-design.md section 9.
 """
@@ -22,7 +19,10 @@ import numpy as np
 try:
     from numba import njit  # type: ignore[import-not-found]
 except ImportError as e:
-    raise ImportError("numba is required for _numba_kernels. Install with: pip install silly-kicks[numba]") from e
+    raise ImportError(
+        "numba is required for _numba_kernels (numba is a core dependency of silly-kicks; "
+        "repair the install: pip install --force-reinstall silly-kicks)"
+    ) from e
 
 # numba's on-disk cache (cache=True) requires a writable cache *locator* to be
 # resolved AT IMPORT TIME (a writable __pycache__ beside the source, a writable

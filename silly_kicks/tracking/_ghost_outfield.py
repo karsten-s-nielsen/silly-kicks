@@ -576,8 +576,8 @@ class GhostOutfieldModel:
 
     Mirrors :class:`~silly_kicks.tracking._ghost_gk.GhostGkModel`: two
     ``HistGradientBoostingRegressor`` ensembles (x, y) served as the exact pickle-free boosted mean
-    (``baseline + sum_trees leaf_value``; no sklearn at inference, numba-accelerated leaf walk when the
-    ``[numba]`` extra is installed). Parameters-only npz + JSON + SHA256 serialization; chirality +
+    (``baseline + sum_trees leaf_value``; no sklearn at inference, numba-accelerated leaf walk, numba
+    being a core dependency). Parameters-only npz + JSON + SHA256 serialization; chirality +
     feature-contract fail-closed load-guards. No grid, no KDE density.
 
     Examples

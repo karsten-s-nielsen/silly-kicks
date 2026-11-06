@@ -46,15 +46,18 @@ from ._velocity_availability import (
     velocity_unavailable_by_design as _velocity_unavailable_by_design,
 )
 
-# Optional numba acceleration for the boosted-tree leaf traversal (ADR-013 / ADR-008
-# pattern): the ``@njit`` kernels are the ADAPTER, the numpy ``_vectorized_leaf_*`` bodies are
-# the PORT + fallback. The import is LAZY (bound on first use, never at module import) so a bare
+# numba acceleration for the boosted-tree leaf traversal (ADR-076; numba is a core dependency,
+# HFU spec 13.2): the ``@njit`` kernels are the ADAPTER, the numpy ``_vectorized_leaf_*`` bodies are
+# the PORT + parity reference, selected only by ``SILLY_KICKS_GHOST_FORCE_NUMPY=1``. The import is
+# LAZY (bound on first use, never at module import) so a bare
 # ``import _ghost_gk`` stays dependency-light -- the contract pinned by
 # ``test_ghost_gk_does_not_eagerly_import_numba``, mirroring the KDE ``cpu-numba`` path. The
 # kernels are bound as MODULE ATTRIBUTES so the dispatch (and test spies) resolve them at call
 # time. ``SILLY_KICKS_GHOST_FORCE_NUMPY=1`` forces the numpy path so both adapters run on every
 # CI leg.
 _HAS_GHOST_NUMBA: bool | None = None  # None = availability not yet probed
+#: The KDE backends that run on numpy only; an explicit one never imports numba (HFU spec 13.2).
+_NUMPY_KDE_BACKENDS = frozenset({"vectorized", "scipy", "fft", "fft-cic"})
 _leaf_values_numba: Any = None
 _leaf_indices_numba: Any = None
 
@@ -69,19 +72,18 @@ def _use_ghost_numba() -> bool:
     re-import.
     """
     global _HAS_GHOST_NUMBA, _leaf_values_numba, _leaf_indices_numba
-    if os.environ.get("SILLY_KICKS_GHOST_FORCE_NUMPY", "") == "1":
+    from silly_kicks import _numba_dispatch
+
+    # numba is core (HFU spec 13.2): only the explicit switch selects the numpy port; a missing numba raises
+    # NumbaUnavailableError here instead of silently running the ~12x slower walk.
+    if not _numba_dispatch.use_numba("GHOST"):
         return False
     if _HAS_GHOST_NUMBA is None:
-        try:
-            from ._ghost_gk_numba import _leaf_indices_numba as _li
-            from ._ghost_gk_numba import _leaf_values_numba as _lv
-
-            _leaf_values_numba = _lv
-            _leaf_indices_numba = _li
-            _HAS_GHOST_NUMBA = True
-        except ImportError:  # pragma: no cover - exercised only without the [numba] extra
-            _HAS_GHOST_NUMBA = False
-    return bool(_HAS_GHOST_NUMBA)
+        kernels = _numba_dispatch.import_kernels("silly_kicks.tracking._ghost_gk_numba")
+        _leaf_values_numba = kernels._leaf_values_numba
+        _leaf_indices_numba = kernels._leaf_indices_numba
+        _HAS_GHOST_NUMBA = True
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1402,7 +1404,7 @@ def _vectorized_leaf_indices(
         Feature matrix, shape (n_samples, n_features).
     flat : _FlatTrees | None
         Pre-flattened form of ``nodes_list`` (see :func:`_flatten_trees`). When supplied AND
-        the ``[numba]`` extra is installed (and ``SILLY_KICKS_GHOST_FORCE_NUMPY`` is unset),
+        ``SILLY_KICKS_GHOST_FORCE_NUMPY`` is unset (numba is a core dependency),
         the traversal dispatches to the bit-identical ``@njit`` adapter. Otherwise the numpy
         body below runs (the reference + fallback).
 
@@ -1477,7 +1479,7 @@ def _vectorized_leaf_values(
         Feature matrix, shape (n_samples, n_features); fit-time column order.
     flat : _FlatTrees | None
         Pre-flattened form of ``nodes_list`` (see :func:`_flatten_trees`). When supplied AND
-        the ``[numba]`` extra is installed (and ``SILLY_KICKS_GHOST_FORCE_NUMPY`` is unset),
+        ``SILLY_KICKS_GHOST_FORCE_NUMPY`` is unset (numba is a core dependency),
         the traversal dispatches to the bit-identical ``@njit`` adapter. Otherwise the numpy
         body below runs (the reference + fallback). Bit-identical either way (``np.array_equal``).
 
@@ -2042,8 +2044,8 @@ class GhostGkModel:
         the serialized tree node arrays + baselines via :func:`_vectorized_leaf_values`,
         so it is deterministic, sklearn-version-independent at inference, and identical
         after :meth:`fit` and :meth:`load`. Cheap — pure leaf traversal, no leaf-match,
-        no grid KDE; numba-accelerated (bit-identical) when the ``[numba]`` extra is
-        installed, numpy fallback otherwise (via the cached :attr:`_flat_trees`).
+        no grid KDE; numba-accelerated (bit-identical; numba is a core dependency), the numpy reference only
+        under the ``SILLY_KICKS_GHOST_FORCE_NUMPY`` switch (via the cached :attr:`_flat_trees`).
 
         Returns shape (n_samples, 2) — served (x, y).
 
@@ -2080,14 +2082,15 @@ class GhostGkModel:
         ----------
         kde_backend : {"auto", "vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "auto"
             KDE kernel. "auto" (the default) resolves to the fastest EXACT backend: "cpu-numba"
-            when the ``[numba]`` extra is installed (and ``SILLY_KICKS_GHOST_FORCE_NUMPY`` is
-            unset), else "vectorized". "cpu-numba" is exact within ~1e-9 of "vectorized"/"scipy"
+            unless the ``SILLY_KICKS_GHOST_FORCE_NUMPY`` switch is set (numba is a core dependency),
+            else "vectorized". "cpu-numba" is exact within ~1e-9 of "vectorized"/"scipy"
             (numba ``exp`` vs numpy ``exp``; the KDE golden already runs "cpu-numba"), so the
             default is exact-arithmetic -- a caller relying on the previous implicit "vectorized"
             default now gets "cpu-numba"; pass ``kde_backend="vectorized"`` to pin the exact numpy
             raw grid. "vectorized" (cpu-numpy) is the closed-form path; "scipy" is the reference
             oracle; "cpu-numba" runs the serial @njit fused loop (~10x the hot loop) and requires
-            the ``[numba]`` extra; "fft" is the binned-convolution backend (O(k + m log m); ~2000x
+            numba (a core dependency; ``NumbaUnavailableError`` on a broken install); "fft" is the
+            binned-convolution backend (O(k + m log m); ~2000x
             on the full-k production regime) -- faithful on mean/spread and on the mode for UNIMODAL
             grids, but on near-tie MULTIMODAL grids the NGP snap can flip the emitted mode by
             several metres, and it is NOT bit-faithful on the raw ``probabilities`` grid. "fft-cic"
@@ -2104,6 +2107,10 @@ class GhostGkModel:
             densities = model.predict_density(X_test)
             densities[0].probabilities.sum()  # ~1.0
         """
+        if kde_backend == "cpu-numba":  # an explicit numba request requires numba (HFU spec 13.2), first
+            from silly_kicks import _numba_dispatch
+
+            _numba_dispatch.require_numba()
         # TF-60 PR3: the KDE density grid is still the module-global DEFAULT_GHOST_GRID; an
         # extended-grid variant (e.g. `sweeper`) would be scored on the wrong 30 m grid. Fail LOUD
         # (never a silently-wrong density). This guard is on predict_density ONLY -- the mean path
@@ -2138,7 +2145,10 @@ class GhostGkModel:
         # Reindex to the canonical fit-time column order (same positional guard as
         # predict_mean): the leaf traversal indexes X[:, feature_idx] positionally.
         X = features[self._feature_names()].values.astype(np.float64)
-        query_leaves = _vectorized_leaf_indices(self._tree_nodes, X, flat=self._flat_trees)
+        # An explicit numpy-side KDE backend never imports numba (HFU spec 13.2), so its leaf walk is the numpy
+        # reference too (bit-identical, ADR-076). "auto" resolves to "vectorized" only under the GHOST switch.
+        flat = None if kde_backend in _NUMPY_KDE_BACKENDS else self._flat_trees
+        query_leaves = _vectorized_leaf_indices(self._tree_nodes, X, flat=flat)
 
         # Precompute grid mesh
         grid_xx, grid_yy = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")

@@ -1,14 +1,11 @@
-"""Optional numba-accelerated kernel for ball-carrier inference.
+"""numba kernel for ball-carrier inference.
 
 Mirrors the Python _carrier_loop_numpy in _ball_carrier.py but uses
 @numba.njit for ~30-50x speedup on large tracking datasets.
 
-Import pattern:
-    try:
-        from ._ball_carrier_numba import _carrier_loop_numba
-        _HAS_NUMBA = True
-    except ImportError:
-        _HAS_NUMBA = False
+numba is a core dependency (HFU spec 13.2). ``_ball_carrier._carrier_kernel`` loads this module through
+``silly_kicks._numba_dispatch.import_kernels`` unless ``SILLY_KICKS_BALL_CARRIER_FORCE_NUMPY=1`` selects the numpy
+reference; a missing numba raises ``NumbaUnavailableError``, never a silent fallback.
 """
 
 from __future__ import annotations
@@ -20,7 +17,10 @@ import numpy as np
 try:
     from numba import njit  # type: ignore[import-not-found]
 except ImportError as e:
-    raise ImportError("numba is required for _ball_carrier_numba. Install with: pip install silly-kicks[numba]") from e
+    raise ImportError(
+        "numba is required for _ball_carrier_numba (numba is a core dependency of silly-kicks; "
+        "repair the install: pip install --force-reinstall silly-kicks)"
+    ) from e
 
 # numba's on-disk cache (cache=True) requires a writable cache *locator* to be
 # resolved AT IMPORT TIME (a writable __pycache__ beside the source, a writable

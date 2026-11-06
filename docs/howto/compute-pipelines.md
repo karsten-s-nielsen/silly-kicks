@@ -41,8 +41,13 @@ module to read only staged datasets (the I1 gate, below).
   dataset-relative files (or fnmatch patterns) its units read, `()` for none. An `ItemStage` declares through
   its refs' `files`. `cross_commit_version="<name>-<n>"` lets an extraction stage resume across commits
   (decision P9); every other stage recomputes after a code change.
-- Failure rule: `max_failures` (default 0) and `abort_first_k` (the first k completed units all failed =
-  a systematic bug; abort).
+- Failure rule: `max_failures` (default 0) is a REDUCE-time tolerance (`_stages.exceeds_tolerance`): a run job
+  records a failed unit, runs its other units and exits 0; the reduce, the reduce trigger and the driver refuse
+  over it. `abort_first_k` (the first k completed units all failed = a systematic bug) aborts the job, exit 3.
+- Reduce reads: a reduce site lists its generation ONCE and reads each file once. A unit work that loops over
+  another stage's unit keys calls `_stages.done_results(ctx, stage)` (or `read_listed` on one listing it holds),
+  never `read_result` per key: on the HF bucket mount a listing per key is quadratic (ADR-128 amendment
+  2026-11-05).
 - `inner_parallel=True` + `inner_width`: the unit runs alone in its job and gets `ctx.pool`, an `InnerPool`
   whose `map_keyed(fn, {key: args})` runs inner tasks (e.g. CV folds) on `--inner-workers` processes.
 - `Pipeline(name, module, stages, params, output)`: declaration order is the DAG order; `output` names the
@@ -64,7 +69,38 @@ is retried on the next run; the campaign controller retries it until it has fail
 without the unit and names it; over it the controller halts the instance and names the unit. A job that
 ends in ERROR is resumed while a retryable failed unit or (after a timeout) a pending unit remains, until
 the stage's jobs have ended in ERROR twice in a row (`Constraints.error_resumes`). A
-killed HPO study unit restarts from trial 0 (R1, ADR-128).
+killed HPO study unit restarts from trial 0 (R1, ADR-128). A failure record (`<key>.failed.json`) holds the
+`error` string and a bounded `traceback`: the frames nearest the raise, then the message.
+
+**Reading a job log.** In an HF job every covered process prints an `[alive]` start line, then one line every
+300 s: `[alive] <job label> <role> pid=<pid> up=<s> unit=<stage>/<key> age=<s> at=<file>:<line> <function>
+children=<pid:state:cpu+<s>:wchan,...>`. A slow unit shows its `at=` moving between lines; a stall shows the same
+unit, a growing `age=` and the same `at=`. A child in state `D` with zero CPU waits in the kernel (its `wchan`
+names where, e.g. a FUSE request). 600 s or more before the job timeout each process prints a `faulthandler`
+dump (`Timeout (h:mm:ss)!` and every thread's stack); its start line names that time. Each process of a job
+dumps in a different second (`main` at 600 s, `reduce` 601 s, `adapter` 602 s, worker `w<i>` at
+600 + 10 × (i + 1) s, its pool child `w<i>.pool<j>` 1 + (j mod 9) s later), so the dumps of processes that start
+before their dump time never share a second. A process that starts after its dump time (for example a worker
+relaunched in the last minutes) dumps 1 s after it starts, so it shows its start-up stack and may share a second
+with another late starter. The start line ends `numba=<version>` (`absent` would mean a broken install: numba
+is a core dependency, and every kernel then raises `NumbaUnavailableError`).
+
+Each unit prints `[unit] <stage>/<key> start` and `[unit] <stage>/<key> done|excluded|failed in <s> s`; the
+driver's 2-timeout rule reads the start lines without an end line. Each run exit prints `[job] <done>/<units>
+done, <failed> failed, exit <rc>, <s> s` (not for `--plan`; a kill by the HF timeout prints none). A store read
+of 8 MB or more prints `[read] <rel> <MB> MB in <s> s (<MB/s> MB/s)`, and a progress line every 60 s while it
+runs, so a slow read and a hung read look different. Inside an executor stage, `materialize_fileset` reads a
+FileSet from the store ONCE per job (a job-local cache under a file lock; five concurrent readers of one 388 MB
+FileSet through the mount took over 6,600 s where one took under 300 s): read a large upstream FileSet through it,
+never per worker from the store.
+
+The HF bucket mount can lose a rename silently (~0.3-0.4% under load; the writer still sees the file). Every
+`_write_bytes_atomically` write is journaled per process (`scripts/_write_confirm.py`); at the end of each executor
+worker, reduce, stage main and adapter legacy-trainer runner, `confirm_job_writes` waits 30 s (0 s outside an HF job), lists, and repeats
+`os.replace` from the `.tmp` part. A `[confirm] repaired <n> lost rename(s)` line in a job log is that repair.
+Write store files only through `_write_bytes_atomically`/`LocalStore`, and delete them only through
+`LocalStore.delete` (or call `_write_confirm.forget`), so the journal stays true. A pool child always shows
+`unit=-` (the unit runs in its worker). Local runs print none of this (`scripts/hf_jobs/liveness.py`).
 
 ## Data
 
@@ -92,15 +128,14 @@ the int / str id mix a real multi-provider corpus has. A reduce that concatenate
 
 ## Sizing
 
-The `profile` stage measures a sample of each multi-unit stage; the planner (`scripts/hf_jobs/planner.py`)
-sizes N and W from the measured unit costs to meet the 60-minute target, bounded by RAM (W x peak RSS
-within 32 GB). A stage whose single unit exceeds the target is reported with its irreducible floor. The
-per-worker cap bounds RSS: a cgroup `MemoryMax` on the DGX, and in an HF container the executor's own RSS
-watchdog (`rss` backend; `RLIMIT_AS` bounds address space and failed every unit there). The cap is each
-worker's fair share of the usable RAM; a unit over it runs again alone, with the whole box. CPUs and RAM come
-from the cgroup (`available_cpus`, `available_ram_bytes`), never the container's host view. The
-job startup the planner subtracts from the target is the median that the committed campaign summaries
-measured (`docs/research/hf_campaigns/*.json`, field `startup_s`); before any summary exists it is 300 s.
+On HF the campaign driver (`scripts/hf_jobs/driver.py`, ADR-128 amendments 2026-11-02/03) sizes without a
+profile: a stage is split into `ceil(units / units_per_job)` jobs capped at `max_shards` (few big jobs, not one
+per unit), and each job is one full `cpu-upgrade` box (8 unit workers; an `inner_parallel` stage runs one unit
+at a time with `min(8, inner_width)` inner workers). A memory-heavy stage with a `peak_rss_by_stage` hint is
+sized down and capped (`--cap-bytes` + the auto-detected `rss` watchdog; `RLIMIT_AS` bounds address space and
+failed every unit there); an over-cap unit is deferred and re-run solo on the whole box (`--escalate`, W=1).
+CPUs and RAM come from the cgroup (`available_cpus`, `available_ram_bytes`), never the container's host view.
+The Cycle 1 cost-based planner and its `profile` measurements were removed (ADR-128 amendment 2026-11-02).
 
 ## Scaffold and register
 

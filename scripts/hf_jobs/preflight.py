@@ -1,20 +1,31 @@
-"""Preflight (spec 5.4): six no-spend checks. `launch` refuses without a passing report for the same
-commit and the same campaign-file hash. The report lives in the bucket (the controller is stateless)."""
+"""Preflight (spec 5.4, HFU spec 13.2): six no-spend checks. `launch` refuses without a passing report for the same
+commit and the same campaign-file hash. The report lives in the bucket (the controller is stateless).
+
+Each check prints one ``[preflight]`` line with its elapsed seconds as it finishes; check 6 also prints one line
+per instance. No check trains anything: CI's parity tests run every migrated trainer end to end on toy data, and a
+local toy run reproduces none of the failures that stop real HF runs (owner decision 2026-11-05)."""
 
 from __future__ import annotations
 
+import concurrent.futures
 import dataclasses
 import datetime
 import inspect
 import json
+import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
+from collections.abc import Callable
 from typing import Any
 
 REPORT_REL = "_campaign/{campaign}/{commit7}/preflight.json"
 _RUN_JOB_PARAMS = {"image", "command", "env", "secrets", "flavor", "timeout", "attempts", "labels", "volumes", "name"}
+#: Concurrent `--plan` subprocesses in check 6. Each is its own Python process: 3.6-19.7 s per instance, 45 s for
+#: all 21 at 8 wide (cycle1, measured 2026-11-05).
+PLAN_WORKERS = min(8, os.cpu_count() or 1)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -22,12 +33,14 @@ class Check:
     name: str
     ok: bool
     detail: str
-    flags: tuple[str, ...] = ()
 
 
-def _sh(run, argv: list[str], *, env: dict | None = None) -> tuple[int, str]:
-    kw = {} if env is None else {"env": env}
-    p = run(argv, capture_output=True, text=True, check=False, **kw)
+def _say(line: str) -> None:
+    print(line, flush=True)
+
+
+def _sh(run, argv: list[str]) -> tuple[int, str]:
+    p = run(argv, capture_output=True, text=True, check=False)
     return p.returncode, (p.stdout or "")
 
 
@@ -77,6 +90,44 @@ def _image_resolves(image: str) -> bool:
         return resp.status == 200
 
 
+#: The HF job platform (`launch.IMAGE` is python:3.12.14-bookworm on x86_64) for evaluating `uv export` markers.
+JOB_MARKER_ENV = {
+    "sys_platform": "linux",
+    "platform_system": "Linux",
+    "platform_machine": "x86_64",
+    "os_name": "posix",
+    "python_version": "3.12",
+    "python_full_version": "3.12.14",
+    "implementation_name": "cpython",
+    "platform_python_implementation": "CPython",
+}
+#: The job's install line (`launch.py` `uv sync --frozen ... --extra train ... --group hfjobs`) as an export.
+JOB_EXPORT_ARGV = ["uv", "export", "--frozen", "--no-hashes", "--extra", "train", "--group", "hfjobs"]
+
+
+def check_numba(*, run=subprocess.run) -> Check:
+    """Check 3 (HFU spec 13.2): numba is in the job's LOCKED install set on the job platform. A static check of the
+    lock, because preflight runs on the controller, where an `import numba` would prove the wrong wheel."""
+    from packaging.requirements import InvalidRequirement, Requirement
+
+    rc, out = _sh(run, JOB_EXPORT_ARGV)
+    if rc:
+        return Check("numba", False, f"`{' '.join(JOB_EXPORT_ARGV)}` failed (rc={rc})")
+    for line in out.splitlines():
+        text = line.split("#", 1)[0].strip()
+        if not text or text.startswith(("-", "\\")):
+            continue
+        try:
+            req = Requirement(text)
+        except InvalidRequirement:
+            continue
+        if req.name.lower() != "numba":
+            continue
+        if req.marker is None or req.marker.evaluate(JOB_MARKER_ENV):
+            return Check("numba", True, f"numba{req.specifier} in the locked job install set (linux cp312)")
+    return Check("numba", False, "numba is NOT in the locked job install set for linux cp312 (--extra train)")
+
+
 def check_lock(*, run=subprocess.run) -> Check:
     """Check 2: `uv lock --check` passes and the pinned image digest resolves on Docker Hub."""
     from scripts.hf_jobs.launch import IMAGE
@@ -92,7 +143,7 @@ def check_lock(*, run=subprocess.run) -> Check:
 
 
 def check_api(api: Any) -> Check:
-    """Check 3: the pinned `run_job`/`list_jobs` expose the typed parameters; cpu-upgrade is 8 vCPU / 32 GB."""
+    """Check 4: the pinned `run_job`/`list_jobs` expose the typed parameters; cpu-upgrade is 8 vCPU / 32 GB."""
     params = set(inspect.signature(api.run_job).parameters)
     missing = _RUN_JOB_PARAMS - params
     if missing:
@@ -114,7 +165,7 @@ def check_api(api: Any) -> Check:
 
 
 def check_datasets(names: list[str], *, api: Any) -> Check:
-    """Check 4: every staged dataset exists at its pinned revision and matches its lock record."""
+    """Check 5: every staged dataset exists at its pinned revision and matches its lock record."""
     from scripts.hf_jobs.datasets import declared, locked
 
     bad = []
@@ -146,40 +197,66 @@ def check_datasets(names: list[str], *, api: Any) -> Check:
     return Check("datasets", not bad, "; ".join(bad) or "every dataset matches its lock")
 
 
-def check_plans(instances: list[Any], *, run=subprocess.run) -> Check:
-    """Check 5: every job's `--plan` and (once per module) a toy `--run-all` pass in this environment.
+def _plan_one(inst: Any, run) -> tuple[bool, str, float]:
+    """(ok, last stderr line, seconds) for one instance's ``--plan`` in a fresh temp store."""
+    t0 = time.monotonic()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = f"{tmp}/{inst.job}"
+        argv = [
+            sys.executable,
+            "-m",
+            inst.module,
+            *inst.args,
+            "--plan",
+            "--store",
+            f"{root}/s",
+            "--data-root",
+            f"{root}/d",
+        ]
+        p = run(argv, capture_output=True, text=True, check=False)
+    try:
+        ok = p.returncode == 0 and bool(json.loads(p.stdout or "{}").get("stages"))
+    except json.JSONDecodeError:
+        ok = False
+    err = ([ln for ln in (p.stderr or "").splitlines() if ln.strip()] or ["(no stderr)"])[-1]
+    return ok, ("" if ok else err), time.monotonic() - t0
 
-    This is where the 4.138.0 real-HF defects would have shown up without spend: an empty study
-    enumeration, missing arms, a dotdir crash. Open-data modules run against a locally served toy tree.
+
+def check_plans(
+    instances: list[Any], *, run=subprocess.run, workers: int = PLAN_WORKERS, say: Callable[[str], None] = _say
+) -> Check:
+    """Check 6: every instance's ``--plan`` passes in this environment, with the campaign's own arguments.
+
+    The instances run in parallel (``workers``), each in its own temp store; each prints one line as it ends.
+    ``--plan`` is where the 4.138.0 real-HF defects would have shown up without spend: an empty study
+    enumeration, missing arms, a dotdir crash.
     """
-    import os
-
-    from scripts._toy_corpora import TOY_PARAMS, toy_session
-
     bad = []
-    toyed: set[str] = set()
-    for inst in instances:
-        with tempfile.TemporaryDirectory() as tmp:
-            argv = [sys.executable, "-m", inst.module, *inst.args, "--plan"]
-            argv += ["--store", f"{tmp}/s", "--data-root", f"{tmp}/d"]
-            rc, out = _sh(run, argv)
-            if rc or not json.loads(out or "{}").get("stages"):
-                bad.append(f"{inst.job}/{inst.variant}: --plan failed")
-                continue
-        if inst.module not in TOY_PARAMS or inst.module in toyed:
-            continue
-        toyed.add(inst.module)
-        with tempfile.TemporaryDirectory() as tmp, toy_session(inst.module, f"{tmp}/d") as (data, extra_env):
-            argv = [sys.executable, "-m", inst.module, *TOY_PARAMS[inst.module], "--run-all"]
-            argv += ["--store", f"{tmp}/s", "--data-root", str(data), "--allow-dirty"]
-            rc, _ = _sh(run, argv, env={**os.environ, **extra_env})
-            if rc:
-                bad.append(f"{inst.module}: toy --run-all failed")
-    return Check("plan", not bad, "; ".join(sorted(set(bad))) or "every --plan and toy --run-all passed")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = {pool.submit(_plan_one, inst, run): inst for inst in instances}
+        for fut in concurrent.futures.as_completed(futures):
+            inst = futures[fut]
+            ok, err, seconds = fut.result()
+            name = f"{inst.job}/{inst.variant}"
+            say(f"[preflight] plan {name} {'ok' if ok else 'FAILED'} {seconds:.1f}s" + ("" if ok else f": {err}"))
+            if not ok:
+                bad.append(f"{name}: --plan failed: {err}")
+    return Check("plan", not bad, "; ".join(sorted(bad)) or f"every --plan passed ({len(instances)} instances)")
+
+
+def run_checks(checks: list[tuple[str, Callable[[], Check]]], *, say: Callable[[str], None] = _say) -> list[Check]:
+    """Run each check in order and print one timed ``[preflight] <name> ok|FAIL <s>s: <detail>`` line as it ends."""
+    out = []
+    for name, check in checks:
+        t0 = time.monotonic()
+        c = check()
+        say(f"[preflight] {name} {'ok' if c.ok else 'FAIL'} {time.monotonic() - t0:.1f}s: {c.detail}")
+        out.append(c)
+    return out
 
 
 def assemble_report(
-    campaign: str, commit: str, campaign_sha256: str, checks: list[Check], *, flags: list[str], now: str | None = None
+    campaign: str, commit: str, campaign_sha256: str, checks: list[Check], *, now: str | None = None
 ) -> dict:
     return {
         "campaign": campaign,
@@ -187,7 +264,6 @@ def assemble_report(
         "campaign_sha256": campaign_sha256,
         "created_at": now or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "checks": [dataclasses.asdict(c) for c in checks],
-        "flags": list(flags),
         "ok": all(c.ok for c in checks),
     }
 
