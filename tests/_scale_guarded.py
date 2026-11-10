@@ -31,6 +31,9 @@ SCALE_GUARDED: dict[str, str] = {
     "silly_kicks.vaep.labels._possession_labels": "test__possession_labels_loc_is_subquadratic",
     "silly_kicks.spadl.utils.add_possessions": "test_add_possessions_is_subquadratic",
     "silly_kicks.atomic.spadl.utils.add_possessions": "test_atomic_add_possessions_is_subquadratic",
+    # The ball-carrier pre-index places every player row in ONE stable sort and one scatter (no group_rows;
+    # HFU fit-units spec 4.5): the guard scales the frame dimension of one match.
+    "silly_kicks.tracking._ball_carrier._pre_index_frames": "test__pre_index_frames_is_subquadratic",
     "silly_kicks.restdefense._counting.count_goalside_by_sample": ("test_count_goalside_by_sample_is_subquadratic"),
     "silly_kicks.restdefense._compute._score_samples": "test_score_samples_is_subquadratic",
     "silly_kicks.gkdv._probe.paired_vector_controls": "test_paired_vector_controls_is_subquadratic",

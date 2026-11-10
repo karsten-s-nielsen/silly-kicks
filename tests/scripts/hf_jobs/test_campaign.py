@@ -2,7 +2,7 @@
 
 The driver loop is tested in ``test_hf_driver.py``. These tests run the command BODIES (review D1-IMPL-06):
 ``cmd_cancel`` and ``cmd_status`` on real ``huggingface_hub`` ``JobInfo`` objects, ``cmd_preflight`` over the
-real cycle1 campaign with the six checks stubbed.
+real cycle1 campaign with the seven checks stubbed.
 """
 
 from __future__ import annotations
@@ -55,6 +55,7 @@ def test_load_campaign_reads_the_driver_settings():
     c = C.load_campaign(CYCLE1)
     assert (c.name, c.concurrency_cap, c.attempts) == ("cycle1", 25, 3)
     assert c.launch_batch == 16  # HFU spec 17.5
+    assert (c.storage_limit_bytes, c.storage_headroom_bytes) == (100_000_000_000, 20_000_000_000)
     assert len(c.sha256) == 64 and c.jobs
 
 
@@ -101,9 +102,10 @@ def test_cmd_status_reports_a_plan_failure_as_a_row(monkeypatch) -> None:
     assert rows and all("boom" in r["error"] for r in rows)
 
 
-def test_cmd_preflight_runs_the_six_checks_and_uploads_the_gate_report(monkeypatch, capsys) -> None:
+def test_cmd_preflight_runs_the_seven_checks_and_uploads_the_gate_report(monkeypatch, capsys) -> None:
     calls: list[str] = []
-    for name in ("check_ref", "check_lock", "check_numba", "check_api", "check_datasets", "check_plans"):
+    names = ("check_ref", "check_lock", "check_numba", "check_api", "check_datasets", "check_plans", "check_storage")
+    for name in names:
         monkeypatch.setattr(
             preflight, name, lambda *a, _n=name, **k: (calls.append(_n), preflight.Check(_n, True, "ok"))[1]
         )
@@ -118,16 +120,19 @@ def test_cmd_preflight_runs_the_six_checks_and_uploads_the_gate_report(monkeypat
     monkeypatch.setattr(store_mod, "BucketStore", _Store)  # cmd_preflight imports it from the store module
     camp = C.load_campaign(CYCLE1)
     report = C.cmd_preflight(camp, SHA, api=_ListApi([]))
-    assert calls == ["check_ref", "check_lock", "check_numba", "check_api", "check_datasets", "check_plans"]
+    assert calls == list(names)
     assert report["ok"] is True and report["commit"] == SHA and report["campaign_sha256"] == camp.sha256
     lines = capsys.readouterr().out.splitlines()  # one timed progress line per check, as it finishes
-    assert [ln.split()[1] for ln in lines] == [
-        "check_ref",
-        "check_lock",
-        "check_numba",
-        "check_api",
-        "check_datasets",
-        "check_plans",
-    ]
+    assert [ln.split()[1] for ln in lines] == list(names)
     assert all(re.fullmatch(r"\[preflight\] \S+ ok \d+\.\ds: ok", ln) for ln in lines), lines
     assert list(uploaded) == [preflight.REPORT_REL.format(campaign="cycle1", commit7=SHA[:7])]
+
+
+def test_storage_values_default_when_the_campaign_file_has_none(tmp_path):
+    text = CYCLE1.read_text(encoding="utf-8")
+    lines = [ln for ln in text.splitlines() if not ln.startswith(("storage_limit_bytes", "storage_headroom_bytes"))]
+    assert len(lines) == len(text.splitlines()) - 2  # cycle1.toml states both values
+    p = tmp_path / "c.toml"
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    c = C.load_campaign(p)
+    assert (c.storage_limit_bytes, c.storage_headroom_bytes) == (100_000_000_000, 20_000_000_000)

@@ -7,6 +7,7 @@ waiting for response headers: huggingface_hub 2.2.0 builds its client with `time
 
 from __future__ import annotations
 
+import re
 import socket
 import subprocess
 import sys
@@ -146,7 +147,42 @@ def test_read_plan_timeout_carries_stack(monkeypatch):
     msg = str(info.value)
     assert "--plan failed (timeout after 3 s)" in msg
     assert 'File "' in msg and "_hang" in msg, msg
+    # The dump is the Python-thread dump of the job watch (never the `faulthandler` watchdog, whose dump can
+    # end the process it reads): its header starts the detail, and the main thread's hung frame comes first.
+    assert "Timeout (" not in msg, msg
+    detail = msg.split("(timeout after 3 s): ", 1)[1]
+    assert re.match(r"\[alive\] \S+ plan pid=\d+ deadline dump: \d+ thread\(s\)", detail), detail
+    assert detail.index(" in _hang") < detail.index(" in <module>")
 
 
 def test_plan_timeout_is_not_rate_limited():
     assert D._plan_rate_limited(C.PlanTimeoutError("--plan failed (timeout after 600 s): rate limit")) is False
+
+
+def _timeout(stderr) -> subprocess.TimeoutExpired:
+    return subprocess.TimeoutExpired(cmd=["python"], timeout=600, stderr=stderr)
+
+
+def test_plan_timeout_detail_starts_at_the_dump_header():
+    """The detail is the child's dump from its header line; what the child printed before it is dropped."""
+    dump = (
+        "[alive] - plan pid=7 deadline dump: 2 thread(s), most recent call first\n"
+        "Thread MainThread (0x1) [main]:\n"
+        '  File "store.py", line 10 in _hang\n'
+        '  File "plan.py", line 3 in <module>\n'
+        "Thread sk-dump (0x2):\n"
+        '  File "liveness.py", line 9 in stack_dump\n'
+    )
+    err = "a warning line\nanother line\n" + dump
+    assert C._plan_timeout_detail(_timeout(err)) == dump
+    assert C._plan_timeout_detail(_timeout(err.encode("utf-8"))) == dump  # POSIX gives bytes
+    long = dump + "".join(f'  File "deep.py", line {i} in level{i}\n' for i in range(400))
+    kept = C._plan_timeout_detail(_timeout("noise\n" + long))
+    assert len(kept) == C.PLAN_DUMP_KEEP_CHARS and kept.startswith("[alive] - plan pid=7 deadline dump: ")
+
+
+def test_plan_timeout_detail_without_a_dump_is_the_stderr_tail():
+    err = "x" * 5000 + "the last line"
+    got = C._plan_timeout_detail(_timeout(err))
+    assert len(got) == C.PLAN_DUMP_KEEP_CHARS and got.endswith("the last line")
+    assert C._plan_timeout_detail(_timeout(None)) == ""

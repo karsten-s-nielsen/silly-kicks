@@ -1,4 +1,7 @@
-"""Preflight (spec 5.4, HFU spec 13.2): six no-spend checks; launch refuses without a passing report for this commit."""
+"""Preflight (spec 5.4, HFU spec 13.2, HFU fit-units spec C3): seven no-spend checks.
+
+Launch refuses without a passing report for this commit.
+"""
 
 from __future__ import annotations
 
@@ -195,3 +198,87 @@ def test_check_numba_ignores_other_platform_line():
 
 def test_check_numba_fails_when_the_export_fails():
     assert not P.check_numba(run=_export_run("", rc=2)).ok
+
+
+# ---- check 7: storage (HFU fit-units spec C3) --------------------------------------------------------
+
+GB = 1_000_000_000
+
+
+class _StorageApi:
+    """Two buckets, two private datasets, one public dataset, one private model -- sizes in bytes."""
+
+    def __init__(self, *, fail: str | None = None, missing: str | None = None) -> None:
+        self.fail, self.missing = fail, missing
+        self.buckets = {"org/scratch": 20 * GB, "org/canary": 1 * GB}
+        self.datasets = {
+            "org/private-a": (True, 30 * GB),
+            "org/private-b": (True, 9 * GB),
+            "org/public": (False, 500 * GB),
+        }
+        self.models = {"org/sandbox-m": (True, 0 * GB + 5_000_000)}
+
+    def list_buckets(self, org):
+        return [types.SimpleNamespace(id=k, size=v) for k, v in self.buckets.items()]
+
+    def list_datasets(self, *, author):
+        return [types.SimpleNamespace(id=k, private=p) for k, (p, _s) in self.datasets.items()]
+
+    def list_models(self, *, author):
+        return [types.SimpleNamespace(id=k, private=p) for k, (p, _s) in self.models.items()]
+
+    def _info(self, table, repo_id):
+        if self.fail == repo_id:
+            raise RuntimeError("429 Too Many Requests")
+        used = None if self.missing == repo_id else table[repo_id][1]
+        return types.SimpleNamespace(id=repo_id, used_storage=used)
+
+    def dataset_info(self, repo_id, *, expand):
+        assert expand == ["usedStorage"]
+        return self._info(self.datasets, repo_id)
+
+    def model_info(self, repo_id, *, expand):
+        assert expand == ["usedStorage"]
+        return self._info(self.models, repo_id)
+
+
+_USED = 20 * GB + 1 * GB + 30 * GB + 9 * GB + 5_000_000  # the public dataset is not counted
+
+
+def test_storage_under_the_bound_passes():
+    c = P.check_storage(_StorageApi(), org="org", limit_bytes=100 * GB, headroom_bytes=20 * GB)
+    assert c.ok and c.name == "storage"
+    assert f"{_USED / GB:.2f} GB used" in c.detail and "org/private-a (dataset) 30.00 GB" in c.detail
+
+
+def test_storage_at_the_bound_passes():
+    assert P.check_storage(_StorageApi(), org="org", limit_bytes=_USED + 20 * GB, headroom_bytes=20 * GB).ok
+
+
+def test_storage_over_the_bound_fails_and_names_the_largest_repo():
+    c = P.check_storage(_StorageApi(), org="org", limit_bytes=_USED + 20 * GB - 1, headroom_bytes=20 * GB)
+    assert not c.ok
+    assert c.detail.index("org/private-a") < c.detail.index("org/scratch") < c.detail.index("org/private-b")
+
+
+def test_a_public_repo_is_not_counted():
+    c = P.check_storage(_StorageApi(), org="org", limit_bytes=100 * GB, headroom_bytes=20 * GB)
+    assert "org/public" not in c.detail
+
+
+def test_an_api_error_fails_the_storage_check_with_its_reason():
+    c = P.check_storage(_StorageApi(fail="org/private-b"), org="org", limit_bytes=100 * GB, headroom_bytes=20 * GB)
+    assert not c.ok and "429 Too Many Requests" in c.detail
+
+
+def test_a_missing_size_fails_the_storage_check():
+    c = P.check_storage(_StorageApi(missing="org/private-a"), org="org", limit_bytes=100 * GB, headroom_bytes=20 * GB)
+    assert not c.ok and "org/private-a" in c.detail and "no size" in c.detail
+
+
+def test_storage_fails_when_a_repo_has_no_private_field():
+    """A listing entry without ``private`` cannot be classed: the count is not a pass (fail closed)."""
+    api = _StorageApi()
+    api.list_datasets = lambda *, author: [types.SimpleNamespace(id="org/private-a")]
+    c = P.check_storage(api, org="org", limit_bytes=100 * GB, headroom_bytes=20 * GB)
+    assert not c.ok and "org/private-a" in c.detail and "private" in c.detail

@@ -19,6 +19,11 @@ mount_fault_budget = 12
 # Per-dataset concurrent-mount cap (fix 2): the private tc3 is mounted by 7 instances; cap well below that so
 # the CSI mount sidecar is not stormed. Other datasets use the default below.
 mount_cap = 25
+# Preflight check 7 (HFU fit-units spec C3): the org's private storage (buckets + private datasets and models)
+# must leave the headroom under the limit. The limit is 100 GB, owner-verified 2026-11-10 (the HF billing page).
+# One campaign is about 7.5 GB: the headroom is two campaigns and 5 GB.
+storage_limit_bytes = 100000000000
+storage_headroom_bytes = 20000000000
 
 [campaign.mount_cap_by_dataset]
 tc3 = 6
@@ -28,9 +33,17 @@ tc3 = 6
 [campaign.peak_rss_by_stage]
 "ghost_gk/extract" = 8589934592
 "ghost_gk/cache" = 8589934592
+# One xsuccess fit unit is one xgboost fit on up to 8 M rows (HFU fit-units spec 3.4). A whole calibrated fit
+# (6 such fits in one process) peaked at 7.26 GiB (HFU spec 16.7): the bound of one unit, with a margin.
+"xsuccess/fit" = 8589934592
 
-# xsuccess first (HFU spec 16.6): the long pole (hpo ~2.7 h, fit ~1.5 h) launches at once; a step launches in
-# instance order.
+# A stage's own job size (HFU fit-units spec 3.4): the 36 xsuccess fit units run 3 wide (the hint above), so
+# 12 jobs of 3 run all of them at once; the campaign value (20 per job) would give 2 jobs and 6 at once.
+[campaign.units_per_job_by_stage]
+"xsuccess/fit" = 3
+
+# xsuccess first (HFU spec 16.6): the long pole (hpo ~2.4 h; fit is 36 units in 12 jobs, HFU fit-units spec 3.4)
+# launches at once; a step launches in instance order.
 [[jobs]]
 job = "xsuccess"
 tier = "public"

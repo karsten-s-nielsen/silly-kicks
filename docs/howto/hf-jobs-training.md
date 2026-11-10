@@ -56,7 +56,7 @@ open-data cache; a cache miss raises `OpenDataSnapshotMissError` and never fetch
 
 `scripts/hf_jobs/campaigns/<name>.toml` (committed, INV-7): the bucket, `concurrency_cap` (the in-flight
 ceiling), `attempts` (the per-unit bound; each HF job itself gets one attempt), the resource-sharing knobs
-(`units_per_job`/`max_shards` size a stage into few big jobs; `mount_cap` + `mount_cap_by_dataset` bound
+(`units_per_job`/`max_shards` size a stage into few big jobs; `units_per_job_by_stage` gives one `"job/stage"` its own job size; `mount_cap` + `mount_cap_by_dataset` bound
 concurrent mounts of a dataset; `mount_fault_budget`; `launch_batch` + `backoff_max_s` pace launches; a
 `peak_rss_by_stage` hint sizes memory-heavy stages — ADR-128 amendment 2026-11-03), and per job the trainer or
 driver, its tier, its dataset (plus
@@ -69,8 +69,8 @@ registry pins each instance's corpus-scope and search-size args (`base_args`). R
 Run long commands in the background. The controller is the minimal driver (`scripts/hf_jobs/driver.py`,
 ADR-128 amendment 2026-11-02).
 
-1. `preflight` -- six no-spend checks (commit pushed and green, lockfile and image, numba in the locked job
-   install set, API contract, datasets, every instance's `--plan`, run in parallel). `check_numba` reads
+1. `preflight` -- seven no-spend checks (commit pushed and green, lockfile and image, numba in the locked job
+   install set, API contract, datasets, every instance's `--plan`, run in parallel, and the org's storage headroom). `check_numba` reads
    `uv export --frozen --no-hashes --extra train --group hfjobs` and evaluates each line's marker for Linux
    CPython 3.12: the job must install numba (a core dependency since 2026-11-06; without it the ghost leaf walk
    ran 12x slower into the 2 h timeout). Each check prints one `[preflight] <check> ok|FAIL <s>s` line as it
@@ -91,8 +91,8 @@ ADR-128 amendment 2026-11-02).
    flight <i>; launched <l>; stuck <r>; instances done <d>/<n>` (done = the output stage is reduced). A study
 unit prints `[progress] study <tag> trial <k>/<n> best=<v> in <s> s` per trial, the census bootstrap
 `[progress] bootstrap <k>/<n> convergent=<c>` about every 60 s and once at the end, a cross-validation loop
-`[progress] <trainer> fold <k>/<n> in <s> s` per fold (the pooled xsuccess `fit`: `[progress] xsuccess fit
-<k>/<n> in <s> s` per completed fold or final fit), a long input read or reduce `[read] <stage> results <k>/<n>
+`[progress] <trainer> fold <k>/<n> in <s> s` per fold (the xsuccess `fit` is 36 stage units, one xgboost fit each: every unit prints its `[unit]`
+lines), a long input read or reduce `[read] <stage> results <k>/<n>
 in <s> s` at most every 60 s (once at the end when it read 100 files or more), and each reduce `[reduce]
 <stage> done in <s> s`. A job hides the three per-match open-data converter warnings (`PYTHONWARNINGS`, scoped to
 `scripts._sb_open_data`). A driver store write that stays rate-limited after 3 retries (2, 4 and 8 s) ends the
@@ -107,7 +107,7 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    The reduce is inline: the job that finds the stage complete reduces it, and the driver triggers a reduce
    with an empty key set when no unit is left to run. No per-worker memory cap is set, so a unit that runs
    out of memory kills its job (`oom`, a RETRY). A unit that `attempts` jobs covered without completing is
-   reported, not retried. A job's limit is 7,200 s unless its stage declares `timeout_s` (the xsuccess `hpo` and `fit` stages:
+   reported, not retried. A job's limit is 7,200 s unless its stage declares `timeout_s` (the xsuccess `hpo` stage:
    14,400 s). A run re-plans only the instances whose output is not reduced yet, and each `--plan` lists its
    run key once.
    A `Job timeout` spends no coverage, but it charges the units that started in that job
@@ -154,8 +154,9 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
 9. Owner gate (commit), then declare the re-fit event in the manifest (version, ADR) and re-render the
    cards (`tests/test_card_regions.py` flags a stale region).
 10. `publish --sandbox --staging DIR` (owner go) -- private `silly-kicks/sandbox-<name>` repos, then the
-    post-verification (model-only file set, remote `SHA256SUMS` = local, README = the rendered card, a
-    `from_hub` round-trip). A public publish is a separate owner go after the artifact commit.
+    post-verification (model-only file set, remote `SHA256SUMS` = local, README = the rendered card, a load
+    round trip: `from_hub` for an artifact with a Hub class; the job loader on the files downloaded to
+    `DIR/_post_verify/<repo>/` for an artifact without one, such as `xsuccess-v1`). A public publish is a separate owner go after the artifact commit.
 
 ## The DGX as an executor
 
@@ -167,3 +168,52 @@ and runs each stage through the stage CLI with peak-RSS measurement against the 
 
 Per-second billing on `cpu-upgrade` ($0.03 per hour): N short jobs cost the same as one long job. The scratch
 bucket adds a small per-GB-month cost.
+
+## Storage and run keys
+
+The org has a private storage limit of 100 GB (owner-verified 2026-11-10 on the HF billing page; the buckets,
+the private datasets and the private models together). Launch 7 stopped on it (`403 Private storage limit
+reached`). At the limit HF also refuses the bucket delete, so clean up BEFORE the limit is near.
+
+- **Preflight check 7, `check_storage`.** It adds the size of the org's buckets and `usedStorage` of each private
+  dataset and model, and fails when the sum plus `storage_headroom_bytes` (20 GB) is above `storage_limit_bytes`
+  (100 GB); both values are in the campaign file. The line lists the used bytes by repo, largest first. An API
+  error or a repo without a size fails the check.
+- **`campaign <file> prune`** lists, for this campaign, the run keys of every commit other than HEAD (files and
+  bytes) and deletes nothing. **`prune --delete --i-have-owner-approval <commit7>`** (the flag once per commit)
+  deletes the run keys of the named commits. Deletion is irreversible: get the owner's yes for each run. Run it
+  after an amend is pushed, and after a launch is retrieved and verified. Stop the driver first: between two job
+  waves no job is non-terminal, so `prune` cannot see that a campaign is live.
+  - It refuses HEAD's commit, a commit with a non-terminal job, and a commit without a run key.
+  - It touches only top-level folders that are exactly `<campaign>-<commit7>-<job>-<tier>` (or with `-r<N>`) for a
+    job of the campaign; never `_campaign`, `_staged`, `_canary` or another campaign's keys.
+  - For a commit that the manifest names as a `training_commit` it prints a notice first: the run keys are run
+    records; the artifacts are in the wheel and on the Hub.
+  - It prints the files left for each run key and exits 1 when a file is left; a second run deletes the rest. A
+    `403` stops the run with a message: delete a private dataset or model first.
+- **A lost result.** Over the limit the bucket mount accepts a write locally and loses the upload; the small
+  marker of a `FileSet` result can land without its files. The plan then reports the unit in `lost_units` (or the
+  stage in `lost_output`), the stage is not reduced, and the driver reruns the unit or the reduce. When the
+  attempts are spent the report is `<stage>/<key>: result lost (members missing); free storage, stop the driver,
+  then run resume` (or `<stage>: output lost ...`).
+
+## Compare two launches
+
+`campaign <file> compare --staging NEW --baseline OLD` compares the retrieved artifacts of two launches (local
+files only, the folders `<staging>/<run_key>/<variant>/`). It prints one line per instance and exits 0 only when
+every artifact is identical and the census verdict of NEW (`NEW/verify.json`) is ok.
+
+- `metadata.json`, `metrics.json` and the file that the artifact's `commit_field` names: equal without the
+  provenance keys (`identity.PROVENANCE_KEYS`).
+- `SHA256SUMS`: equal on the lines of the other files. `MODEL_CARD.md`: equal after each commit is replaced.
+- Every other file: byte for byte.
+
+A launch that changes no model is a parity proof: when `compare` passes against the shipped launch, adopt and
+publish nothing. A difference is a defect of the change.
+
+## Recover a STUCK unit
+
+A `STUCK <instance>: <reason>` line ends with `fix the cause, stop the driver, then run resume`. The driver
+counts the failed jobs it saw since it started; the jobs that were terminal at its start are its baseline. So a
+unit that you repair while the driver runs stays STUCK in that run. Stop the driver (the jobs in flight go on),
+then run `resume`: the new run has a new baseline and attempts the work again.

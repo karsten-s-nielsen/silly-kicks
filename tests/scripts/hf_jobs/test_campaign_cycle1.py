@@ -87,3 +87,20 @@ def test_the_long_pole_is_the_first_instance():
     and a ~1.5 h fit) comes first in the file; launch 5 started its extract ~1.5 h in."""
     first = C.instances(C.load_campaign(CYCLE1), "0" * 40)[0]
     assert (first.job, first.tier) == ("xsuccess", "public")
+
+
+def test_cycle1_runs_the_36_xsuccess_fits_as_twelve_jobs_of_three():
+    """HFU fit-units spec 3.4: the `fit` stage has its own job size (3 units) and a peak-RSS hint (8 GiB) that
+    gives exactly 3 unit workers on a `cpu-upgrade` box, so 12 jobs run all 36 fits at once."""
+    from scripts._parallel_launch import size_workers
+    from scripts.hf_jobs.driver import _nshards
+    from scripts.hf_jobs.executor import ExecutorConfig
+    from scripts.train_xsuccess import FIT_UNITS
+
+    c = C.load_campaign(CYCLE1)
+    assert c.units_per_job_by_stage == {"xsuccess/fit": 3}
+    assert c.peak_rss_by_stage["xsuccess/fit"] == 8 * 1024**3
+    assert _nshards(len(FIT_UNITS), c.units_per_job_by_stage["xsuccess/fit"], c.max_shards) == 12
+    gib = 1024**3
+    for box_ram in (30 * gib, 32 * gib):  # the cgroup figure of a 32 GB cpu-upgrade box
+        assert size_workers(c.peak_rss_by_stage["xsuccess/fit"], box_ram, 8, ExecutorConfig().headroom_bytes) == 3

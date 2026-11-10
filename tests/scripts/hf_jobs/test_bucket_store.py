@@ -118,3 +118,46 @@ def test_an_empty_prefix_store_never_lists_the_whole_bucket():
     s = BucketStore("b/x", "", api=api)
     assert s.names("rk/p/u") == {"a.json"}
     assert api.lists == [("rk/p/u/", False)]
+
+
+# ---- the plan's request count with the FileSet member check (HFU fit-units spec C4) -------------------
+
+
+def _plan_requests(tmp_path, *, fileset: bool) -> tuple[list, int, dict]:
+    """Run a one-stage toy pipeline into a local store, serve its files from a counting fake bucket, and plan it.
+    ``fileset``: the unit result and the stage output are FileSets; else both are frames."""
+    import pandas as pd
+
+    from scripts import _stages as s
+
+    def work(key, ctx):
+        return s.FileSet({"X.npy": b"x", "sub/ids.npy": b"i"}) if fileset else pd.DataFrame({"a": [1]})
+
+    def reduce(results, ctx):
+        return s.FileSet({"out.bin": b"o"}) if fileset else pd.DataFrame({"b": [2]})
+
+    pipeline = s.Pipeline(
+        name="t",
+        module="tests.scripts._toy_pipeline",
+        stages=(s.Stage(name="prep", units=lambda c: ["u1", "u2"], work=work, reduce=reduce),),
+        params=(),
+    )
+    prov = {"commit": "c" * 40, "tree_state": "clean", "code_identity": "c" * 40}
+    local = s.make_context(pipeline, {}, prov, store=s.LocalStore(tmp_path), data_root=None)
+    for key in ("u1", "u2"):
+        s.run_unit(local, pipeline.stage("prep"), key, worker="w0")
+    s.reduce_stage(local, "prep")
+    files = {f"rk/{p.relative_to(tmp_path).as_posix()}": p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    api = _CountingApi(files)
+    ctx = s.make_context(pipeline, {}, prov, store=BucketStore("b/x", "rk", api=api), data_root=None)
+    record = s.plan(ctx)["stages"][0]
+    return api.lists, api.downloads, record
+
+
+def test_the_member_check_adds_one_marker_read_per_fileset_result_and_no_listing(tmp_path):
+    lists_f, reads_f, rec_f = _plan_requests(tmp_path / "f", fileset=True)
+    lists_p, reads_p, rec_p = _plan_requests(tmp_path / "p", fileset=False)
+    assert lists_f == lists_p == [("rk/", True)]  # ONE recursive listing, with and without FileSets
+    assert reads_f - reads_p == 3  # two unit markers and the output marker; no member is read
+    assert (rec_f["done"], rec_f["reduced"], rec_f["lost_units"], rec_f["lost_output"]) == (2, True, [], False)
+    assert (rec_p["done"], rec_p["reduced"]) == (2, True)

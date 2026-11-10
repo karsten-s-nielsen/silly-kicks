@@ -2,8 +2,9 @@
 
 Fits ``silly_kicks.xsuccess.XSuccessModel`` (END-BLIND, calibrated XGBoost) on the PUBLIC StatsBomb open-data
 corpus. An ADR-128 pipeline (HFU spec 15.5a): ``refs`` -> ``extract`` (one store-cached unit per match: its real
-on-ball rows) -> ``hpo`` (the Optuna study, its folds on the InnerPool) -> ``fit`` (the GroupKFold-by-match
-out-of-fold metrics, the pooled fit, the pickle-free booster-JSON + metadata + SHA256SUMS bundle, the card).
+on-ball rows) -> ``hpo`` (the Optuna study, its folds on the InnerPool) -> ``fit`` (36 units, one xgboost fit
+each: the final fit and the GroupKFold-by-match folds with their calibration splits; the reduce gives the
+out-of-fold metrics, the pickle-free booster-JSON + metadata + SHA256SUMS bundle and the card).
 ``python -m scripts.train_xsuccess --run-all --store <STORE> --all-competitions --hpo-trials 30 --out <DIR>``.
 """
 
@@ -33,27 +34,6 @@ def onball_rows_for_match(actions: pd.DataFrame, match_id: object) -> pd.DataFra
     out = p[["period_id", "type_id", "result_id", "bodypart_id", "start_x", "start_y", "time_seconds"]].copy()
     out.insert(0, "game_id", str(match_id))
     return out.reset_index(drop=True)
-
-
-def cross_val_metrics(pooled: pd.DataFrame, *, params: dict | None, family: str = "xgboost") -> dict:
-    """GroupKFold-by-match out-of-fold AUC / Brier / calibration-in-the-large + per-type reliability."""
-    from silly_kicks.xsuccess import XSuccessModel
-
-    y, splits = _cv_splits(pooled)
-    oof = np.full(len(y), np.nan)
-    if not splits:
-        oof = XSuccessModel().fit(pooled, family=family, params=params).predict_success(pooled)
-    else:
-        import time
-
-        from scripts._study_shared import print_fold
-
-        t0 = time.monotonic()
-        for k, (tr, te) in enumerate(splits, start=1):
-            m = XSuccessModel().fit(pooled.iloc[tr], family=family, params=params)
-            oof[te] = m.predict_success(pooled.iloc[te])
-            print_fold("xsuccess", k, len(splits), t0)
-    return _oof_metrics(pooled, y, oof)
 
 
 def _cv_splits(pooled: pd.DataFrame) -> tuple[np.ndarray, list]:
@@ -214,70 +194,6 @@ Attribution: Paul/Klemp/Memmert 2025; XGBoost (Chen & Guestrin 2016) -- see NOTI
 """
 
 
-_FIT_ROWS: dict = {}
-
-
-def _fit_task(rows_path: str, plan_path: str, fold_i: int, family: str, params: dict | None):
-    """One `fit` inner unit in an InnerPool child (module-level: pickled by reference). ``fold_i >= 0``: the fold's
-    model predicts its test rows; ``-1``: the final fit on every row, returned as its saved files and feature set.
-    The child reads the job-local rows and fold plan once and caches them per process (HFU spec 16.2)."""
-    import tempfile
-
-    from silly_kicks.xsuccess import XSuccessModel
-
-    key = (rows_path, plan_path)
-    if key not in _FIT_ROWS:
-        z = np.load(plan_path)  # positional: arr_{2i} = fold i's train rows, arr_{2i+1} = its test rows
-        folds = [(z[f"arr_{2 * i}"], z[f"arr_{2 * i + 1}"]) for i in range(len(z.files) // 2)]
-        _FIT_ROWS.clear()
-        _FIT_ROWS[key] = (pd.read_parquet(rows_path), folds)
-    pooled, folds = _FIT_ROWS[key]
-    if fold_i >= 0:
-        tr, te = folds[fold_i]
-        return XSuccessModel().fit(pooled.iloc[tr], family=family, params=params).predict_success(pooled.iloc[te])
-    model = XSuccessModel().fit(pooled, family=family, params=params)
-    with tempfile.TemporaryDirectory() as tmp:
-        model.save(Path(tmp))
-        files = {f.name: f.read_bytes() for f in sorted(Path(tmp).iterdir()) if f.is_file()}
-    return files, model.feature_set
-
-
-def _fit_map(pool, pooled: pd.DataFrame, *, family: str, params: dict | None, work: Path) -> tuple[dict, dict, str]:
-    """The out-of-fold metrics, the final model's files and its feature set, with the folds and the final fit as
-    InnerPool units; the final fit (the longest unit) is submitted first; the combination is in key order, so the
-    result equals the serial `cross_val_metrics` + fit (HFU spec 16.2)."""
-    import sys
-    import time
-
-    from scripts._stages import int_key, ordered_values
-
-    y, splits = _cv_splits(pooled)
-    work.mkdir(parents=True, exist_ok=True)
-    rows_path, plan_path = work / "rows.parquet", work / "plan.npz"
-    pooled.to_parquet(rows_path, index=False)
-    np.savez(plan_path, *[a for tr, te in splits for a in (tr, te)])
-    paths = (str(rows_path), str(plan_path))
-    items = {
-        "final": (*paths, -1, family, params),
-        **{int_key(i): (*paths, i, family, params) for i in range(len(splits))},
-    }
-    t0, done = time.monotonic(), [0]
-
-    def progress(_key, _value) -> None:
-        done[0] += 1
-        print(
-            f"[progress] xsuccess fit {done[0]}/{len(items)} in {time.monotonic() - t0:.1f} s",
-            file=sys.stderr,
-            flush=True,
-        )
-
-    *preds, (files, feature_set) = ordered_values(pool.map_keyed(_fit_task, items, on_done=progress))
-    oof = np.full(len(y), np.nan)
-    for (_tr, te), p in zip(splits, preds, strict=True):
-        oof[te] = p
-    return _oof_metrics(pooled, y, oof), files, feature_set
-
-
 def _extract_reduce(results, ctx) -> pd.DataFrame:
     """The per-match on-ball rows in sorted key order (the legacy sorted shard glob)."""
     from scripts._stages import combine_frames
@@ -293,29 +209,172 @@ def _hpo_work(key, ctx) -> dict:
     return {"best_params": best}
 
 
-def _fit_work(key, ctx):
-    """The out-of-fold metrics at the best parameters, the pooled fit and the bundle (model, card, metrics)."""
+#: The unit grid of the `fit` stage (HFU fit-units spec 3.2). One calibrated fit is 6 xgboost fits: the model
+#: (`main`) and one per calibration split (`cal0`..`cal4`). The stage runs 6 calibrated fits: the final fit and
+#: one per GroupKFold-by-match fold. So one unit = one xgboost fit, and the driver shards the 36 units over jobs.
+#: The grid is FIXED, so a `--plan` reads nothing; a unit that the corpus does not have returns `ABSENT`.
+_FITS: tuple[str, ...] = ("final", "fold0", "fold1", "fold2", "fold3", "fold4")
+_PARTS: tuple[str, ...] = ("main", "cal0", "cal1", "cal2", "cal3", "cal4")
+FIT_UNITS: tuple[str, ...] = tuple(sorted(f"{fit}-{part}" for fit in _FITS for part in _PARTS))
+#: The result of a unit that does not exist for the input: a fold beyond the fold count, a calibration split
+#: beyond the fit's split count, and every calibration unit of a family without calibration.
+ABSENT: dict = {"absent": True}
+_SEED = 42  # `XSuccessModel.fit`'s default seed, the one the serial fit used
+
+
+def _npy(values: np.ndarray) -> bytes:
+    import io
+
+    buf = io.BytesIO()
+    np.save(buf, values)
+    return buf.getvalue()
+
+
+def _from_npy(data: bytes) -> np.ndarray:
+    import io
+
+    return np.load(io.BytesIO(data))
+
+
+def _fit_rows(splits: list, fit: str, n: int) -> np.ndarray | None:
+    """The pooled row positions that calibrated fit ``fit`` trains on: every row for ``final``, fold ``i``'s
+    train rows for ``fold<i>``; ``None`` when the corpus has no such fold."""
+    if fit == "final":
+        return np.arange(n)
+    i = int(fit.removeprefix("fold"))
+    return splits[i][0] if i < len(splits) else None
+
+
+def fit_unit(pooled: pd.DataFrame, key: str, *, family: str, params: dict | None):
+    """One `fit` unit ``<fit>-<part>`` (HFU fit-units spec 3.2). The folds are `_cv_splits(pooled)`: computed on
+    ALL pooled rows; the finite-feature filter runs after the fold selection, inside the fit steps.
+
+    - ``<fit>-cal<j>``: calibration split ``j`` of the fit: a one-column frame ``p`` (xgboost's float32).
+    - ``fold<i>-main``: the booster of the fold; a one-column frame ``raw``, its prediction on the fold's test
+      rows BEFORE the isotonic step (NaN for a row with a non-finite feature).
+    - ``final-main``: a `FileSet` with ``model.json`` (the saved model) and ``probe_raw.npy`` (the raw prediction
+      on the chirality probe, from the in-memory booster); with no folds also ``in_sample_raw.npy``.
+    - a unit that the input does not have: `ABSENT`.
+
+    The ``per_type_logistic`` family has no calibration: its ``main`` units fit the whole model and return final
+    predictions; its ``cal`` units are `ABSENT`."""
     import tempfile
 
-    from scripts._corpus_identity import open_data_identity
     from silly_kicks.xsuccess import XSuccessModel
+    from silly_kicks.xsuccess import _model as xmodel
+    from silly_kicks.xsuccess._features import xsuccess_features
 
-    pooled, family = ctx.upstream("extract"), ctx.params["family"]
-    if not len(pooled):
-        raise SystemExit("no on-ball rows collected from the corpus; nothing to fit")
-    best = ctx.upstream("hpo")["best_params"]
-    # The folds and the final fit on the InnerPool (HFU spec 16.2); a width-1 (escalated) job runs the serial
-    # composition in-process, as the hpo stage does -- the same result either way.
-    if ctx.pool is not None and ctx.pool.workers > 1 and _cv_splits(pooled)[1]:
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            metrics, files, feature_set = _fit_map(ctx.pool, pooled, family=family, params=best, work=Path(tmp))
-    else:
-        metrics = cross_val_metrics(pooled, params=best, family=family)
-        model = XSuccessModel().fit(pooled, family=family, params=best)
-        feature_set = model.feature_set
+    fit, _, part = key.partition("-")
+    _y, splits = _cv_splits(pooled)
+    rows = _fit_rows(splits, fit, len(pooled))
+    if rows is None:
+        return dict(ABSENT)
+    train = pooled.iloc[rows]
+    test = None if fit == "final" else pooled.iloc[splits[int(fit.removeprefix("fold"))][1]]
+
+    if family != "xgboost":
+        if part != "main":
+            return dict(ABSENT)
+        model = XSuccessModel().fit(train, family=family, params=params)
+        if test is not None:
+            return pd.DataFrame({"raw": model.predict_success(test)})
         with tempfile.TemporaryDirectory() as tmp:
             model.save(Path(tmp))
-            files = {f.name: f.read_bytes() for f in sorted(Path(tmp).iterdir()) if f.is_file()}
+            files = {"model.json": (Path(tmp) / "model.json").read_bytes()}
+        files["probe_raw.npy"] = _npy(model.predict_success(xmodel._chirality_probe_actions()))
+        if not splits:
+            files["in_sample_raw.npy"] = _npy(model.predict_success(pooled))
+        return FileSet(files)
+
+    X, y, _tid = xmodel._training_arrays(train)
+    p = xmodel._xgb_params(params, _SEED)
+    if part != "main":
+        cal = xmodel._calibration_splits(X, y, _SEED)
+        j = int(part.removeprefix("cal"))
+        if j >= len(cal):
+            return dict(ABSENT)
+        return pd.DataFrame({"p": xmodel._calibration_fold_proba(X, y, p, *cal[j])})
+    booster = xmodel._fit_booster(X, y, p)
+    if test is not None:
+        return pd.DataFrame({"raw": xmodel._raw_predict(booster, xsuccess_features(test))})
+    with tempfile.TemporaryDirectory() as tmp:
+        booster.save_model(str(Path(tmp) / "model.json"))
+        files = {"model.json": (Path(tmp) / "model.json").read_bytes()}
+    files["probe_raw.npy"] = _npy(xmodel._raw_predict(booster, xsuccess_features(xmodel._chirality_probe_actions())))
+    if not splits:
+        files["in_sample_raw.npy"] = _npy(xmodel._raw_predict(booster, xsuccess_features(pooled)))
+    return FileSet(files)
+
+
+def fit_reduce(pooled: pd.DataFrame, results, *, family: str, params: dict | None) -> tuple[dict, dict, str]:
+    """The out-of-fold metrics, the model files (``model.json``, ``metadata.json``, ``SHA256SUMS``) and the feature
+    set from the 36 unit results. It fits the isotonic regression of each calibrated fit from its ``cal`` units,
+    calibrates each fold's raw predictions, and assembles the out-of-fold vector over ALL pooled rows in fold
+    order: the composition of the former serial fit, so the bytes are the same. It never loads a booster."""
+    import tempfile
+
+    from silly_kicks.xsuccess import _model as xmodel
+
+    xgboost_family = family == "xgboost"
+    y, splits = _cv_splits(pooled)
+
+    def thresholds(fit: str) -> tuple[np.ndarray | None, np.ndarray | None]:
+        if not xgboost_family:
+            return None, None
+        rows = _fit_rows(splits, fit, len(pooled))
+        if rows is None:  # the reduce asks only for `final` and the folds that `splits` has
+            raise ValueError(f"the corpus has no fit {fit!r}")
+        X, yk, _tid = xmodel._training_arrays(pooled.iloc[rows])
+        cal = xmodel._calibration_splits(X, yk, _SEED)
+        if not cal:
+            return None, None
+        probas = [results[f"{fit}-cal{j}"]["p"].to_numpy() for j in range(len(cal))]
+        return xmodel._isotonic_thresholds(xmodel._calibration_oof(len(yk), cal, probas), yk)
+
+    final = results["final-main"]
+    iso_x, iso_y = thresholds("final")
+    if splits:
+        oof = np.full(len(y), np.nan)
+        for i, (_tr, te) in enumerate(splits):
+            oof[te] = xmodel._calibrate(results[f"fold{i}-main"]["raw"].to_numpy(), *thresholds(f"fold{i}"))
+    else:  # fewer than 2 matches: the final model scored in sample, as the serial fit did
+        oof = xmodel._calibrate(_from_npy(final.files["in_sample_raw.npy"]), iso_x, iso_y)
+    metrics = _oof_metrics(pooled, y, oof)
+
+    payload = xmodel._metadata_payload(
+        feature_names=FEATURE_NAMES,
+        feature_set=family,
+        params=xmodel._xgb_params(params, _SEED) if xgboost_family else dict(xmodel._DEFAULT_PARAMS),
+        iso_x=iso_x,
+        iso_y=iso_y,
+        probe_prediction=xmodel._calibrate(_from_npy(final.files["probe_raw.npy"]), iso_x, iso_y).tolist(),
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "model.json").write_bytes(final.files["model.json"])
+        xmodel._write_metadata_and_sums(Path(tmp), payload)
+        files = {f.name: f.read_bytes() for f in sorted(Path(tmp).iterdir()) if f.is_file()}
+    return metrics, files, family
+
+
+def _pooled(ctx) -> pd.DataFrame:
+    pooled = ctx.upstream("extract")
+    if not len(pooled):
+        raise SystemExit("no on-ball rows collected from the corpus; nothing to fit")
+    return pooled
+
+
+def _fit_unit_work(key, ctx):
+    """One xgboost fit of the `fit` stage (`fit_unit`) at the study's best parameters."""
+    return fit_unit(_pooled(ctx), key, family=ctx.params["family"], params=ctx.upstream("hpo")["best_params"])
+
+
+def _fit_reduce(results, ctx):
+    """The bundle (model, metadata, card, metrics) from the 36 unit results (`fit_reduce`)."""
+    from scripts._corpus_identity import open_data_identity
+
+    pooled, family = _pooled(ctx), ctx.params["family"]
+    best = ctx.upstream("hpo")["best_params"]
+    metrics, files, feature_set = fit_reduce(pooled, results, family=family, params=best)
     # The bundled metadata.json carries the training provenance (spec S5.5, ADR-052/056); it is not in SHA256SUMS.
     meta = json.loads(files["metadata.json"])
     meta |= {"training_commit": ctx.prov["commit"], "run_tree_dirty": ctx.prov["dirty"]}
@@ -387,16 +446,13 @@ PIPELINE = Pipeline(
             inner_width=5,
             timeout_s=14400,  # ~2x the projected 30-trial average (spec 15.7)
         ),
-        Stage(
+        Stage(  # 36 units: one xgboost fit each (HFU fit-units spec 3.2); the reduce assembles the bundle
             name="fit",
-            units=lambda ctx: ["only"],
-            work=_fit_work,
+            units=lambda ctx: list(FIT_UNITS),
+            work=_fit_unit_work,
             needs=("refs", "extract", "hpo"),
-            reduce=lambda r, ctx: r["only"],
+            reduce=_fit_reduce,
             params=("family",),
-            inner_parallel=True,  # the CV folds and the final fit on the InnerPool (HFU spec 16.2)
-            inner_width=3,  # measured peak 7.26 GiB per unit (spec 16.7): 3 fit the 24 GiB budget
-            timeout_s=14400,  # ~4,000-6,200 s expected (spec 16.7)
         ),
     ),
     output="fit",

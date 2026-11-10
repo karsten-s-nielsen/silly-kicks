@@ -1,5 +1,6 @@
-"""Preflight (spec 5.4, HFU spec 13.2): six no-spend checks. `launch` refuses without a passing report for the same
-commit and the same campaign-file hash. The report lives in the bucket (the controller is stateless).
+"""Preflight (spec 5.4, HFU spec 13.2, HFU fit-units spec C3): seven no-spend checks. `launch` refuses without
+a passing report for the same commit and the same campaign-file hash. The report lives in the bucket (the
+controller is stateless).
 
 Each check prints one ``[preflight]`` line with its elapsed seconds as it finishes; check 6 also prints one line
 per instance. No check trains anything: CI's parity tests run every migrated trainer end to end on toy data, and a
@@ -195,6 +196,48 @@ def check_datasets(names: list[str], *, api: Any) -> Check:
         if d.kind == "flat_tc3" and rec.get("home_teams", True) and "home_teams.json" not in files:
             bad.append(f"{name}: home_teams.json missing")
     return Check("datasets", not bad, "; ".join(bad) or "every dataset matches its lock")
+
+
+def check_storage(api: Any, *, org: str, limit_bytes: int, headroom_bytes: int) -> Check:
+    """Check 7 (HFU fit-units spec C3): the org's private storage leaves ``headroom_bytes`` under ``limit_bytes``.
+
+    Used = the size of every bucket of ``org`` plus ``usedStorage`` of each PRIVATE dataset and model of ``org``
+    (launch 7 stopped on the org limit; at the limit HF also refuses the bucket delete, so the cleanup must come
+    before the launch). The detail lists the used bytes by repo, largest first. An API error, a repo without a
+    size or a listing entry without ``private`` FAILS the check with its reason: a count that cannot be made is
+    not a pass. This is a guard computed
+    from two API figures; it is not HF's own accounting."""
+    used: dict[str, int] = {}
+    try:
+        for b in api.list_buckets(org):
+            used[str(b.id)] = _size(b.id, getattr(b, "size", None))
+        for kind, lister, info in (
+            ("dataset", api.list_datasets, api.dataset_info),
+            ("model", api.list_models, api.model_info),
+        ):
+            for repo in lister(author=org):
+                private = getattr(repo, "private", None)
+                if private is None:  # it cannot be classed: counting it as public would fail open
+                    raise ValueError(f"{repo.id} ({kind}) has no private field in the API answer")
+                if private:
+                    used[f"{repo.id} ({kind})"] = _size(
+                        repo.id, getattr(info(repo.id, expand=["usedStorage"]), "used_storage", None)
+                    )
+    except Exception as exc:
+        return Check("storage", False, f"the storage count failed: {type(exc).__name__}: {exc}")
+    total = sum(used.values())
+    by_repo = ", ".join(f"{name} {size / 1e9:.2f} GB" for name, size in sorted(used.items(), key=lambda kv: -kv[1]))
+    detail = (
+        f"{total / 1e9:.2f} GB used + {headroom_bytes / 1e9:.0f} GB headroom against a {limit_bytes / 1e9:.0f} GB "
+        f"limit: {by_repo}"
+    )
+    return Check("storage", total + headroom_bytes <= limit_bytes, detail)
+
+
+def _size(name: Any, value: Any) -> int:
+    if value is None:
+        raise ValueError(f"{name} has no size in the API answer")
+    return int(value)
 
 
 def _plan_one(inst: Any, run) -> tuple[bool, str, float]:

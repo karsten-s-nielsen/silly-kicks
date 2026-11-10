@@ -50,3 +50,35 @@ def fitted_xt():
     xt = ExpectedThreat(l=16, w=12)
     xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
     return xt
+
+
+@pytest.fixture
+def shadow_pre_index_oracle(monkeypatch):
+    """Run the pre-index ORACLE beside every ``_pre_index_frames`` call of a test (HFU fit-units spec 4.3).
+
+    It replaces ``silly_kicks.tracking._ball_carrier._pre_index_frames`` with a wrapper that calls the oracle on a
+    copy of the frames and the real function on the frames, and asserts that the two results are equal (or, where
+    the oracle raises, that the real function raises the same type). So every frame table that a test builds
+    inline becomes an oracle input. It lives here because test modules in ``tests/tracking`` and in
+    ``tests/scripts`` use it. Returns the call counter (``{"n": int}``).
+    """
+    from silly_kicks.tracking import _ball_carrier
+    from tests.tracking._pre_index_oracle import assert_pre_index_equal, pre_index_frames_oracle
+
+    real = _ball_carrier._pre_index_frames
+    calls = {"n": 0}
+
+    def shadow(frames):
+        calls["n"] += 1
+        try:
+            want = pre_index_frames_oracle(frames.copy(deep=True))
+        except Exception as exc:
+            with pytest.raises(type(exc)):
+                real(frames)
+            raise
+        got = real(frames)
+        assert_pre_index_equal(want, got)
+        return got
+
+    monkeypatch.setattr(_ball_carrier, "_pre_index_frames", shadow)
+    return calls

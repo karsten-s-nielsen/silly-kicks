@@ -1274,12 +1274,13 @@ def test_a_round_robin_shard_holding_a_stuck_unit_is_held_back(tmp_path) -> None
 
 def test_a_long_plan_timeout_dump_keeps_the_innermost_frames(tmp_path) -> None:
     """HFU spec 13.4: a `PlanTimeoutError` is a `--plan failed` report, never a rate-limit back-off or a step crash.
-    A faulthandler dump lists the most recent call FIRST, so the report keeps the HEAD: the timeout text and the
-    innermost frames."""
+    The dump lists the main thread and the most recent call FIRST, so the report keeps the HEAD: the timeout
+    text and the innermost frames."""
     from scripts.hf_jobs.campaign import PlanTimeoutError
 
     frames = ['  File "deep.py", line 10 in _hang'] + [f'  File "deep.py", line {i} in level{i}' for i in range(30)]
-    dump = "Timeout (0:09:30)!\nThread 0x0001 (most recent call first):\n" + "\n".join(frames) + "\n"
+    head = "[alive] - plan pid=7 deadline dump: 1 thread(s), most recent call first\nThread MainThread (0x1) [main]:\n"
+    dump = head + "\n".join(frames) + "\n"
     assert len(dump) > 300
     ok, slow = _inst(variant="ok"), _inst(variant="slow")
     plan = _single_stage_plan(tmp_path)
@@ -1423,3 +1424,231 @@ def test_run_keeps_one_plan_cache_across_steps() -> None:
 
     assert _loop(step_fn) == 0
     assert isinstance(seen[0], dict) and seen[0] is seen[1]
+
+
+# ---- the `compare` command (HFU fit-units spec 6 step 3) ---------------------------------------------
+
+
+def _no_api_args():
+    def no_api():
+        raise AssertionError("this command must not build an HF API")
+
+    return dict(load=lambda _f: _campaign(), make_api=no_api, head=lambda: _COMMIT)
+
+
+def test_main_compare_exits_by_the_result(monkeypatch, tmp_path, capsys) -> None:
+    from scripts.hf_jobs import adopt
+
+    rows = {
+        "xsuccess-public/default": {"identical": True, "differences": []},
+        "census-public/default": {"census_ok": True, "certification": {"basis": "rebaseline"}},
+    }
+    monkeypatch.setattr(adopt, "compare_staging", lambda c, *, staging, baseline: rows)
+    argv = ["camp.toml", "compare", "--staging", str(tmp_path / "new"), "--baseline", str(tmp_path / "old")]
+    assert main(argv, **_no_api_args()) == 0
+    assert "xsuccess-public/default IDENTICAL" in capsys.readouterr().out
+    rows["xsuccess-public/default"] = {"identical": False, "differences": ["model.json: bytes differ"]}
+    assert main(argv, **_no_api_args()) == 1
+    assert "xsuccess-public/default DIFFERENT: model.json: bytes differ" in capsys.readouterr().out
+    rows["xsuccess-public/default"] = {"identical": True, "differences": []}
+    rows["census-public/default"] = {"census_ok": False, "certification": None}
+    assert main(argv, **_no_api_args()) == 1
+    assert "census-public/default census verdict NOT ok" in capsys.readouterr().out
+
+
+def test_main_compare_needs_a_baseline(tmp_path) -> None:
+    with pytest.raises(SystemExit, match="baseline"):
+        main(["camp.toml", "compare", "--staging", str(tmp_path)], **_no_api_args())
+
+
+# ---- the `prune` command (HFU fit-units spec C3) -----------------------------------------------------
+
+
+def _fake_prune(monkeypatch, result):
+    from scripts.hf_jobs import prune
+
+    seen: dict = {}
+    monkeypatch.setattr(prune, "prune", lambda c, **k: (seen.update(k), result)[1])
+    monkeypatch.setattr(prune, "manifest_commits", lambda: {"abc1234": 2})
+    return seen
+
+
+def test_main_prune_refusal_is_one_line_not_a_traceback(monkeypatch) -> None:
+    from scripts.hf_jobs import prune
+
+    def refuse(c, **_k):
+        raise prune.PruneRefusedError("commit bbbbbbb has a non-terminal job")
+
+    monkeypatch.setattr(prune, "prune", refuse)
+    monkeypatch.setattr(prune, "manifest_commits", lambda: {})
+    with pytest.raises(SystemExit, match="prune refused: commit bbbbbbb has a non-terminal job"):
+        main(["camp.toml", "prune", "--delete", "--i-have-owner-approval", "bbbbbbb"], **_main_args())
+
+
+def test_main_prune_lists_without_delete(monkeypatch) -> None:
+    seen = _fake_prune(monkeypatch, {"ok": True, "listing": {}, "deleted": {}})
+    assert main(["camp.toml", "prune"], **_main_args()) == 0
+    assert (seen["delete"], list(seen["approved"]), seen["head"]) == (False, [], _COMMIT)
+    assert seen["manifest_commits"] == {"abc1234": 2}
+
+
+def test_main_prune_delete_names_each_commit_and_exits_by_ok(monkeypatch) -> None:
+    seen = _fake_prune(monkeypatch, {"ok": False, "listing": {}, "deleted": {}})
+    argv = [
+        "camp.toml",
+        "prune",
+        "--delete",
+        "--i-have-owner-approval",
+        "bbbbbbb",
+        "--i-have-owner-approval",
+        "ccccccc",
+    ]
+    assert main(argv, **_main_args()) == 1
+    assert seen["delete"] is True and list(seen["approved"]) == ["bbbbbbb", "ccccccc"]
+
+
+# ---- a lost FileSet result in a running driver (HFU fit-units spec C4) --------------------------------
+
+_LOST_UNIT = "extract/only: result lost (members missing); free storage, stop the driver, then run resume"
+_LOST_OUTPUT = "extract: output lost (members missing); free storage, stop the driver, then run resume"
+
+
+def _fileset_stage(tmp_path):
+    """One stage whose unit result and output are FileSets, run and reduced (the launch-7 shape)."""
+    stage = s.Stage(
+        name="extract",
+        units=lambda c: ["only"],
+        work=lambda k, c: s.FileSet({"X.npy": b"x"}),
+        reduce=lambda r, c: s.FileSet({"out.bin": b"o"}),
+    )
+    ctx = _ctx(tmp_path, (stage,))
+    _run(ctx, "extract", "only")
+    s.reduce_stage(ctx, "extract")
+    return ctx
+
+
+def _lose(tmp_path, ctx, stem: str) -> dict:
+    import shutil
+
+    shutil.rmtree(tmp_path / ctx.generation("extract") / f"{stem}.files")
+    return _realplan(ctx)
+
+
+def test_a_stage_that_is_no_longer_reduced_counts_its_finished_jobs_again(tmp_path) -> None:
+    """Through `_attribute`: the run job that wrote the lost result and the finished reduce trigger count again
+    once the plan says the stage is not reduced."""
+    ctx = _fileset_stage(tmp_path)
+    inst, store = _inst(), _ManifestStore()
+    reduced = _realplan(ctx)
+    token = reduced["stages"][0]["token"]
+    jobs = [
+        _ran_job(inst, reduced, token, "j1", ["only"], store=store),
+        _ran_job(inst, reduced, token, "j2", [], store=store),  # a reduce trigger (an empty manifest)
+    ]
+    got = _attribute([inst], {inst.id: reduced}, jobs, frozenset(), lambda _i: store, attempts=3)
+    assert (got[0], got[1]) == ({}, {})  # a reduced stage: its jobs do not count
+    lost = _lose(tmp_path, ctx, "only")
+    assert lost["stages"][0]["reduced"] is False and lost["stages"][0]["lost_units"] == ["only"]
+    got = _attribute([inst], {inst.id: lost}, jobs, frozenset(), lambda _i: store, attempts=3)
+    assert got[0] == {(inst.id, "extract", "only"): 1} and got[1] == {(inst.id, "extract"): 1}
+
+
+def test_a_lost_unit_reruns_below_attempts(tmp_path) -> None:
+    ctx = _fileset_stage(tmp_path)
+    inst = _inst()
+    decision = _dec(inst, _lose(tmp_path, ctx, "only"), coverage={(inst.id, "extract", "only"): 1})
+    assert [lx.keys for lx in decision.launches] == [("only",)] and decision.reports == ()
+
+
+def test_a_lost_unit_at_attempts_reports_the_lost_result(tmp_path) -> None:
+    ctx = _fileset_stage(tmp_path)
+    inst = _inst()
+    decision = _dec(inst, _lose(tmp_path, ctx, "only"), coverage={(inst.id, "extract", "only"): 3})
+    assert decision.launches == () and decision.reports == ((inst.id, _LOST_UNIT),)
+    assert "crashed with no record" not in decision.reports[0][1]
+
+
+def test_a_lost_output_triggers_the_reduce_and_then_reports_the_lost_output(tmp_path) -> None:
+    ctx = _fileset_stage(tmp_path)
+    inst = _inst()
+    plan = _lose(tmp_path, ctx, "_output")
+    rec = plan["stages"][0]
+    assert (rec["lost_units"], rec["lost_output"], rec["reduced"], rec["done"]) == ([], True, False, 1)
+    decision = _dec(inst, plan)
+    assert [(lx.stages, lx.keys) for lx in decision.launches] == [(("extract",), ())]  # a reduce trigger
+    spent = _dec(inst, plan, reduce_errors={(inst.id, "extract"): 3})
+    assert spent.launches == () and spent.reports == ((inst.id, _LOST_OUTPUT),)
+
+
+# ---- the STUCK line names the operator path (HFU fit-units spec C5) ----------------------------------
+
+
+def test_a_stuck_line_names_the_operator_path() -> None:
+    from scripts.hf_jobs.driver import stuck_line
+
+    reason = "extract/b timed out 2x (jobs j1, j2)"
+    assert stuck_line("rk/default", reason) == (
+        "STUCK rk/default: extract/b timed out 2x (jobs j1, j2); fix the cause, stop the driver, then run resume"
+    )
+    assert stuck_line("rk/default", _LOST_UNIT) == f"STUCK rk/default: {_LOST_UNIT}"  # the path is not repeated
+    assert stuck_line("rk/default", _LOST_OUTPUT) == f"STUCK rk/default: {_LOST_OUTPUT}"
+
+
+def test_step_prints_each_report_as_a_stuck_line(tmp_path, capsys) -> None:
+    def failing_plan(_inst):
+        raise RuntimeError("--plan failed (rc=1): boom")
+
+    result = _step(
+        _campaign(),
+        instances=[_inst()],
+        read_plan=failing_plan,
+        live_records=lambda: [],
+        launch_fn=_LaunchRecorder(),
+    )
+    assert len(result.reports) == 1
+    lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("STUCK ")]
+    assert len(lines) == 1 and lines[0].endswith("; fix the cause, stop the driver, then run resume")
+
+
+# ---- units_per_job_by_stage (HFU fit-units spec 3.4) --------------------------------------------------
+
+_GRID = [f"u{i:02d}" for i in range(36)]
+
+
+def _grid_plan(tmp_path) -> dict:
+    return _realplan(_ctx(tmp_path, (s.Stage(name="fit", units=lambda c: list(_GRID), work=_work()),)))
+
+
+def test_a_stage_override_gives_twelve_jobs_of_three(tmp_path) -> None:
+    inst = _inst()  # job name "job": the override key is "<job>/<stage>"
+    decision = _dec(inst, _grid_plan(tmp_path), units_per_job_by_stage={"job/fit": 3})
+    assert [lx.keys for lx in decision.launches] == [tuple(_GRID[i : i + 3]) for i in range(0, 36, 3)]
+    assert [lx.shard for lx in decision.launches] == [(i, 12) for i in range(12)]
+
+
+def test_a_stage_without_an_override_uses_the_global_value(tmp_path) -> None:
+    inst = _inst()
+    plan = _grid_plan(tmp_path)
+    assert [len(lx.keys) for lx in _dec(inst, plan).launches] == [18, 18]  # 36 units / 20 per job = 2 jobs
+    other = _dec(inst, plan, units_per_job_by_stage={"another_job/fit": 3, "job/extract": 3})
+    assert [len(lx.keys) for lx in other.launches] == [18, 18]
+
+
+def test_the_override_reaches_the_round_robin_path(tmp_path) -> None:
+    inst = _download_inst()
+    plan = _grid_plan(tmp_path)
+    assert len(_dec(inst, plan).launches) == 2
+    decision = _dec(inst, plan, units_per_job_by_stage={"job/fit": 3})
+    assert [lx.shard for lx in decision.launches] == [(i, 12) for i in range(12)]
+    assert all(not lx.keyed and len(lx.keys) == 3 for lx in decision.launches)
+
+
+def test_an_escalate_launch_keeps_one_worker_under_an_override(tmp_path) -> None:
+    stage = s.Stage(name="fit", units=lambda c: ["a", "b"], work=_work(fail=("b",)), max_failures=None)
+    ctx = _ctx(tmp_path, (stage,))
+    _run(ctx, "fit", "a")
+    _run(ctx, "fit", "b")
+    plan = _realplan(ctx)
+    plan["stages"][0]["memory_units"] = ["b"]  # b deferred for memory (the engine's plan field)
+    d = _dec(_inst(), plan, units_per_job_by_stage={"job/fit": 3})
+    assert [(lx.escalate, lx.workers, lx.keys) for lx in d.launches] == [(True, 1, ("b",))]

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,10 @@ PROVENANCE_KEYS: tuple[str, ...] = (
     "run_tree_state",
     "reproducibility_note",
     "generation",
+    # The byte count of the saved artifact files (xShot / xCross `metrics.json`). Those files hold the commit and
+    # the job platform string, so the count names the run, not the model: it changed by 1 byte between two
+    # launches of one code state when the kernel version changed length (HFU fit-units spec 1.2, M7).
+    "artifact_size_bytes",
 )
 #: The JSON files compared after normalization; every other file is compared byte for byte, except
 #: `SUMS` (below).
@@ -38,12 +43,13 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def normalized_sums(data: bytes) -> bytes:
-    """``SHA256SUMS`` without its `NORMALIZED` entries, lines sorted (the payload part of the manifest)."""
+def normalized_sums(data: bytes, normalized: Sequence[str] = NORMALIZED) -> bytes:
+    """``SHA256SUMS`` without the entries of the ``normalized`` files (default `NORMALIZED`), lines sorted (the
+    payload part of the manifest)."""
     keep = []
     for line in data.decode("utf-8").replace("\r\n", "\n").splitlines():
         parts = line.split()
-        if parts and parts[-1].lstrip("*") not in NORMALIZED:
+        if parts and parts[-1].lstrip("*") not in normalized:
             keep.append(" ".join(parts))
     return "\n".join(sorted(keep)).encode("utf-8")
 
@@ -95,3 +101,45 @@ def compare(a: Mapping[str, Mapping[str, str]], b: Mapping[str, Mapping[str, str
         elif fa[name] != fb[name]:
             diffs.append(f"{name}: bytes differ")
     return diffs
+
+
+#: The model card, compared across commits after each 40-hex commit is replaced by a fixed token.
+CARD = "MODEL_CARD.md"
+_COMMIT_RE = re.compile(rb"\b[0-9a-f]{40}\b")
+
+
+def cross_commit_differences(a: str | Path, b: str | Path, *, commit_file: str | None = None) -> list[str]:
+    """The differences between two artifact folders of DIFFERENT commits (empty == identical). THE rule of
+    `campaign compare` (HFU fit-units spec 6 step 3):
+
+    - ``metadata.json``, ``metrics.json`` and ``commit_file`` (the file that the artifact's manifest
+      ``commit_field`` names, e.g. ``model.json`` for match_outcome) are compared as canonical JSON without
+      `PROVENANCE_KEYS`;
+    - `SUMS` is compared on the lines of the files that are not normalized by the line above;
+    - `CARD` is compared after each 40-hex commit is replaced by a token (line endings normalized);
+    - every other file is compared byte for byte;
+    - a file in only one folder is a difference.
+    """
+    da, db = Path(a), Path(b)
+    normalized = (*NORMALIZED, *((commit_file,) if commit_file else ()))
+    names_a = {p.name for p in da.iterdir() if p.is_file()}
+    names_b = {p.name for p in db.iterdir() if p.is_file()}
+    diffs = [f"{name}: present in only one artifact" for name in sorted(names_a ^ names_b)]
+    for name in sorted(names_a & names_b):
+        xa, xb = (da / name).read_bytes(), (db / name).read_bytes()
+        if name in normalized:
+            if normalized_json(xa) != normalized_json(xb):
+                diffs.append(f"{name}: differs after removing the provenance keys")
+        elif name == SUMS:
+            if normalized_sums(xa, normalized) != normalized_sums(xb, normalized):
+                diffs.append(f"{name}: payload lines differ")
+        elif name == CARD:
+            if _card(xa) != _card(xb):
+                diffs.append(f"{name}: differs after replacing the commit")
+        elif xa != xb:
+            diffs.append(f"{name}: bytes differ")
+    return diffs
+
+
+def _card(data: bytes) -> bytes:
+    return _COMMIT_RE.sub(b"<commit>", data.replace(b"\r\n", b"\n"))

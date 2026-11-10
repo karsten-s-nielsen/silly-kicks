@@ -432,6 +432,10 @@ change the search); `[progress] bootstrap <k>/<n> convergent=<c>` about every 60
 check confirms each of the seven 5.0.0 models' retrieved best parameters are within 3 ULP of the committed ones
 (the plan's Task 27 Step 6 block); a failure stops for the owner.
 
+Result (2026-11-10, launch 7 on `a1a3b52f`, read-only, after the release): `check_params_ulp.py` over
+`D:/Development/_staging/cycle1-a1a3b52`: 7 of 7 models within 3 ULP, `max_ulp=0`, exit 0. I3 (§14.10): the
+receiver `pool_coverage` is 51,440 / 50,719 and `keep_pool` is false, as required.
+
 ### 14.10b Change 7j — a deterministic back-line tie-break at the source (I2)
 
 `select_back_line_players` (`_defensive_line.py:96`/`:98`) and `_collective.back_line_batch`

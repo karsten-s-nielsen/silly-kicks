@@ -75,7 +75,9 @@ def _pre_index_frames(
 
     # Ball position per frame
     ball_pos = (
-        ball_rows.groupby(["game_id", "period_id", "frame_id"], dropna=False)
+        # `observed=True`: the pandas 3 default, stated so that `category` frame keys give the same groups
+        # and no `FutureWarning` on pandas 2 (an unobserved key combination holds no ball row).
+        ball_rows.groupby(["game_id", "period_id", "frame_id"], dropna=False, observed=True)
         .agg(bx=("x", "mean"), by=("y", "mean"), bs=("ball_state", "first"))
         .reset_index()
     )
@@ -91,11 +93,6 @@ def _pre_index_frames(
 
     frame_ball = unique_frames.merge(ball_pos, on=["game_id", "period_id", "frame_id"], how="left")
 
-    # Build frame index for O(1) lookup: (game_id, period_id, frame_id) → row index
-    frame_to_idx: dict[tuple, int] = {}
-    for i, row in enumerate(unique_frames.itertuples(index=False)):
-        frame_to_idx[(row.game_id, row.period_id, row.frame_id)] = i
-
     # Per-frame ball arrays
     bx_arr = frame_ball["bx"].to_numpy(dtype=np.float64)
     by_arr = frame_ball["by"].to_numpy(dtype=np.float64)
@@ -105,11 +102,25 @@ def _pre_index_frames(
         dtype=np.bool_,
     )
 
-    # Player groups
-    player_groups = dict(iter(player_rows.groupby(["game_id", "period_id", "frame_id"])))
-    max_players = max((len(g) for g in player_groups.values()), default=0)
-    if max_players == 0:
-        max_players = 1  # avoid zero-width arrays
+    # Player placement: every player row goes to (its frame's index, its position inside the frame). One pass
+    # over the rows and no per-frame object: the per-frame DataFrame of the former code was 13-58 s per match.
+    # A row whose frame key holds a null is not placed (the former `groupby` dropped it); inside a frame the
+    # slot order is the input row order (a stable sort by frame index).
+    keys = ["game_id", "period_id", "frame_id"]
+    placed = player_rows[player_rows[keys].notna().all(axis=1).to_numpy(dtype=bool)]
+    frame_of_row = (
+        placed[keys]
+        .merge(unique_frames.assign(_frame_idx=np.arange(n_frames, dtype=np.int64)), on=keys, how="left")["_frame_idx"]
+        .to_numpy(dtype=np.float64)
+    )
+    known = ~np.isnan(frame_of_row)  # a key absent from the frame table places nothing
+    order = np.flatnonzero(known)
+    order = order[np.argsort(frame_of_row[order], kind="stable")]
+    f_idx = frame_of_row[order].astype(np.int64)
+    starts = np.flatnonzero(np.r_[True, f_idx[1:] != f_idx[:-1]]) if len(f_idx) else np.zeros(0, dtype=np.int64)
+    counts = np.diff(np.r_[starts, len(f_idx)])
+    slot = np.arange(len(f_idx), dtype=np.int64) - np.repeat(starts, counts)
+    max_players = int(counts.max()) if len(counts) else 1  # 1 avoids zero-width arrays
 
     # Dense player arrays
     px = np.full((n_frames, max_players), np.nan)
@@ -119,26 +130,23 @@ def _pre_index_frames(
     player_slot_arr = np.full((n_frames, max_players), -1, dtype=np.int64)
     n_valid = np.zeros(n_frames, dtype=np.int64)
 
-    for key, group in player_groups.items():
-        f_idx = frame_to_idx.get(key)
-        if f_idx is None:
-            continue
-        n = min(len(group), max_players)
-        n_valid[f_idx] = n
-        px[f_idx, :n] = group["x"].to_numpy(dtype=np.float64)[:n]
-        py[f_idx, :n] = group["y"].to_numpy(dtype=np.float64)[:n]
-        if has_velocity:
-            pvx[f_idx, :n] = group["vx"].to_numpy(dtype=np.float64)[:n]
-            pvy[f_idx, :n] = group["vy"].to_numpy(dtype=np.float64)[:n]
-        else:
-            pvx[f_idx, :n] = 0.0
-            pvy[f_idx, :n] = 0.0
-        pids = group["player_id"].to_numpy()
-        for j in range(n):
-            player_slot_arr[f_idx, j] = pid_to_slot.get(pids[j], -1)
+    n_valid[f_idx[starts]] = counts
+    px[f_idx, slot] = placed["x"].to_numpy(dtype=np.float64)[order]
+    py[f_idx, slot] = placed["y"].to_numpy(dtype=np.float64)[order]
+    if has_velocity:
+        pvx[f_idx, slot] = placed["vx"].to_numpy(dtype=np.float64)[order]
+        pvy[f_idx, slot] = placed["vy"].to_numpy(dtype=np.float64)[order]
+    else:
+        pvx[f_idx, slot] = 0.0
+        pvy[f_idx, slot] = 0.0
+    # The slot id of each ROW's own id object, by `dict.get` (never a lookup per unique value): a float NaN id is
+    # never found, and an object NaN is found only when it IS the key object -- so the id of every row keeps the
+    # result the per-player loop gave it. `-1` marks an empty slot AND an id that is not found.
+    pids = placed["player_id"].to_numpy()[order]
+    player_slot_arr[f_idx, slot] = np.fromiter((pid_to_slot.get(p, -1) for p in pids), dtype=np.int64, count=len(pids))
 
     # Segment boundaries: contiguous ranges per (game_id, period_id)
-    seg_groups = unique_frames.groupby(["game_id", "period_id"], dropna=False, sort=True)
+    seg_groups = unique_frames.groupby(["game_id", "period_id"], dropna=False, sort=True, observed=True)
     seg_starts_list = []
     seg_ends_list = []
     for _, seg_idx in seg_groups.groups.items():

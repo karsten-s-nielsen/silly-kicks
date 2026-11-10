@@ -79,6 +79,118 @@ def _load_booster_base_score_safe(model_json: Path):
     return booster
 
 
+# ---- the fit steps (HFU fit-units spec 3.2) ----------------------------------------------------------
+# `XSuccessModel.fit`, `predict_success` and `to_dict` compose these functions in sequence. The trainer
+# (`scripts/train_xsuccess.py`) composes the SAME functions, one xgboost fit per stage unit, so the library and
+# the trainer run one composition and give the same bytes.
+
+
+def _training_arrays(actions) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``(X, y, type_id)`` of the kept rows: ``non_action`` rows and rows with a non-finite feature are dropped."""
+    sub = actions[actions["type_id"] != _NON_ACTION]
+    X = xsuccess_features(sub)
+    y = (np.asarray(sub["result_id"]) == _SUCCESS).astype(int)
+    tid = np.asarray(sub["type_id"])
+    finite = np.isfinite(X).all(axis=1)
+    return X[finite], y[finite], tid[finite]
+
+
+def _xgb_params(params: dict | None, seed: int) -> dict:
+    """The xgboost parameters of one fit: ``params`` (default `_DEFAULT_PARAMS`) with ``random_state = seed``."""
+    p = dict(params or _DEFAULT_PARAMS)
+    p["random_state"] = seed
+    return p
+
+
+def _fit_booster(X, y, p: dict):
+    """One xgboost fit; returns the Booster."""
+    import xgboost as xgb
+
+    clf = xgb.XGBClassifier(**p)
+    clf.fit(X, y)
+    return clf.get_booster()
+
+
+def _calibration_splits(X, y, seed: int) -> list[tuple[np.ndarray, np.ndarray]]:
+    """The ``(train, test)`` index pairs of the isotonic calibration, in order; ``[]`` when no calibration
+    applies (one class, fewer than 50 rows, or fewer than 2 rows of the rarer class)."""
+    if not (len(np.unique(y)) == 2 and len(y) >= 50):
+        return []
+    n_splits = min(5, int(np.bincount(y).min()))
+    if n_splits < 2:
+        return []
+    from sklearn.model_selection import StratifiedKFold
+
+    return list(StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed).split(X, y))
+
+
+def _calibration_fold_proba(X, y, p: dict, train, test) -> np.ndarray:
+    """One calibration split: fit on its train rows, return ``P(success)`` of its test rows (xgboost's dtype)."""
+    import xgboost as xgb
+
+    clf = xgb.XGBClassifier(**p)
+    clf.fit(X[train], y[train])
+    return clf.predict_proba(X[test])[:, 1]
+
+
+def _calibration_oof(n: int, splits, probas) -> np.ndarray:
+    """The out-of-fold vector of ``n`` rows: each split's ``probas`` entry placed at its test rows. The dtype is
+    the splits' own (what ``cross_val_predict`` gave by concatenation)."""
+    oof = np.empty(n, dtype=np.result_type(*[np.asarray(q).dtype for q in probas]))
+    for (_train, test), proba in zip(splits, probas, strict=True):
+        oof[test] = proba
+    return oof
+
+
+def _isotonic_thresholds(oof, y) -> tuple[np.ndarray, np.ndarray]:
+    """The isotonic breakpoints ``(x, y)`` fitted on the out-of-fold vector."""
+    from sklearn.isotonic import IsotonicRegression
+
+    iso = IsotonicRegression(out_of_bounds="clip").fit(oof, y)
+    return np.asarray(iso.X_thresholds_, dtype=float), np.asarray(iso.y_thresholds_, dtype=float)
+
+
+def _raw_predict(booster, X) -> np.ndarray:
+    """The booster's ``P(success)`` BEFORE the isotonic step: float64, NaN for a row with a non-finite feature."""
+    finite = np.isfinite(X).all(axis=1)
+    out = np.full(X.shape[0], np.nan, dtype=float)
+    if finite.any():
+        import xgboost as xgb
+
+        out[finite] = np.asarray(booster.predict(xgb.DMatrix(X[finite])), dtype=float)
+    return out
+
+
+def _calibrate(raw: np.ndarray, iso_x: np.ndarray | None, iso_y: np.ndarray | None) -> np.ndarray:
+    """The isotonic step on a raw prediction vector (pure numpy); NaN stays NaN. Without thresholds: ``raw``."""
+    if iso_x is None or iso_y is None:
+        return raw
+    out = np.full(raw.shape[0], np.nan, dtype=float)
+    finite = ~np.isnan(raw)
+    out[finite] = np.interp(raw[finite], iso_x, iso_y)
+    return out
+
+
+def _metadata_payload(*, feature_names, feature_set: str, params, iso_x, iso_y, probe_prediction: list) -> dict:
+    """The ``metadata.json`` payload from its parts (everything but the booster), in the fixed key order."""
+    return {
+        "feature_names": list(feature_names),
+        "feature_set": feature_set,
+        "params": params,
+        "isotonic": ({"x": iso_x.tolist(), "y": iso_y.tolist()} if iso_x is not None and iso_y is not None else None),
+        "feature_contract": feature_contract_block(),
+        "chirality": {"probe_prediction": probe_prediction},
+    }
+
+
+def _write_metadata_and_sums(path: Path, payload: dict) -> None:
+    """Write ``metadata.json`` (the payload) and ``SHA256SUMS`` (the sha256 of the ``model.json`` already in
+    ``path``). `XSuccessModel.save` and the trainer's reduce both write the two files with this step."""
+    (path / "metadata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    sha = hashlib.sha256((path / "model.json").read_bytes()).hexdigest()
+    (path / "SHA256SUMS").write_text(f"{sha}  model.json\n", encoding="utf-8")
+
+
 class XSuccessIntegrityError(RuntimeError):
     """Raised on an unfitted serve or a load-time SHA / chirality / feature-contract mismatch.
 
@@ -164,12 +276,7 @@ class XSuccessModel:
             fallback = XSuccessModel().fit(actions, family="per_type_logistic")
             assert model.is_fitted
         """
-        sub = actions[actions["type_id"] != _NON_ACTION]
-        X = xsuccess_features(sub)
-        y = (np.asarray(sub["result_id"]) == _SUCCESS).astype(int)
-        tid = np.asarray(sub["type_id"])
-        finite = np.isfinite(X).all(axis=1)
-        X, y, tid = X[finite], y[finite], tid[finite]
+        X, y, tid = _training_arrays(actions)
 
         self.feature_names = list(FEATURE_NAMES)
         self.feature_set = family
@@ -188,32 +295,15 @@ class XSuccessModel:
         return self
 
     def _fit_xgboost(self, X, y, *, params, calibrate, seed) -> None:
-        import xgboost as xgb
-
-        p = dict(params or _DEFAULT_PARAMS)
-        p["random_state"] = seed
-        clf = xgb.XGBClassifier(**p)
-        clf.fit(X, y)
-        self._booster = clf.get_booster()
+        """The model fit, then one fit per calibration split and the isotonic fit on their out-of-fold vector
+        (the fit steps above, in sequence: 1 + up to 5 xgboost fits)."""
+        p = _xgb_params(params, seed)
+        self._booster = _fit_booster(X, y, p)
         self._params = p
-        if calibrate and len(np.unique(y)) == 2 and len(y) >= 50:
-            from sklearn.isotonic import IsotonicRegression
-            from sklearn.model_selection import StratifiedKFold, cross_val_predict
-
-            n_splits = min(5, int(np.bincount(y).min()))
-            if n_splits >= 2:
-                oof = np.asarray(
-                    cross_val_predict(
-                        xgb.XGBClassifier(**p),
-                        X,
-                        y,
-                        method="predict_proba",
-                        cv=StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed),
-                    )
-                )[:, 1]
-                iso = IsotonicRegression(out_of_bounds="clip").fit(oof, y)
-                self._iso_x = np.asarray(iso.X_thresholds_, dtype=float)
-                self._iso_y = np.asarray(iso.y_thresholds_, dtype=float)
+        splits = _calibration_splits(X, y, seed) if calibrate else []
+        if splits:
+            probas = [_calibration_fold_proba(X, y, p, train, test) for train, test in splits]
+            self._iso_x, self._iso_y = _isotonic_thresholds(_calibration_oof(len(y), splits, probas), y)
 
     def _fit_per_type(self, X, y, tid) -> None:
         from sklearn.linear_model import LogisticRegression
@@ -256,18 +346,9 @@ class XSuccessModel:
         if self.feature_set == "per_type_logistic":
             return self._predict_per_type(X, np.asarray(actions["type_id"]))
 
-        import xgboost as xgb
-
         if self._booster is None:
             raise XSuccessIntegrityError("xgboost family requires a fitted booster")
-        finite = np.isfinite(X).all(axis=1)
-        out = np.full(X.shape[0], np.nan, dtype=float)
-        if finite.any():
-            prob = np.asarray(self._booster.predict(xgb.DMatrix(X[finite])), dtype=float)
-            if self._iso_x is not None and self._iso_y is not None:
-                prob = np.interp(prob, self._iso_x, self._iso_y)
-            out[finite] = prob
-        return out
+        return _calibrate(_raw_predict(self._booster, X), self._iso_x, self._iso_y)
 
     def _predict_per_type(self, X, tid) -> np.ndarray:
         """Per-type logistic serve (pure-numpy): dispatch each row to its action_type's logistic,
@@ -298,18 +379,14 @@ class XSuccessModel:
         """
         if not self.is_fitted:
             raise XSuccessIntegrityError("model is not fitted; nothing to serialize")
-        return {
-            "feature_names": list(self.feature_names),
-            "feature_set": self.feature_set,
-            "params": self._params,
-            "isotonic": (
-                {"x": self._iso_x.tolist(), "y": self._iso_y.tolist()}
-                if self._iso_x is not None and self._iso_y is not None
-                else None
-            ),
-            "feature_contract": feature_contract_block(),
-            "chirality": self._chirality_block(),
-        }
+        return _metadata_payload(
+            feature_names=self.feature_names,
+            feature_set=self.feature_set,
+            params=self._params,
+            iso_x=self._iso_x,
+            iso_y=self._iso_y,
+            probe_prediction=self._chirality_block()["probe_prediction"],
+        )
 
     def _chirality_block(self) -> dict:
         return {"probe_prediction": self.predict_success(_chirality_probe_actions()).tolist()}
@@ -348,8 +425,7 @@ class XSuccessModel:
             if self._booster is None:
                 raise XSuccessIntegrityError("xgboost family requires a fitted booster")
             self._booster.save_model(str(path / "model.json"))
-        (path / "metadata.json").write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
-        (path / "SHA256SUMS").write_text(f"{self._sha(path)}  model.json\n", encoding="utf-8")
+        _write_metadata_and_sums(path, self.to_dict())
 
     @classmethod
     def load(cls, path, *, legacy_override: bool = False) -> XSuccessModel:

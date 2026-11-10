@@ -85,3 +85,26 @@ def test_training_commit_exactly_when_commit_field():
     entry declares a training commit exactly when it declares the bundle field that records it."""
     for a in MAN.artifacts.values():
         assert (a.training_commit is None) == (a.commit_field is None), a.id
+
+
+def test_hub_class_names_the_loader_and_its_round_trip():
+    """HFU fit-units spec C2: `post_verify` round-trips a Hub artifact with ``from_hub`` when it declares a
+    ``hub_class``, and with the job loader's ``load`` when it declares none. So a declared class must BE the
+    job loader and have ``from_hub``; an artifact without one must have a loader with ``load``."""
+    import importlib
+
+    from scripts.hf_jobs.adopt import LOADERS
+
+    with_class, without = [], []
+    for a in sorted((x for x in MAN.artifacts.values() if x.kind == "hub"), key=lambda x: x.id):
+        mod, _, cls = LOADERS[a.job].partition(":")
+        klass = getattr(importlib.import_module(mod), cls)
+        if a.hub_class:
+            assert cls == a.hub_class, f"{a.id}: hub_class {a.hub_class!r} is not the job loader {cls!r}"
+            assert hasattr(klass, "from_hub"), f"{a.id}: {cls} has no from_hub"
+            with_class.append(a.id)
+        else:
+            assert hasattr(klass, "load"), f"{a.id}: {cls} has no load"
+            assert not hasattr(klass, "from_hub"), f"{a.id}: {cls} has from_hub; declare hub_class"
+            without.append(a.id)
+    assert with_class and without == ["hub_xsuccess"]

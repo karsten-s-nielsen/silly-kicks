@@ -721,6 +721,7 @@ def build_open_data(
     heavy_first: bool = True,
     heavy_id: str = HEAVY_MATCH_ID,
     aliases: Mapping[str, str] | None = None,
+    nonfinite_in: str | None = None,
 ) -> pathlib.Path:
     """Write a toy StatsBomb open-data tree (the ``github.com/statsbomb/open-data`` layout) under ``root``.
 
@@ -728,7 +729,9 @@ def build_open_data(
     matches, ``data/events/<id>.json`` copies the committed raw fixtures, and ``data/lineups/<id>.json`` is
     built from each match's two "Starting XI" events. The first "Starting XI" team is the home team. With
     ``heavy_first`` the tree also holds the heavy match ``heavy_id`` (default ``HEAVY_MATCH_ID``, see its
-    comment), listed first. ``aliases`` (``{new id: fixture id}``) adds copies of a fixture under new ids. Serve it with
+    comment), listed first. ``aliases`` (``{new id: fixture id}``) adds copies of a fixture under new ids.
+    ``nonfinite_in`` names a match whose first ``Pass`` event loses its ``location``: its SPADL start is then
+    NaN, so the xsuccess corpus holds a row with a non-finite feature (HFU fit-units spec 3.5). Serve it with
     ``tests/scripts/_open_data_server.serve_open_data`` and point statsbombpy at it with
     ``SILLY_KICKS_OPEN_DATA_BASE`` (``scripts._sb_open_data.pin_open_data_revision``).
     """
@@ -742,6 +745,9 @@ def build_open_data(
         sources = {heavy_id: heavy, **sources}
     for new_id, fixture in (aliases or {}).items():
         sources[new_id] = json.loads((_SB_RAW_EVENTS / f"{fixture}.json").read_bytes())
+    if nonfinite_in is not None:
+        first_pass = next(e for e in sources[nonfinite_in] if e.get("type", {}).get("name") == "Pass")
+        del first_pass["location"]
     comp = {
         "competition_id": 43,
         "season_id": 106,
@@ -982,6 +988,15 @@ def _open_data_toy(root: pathlib.Path) -> pathlib.Path:
     return root
 
 
+#: The match of the xsuccess toy that holds a row with a non-finite feature (`build_open_data(nonfinite_in=)`).
+XSUCCESS_NONFINITE_MATCH_ID = "7298"
+
+
+def _xsuccess_toy(root: pathlib.Path) -> pathlib.Path:
+    build_open_data(root / _OPEN_DATA_DIR, nonfinite_in=XSUCCESS_NONFINITE_MATCH_ID)
+    return root
+
+
 #: The census toy: 5 matches sorted 3754058, 7298, 7300000 (heavy), 7584, 7600000 (a copy of 7584). With
 #: ``--fit-fraction 0.4`` the leakage-disjoint split fits xT on the two lowest ids -- 7298 has goals, so the
 #: xT surface is non-zero (3754058 alone has none) -- and scores three, the HEAVY one first in key order
@@ -1125,7 +1140,7 @@ TOY_BUILDERS: dict[str, Callable[[pathlib.Path], pathlib.Path]] = {
     "scripts.train_win_probability": _open_data_toy,
     "scripts.train_match_outcome_dependence": _open_data_toy,
     "scripts.train_pass_completion": _open_data_toy,
-    "scripts.train_xsuccess": _open_data_toy,
+    "scripts.train_xsuccess": _xsuccess_toy,
     "scripts.train_receiver_model": _receiver_toy,
     "scripts.train_ghost_outfield": _outfield_toy,
     "scripts.train_ghost_gk": _ghost_toy,

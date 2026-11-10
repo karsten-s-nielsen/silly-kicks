@@ -329,6 +329,8 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "silly_kicks/expected_passing/_features.py" = ["N806"]
 # TF-61 xSuccess: ML-style uppercase X feature matrices (xgboost model + HPO objective).
 "silly_kicks/xsuccess/_model.py" = ["N803", "N806"]
+# The fit oracle is the 4.140.0 `_model.py` methods VERBATIM (uppercase X); its bodies are not edited.
+"tests/xsuccess/_fit_oracle.py" = ["N803"]
 "silly_kicks/xsuccess/_features.py" = ["N806"]
 "silly_kicks/xsuccess/_objective.py" = ["N803", "N806"]
 # TF-63 win_probability: math-style uppercase transition matrix M / win-draw-loss planes W,D,L /

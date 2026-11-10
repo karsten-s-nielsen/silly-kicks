@@ -8,6 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+# Every frame table these tests build also runs through the pre-index ORACLE (HFU fit-units spec 4.3).
+pytestmark = pytest.mark.usefixtures("shadow_pre_index_oracle")
+
 
 def _make_carrier_frame(
     *,

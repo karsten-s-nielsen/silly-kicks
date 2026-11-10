@@ -905,3 +905,205 @@ def test_finalize_rebuilds_the_final_copy(tmp_path):
     assert not stray.exists() and sorted(p.name for p in final.iterdir()) == sorted(
         p.name for p in (staging / _INST).iterdir()
     )
+
+
+# ---- compare_staging (HFU fit-units spec 6 step 3) ---------------------------------------------------
+
+_CA, _CB = "a" * 40, "b" * 40
+
+
+def _compare_campaign():
+    from types import SimpleNamespace
+
+    from scripts.hf_jobs.campaign import CampaignJob
+
+    return SimpleNamespace(
+        name="cycle1",
+        jobs=(
+            CampaignJob("xsuccess", "public", "sb_open", ("default",), None, None),
+            CampaignJob("match_outcome_dependence", "public", "sb_open", ("default",), None, None),
+            CampaignJob("build_territory_ranking_census", "public", "sb_open", ("default",), None, None),
+        ),
+    )
+
+
+def _compare_staging_dir(root: Path, commit: str, *, weights: bytes = b"W", census_ok: bool = True) -> Path:
+    """A toy retrieved staging folder: an xsuccess artifact, a match_outcome artifact (the commit inside
+    model.json) and a verify.json with the census row."""
+    c7 = commit[:7]
+    x = root / f"cycle1-{c7}-xsuccess-public" / "default"
+    x.mkdir(parents=True)
+    (x / "model.json").write_bytes(weights)
+    (x / "metadata.json").write_text(json.dumps({"training_commit": commit, "feature_names": ["a"]}))
+    (x / "SHA256SUMS").write_text(f"{hashlib.sha256(weights).hexdigest()}  model.json\n")
+    m = root / f"cycle1-{c7}-match_outcome_dependence-public" / "default"
+    m.mkdir(parents=True)
+    (m / "model.json").write_text(json.dumps({"rho": -0.1, "training_commit": commit}))
+    (m / "SHA256SUMS").write_text(f"{hashlib.sha256((m / 'model.json').read_bytes()).hexdigest()}  model.json\n")
+    census = f"cycle1-{c7}-build_territory_ranking_census-public/default"
+    (root / census).mkdir(parents=True)
+    (root / "verify.json").write_text(
+        json.dumps(
+            {"commit": commit, "instances": {census: {"ok": census_ok, "certification": {"basis": "rebaseline"}}}}
+        )
+    )
+    return root
+
+
+def test_compare_staging_reports_each_instance(tmp_path):
+    """Identical under the rule: provenance differs, and match_outcome holds its commit inside model.json."""
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+    assert got["xsuccess-public/default"] == {"identical": True, "differences": []}
+    assert got["match_outcome_dependence-public/default"] == {"identical": True, "differences": []}
+    assert got["build_territory_ranking_census-public/default"]["census_ok"] is True
+    assert list(got) == [
+        "xsuccess-public/default",
+        "match_outcome_dependence-public/default",
+        "build_territory_ranking_census-public/default",
+    ]
+
+
+def test_compare_staging_reports_a_payload_difference(tmp_path):
+    new = _compare_staging_dir(tmp_path / "new", _CB, weights=b"X")
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
+    assert row["identical"] is False and any(d.startswith("model.json") for d in row["differences"])
+
+
+def test_compare_staging_reports_an_instance_in_only_one_folder(tmp_path):
+    import shutil
+
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    shutil.rmtree(old / f"cycle1-{_CA[:7]}-xsuccess-public")
+    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+    assert got["xsuccess-public/default"] == {
+        "identical": False,
+        "differences": ["present in only one staging folder"],
+    }
+
+
+def test_compare_staging_refuses_two_run_keys_on_one_side(tmp_path):
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    (old / f"cycle1-{'c' * 7}-xsuccess-public" / "default").mkdir(parents=True)
+    with pytest.raises(A.AdoptionRefusedError, match="xsuccess-public"):
+        A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+
+
+@pytest.mark.parametrize("fault", ["no_verify_json", "another_commit", "not_ok"])
+def test_compare_staging_census_is_not_ok(tmp_path, fault):
+    new = _compare_staging_dir(tmp_path / "new", _CB, census_ok=fault != "not_ok")
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    if fault == "no_verify_json":
+        (new / "verify.json").unlink()
+    elif fault == "another_commit":
+        doc = json.loads((new / "verify.json").read_text())
+        (new / "verify.json").write_text(json.dumps({**doc, "commit": "d" * 40}))
+    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+    assert got["build_territory_ranking_census-public/default"]["census_ok"] is False
+
+
+# ---- one read bound for the whole retrieve (HFU fit-units spec C1) ------------------------------------
+
+
+class _SlowStore:
+    """A LocalStore whose reads and listings take 5 ms and record how many are in flight at once."""
+
+    def __init__(self, root: Path):
+        import threading
+
+        from scripts._stages import LocalStore
+
+        self.inner, self.lock, self.in_flight, self.peak = LocalStore(root), threading.Lock(), 0, 0
+
+    def _held(self, fn, rel):
+        import time
+
+        with self.lock:
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+        try:
+            time.sleep(0.005)
+            return fn(rel)
+        finally:
+            with self.lock:
+                self.in_flight -= 1
+
+    def read_bytes(self, rel):
+        return self._held(self.inner.read_bytes, rel)
+
+    def names(self, rel):
+        return self._held(self.inner.names, rel)
+
+    def write_bytes(self, rel, data):
+        self.inner.write_bytes(rel, data)
+
+
+def _bound_world(tmp_path: Path):
+    import pandas as pd
+
+    from scripts._stages import FileSet, write_result
+    from scripts.hf_jobs import campaign as Camp
+
+    c = Camp.load_campaign(Path("scripts/hf_jobs/campaigns/cycle1.toml"))
+    store = _SlowStore(tmp_path / "bucket")
+    units = [f"u{i:02d}" for i in range(40)]
+    write_result(store.inner, "assemble/g1/_output", FileSet({"metrics.json": b"{}"}))
+    write_result(store.inner, "extract/g0/_output", pd.DataFrame({"f": [1.0], "_y": [0], "_group": ["a"]}))
+    for i, u in enumerate(units):
+        store.write_bytes(f"extract/g0/{u}.counters.json", json.dumps({"n_events": i + 1}).encode())
+
+    def plan_fn(inst, *, bucket):
+        return {
+            "output": "assemble",
+            "stages": [
+                {"name": "extract", "generation": "extract/g0", "reduced": True, "units": units},
+                {"name": "assemble", "generation": "assemble/g1", "reduced": True},
+            ],
+        }
+
+    return c, store, plan_fn
+
+
+def _records(staging: Path) -> dict:
+    return {
+        p.relative_to(staging).as_posix(): json.loads(p.read_text())["counters"]
+        for p in sorted(staging.rglob("*.record.json"))
+    }
+
+
+def test_retrieve_runs_the_plan_reads_under_the_bound(tmp_path):
+    """A `--plan` subprocess reads the store too (spec C1: EVERY store read): it holds one slot."""
+    import threading
+    import time
+
+    c, store, plan_fn = _bound_world(tmp_path)
+    lock, state = threading.Lock(), {"in_flight": 0, "peak": 0}
+
+    def counted_plan(inst, *, bucket):
+        with lock:
+            state["in_flight"] += 1
+            state["peak"] = max(state["peak"], state["in_flight"])
+        try:
+            time.sleep(0.02)
+            return plan_fn(inst, bucket=bucket)
+        finally:
+            with lock:
+                state["in_flight"] -= 1
+
+    A.retrieve(c, C, staging=tmp_path / "s", plan_fn=counted_plan, store_fn=lambda _uri: store, read_workers=2)
+    assert 1 <= state["peak"] <= 2, state  # 4 instance workers ran 4 plans at once before
+    assert store.peak <= 2
+
+
+def test_retrieve_never_reads_more_than_eight_at_once(tmp_path):
+    c, store, plan_fn = _bound_world(tmp_path)
+    A.retrieve(c, C, staging=tmp_path / "s8", plan_fn=plan_fn, store_fn=lambda _uri: store)
+    assert 2 <= store.peak <= 8, store.peak  # 4 instances x 8 counter threads gave up to 32 before the bound
+    serial = _SlowStore(tmp_path / "bucket")
+    A.retrieve(c, C, staging=tmp_path / "s1", plan_fn=plan_fn, store_fn=lambda _uri: serial, read_workers=1)
+    assert serial.peak == 1
+    assert _records(tmp_path / "s8") == _records(tmp_path / "s1") and len(_records(tmp_path / "s8")) == 21
