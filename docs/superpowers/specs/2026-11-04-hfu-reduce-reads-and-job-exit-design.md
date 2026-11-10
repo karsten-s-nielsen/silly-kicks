@@ -1,6 +1,7 @@
 # HFU — reduce reads, job exit semantics, match-outcome pipeline — design
 
-Branch `feat/minimal-hf-driver` (PR #299); one amend per change, each amend and force-push owner-gated. Scope owner:
+Branch `feat/minimal-hf-driver` (PR #299); one amend per change, each amend and force-push owner-gated; one
+exception: the launch-7 adoption is a NEW commit on top of `a1a3b52f`, the cycle's final commit (§18.4). Scope owner:
 Karsten. Reviewers A and B (independent); reports in `D:\Development\_reviews\2026-11-0*-hfu-reduce-reads-*`.
 The review rounds and their answers are in git history; this document states the standing decisions only.
 
@@ -368,7 +369,8 @@ Public certification = the head-to-head (`basis: "in_sample_parity"`), two-sided
 `cv_metric` within 5 % (`match_outcome`: `rho` within 1e-6), the ADR-126 gate for xshot/xcross, and the 14.3
 identity. A wheel artifact without `metrics.json` names a `cv_reference` (`expected_passing`: the research
 metrics; `match_outcome`: its `model.json`; `xsuccess`: `docs/artifacts/cv_reference/xsuccess.json`, the card's
-AUC 0.895 and Brier 0.084). `headtohead` takes `--certification` from the caller; `statsbomb_open` builders read
+AUC 0.895 and Brier 0.084); §18.7 supersedes this for those three (their bundles now ship `metrics.json`).
+`headtohead` takes `--certification` from the caller; `statsbomb_open` builders read
 the snapshot; `flat_tc3` evaluates on the run's own `extract` rows, which retrieve copies beside the artifact.
 
 ### 14.5 Change 7d — `DependenceModel.load` takes `Path | str` (F12)
@@ -656,7 +658,7 @@ ADR-128 items, `docs/howto/hf-jobs-training.md`, `CHANGELOG.md` `[Unreleased]`.
 
 ## 17. Change 10 — the launch 6 verify findings (2026-11-09)
 
-Status: DRAFT r23. Owner 2026-11-09: amend and rerun all 21 instances (launch 7); fold in parallel retrieve/verify
+Status: APPROVED (A r23, B r23); implemented and launched (launch 7). Owner 2026-11-09: amend and rerun all 21 instances (launch 7); fold in parallel retrieve/verify
 and `launch_batch` 16. The version stays 4.139.1.
 
 ### 17.1 Evidence (launch 6 on `0552f58e`: 21/21 done, verify 16 ok, 5 FAIL)
@@ -731,3 +733,136 @@ tracked edit from launch until adopt ends; retrieve, verify, adopt; Task 27 Step
 
 ADR-128 items; the `rehydrate_public_corpus_ids` docstring keeps its contract and names the trainers' `all_public=False`;
 `docs/howto/hf-jobs-training.md`; `CHANGELOG.md` `[Unreleased]`.
+
+## 18. Change 11 — adopt the launch 7 artifacts (2026-11-10)
+
+Status: §18.1-18.5 APPROVED (A r27, B r27); §18.6 APPROVED (A r29, B r29); §18.7 APPROVED (A r31, B r31). Owner 2026-11-10: fix `adopt`, A/B review, then adopt launch 7 with the fixed `adopt`; no rerun.
+
+### 18.1 Evidence (launch 7 on `a1a3b52f`: 21/21 done, verify 21/21 ok)
+
+- **F33.** `adopt` refused: `manifest artifact 'match_outcome' has 0 training_commit lines`. `adopt` calls
+  `_set_manifest_commit` for every adopted artifact (`adopt.py:943`). The manifest entries of `match_outcome` and
+  `expected_passing` declare no `commit_field` and no `training_commit` (`manifest.violations` checks a commit only
+  when `commit_field` is set, `manifest.py:166`), so `adopt` must not demand the line. (Their bundles do record a
+  commit, `model.json` and the new `metrics.json`; §18.7 declares both.) Today every manifest entry has
+  `training_commit` exactly when it has `commit_field` (25 of 29).
+- **F34.** `adopt` is not atomic: before it refused it had written 24 bundle and census files and one new
+  `metrics.json` (`git status` after the run); its docstring says a refusal writes nothing. The tree was restored to
+  HEAD by hand.
+- **Storage (operational, no code change).** Launch 7 first stopped on `403 Private storage limit reached for org
+  silly-kicks`: the scratch bucket held 70 GB, 56 GB of it the run keys of 13 amended-away commits. Over the limit,
+  the bucket's batch delete endpoint also returned 403. Owner-approved: the legacy dataset `hf-refit-xshot` (not in
+  `datasets.lock.json`) was deleted, then the 13 commits' run keys; one generation damaged by the lost uploads was
+  deleted and recomputed. Launch 7 then resumed and finished. Owner 2026-11-10: "I am not raising any limits just
+  because you leave a mess behind".
+
+### 18.2 Change 11a — no manifest commit for an artifact that declares none (F33)
+
+`adopt` writes `training_commit` into the manifest only for an artifact with a `commit_field`. An artifact without one
+keeps its manifest entry byte for byte; `observed.json` still records its campaign and commit, as for every artifact.
+A manifest test pins the invariant this relies on: an entry has `training_commit` exactly when it declares a
+`commit_field`.
+
+### 18.3 Change 11b — a refusal leaves the tree as it found it (F34)
+
+The clean-tree check `adopt` has (`git_provenance`) reads the process's working directory, not the root `adopt`
+writes to. `adopt` therefore also refuses at entry when `git status` of the root is not empty ("the root tree is not
+clean"), so every change in the root after the entry checks is its own. The entry checks run in this order: the
+staging dir outside the repo, the provenance clean-tree check, the campaign commit, the root status (new), the verify
+report. The entry checks write nothing and stay
+outside the rollback. `adopt` then runs its write phase (the bundles, the driver outputs, the manifest, `observed.json`,
+the cards, the verdicts, the allowlist check) under a rollback: on any `BaseException` (a `KeyboardInterrupt`
+included) it restores each path `git status` reports: a tracked path is checked out from HEAD (a deleted tracked file
+comes back), a new file is removed. When the rollback succeeds, the original exception propagates unchanged. When a
+restore fails, `adopt` raises `AdoptionRollbackError` (a subclass of `AdoptionRefusedError`) from the original
+exception; its message names every path it could not restore. The local gate (`_local_gate`, `gate=True`) runs after
+the write phase, outside the rollback: an interrupted or failed gate leaves the finished adoption for the operator.
+Idempotence is kept. Every second run over the same staging dir writes nothing: over an uncommitted adoption it
+refuses at the root-status check; over a committed one, with real git, it refuses at the campaign-commit check (the
+adoption commit moved HEAD). The write phase itself is a fixed point (each `adopted_at` keeps its date); a test pins
+that with provenance that reports the campaign commit. The `adopt` docstring states this.
+
+### 18.4 Adopting launch 7
+
+`adopt` refuses a HEAD other than the campaign commit, and the fix is a tracked change. Owner 2026-11-10: run the
+fixed `adopt.py` from a copy outside the repo against the clean tree at `a1a3b52f` (the exact commands are plan Task
+50). Before the run, no module that `adopt` imports differs from HEAD (the two docstring and comment edits of §18.5
+that touch `manifest.py` and `manifest.toml` are made after the run), so the copy differs from HEAD in `adopt.py` only. Training
+provenance is unchanged: every job ran at `a1a3b52f`, and each adopted `training_commit` is `a1a3b52f`. The adoption
+files and the Change 11 change go into ONE NEW commit on top of `a1a3b52f`, the cycle's final commit, never an amend:
+an amend would replace `a1a3b52f`, the commit every adopted artifact names. PR #299 merges without squashing (owner:
+the plan all along), so `a1a3b52f` stays reachable from `main`, as the earlier training commits are. The local gate is
+skipped (owner: "do not run the test suite locally"); CI runs it on the commit.
+
+### 18.5 Docs
+
+ADR-128 amendment items; `docs/howto/hf-jobs-training.md` (step 8: no manifest commit for an artifact without
+`commit_field`; a refusal leaves the tree as found); `CHANGELOG.md` `[Unreleased]`; the three texts that say `adopt`
+sets every adopted artifact's `training_commit` (the `manifest.toml` header, the `manifest.py` and `adopt.py` module
+docstrings) say "an adopted artifact with a `commit_field`". The `manifest.toml` and `manifest.py` edits are made after
+the §18.4 adoption run.
+
+### 18.6 Change 11c — canonical probe ids in the xCross bundles (F35)
+
+- **F35.** The first fixed-`adopt` run (§18.4) adopted 25 artifacts, and
+  `tests/test_bundled_probe_ids_are_committed_ids.py` then failed for `_xcross_weights/default` and `/position_only`:
+  `probe_sample_matches` holds `["gradientsports", "gradientsports-10502"]` (and `-10503`), the committed record
+  `["gradientsports", "10502"]`. Since the ADR-128 migration the xCross probe cohort (`_cohort_files`) records the
+  staged unit's `match_id`, which is the per-game directory name (`pergame_name`, `flat_to_pergame`:
+  `f"{provider}-{game}"`); the legacy trainer recorded the canonical id. The `probe_sample_in_training_folds` keys
+  carry the same names. No new id is disclosed (the two matches are the committed probe pair), but a field that
+  ships in the wheel, in `observed.json` and in every Hub copy changed form. The per-game ids are in exactly the
+  four xCross staging `metrics.json` files; no other adopted bundle JSON has one. `metrics.json` is not in a bundle's
+  `SHA256SUMS`, so finalizing it does not affect `load()`.
+- **Owner 2026-11-10:** fix the trainer, and canonicalize at adoption; no rerun.
+- **The canonical id.** `scripts/_corpus_identity.canonical_match_id(provider, match_id) -> str` strips a leading
+  `f"{q}-"` where `q` is the pair's own provider or that provider's identity (`_CONVERTER_TO_IDENTITY`: `sportec` ->
+  `idsse`; the staged per-game name carries the stem provider). Any other id is returned unchanged, so an id that is
+  already canonical stays, a dashed one included (`idsse`, `DFL-MAT-J03WMX`). A staged name equal to its provider
+  (no game) is returned unchanged; no probe unit has one.
+- **The trainer.** `_cohort_files` records each probe match as `[provider, canonical_match_id(provider, match_id)]`
+  and keys `match_groups` by that canonical id; its frame lookup still uses the staged name.
+- **Off-HF finalize.** `scripts/_corpus_identity.canonical_probe_ids(metrics) -> dict` returns a new dict whose
+  `probe_sample_matches` pairs carry canonical ids, and whose `probe_sample_in_training_folds` keys are mapped
+  through those pairs (a key no pair names stays); a metrics without the fields is returned unchanged; the input is
+  not mutated. `adopt` builds ONE finalized copy of each adopted instance, `<staging>/_final/<instance>/` (the
+  staging files with `metrics.json` finalized; outside the repo, rebuilt on every run). The wheel bundle (`_bundle`),
+  a Hub artifact's `observed.json` entry (its `metrics_summary` and its file hashes) and `publish` (the uploaded dir
+  and its post-verification) all read that copy, so they agree byte for byte. `publish` rebuilds the copy the same
+  way before it uploads. Launch 7's records are finalized; no job reruns.
+- **Re-adoption.** The modules the re-adoption run loads that differ from HEAD are exactly `scripts/hf_jobs/adopt.py`
+  and `scripts/_corpus_identity.py`: each is copied outside the repo, its sha256 recorded and checked, and each is
+  registered in `sys.modules` under its own name before any other `scripts` import (plan Task 53). The trainer
+  change is not loaded by `adopt`. The first run's output is discarded first: exactly the paths its report lists as
+  written (a tracked path checked out from HEAD, a new file removed), after which `git status` shows only the Change
+  11 paths. The `manifest.toml` header and `manifest.py` docstring edits (§18.5) follow the re-adoption run.
+
+### 18.7 Change 11d — the bundle's own CV record replaces `cv_reference` (F36)
+
+- **F36.** The first adoption run added a `metrics.json` to three wheel bundles that shipped none: `expected_passing`,
+  `match_outcome` and `xsuccess` (`_bundle` writes the canonical bundle shape, and the pipeline trainers emit
+  `metrics.json`). These are exactly the three artifacts whose committed CV record came from a manifest
+  `cv_reference` (HFU spec 14.4), because their bundles had none. `_committed_metrics` prefers a bundle's own
+  `metrics.json`, so after adoption the `cv_reference` entries are dead, and two tests that pin the old design fail
+  (`test_committed_metrics_without_reference_raises`, `test_cv_reference_values_match_sources`). The new records
+  agree with the shipped prose: xsuccess AUC 0.8948 / Brier 0.0838 (the card says 0.895 / 0.084), the
+  `match_outcome` `rho` equals `model.json`'s, `expected_passing` rounds to 0.794 / 0.006 / 0.129.
+- **Owner 2026-11-10:** ship `metrics.json`; the bundle's own record is the CV baseline of the next campaign.
+- **Change.** The three manifest entries drop `cv_reference` and their "committed CV record" comments;
+  `docs/artifacts/cv_reference/xsuccess.json` (read only by that entry) is removed. The `cv_reference` field and
+  `_committed_metrics`'s fallback stay for a bundle without `metrics.json`. Both edits follow the re-adoption run
+  (`adopt` writes `manifest.toml`), with the §18.5 edits.
+- **Tests.** `test_committed_metrics_without_reference_raises` pins the refusal on a toy wheel artifact with neither
+  a `metrics.json` nor a `cv_reference`. `test_cv_reference_values_match_sources` becomes
+  `test_a_bundle_metrics_is_its_committed_cv_record`: for each of the three, `_committed_metrics` equals the
+  bundle's `metrics.json`, and the shipped prose still matches it (the xsuccess card's AUC and Brier at 3 decimals,
+  the `match_outcome` `rho`, the `expected_passing` rounding).
+- **The two commits are declared (owner 2026-11-10).** `match_outcome` (`model.json:training_commit`) and
+  `expected_passing` (`metrics.json:training_commit`) record their training commit in the bundle, so their entries
+  gain `commit_field` and `training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"` after the re-adoption run
+  (with the other manifest edits); `test_wheel_artifact_matches_its_expectations` then checks each bundle's commit
+  against the entry, and the next `adopt` writes it like any other.
+- **A test pinned to the committed census.** `test_rebaseline_tolerance.py` built its fresh census with absolute
+  `n_boot_effective` values (400, and 401 for the beyond-bound case), so over the adopted census (400) its "+2" case
+  became +1 and passed the bound. Its deltas are now relative to the committed census (+1, and +2 in all), so it holds
+  over HEAD's census (399) and the adopted one alike.

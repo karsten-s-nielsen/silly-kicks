@@ -10,10 +10,10 @@
       "n_rows": 41260
     },
     "tier2": {
-      "icc": 0.1334544173963773,
-      "lo": 0.12105729153114521,
+      "icc": 0.13345441739637773,
+      "lo": 0.12106180965743128,
       "power": 1.0,
-      "n_boot_effective": 399
+      "n_boot_effective": 400
     }
   },
   "verdict": {
@@ -30,11 +30,12 @@
     "ICC_EFFECT_SIZE": 0.05
   },
   "honest_limit": "A NEGATIVE verdict is EXPECTED on a single-club / national-team corpus: one player = one team, so the defender-vs-team confound is unidentifiable and a per-defender ranking is NOT licensed. The census measures this rather than assuming it; a multi-club transfer corpus is what supplies the cross-team observations a ranking needs.",
-  "generation": "1c2995f0cdb95cdc",
-  "n_attempted": 0,
+  "generation": "36affac1879af87c",
+  "n_attempted": 1981,
   "n_failed": 0,
   "n_counters_unrecorded": 0,
-  "run_commit": "dd7ed4fcbd8efe2bab51e52e5bbbdf1b2fc5183c",
+  "n_excluded": 0,
+  "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
   "input_contract": {

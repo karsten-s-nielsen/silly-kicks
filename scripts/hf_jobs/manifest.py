@@ -1,11 +1,11 @@
 """The artifact manifest (ADR-128 spec 5.7): every bundled and Hub artifact, with its declared EXPECTATIONS.
 
 ``docs/artifacts/manifest.toml`` is human-written, with ONE exception (spec INV-9, 5.7 step 6): `adopt` sets
-an adopted artifact's ``training_commit`` to the verified campaign commit. It replaces the scattered test
-constants (commits, events, classification, card sources, Hub roles) with ONE declared source, read by the
-artifact tests, the publisher, the Hub validator and `adopt`. Observed fields (sha256, metrics summary, env,
-campaign, adopted_at) live in ``docs/artifacts/observed.json``, written only by `adopt` -- never compared
-against themselves (INV-9).
+the ``training_commit`` of each adopted artifact with a ``commit_field`` to the verified campaign commit. It
+replaces the scattered test constants (commits, events, classification, card sources, Hub roles) with ONE declared
+source, read by the artifact tests, the publisher, the Hub validator and `adopt`. Observed fields (sha256, metrics
+summary, env, campaign, adopted_at) live in ``docs/artifacts/observed.json``, written only by `adopt` -- never
+compared against themselves (INV-9).
 
 Generated card regions: a card wraps each generated value in inline markers
 ``<!-- generated:<name> -->...<!-- /generated:<name> -->``; `render_card` re-renders them from the manifest

@@ -660,6 +660,48 @@ rerun all 21 instances; nothing from launch 6 is adopted.
 `scripts/hf_jobs/{adopt,floor,registry}.py`, `scripts/hf_jobs/campaigns/cycle1.toml`. The version stays 4.139.1 in
 this amend. Spec and plan A/B approved (A r23/r21, B r23/r20).
 
+## Amendment (2026-11-10): adopting launch 7
+
+Launch 7 on `a1a3b52f` finished 21 of 21 instances, and verify passed all 21. `adopt` then refused (spec
+`2026-11-04-hfu-reduce-reads-and-job-exit-design.md` §18, F33-F34). Owner: fix `adopt`, then adopt launch 7 with the
+fixed module; no rerun.
+
+33. **`adopt` wrote a manifest commit for an artifact that records none (F33).** `match_outcome` and
+    `expected_passing` have no `commit_field`, so their entries have no `training_commit`, and `adopt` refused.
+    **Decision:** `adopt` writes `training_commit` only for an artifact with a `commit_field`; a manifest test pins
+    "`training_commit` exactly when `commit_field`".
+34. **A refusal left files behind (F34).** **Decision:** `adopt` refuses at entry when the root's `git status` is not
+    empty (the provenance check reads the working directory, not the root), and runs its write phase under a
+    rollback: on any `BaseException` it restores every changed path (a tracked path from HEAD, a new file removed),
+    and a restore that fails raises `AdoptionRollbackError` naming the paths. The local gate runs after the write
+    phase, outside the rollback.
+35. **The adoption is a new commit.** An amend would replace `a1a3b52f`, the commit every adopted artifact names. The
+    adoption and this fix are one new commit on top of `a1a3b52f`, the cycle's final commit; PR #299 merges without
+    squashing, so `a1a3b52f` stays reachable from `main`. The fixed `adopt.py` runs from a copy outside the repo
+    against the clean tree at `a1a3b52f`; the copy's sha256 is recorded in the cycle ledger.
+36. **The xCross probe ids changed form (F35).** Since the migration the probe cohort recorded the staged per-game
+    name (`gradientsports-10502`), not the canonical id (`10502`), in `probe_sample_matches` and the
+    `probe_sample_in_training_folds` keys. **Decision (owner):** the trainer records canonical ids
+    (`_corpus_identity.canonical_match_id`: a leading provider or identity prefix stripped, any other id unchanged),
+    and adoption finalizes launch 7's records off HF (`canonical_probe_ids`) into ONE copy per instance,
+    `<staging>/_final/<instance>/`, which the wheel bundle, a Hub artifact's `observed.json` entry and `publish` all
+    read. The re-adoption loads exactly the two changed modules, `adopt.py` and `_corpus_identity.py`, from
+    sha256-checked copies.
+37. **The bundle's own CV record replaces `cv_reference` (F36).** Adoption adds a `metrics.json` to `expected_passing`,
+    `match_outcome` and `xsuccess`, the three artifacts whose CV baseline came from a manifest `cv_reference`.
+    **Decision (owner):** ship it; the bundle's record is the next campaign's baseline; the three `cv_reference`
+    entries and `docs/artifacts/cv_reference/xsuccess.json` are removed (the field stays for a bundle without one).
+    `match_outcome` and `expected_passing` record their training commit in the bundle, so the manifest declares it
+    (`commit_field`) and checks it.
+
+The launch also stopped once on the org's private storage limit: the scratch bucket held the run keys of 13
+amended-away commits. They were deleted after the owner's go; the owner will not raise the limit for leftovers.
+
+**Scope.** `scripts/hf_jobs/{adopt,manifest}.py`, `scripts/_corpus_identity.py`, `scripts/train_xcross_attempt.py`,
+`docs/artifacts/manifest.toml` (comments, three `cv_reference` entries, two `commit_field` entries),
+`docs/artifacts/cv_reference/xsuccess.json` (removed), the adopted artifacts. The adoption changes the wheel's
+bundled weights, so the release is 4.140.0 (owner 2026-11-10). Spec and plan A/B approved (A r27/r25, B r27/r24; §18.6 A r29/r27, B r29/r26).
+
 ## Related
 
 - **Specs:** `docs/superpowers/specs/2026-10-18-compute-contract-hf-campaigns-design.md`

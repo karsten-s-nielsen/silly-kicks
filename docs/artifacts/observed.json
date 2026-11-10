@@ -24,93 +24,362 @@
     }
   },
   "expected_passing": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
-    "metrics_summary": {},
+    "metrics_summary": {
+      "auc": 0.7940631079645424,
+      "base_rate": 0.7991601940613209,
+      "brier": 0.1293463309954237,
+      "competitions": [
+        [
+          2,
+          27
+        ],
+        [
+          2,
+          44
+        ],
+        [
+          7,
+          27
+        ],
+        [
+          7,
+          108
+        ],
+        [
+          7,
+          235
+        ],
+        [
+          9,
+          27
+        ],
+        [
+          9,
+          281
+        ],
+        [
+          11,
+          1
+        ],
+        [
+          11,
+          2
+        ],
+        [
+          11,
+          4
+        ],
+        [
+          11,
+          21
+        ],
+        [
+          11,
+          22
+        ],
+        [
+          11,
+          23
+        ],
+        [
+          11,
+          24
+        ],
+        [
+          11,
+          25
+        ],
+        [
+          11,
+          26
+        ],
+        [
+          11,
+          27
+        ],
+        [
+          11,
+          37
+        ],
+        [
+          11,
+          38
+        ],
+        [
+          11,
+          39
+        ],
+        [
+          11,
+          40
+        ],
+        [
+          11,
+          41
+        ],
+        [
+          11,
+          42
+        ],
+        [
+          11,
+          90
+        ],
+        [
+          11,
+          278
+        ],
+        [
+          12,
+          27
+        ],
+        [
+          12,
+          86
+        ],
+        [
+          16,
+          1
+        ],
+        [
+          16,
+          2
+        ],
+        [
+          16,
+          4
+        ],
+        [
+          16,
+          21
+        ],
+        [
+          16,
+          22
+        ],
+        [
+          16,
+          23
+        ],
+        [
+          16,
+          24
+        ],
+        [
+          16,
+          25
+        ],
+        [
+          16,
+          26
+        ],
+        [
+          16,
+          27
+        ],
+        [
+          16,
+          37
+        ],
+        [
+          16,
+          39
+        ],
+        [
+          16,
+          41
+        ],
+        [
+          16,
+          44
+        ],
+        [
+          16,
+          71
+        ],
+        [
+          16,
+          76
+        ],
+        [
+          16,
+          276
+        ],
+        [
+          16,
+          277
+        ],
+        [
+          35,
+          75
+        ],
+        [
+          37,
+          4
+        ],
+        [
+          37,
+          42
+        ],
+        [
+          37,
+          90
+        ],
+        [
+          37,
+          281
+        ],
+        [
+          43,
+          3
+        ],
+        [
+          43,
+          51
+        ],
+        [
+          43,
+          54
+        ],
+        [
+          43,
+          55
+        ],
+        [
+          43,
+          106
+        ],
+        [
+          43,
+          269
+        ],
+        [
+          43,
+          270
+        ],
+        [
+          43,
+          272
+        ],
+        [
+          44,
+          107
+        ],
+        [
+          49,
+          3
+        ],
+        [
+          49,
+          107
+        ],
+        [
+          53,
+          106
+        ],
+        [
+          53,
+          315
+        ],
+        [
+          55,
+          43
+        ],
+        [
+          55,
+          282
+        ],
+        [
+          72,
+          30
+        ],
+        [
+          72,
+          107
+        ],
+        [
+          81,
+          48
+        ],
+        [
+          81,
+          275
+        ],
+        [
+          87,
+          84
+        ],
+        [
+          87,
+          268
+        ],
+        [
+          87,
+          279
+        ],
+        [
+          116,
+          68
+        ],
+        [
+          131,
+          281
+        ],
+        [
+          135,
+          281
+        ],
+        [
+          182,
+          281
+        ],
+        [
+          223,
+          282
+        ],
+        [
+          1238,
+          108
+        ],
+        [
+          1267,
+          107
+        ],
+        [
+          1470,
+          274
+        ]
+      ],
+      "corpus_match_ids_sha256": "f0446a673cf837060ea5f282414547411a6869536eb3191974d9aba6e5be8a56",
+      "corpus_n_matches": 3961,
+      "ece": 0.006435980695455661,
+      "generation": "94fd032f64a72e74",
+      "n_attempted": 3961,
+      "n_competitions": 80,
+      "n_counters_unrecorded": 0,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_matches": 3961,
+      "n_oof": 3337914,
+      "n_pass_rows": 3337914,
+      "providers": "statsbomb-open (all 80 open-data competitions)",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3"
+    },
     "sha256": {
       "MODEL_CARD.md": "63db3fb3ccb937ae5572af802ccdcafc2c88c51c81b14cbe4dfb986dd7a7d6eb",
-      "SHA256SUMS": "abc60ad1cc6e3531994982128c6e31c5fb4a6b5359e19b6048108686f58c676b",
-      "model.json": "07e04a5a192e1349667f7c914e23332eb9d603aad835a38bb6e213b0e956726a"
+      "SHA256SUMS": "66e986457cdc9df8d7bf09cb8f14844d356b84f8f4eb0e205201a0f278aca14a",
+      "metrics.json": "af12720e04a0a27495fb4fb9170f363e6d1f6f5e790ec2d4280184c5af2dc243",
+      "model.json": "7967fd93741eb1344e9566af6a89cdc40ebb56fa803a06d7b687f46dc3370553"
     }
   },
   "ghost_default": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
-    "env": {},
-    "metrics_summary": {
-      "acceptance": {
-        "artifact_size_lt_15mb": true,
-        "cross_fold_std_lt_05m": true,
-        "overall_mae_lt_2m": true,
-        "per_provider_mae_lt_3m": true
-      },
-      "artifact_size_bytes": 2351081,
-      "carrier_params": {
-        "beta": 0.0,
-        "gamma": 0.25,
-        "tolerance_m": 3.0
-      },
-      "cv_folds": 5,
-      "cv_mae_euclidean_mean": 1.127059374623758,
-      "cv_mae_euclidean_std": 0.03375836915026666,
-      "cv_mae_x_mean": 0.16589887638765838,
-      "cv_mae_x_std": 0.0030001343461871243,
-      "cv_mae_y_mean": 1.0754757258303134,
-      "cv_mae_y_std": 0.03293184892547,
-      "detection_selection_bias": {
-        "ball_to_keeper_dist_detected_mean": 23.268318334326782,
-        "ball_to_keeper_dist_undetected_mean": 47.98931663400538,
-        "keeper_depth_detected_mean": 5.05032336584333,
-        "keeper_depth_undetected_mean": 15.526409788919468,
-        "n_detected": 184277,
-        "n_games_counters_unrecorded": 0,
-        "n_undetected": 735727,
-        "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
-      },
-      "grid_x_max": 30.0,
-      "high_sweeper_stratum_mae_mean": NaN,
-      "hyperparameters": {
-        "max_depth": 8,
-        "n_estimators": 500
-      },
-      "n_games": 179,
-      "n_providers": 3,
-      "n_samples": 1039502,
-      "per_provider_high_sweeper_coverage": {
-        "gradientsports": 0.0,
-        "skillcorner": 0.0,
-        "sportec": 0.0
-      },
-      "per_provider_mae_euclidean": {
-        "gradientsports": 1.0713382813448384,
-        "skillcorner": 1.1625960742606405,
-        "sportec": 1.6751893062581131
-      },
-      "providers": [
-        "gradientsports",
-        "skillcorner",
-        "sportec"
-      ],
-      "reproducibility": "restricted",
-      "reproducibility_note": "Restricted: trained at training_commit a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
-      "run_tree_dirty": false,
-      "run_tree_state": "clean",
-      "subsample_fps": 1.0,
-      "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
-      "variant": "default"
-    },
-    "sha256": {
-      "SHA256SUMS": "e391b4856a606e85edafba8b6e19604c33476dd5c1c74f9bb7c27d0896abad36",
-      "metadata.json": "f3896f4fa095a3a718978394c58218a46a5d291975032e469234246c83eb4c07",
-      "metrics.json": "0a7fe7e2e97396834c6f94cdc2cac110b640ca6311114d6a549d8650441ae881",
-      "rfcde_weights.npz": "673621fd8fa356e100e4f8a13d553f9a747569eaf2378b6736bae9c66a6f2868"
-    }
-  },
-  "ghost_full": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -167,23 +436,24 @@
         "sportec"
       ],
       "reproducibility": "restricted",
-      "reproducibility_note": "Restricted: trained at training_commit 4095251730ce216decf99ec8e47d8e1162a04a1d on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "subsample_fps": 1.0,
-      "training_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
-      "variant": "full"
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
+      "variant": "default"
     },
     "sha256": {
-      "SHA256SUMS": "3660bfe324bc81459165e31dfc44050a08906d57c77eaa0b39ad43067afb70d3",
-      "metadata.json": "81f7ce72898f97ca085637fe571a5cb34aeb950dcdaec0a1714c15fc756ec7db",
-      "metrics.json": "84ccb49f434f8e2015bfcfc5cab9aef06cd7e140c7c6d2f6245e03620e178bb4"
+      "SHA256SUMS": "f302a7c0b0904a160385dc2aeb4b86401bc757e6509b18367f1a6a78ca447004",
+      "metadata.json": "ec4fe5a491a035f2428228380f4158c25bd34f317439dfd8c1e1434272fddfc5",
+      "metrics.json": "60084b76057bf53b27e799f5158ad280583bc15ed4b08d0cf2241fbea8876116",
+      "rfcde_weights.npz": "673621fd8fa356e100e4f8a13d553f9a747569eaf2378b6736bae9c66a6f2868"
     }
   },
-  "ghost_position_only": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+  "ghost_full": {
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -192,7 +462,81 @@
         "overall_mae_lt_2m": true,
         "per_provider_mae_lt_3m": true
       },
-      "artifact_size_bytes": 2341647,
+      "artifact_size_bytes": 2351094,
+      "carrier_params": {
+        "beta": 0.0,
+        "gamma": 0.25,
+        "tolerance_m": 3.0
+      },
+      "cv_folds": 5,
+      "cv_mae_euclidean_mean": 1.127059374623758,
+      "cv_mae_euclidean_std": 0.03375836915026666,
+      "cv_mae_x_mean": 0.16589887638765838,
+      "cv_mae_x_std": 0.0030001343461871243,
+      "cv_mae_y_mean": 1.0754757258303134,
+      "cv_mae_y_std": 0.03293184892547,
+      "detection_selection_bias": {
+        "ball_to_keeper_dist_detected_mean": 23.26831833432679,
+        "ball_to_keeper_dist_undetected_mean": 47.98931663400538,
+        "keeper_depth_detected_mean": 5.05032336584333,
+        "keeper_depth_undetected_mean": 15.526409788919468,
+        "n_detected": 184277,
+        "n_games_counters_unrecorded": 0,
+        "n_undetected": 735727,
+        "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
+      },
+      "grid_x_max": 30.0,
+      "high_sweeper_stratum_mae_mean": NaN,
+      "hyperparameters": {
+        "max_depth": 8,
+        "n_estimators": 500
+      },
+      "n_games": 179,
+      "n_providers": 3,
+      "n_samples": 1039502,
+      "per_provider_high_sweeper_coverage": {
+        "gradientsports": 0.0,
+        "skillcorner": 0.0,
+        "sportec": 0.0
+      },
+      "per_provider_mae_euclidean": {
+        "gradientsports": 1.0713382813448384,
+        "skillcorner": 1.1625960742606405,
+        "sportec": 1.6751893062581131
+      },
+      "providers": [
+        "gradientsports",
+        "skillcorner",
+        "sportec"
+      ],
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "subsample_fps": 1.0,
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
+      "variant": "full"
+    },
+    "sha256": {
+      "SHA256SUMS": "f302a7c0b0904a160385dc2aeb4b86401bc757e6509b18367f1a6a78ca447004",
+      "metadata.json": "ec4fe5a491a035f2428228380f4158c25bd34f317439dfd8c1e1434272fddfc5",
+      "metrics.json": "9066120a0e05061b14ddc29fc4eddb063b29ba6121d0177772393842cfc83b2d",
+      "rfcde_weights.npz": "673621fd8fa356e100e4f8a13d553f9a747569eaf2378b6736bae9c66a6f2868"
+    }
+  },
+  "ghost_position_only": {
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
+    "env": {},
+    "metrics_summary": {
+      "acceptance": {
+        "artifact_size_lt_15mb": true,
+        "cross_fold_std_lt_05m": true,
+        "overall_mae_lt_2m": true,
+        "per_provider_mae_lt_3m": true
+      },
+      "artifact_size_bytes": 2341690,
       "carrier_params": {
         "beta": 0.0,
         "gamma": 0.25,
@@ -206,7 +550,7 @@
       "cv_mae_y_mean": 1.0970911630195823,
       "cv_mae_y_std": 0.03594358547930148,
       "detection_selection_bias": {
-        "ball_to_keeper_dist_detected_mean": 23.268318334326782,
+        "ball_to_keeper_dist_detected_mean": 23.26831833432679,
         "ball_to_keeper_dist_undetected_mean": 47.98931663400538,
         "keeper_depth_detected_mean": 5.05032336584333,
         "keeper_depth_undetected_mean": 15.526409788919468,
@@ -240,24 +584,24 @@
         "sportec"
       ],
       "reproducibility": "restricted",
-      "reproducibility_note": "Restricted: trained at training_commit b62c1f24a7a9e3361ce416b402ed27da4a59b9e6 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-      "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "subsample_fps": 1.0,
-      "training_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "variant": "default"
     },
     "sha256": {
-      "SHA256SUMS": "e63e666b083604fdcfa53e5f192909d85b68ddaaa28ce67c0ebbd7dd61638c7c",
-      "metadata.json": "95648b3c6bb0d5409a6a9244f714d3d8d1bddf1f927deb78e6fef32cb93472ae",
-      "metrics.json": "360c74ffd9b6fadef93df373d54bd4805e55be12b0ac1e3baa80151451cd8ec9",
+      "SHA256SUMS": "855fadaabab69862d13bfc7e65fdb527efe7490e77cb112bc928f905fd95c1b5",
+      "metadata.json": "8cc698e7ca6698015f505eb26403fb0aa596a97385573428acb72325a66fd501",
+      "metrics.json": "9b41e8719cdd81c73b98c1f12a07af1bf9aab71a7a4476282e8bbe838dd0ae5b",
       "rfcde_weights.npz": "b515603f129856219e6fb75517113116ea5cb39fced01438fed62be7d7b4bca7"
     }
   },
   "ghost_sweeper": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -266,7 +610,7 @@
         "overall_mae_lt_2m": true,
         "per_provider_mae_lt_3m": true
       },
-      "artifact_size_bytes": 2352701,
+      "artifact_size_bytes": 2352714,
       "carrier_params": {
         "beta": 0.0,
         "gamma": 0.25,
@@ -314,24 +658,24 @@
         "sportec"
       ],
       "reproducibility": "restricted",
-      "reproducibility_note": "Restricted: trained at training_commit a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "subsample_fps": 1.0,
-      "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "variant": "sweeper"
     },
     "sha256": {
-      "SHA256SUMS": "3285cee05930db4de00af19ace957073aa70a41780f501ca095f8f8b960d45fa",
-      "metadata.json": "b2276fd42be46f0f79ef535401eda2bb209dac85ee907851608ec4c0729f252f",
-      "metrics.json": "ced14b002030c9b22aede4fc02317c8804d9172350cfc837bede316439a6dab3",
+      "SHA256SUMS": "3616e01dd85c818d144f49b9af8d4014728583004638d6ffc379b0e500d23ad9",
+      "metadata.json": "8976f95e7c7775dfeb8d526edc1475b96b89aa26f03a1c31645f9aaaa23587da",
+      "metrics.json": "e10765d14906d07f94692bc68b919a353f645fc9c62ee237c582edaf2fdb7094",
       "rfcde_weights.npz": "61563b4c40fce25601a76d189606fb2d72de8f75c0c5835dd50b8c58be321971"
     }
   },
   "ghost_sweeper_position_only": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -340,7 +684,7 @@
         "overall_mae_lt_2m": true,
         "per_provider_mae_lt_3m": true
       },
-      "artifact_size_bytes": 2341997,
+      "artifact_size_bytes": 2342040,
       "carrier_params": {
         "beta": 0.0,
         "gamma": 0.25,
@@ -387,23 +731,25 @@
         "skillcorner",
         "sportec"
       ],
-      "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "subsample_fps": 1.0,
-      "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "variant": "sweeper_position_only"
     },
     "sha256": {
-      "SHA256SUMS": "d8d0bbf43438401dc358627850da388d15dbff0b934e2a2b5a0c60de2f1bf4a7",
-      "metadata.json": "25423d06358913101e5f11161c48ad84bc01bbab3a023c2cb2e1fdbf77138786",
-      "metrics.json": "e8fa51acae044f8148ec9c3269bd62abc1e7f59688cb55b188358a21232a0c32",
+      "SHA256SUMS": "f36a73a30d5e7e9f1500f7887cc80655e8a05dff2123762c0de3a4ef83e07cdf",
+      "metadata.json": "3ce8fe0f8be71a29a680e3e5b7cbfd3a8508a146bc6db15ac5a22253037a7ee9",
+      "metrics.json": "71e45d509b6ff57a8b8885b1b0bfb446fd6e708badeda5e5cbb6380db9ae4fa2",
       "rfcde_weights.npz": "f1d303461bdd101e72f52085ea9550795ce650d28671c32d30a9e00b2fae7e32"
     }
   },
   "hub_ghost_sweeper": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -412,7 +758,7 @@
         "overall_mae_lt_2m": true,
         "per_provider_mae_lt_3m": true
       },
-      "artifact_size_bytes": 2352701,
+      "artifact_size_bytes": 2352714,
       "carrier_params": {
         "beta": 0.0,
         "gamma": 0.25,
@@ -460,23 +806,24 @@
         "sportec"
       ],
       "reproducibility": "restricted",
-      "reproducibility_note": "Restricted: trained at training_commit a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "subsample_fps": 1.0,
-      "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "variant": "sweeper"
     },
     "sha256": {
-      "SHA256SUMS": "3285cee05930db4de00af19ace957073aa70a41780f501ca095f8f8b960d45fa",
-      "metadata.json": "b2276fd42be46f0f79ef535401eda2bb209dac85ee907851608ec4c0729f252f",
-      "metrics.json": "ced14b002030c9b22aede4fc02317c8804d9172350cfc837bede316439a6dab3"
+      "SHA256SUMS": "3616e01dd85c818d144f49b9af8d4014728583004638d6ffc379b0e500d23ad9",
+      "metadata.json": "8976f95e7c7775dfeb8d526edc1475b96b89aa26f03a1c31645f9aaaa23587da",
+      "metrics.json": "e10765d14906d07f94692bc68b919a353f645fc9c62ee237c582edaf2fdb7094",
+      "rfcde_weights.npz": "61563b4c40fce25601a76d189606fb2d72de8f75c0c5835dd50b8c58be321971"
     }
   },
   "hub_ghost_sweeper_position_only": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -485,7 +832,7 @@
         "overall_mae_lt_2m": true,
         "per_provider_mae_lt_3m": true
       },
-      "artifact_size_bytes": 2341997,
+      "artifact_size_bytes": 2342040,
       "carrier_params": {
         "beta": 0.0,
         "gamma": 0.25,
@@ -532,22 +879,25 @@
         "skillcorner",
         "sportec"
       ],
-      "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "reproducibility": "restricted",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "subsample_fps": 1.0,
-      "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "variant": "sweeper_position_only"
     },
     "sha256": {
-      "SHA256SUMS": "d8d0bbf43438401dc358627850da388d15dbff0b934e2a2b5a0c60de2f1bf4a7",
-      "metadata.json": "25423d06358913101e5f11161c48ad84bc01bbab3a023c2cb2e1fdbf77138786",
-      "metrics.json": "e8fa51acae044f8148ec9c3269bd62abc1e7f59688cb55b188358a21232a0c32"
+      "SHA256SUMS": "f36a73a30d5e7e9f1500f7887cc80655e8a05dff2123762c0de3a4ef83e07cdf",
+      "metadata.json": "3ce8fe0f8be71a29a680e3e5b7cbfd3a8508a146bc6db15ac5a22253037a7ee9",
+      "metrics.json": "71e45d509b6ff57a8b8885b1b0bfb446fd6e708badeda5e5cbb6380db9ae4fa2",
+      "rfcde_weights.npz": "f1d303461bdd101e72f52085ea9550795ce650d28671c32d30a9e00b2fae7e32"
     }
   },
   "hub_outfield_default": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "coherence": {
@@ -574,21 +924,22 @@
       "feature_set": "faithful",
       "n_games": 179,
       "n_rows": 4170920,
-      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "subsample_fps": 1.0,
       "training_platform": null,
       "variant": "default"
     },
     "sha256": {
-      "SHA256SUMS": "e7fbb99d3ceb425fdd347a4c7422e42ca6e831d87da2c464cbaad5766b7a7408",
-      "metadata.json": "59bc58308b610c186b4730c0226852e94911ddfeeb7fd3db6089c278e5f7f258",
-      "metrics.json": "78c50b9bd266f0ceb72f70720665dbef6982661fbf29e54305a64234e034f20c"
+      "SHA256SUMS": "f2516358bf4ea6ff2c8b99afed10b5e73637edb3c531bccf18a614c3336e9c17",
+      "metadata.json": "8c22781ce5a0a2b33f1c4d035f8092662c8b54697bd07b6ee956662b87784822",
+      "metrics.json": "5ce6205a27681de8ad286151cfdcb8273a49f39ee7917e91d07fa67875bb5ef7",
+      "model.npz": "879aa6db36f58aeca7c89e344d3711f79a4636504245d5d2e7d404edfebb0ee4"
     }
   },
   "hub_outfield_position_only": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "coherence": {
@@ -615,21 +966,22 @@
       "feature_set": "position_only",
       "n_games": 179,
       "n_rows": 4170920,
-      "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "subsample_fps": 1.0,
-      "training_platform": "dgx-spark-aarch64",
+      "training_platform": null,
       "variant": "position_only"
     },
     "sha256": {
-      "SHA256SUMS": "a912205781c9cda786ad6c0b57c168b9865be0ab312ca416cb9348ec99bfbdf8",
-      "metadata.json": "856ce93e18e4cec5f748300ec3ec8712ecc13f38836c4ac4768f2b07db0c4f90",
-      "metrics.json": "e9c1fc71cc663f94aeca6f52ef3f5918e0593767fd610b114a1b4af67f7906eb"
+      "SHA256SUMS": "9185f17cc08d05066a0bfb8fabd6567a3dcf95a5a54c0c6cdbafd8d117b1a553",
+      "metadata.json": "fe0325509465181ae4a90c7b54e27000563aaaf5d6470cf53091c6fcfd54a723",
+      "metrics.json": "f21c3afb8a69d46c0be4e971710e37331a80071aaa64618d2da0731c44c13600",
+      "model.npz": "f9c9152b88869d8fea8897b4c84f50b86b1196e95970107c53a798fc84c3c695"
     }
   },
   "hub_xcross_sc_extended": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -638,7 +990,7 @@
         "log_loss_lt_uniform": true,
         "pr_auc_gt_base_rate": true
       },
-      "artifact_size_bytes": 1051998,
+      "artifact_size_bytes": 1057036,
       "candidates": {
         "sc_extended": {
           "metrics": {
@@ -667,27 +1019,27 @@
       "corpus_n_matches": 115,
       "estimates_are_cv_not_shipped_fit": true,
       "gk_block_ablation": {
-        "delta_log_loss": -0.0014766812324523981,
-        "delta_pr_auc": 0.008502203345504139,
+        "delta_log_loss": -0.0014950543642044123,
+        "delta_pr_auc": 0.00802794694602374,
         "note": "reported context (marginal predictive value); NOT the tf19_ready gate",
-        "with_gk_log_loss": 0.17250049114227295,
-        "with_gk_pr_auc": 0.20538226125240397,
-        "without_gk_log_loss": 0.17397717237472535,
-        "without_gk_pr_auc": 0.19688005790689983
+        "with_gk_log_loss": 0.16552821695804595,
+        "with_gk_pr_auc": 0.18955706723400065,
+        "without_gk_log_loss": 0.16702327132225037,
+        "without_gk_pr_auc": 0.1815291202879769
       },
       "gk_substitution_probe": {
-        "gk_dose_ratio_4m_over_2m": 1.8854462849418443,
-        "gk_mean_abs_delta": 0.033390632649996706,
-        "gk_median_abs_delta": 0.011558362108189613,
-        "gk_median_abs_delta_at_2m": 0.008846297860145569,
-        "gk_median_abs_delta_at_4m": 0.01667921943590045,
-        "gk_p90_abs_delta": 0.09644672945141798,
-        "gk_zero_fraction": 0.0,
+        "gk_dose_ratio_4m_over_2m": 1.7445212112469086,
+        "gk_mean_abs_delta": 0.03030741228614488,
+        "gk_median_abs_delta": 0.010366086615249515,
+        "gk_median_abs_delta_at_2m": 0.00872831977903843,
+        "gk_median_abs_delta_at_4m": 0.01522673899307847,
+        "gk_p90_abs_delta": 0.08833312243223192,
+        "gk_zero_fraction": 0.0016666666666666668,
         "n_frames_used": 200,
-        "nearest_def_median_abs_delta": 0.00524997990578413,
+        "nearest_def_median_abs_delta": 0.0051609547808766365,
         "note": "responsiveness (necessary for TF-19), NOT causal GK primacy (PR-C); nearest-def control is partially self-limiting (floating identity)",
         "random_band_median_abs_delta": 0.0,
-        "random_band_zero_fraction": 0.7930555555555555,
+        "random_band_zero_fraction": 0.7983333333333333,
         "tf19_probe_abs_floor": 0.01,
         "tf19_probe_ratio": 2.0,
         "tf19_ready": true,
@@ -698,43 +1050,43 @@
       "permutation_importance": {
         "held_out": true,
         "importances": {
-          "ball_r": 0.03322813766092998,
-          "ball_speed": 0.09767443090524508,
-          "ball_theta": 0.02828159132737822,
-          "box_off_def_ratio": 0.004224164307180437,
-          "dist_endline": 0.03121957698768285,
-          "dist_nearest_def": 0.049629396095716725,
-          "dist_nearest_teammate": 0.050822397084446545,
-          "gk_carrier_side": 0.02057236965060044,
-          "gk_dist_far_post": 0.006135584751245194,
-          "gk_dist_near_post": 0.004344892784704861,
-          "gk_lateral_offset": 0.0026887669728308103,
-          "gk_r": 0.004401592319236528,
-          "gk_theta": 0.006516463638005013,
-          "score_differential": 0.0035619430069584457,
-          "space_controlled": 0.02404185638995777,
-          "ten_minute_warning": 0.0011660384651056212
+          "ball_r": 0.028416494135623173,
+          "ball_speed": 0.0887043253435261,
+          "ball_theta": 0.02760242216821286,
+          "box_off_def_ratio": 0.0034385516708850907,
+          "dist_endline": 0.025542550287919075,
+          "dist_nearest_def": 0.04962213609128752,
+          "dist_nearest_teammate": 0.04893648558845794,
+          "gk_carrier_side": 0.0202942620112512,
+          "gk_dist_far_post": 0.004769319588874378,
+          "gk_dist_near_post": 0.003165104288542378,
+          "gk_lateral_offset": 0.0015861292202175848,
+          "gk_r": 0.0058618910620271015,
+          "gk_theta": 0.006533952824078657,
+          "score_differential": 0.0027796185255746743,
+          "space_controlled": 0.021736226381180546,
+          "ten_minute_warning": 0.00026404424550507624
         },
         "n_folds_used": 5,
         "n_repeats": 10,
         "note": "CV-held-out, architecture-representative; NOT measured on the production weights' own training data. score_differential importance is qualified by coverage.",
         "score_differential_coverage": 1.0,
-        "score_differential_importance": 0.0035619430069584457,
+        "score_differential_importance": 0.0027796185255746743,
         "scoring": "average_precision"
       },
       "probe_gated_on_held_out": false,
       "probe_sample_in_training_folds": {
-        "gradientsports-10502": false,
-        "gradientsports-10503": false
+        "10502": false,
+        "10503": false
       },
       "probe_sample_matches": [
         [
           "gradientsports",
-          "gradientsports-10502"
+          "10502"
         ],
         [
           "gradientsports",
-          "gradientsports-10503"
+          "10503"
         ]
       ],
       "providers": [
@@ -742,8 +1094,8 @@
         "skillcorner"
       ],
       "reproducibility": "restricted",
-      "reproducibility_note": "Restricted: trained at training_commit 4095251730ce216decf99ec8e47d8e1162a04a1d on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "score_differential_range_probe": {
@@ -756,14 +1108,15 @@
       "tf19_ready": true
     },
     "sha256": {
-      "SHA256SUMS": "2b466fde55076f524d401d5cfe3eb0622bfa5e63f79257277738cc4187b9fa47",
-      "metadata.json": "43b0d4235b0526e71ac36aefe6ab9b3af8727dc932382f2f89c64600f361eb33",
-      "metrics.json": "794529dc4ced083f8164bca4099a8dafd2d878a76adc3967e75ec2e9c1fb2cd4"
+      "SHA256SUMS": "fd3dab2df9c386f145ff0ce1e069e8ec345877fb5a639bf5378cea5f6c00183c",
+      "metadata.json": "d6ce34556b069e2d47529abd67ae5a1a4ff95e854e08667712e69a60832ec612",
+      "metrics.json": "7373db64178084e368a588fd3dc718f3c980ca891283fd5f0818b1325724231d",
+      "model.json": "452c763c0c4ad3af724e1603539cc7df200d95aa1b38a424553d2051eaae2397"
     }
   },
   "hub_xcross_sc_extended_position_only": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -772,7 +1125,7 @@
         "log_loss_lt_uniform": true,
         "pr_auc_gt_base_rate": true
       },
-      "artifact_size_bytes": 1729383,
+      "artifact_size_bytes": 1663725,
       "candidates": {
         "sc_extended": {
           "metrics": {
@@ -801,27 +1154,27 @@
       "corpus_n_matches": 115,
       "estimates_are_cv_not_shipped_fit": true,
       "gk_block_ablation": {
-        "delta_log_loss": -0.0010882049798965343,
-        "delta_pr_auc": 0.0034114675971482766,
+        "delta_log_loss": -0.0011727303266525213,
+        "delta_pr_auc": 0.0032235799353194095,
         "note": "reported context (marginal predictive value); NOT the tf19_ready gate",
-        "with_gk_log_loss": 0.18538473546504974,
-        "with_gk_pr_auc": 0.14217926019694493,
-        "without_gk_log_loss": 0.18647294044494628,
-        "without_gk_pr_auc": 0.13876779259979666
+        "with_gk_log_loss": 0.17684145867824555,
+        "with_gk_pr_auc": 0.13281335223673293,
+        "without_gk_log_loss": 0.17801418900489807,
+        "without_gk_pr_auc": 0.12958977230141352
       },
       "gk_substitution_probe": {
-        "gk_dose_ratio_4m_over_2m": 2.121593830868116,
-        "gk_mean_abs_delta": 0.03642505304884859,
-        "gk_median_abs_delta": 0.01822757162153721,
-        "gk_median_abs_delta_at_2m": 0.014797341078519821,
-        "gk_median_abs_delta_at_4m": 0.031393947545439005,
-        "gk_p90_abs_delta": 0.09273765459656716,
-        "gk_zero_fraction": 0.0008333333333333334,
+        "gk_dose_ratio_4m_over_2m": 2.050084320310557,
+        "gk_mean_abs_delta": 0.03652452416018908,
+        "gk_median_abs_delta": 0.01913252379745245,
+        "gk_median_abs_delta_at_2m": 0.015233341604471207,
+        "gk_median_abs_delta_at_4m": 0.031229634769260883,
+        "gk_p90_abs_delta": 0.09422177635133268,
+        "gk_zero_fraction": 0.0016666666666666668,
         "n_frames_used": 200,
-        "nearest_def_median_abs_delta": 0.007420682348310947,
+        "nearest_def_median_abs_delta": 0.006934784352779388,
         "note": "responsiveness (necessary for TF-19), NOT causal GK primacy (PR-C); nearest-def control is partially self-limiting (floating identity)",
         "random_band_median_abs_delta": 0.0,
-        "random_band_zero_fraction": 0.7947222222222222,
+        "random_band_zero_fraction": 0.7938888888888889,
         "tf19_probe_abs_floor": 0.01,
         "tf19_probe_ratio": 2.0,
         "tf19_ready": true,
@@ -832,42 +1185,42 @@
       "permutation_importance": {
         "held_out": true,
         "importances": {
-          "ball_r": 0.029130522915603207,
-          "ball_theta": 0.029866421759009266,
-          "box_off_def_ratio": 0.002177499422979666,
-          "dist_endline": 0.032328116907934454,
-          "dist_nearest_def": 0.03643101966414304,
-          "dist_nearest_teammate": 0.039113479126478,
-          "gk_carrier_side": 0.014047140376318618,
-          "gk_dist_far_post": 0.002870247315053874,
-          "gk_dist_near_post": 0.005102542441176422,
-          "gk_lateral_offset": 0.0008153742411341125,
-          "gk_r": 0.0032978619090910815,
-          "gk_theta": 0.0034971466872003704,
-          "score_differential": 0.004020981847271734,
-          "space_controlled": 0.02389427602300636,
-          "ten_minute_warning": 0.0008487704700555771
+          "ball_r": 0.027459630468647328,
+          "ball_theta": 0.028451809393255367,
+          "box_off_def_ratio": 0.0023529259734268587,
+          "dist_endline": 0.031196563494193384,
+          "dist_nearest_def": 0.03569147024800566,
+          "dist_nearest_teammate": 0.037409042086582064,
+          "gk_carrier_side": 0.013169354972119574,
+          "gk_dist_far_post": 0.0025883497315247134,
+          "gk_dist_near_post": 0.004603238016467709,
+          "gk_lateral_offset": 0.0014840037208155201,
+          "gk_r": 0.003848928542424164,
+          "gk_theta": 0.0033487347153206572,
+          "score_differential": 0.003663430518840777,
+          "space_controlled": 0.02161656141875216,
+          "ten_minute_warning": 0.0004132308366863343
         },
         "n_folds_used": 5,
         "n_repeats": 10,
         "note": "CV-held-out, architecture-representative; NOT measured on the production weights' own training data. score_differential importance is qualified by coverage.",
         "score_differential_coverage": 1.0,
-        "score_differential_importance": 0.004020981847271734,
+        "score_differential_importance": 0.003663430518840777,
         "scoring": "average_precision"
       },
       "probe_gated_on_held_out": false,
       "probe_sample_in_training_folds": {
-        "gradientsports-10502": false,
-        "gradientsports-10503": false
+        "10502": false,
+        "10503": false
       },
       "probe_sample_matches": [
         [
           "gradientsports",
-          "gradientsports-10502"
+          "10502"
         ],
         [
           "gradientsports",
-          "gradientsports-10503"
+          "10503"
         ]
       ],
       "providers": [
@@ -875,8 +1228,8 @@
         "skillcorner"
       ],
       "reproducibility": "restricted",
-      "reproducibility_note": "Restricted: trained at training_commit 4095251730ce216decf99ec8e47d8e1162a04a1d on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "score_differential_range_probe": {
@@ -889,14 +1242,15 @@
       "tf19_ready": true
     },
     "sha256": {
-      "SHA256SUMS": "d0676d6cf4993b96644bde84417b0b88f026d1e9ee64e14f8f7ffed0555d152f",
-      "metadata.json": "708715cb3810e9a77c9577918c937c9216a17c8acdea397f793702c8a6b0c1d3",
-      "metrics.json": "dce074ac976a794cb7bd416ecf2579df2c32b02164ace3293b445bc2e62c4ac1"
+      "SHA256SUMS": "4c1a40077fa2c61abfe9cacf07b7b5afd1acbbc132e25bea95262bf14084293d",
+      "metadata.json": "89f9af99cb743f68ad1b7e9f8fd07294b5028fa408da406f425c4683874270f5",
+      "metrics.json": "c82b3d91ac85e1a46b55474e6d617e2474d6314499d83080a73f2fc173b5f4d8",
+      "model.json": "5e426987d0380ac206020f9c2fb9a0f089ef2895484497af243f1a2f91f06335"
     }
   },
   "hub_xshot_sc_extended": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -905,7 +1259,7 @@
         "log_loss_lt_uniform": true,
         "pr_auc_gt_base_rate": true
       },
-      "artifact_size_bytes": 1401526,
+      "artifact_size_bytes": 1477077,
       "candidates": {
         "sc_extended": {
           "metrics": {
@@ -940,21 +1294,22 @@
         "skillcorner"
       ],
       "reproducibility": "restricted",
-      "reproducibility_note": "Restricted: trained at training_commit 4095251730ce216decf99ec8e47d8e1162a04a1d on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "shipped_variant": "sc_extended"
     },
     "sha256": {
-      "SHA256SUMS": "5e71da1519cfaf00c53873e6fa3f69307dbbc5dc6fa7b58c11e5e0201bf5726d",
-      "metadata.json": "43e12e676b0787093ecb481dc804a8596b40da6c61f339f5e881828daa5453d6",
-      "metrics.json": "b7ad370e07a743c7620b9138a54c4bdb28437f87de9c2c7e027cf5972bbf4b8c"
+      "SHA256SUMS": "8bc987e506a7e945df8a27c404a6fa9b308e0677d1f5cfbb45dbe5f6668b93ba",
+      "metadata.json": "9bddfefe89c8c90c6f90118197f54dc2968d77f14e6ef5b44b0665bb32ac67b4",
+      "metrics.json": "6589ef99ff8ab4c55974f72e65ca81c433378f32526b8fd7229ad1420aa0e347",
+      "model.json": "061d12184a4bbd6f45a8c05a12cdd738dad868d2beb2bacf9097dece58e37bef"
     }
   },
   "hub_xshot_sc_extended_position_only": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -963,7 +1318,7 @@
         "log_loss_lt_uniform": true,
         "pr_auc_gt_base_rate": true
       },
-      "artifact_size_bytes": 1706475,
+      "artifact_size_bytes": 1821992,
       "candidates": {
         "sc_extended": {
           "metrics": {
@@ -998,41 +1353,191 @@
         "skillcorner"
       ],
       "reproducibility": "restricted",
-      "reproducibility_note": "Restricted: trained at training_commit 4095251730ce216decf99ec8e47d8e1162a04a1d on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (idsse, skillcorner) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'sc_extended'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "shipped_variant": "sc_extended"
     },
     "sha256": {
-      "SHA256SUMS": "cb33bfa1dc93ce3ef6797631df406486d753675ed438a511f6099cb6c1119163",
-      "metadata.json": "af82440b2a168425212a8f4e7b323337d7cce9c420d621744fed15a8816991b6",
-      "metrics.json": "628f1e7378599b980d41315f8337db55b68aafd74b0b6c4911d862e83f68de55"
+      "SHA256SUMS": "00a54b9d5e4be47539a7897cd01b63b9077c17e270f786412ae1902b1709c0d1",
+      "metadata.json": "d9dd4b28c3a8ac8a173ec7432c3afaf18f044b80d5c5b88bf12b898e5eb683d2",
+      "metrics.json": "c7b293428d1352e5f99ec080ddcbc5af4418d7bf23a59afd9a36241f4265cb54",
+      "model.json": "2d625d64874049f72b8ab60a20a2355becb88fb6457a842c6bf899065ca4cc5b"
     }
   },
   "hub_xsuccess": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
-    "metrics_summary": {},
+    "metrics_summary": {
+      "auc": 0.8948403992254027,
+      "base_rate": 0.8349647646941684,
+      "brier": 0.08382231441584499,
+      "calibration_in_the_large": {
+        "n_success": 6658333,
+        "sum_pred": 6658261.644620642
+      },
+      "corpus_match_ids_sha256": "f0446a673cf837060ea5f282414547411a6869536eb3191974d9aba6e5be8a56",
+      "corpus_n_matches": 3961,
+      "feature_set": "xgboost",
+      "generation": "101d1a7343eb403d",
+      "hpo_best_params": {
+        "colsample_bytree": 0.6429610536981535,
+        "learning_rate": 0.0753416368360696,
+        "max_depth": 7,
+        "min_child_weight": 19,
+        "n_estimators": 568,
+        "reg_alpha": 0.005697954571199672,
+        "reg_lambda": 0.5058500772009156,
+        "subsample": 0.9140951282979688
+      },
+      "hpo_trials": 30,
+      "n_attempted": 3961,
+      "n_counters_unrecorded": 0,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_matches": 3961,
+      "n_oof": 7974388,
+      "n_rows": 7974436,
+      "per_type_reliability": {
+        "bad_touch": {
+          "n": 118658,
+          "obs": 0.0,
+          "pred": 0.0
+        },
+        "clearance": {
+          "n": 183434,
+          "obs": 1.0,
+          "pred": 0.999999986631733
+        },
+        "corner_crossed": {
+          "n": 29544,
+          "obs": 0.32372055239642566,
+          "pred": 0.3283503397357128
+        },
+        "corner_short": {
+          "n": 8396,
+          "obs": 0.8920914721295855,
+          "pred": 0.8905636181676991
+        },
+        "cross": {
+          "n": 83639,
+          "obs": 0.2898049952773228,
+          "pred": 0.2902109209037798
+        },
+        "dribble": {
+          "n": 3191822,
+          "obs": 1.0,
+          "pred": 1.0
+        },
+        "foul": {
+          "n": 108845,
+          "obs": 0.0,
+          "pred": 0.0
+        },
+        "freekick_crossed": {
+          "n": 48739,
+          "obs": 0.3744229467161821,
+          "pred": 0.3765325694650405
+        },
+        "freekick_short": {
+          "n": 56433,
+          "obs": 0.9799053745149114,
+          "pred": 0.9814820127589939
+        },
+        "goalkick": {
+          "n": 63501,
+          "obs": 0.6268247744130013,
+          "pred": 0.6252434259450875
+        },
+        "interception": {
+          "n": 119517,
+          "obs": 0.7062844616247062,
+          "pred": 0.7053575026185603
+        },
+        "keeper_claim": {
+          "n": 16671,
+          "obs": 1.0,
+          "pred": 0.9998855537189194
+        },
+        "keeper_punch": {
+          "n": 5417,
+          "obs": 0.6863577625992247,
+          "pred": 0.6876215683170354
+        },
+        "keeper_save": {
+          "n": 23613,
+          "obs": 0.8295430483208402,
+          "pred": 0.8303650551201899
+        },
+        "pass": {
+          "n": 3337914,
+          "obs": 0.7991601940613209,
+          "pred": 0.7991202794166506
+        },
+        "shot": {
+          "n": 95297,
+          "obs": 0.10427400652696307,
+          "pred": 0.10584826131921876
+        },
+        "shot_freekick": {
+          "n": 4449,
+          "obs": 0.06653180489997752,
+          "pred": 0.06729177967112968
+        },
+        "shot_penalty": {
+          "n": 1481,
+          "obs": 0.7393652937204591,
+          "pred": 0.7359158441595416
+        },
+        "tackle": {
+          "n": 156140,
+          "obs": 0.608863840143461,
+          "pred": 0.6082981557010275
+        },
+        "take_on": {
+          "n": 138745,
+          "obs": 0.564553677610004,
+          "pred": 0.5636902200468819
+        },
+        "throw_in": {
+          "n": 182133,
+          "obs": 0.8333964740052598,
+          "pred": 0.8331706289530662
+        }
+      },
+      "providers": "statsbomb-open (comp 2, season 27), (comp 2, season 44), (comp 7, season 27), (comp 7, season 108), (comp 7, season 235), (comp 9, season 27), (comp 9, season 281), (comp 11, season 1), (comp 11, season 2), (comp 11, season 4), (comp 11, season 21), (comp 11, season 22), (comp 11, season 23), (comp 11, season 24), (comp 11, season 25), (comp 11, season 26), (comp 11, season 27), (comp 11, season 37), (comp 11, season 38), (comp 11, season 39), (comp 11, season 40), (comp 11, season 41), (comp 11, season 42), (comp 11, season 90), (comp 11, season 278), (comp 12, season 27), (comp 12, season 86), (comp 16, season 1), (comp 16, season 2), (comp 16, season 4), (comp 16, season 21), (comp 16, season 22), (comp 16, season 23), (comp 16, season 24), (comp 16, season 25), (comp 16, season 26), (comp 16, season 27), (comp 16, season 37), (comp 16, season 39), (comp 16, season 41), (comp 16, season 44), (comp 16, season 71), (comp 16, season 76), (comp 16, season 276), (comp 16, season 277), (comp 35, season 75), (comp 37, season 4), (comp 37, season 42), (comp 37, season 90), (comp 37, season 281), (comp 43, season 3), (comp 43, season 51), (comp 43, season 54), (comp 43, season 55), (comp 43, season 106), (comp 43, season 269), (comp 43, season 270), (comp 43, season 272), (comp 44, season 107), (comp 49, season 3), (comp 49, season 107), (comp 53, season 106), (comp 53, season 315), (comp 55, season 43), (comp 55, season 282), (comp 72, season 30), (comp 72, season 107), (comp 81, season 48), (comp 81, season 275), (comp 87, season 84), (comp 87, season 268), (comp 87, season 279), (comp 116, season 68), (comp 131, season 281), (comp 135, season 281), (comp 182, season 281), (comp 223, season 282), (comp 1238, season 108), (comp 1267, season 107), (comp 1470, season 274)",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3"
+    },
     "sha256": {
-      "SHA256SUMS": "a50d9fc1a5620187c530aceb639d75e690e171164d4b93087a159c9005de47d0",
-      "metadata.json": "2d4cf74b538ee879d6f095d6e5036b379b1028edfbee6928884950094fed6028"
+      "MODEL_CARD.md": "91143b248ccc3da2e4bbeb4de38649139f06dd969921de552a4cde74094303f4",
+      "SHA256SUMS": "98c3bce4fbfb90b2c8ee3dc781c2477a1b48a2042a75b21215eb2baa98de014e",
+      "metadata.json": "3e332e7c88733d8d89ea402493a45fde3339387c99be1972bf8a9b8e28a85ab0",
+      "metrics.json": "c6a55b11b461d1b25ec47afc1100178455b66abc3b9d70f491fd4815c26d5bcc",
+      "model.json": "9e7d96afc9e48abc039b98b0fb382dda367830bea9d155566f5977eb668bcf98"
     }
   },
   "match_outcome": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
-    "metrics_summary": {},
+    "metrics_summary": {
+      "corpus_match_ids_sha256": "f0446a673cf837060ea5f282414547411a6869536eb3191974d9aba6e5be8a56",
+      "corpus_n_matches": 3961,
+      "rho": 0.02161420866397881
+    },
     "sha256": {
-      "SHA256SUMS": "8aa2778ec7073cc355e8713b6dd7515d138266aeaf91672ecd1a230ad4fd6ec9",
-      "model.json": "65f485bb41a33240ce5bbe22245aa20671d5d2dfc6be57f3bfee14850a1fc6dc"
+      "SHA256SUMS": "35762c196ccb24113fb37aeb5e1f72bcc2ea86ab70ac4e69ab5fdfcc2ec448fe",
+      "metrics.json": "15ddc9352ae2a322975997dff38712cc27f29073da8d231d1a372151997b9562",
+      "model.json": "6020feb91b48e6ba53c7c7ce8fdfcd2d8577b324b9cbf570b0866ef375c48b97"
     }
   },
   "outfield_default": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "coherence": {
@@ -1059,22 +1564,22 @@
       "feature_set": "faithful",
       "n_games": 179,
       "n_rows": 4170920,
-      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "subsample_fps": 1.0,
       "training_platform": null,
       "variant": "default"
     },
     "sha256": {
-      "SHA256SUMS": "e7fbb99d3ceb425fdd347a4c7422e42ca6e831d87da2c464cbaad5766b7a7408",
-      "metadata.json": "59bc58308b610c186b4730c0226852e94911ddfeeb7fd3db6089c278e5f7f258",
-      "metrics.json": "78c50b9bd266f0ceb72f70720665dbef6982661fbf29e54305a64234e034f20c",
-      "model.npz": "6c95fe347f5f0698e9567139cc742f158742aef971ffce2967954b0f4cf9abe4"
+      "SHA256SUMS": "f2516358bf4ea6ff2c8b99afed10b5e73637edb3c531bccf18a614c3336e9c17",
+      "metadata.json": "8c22781ce5a0a2b33f1c4d035f8092662c8b54697bd07b6ee956662b87784822",
+      "metrics.json": "5ce6205a27681de8ad286151cfdcb8273a49f39ee7917e91d07fa67875bb5ef7",
+      "model.npz": "879aa6db36f58aeca7c89e344d3711f79a4636504245d5d2e7d404edfebb0ee4"
     }
   },
   "outfield_position_only": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "coherence": {
@@ -1101,22 +1606,22 @@
       "feature_set": "position_only",
       "n_games": 179,
       "n_rows": 4170920,
-      "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "subsample_fps": 1.0,
-      "training_platform": "dgx-spark-aarch64",
+      "training_platform": null,
       "variant": "position_only"
     },
     "sha256": {
-      "SHA256SUMS": "a912205781c9cda786ad6c0b57c168b9865be0ab312ca416cb9348ec99bfbdf8",
-      "metadata.json": "856ce93e18e4cec5f748300ec3ec8712ecc13f38836c4ac4768f2b07db0c4f90",
-      "metrics.json": "e9c1fc71cc663f94aeca6f52ef3f5918e0593767fd610b114a1b4af67f7906eb",
-      "model.npz": "eb567913b27f4d4fb9b17a9e596a3808a7d24b03bf8fa41789c290512fd66504"
+      "SHA256SUMS": "9185f17cc08d05066a0bfb8fabd6567a3dcf95a5a54c0c6cdbafd8d117b1a553",
+      "metadata.json": "fe0325509465181ae4a90c7b54e27000563aaaf5d6470cf53091c6fcfd54a723",
+      "metrics.json": "f21c3afb8a69d46c0be4e971710e37331a80071aaa64618d2da0731c44c13600",
+      "model.npz": "f9c9152b88869d8fea8897b4c84f50b86b1196e95970107c53a798fc84c3c695"
     }
   },
   "receiver_default": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "candidate_count_distribution": {
@@ -1152,8 +1657,8 @@
         "statsbomb"
       ],
       "reproducibility": "restricted",
-      "reproducibility_note": "Restricted: trained at training_commit b62c1f24a7a9e3361ce416b402ed27da4a59b9e6 on a corpus (statsbomb) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-      "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+      "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (statsbomb) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "schema": "receiver-rows-2",
       "top1_by_fold": [
@@ -1168,9 +1673,9 @@
     },
     "sha256": {
       "MODEL_CARD.md": "9580efdd65f5199d6c1938b432b22f3d762e8a1632cc2bad938470c395c7911a",
-      "SHA256SUMS": "9ba3112ee436ac990382e88953292877a4593cccbdb4db2ab56d55d6706036a2",
-      "metrics.json": "2a56c5b6a39c6697f775b5e221d8a3513e6fef6fe657d93bc65f93ac34c54274",
-      "model.json": "e2dd29415c40c9e896db8f88bd86bbf0cee1a1748a652f83d0938186ed960e8f"
+      "SHA256SUMS": "603316db0bbf02c896b5899a06ad3e75df47ae8be97514efc10e5ea1b7b5f16d",
+      "metrics.json": "87499d45c8f05bad71152cd34d2ddf69626c8469430a651dfe853f0c7d8f485b",
+      "model.json": "59db565fcccf051cac29dfa12bc8321ec3ba9b3129e3d6b973f19b4750c3b6bf"
     }
   },
   "retention_default": {
@@ -1216,11 +1721,11 @@
     }
   },
   "win_probability": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
-      "brier": 0.13852696776122958,
+      "brier": 0.13852695999356615,
       "competitions": [
         [
           2,
@@ -1544,32 +2049,35 @@
         ]
       ],
       "corpus_goals_per_match": 2.9575864680636204,
-      "ece": 0.01680112045983158,
+      "corpus_match_ids_sha256": "f0446a673cf837060ea5f282414547411a6869536eb3191974d9aba6e5be8a56",
+      "corpus_n_matches": 3961,
+      "ece": 0.016801128549492814,
       "expected_goals_tol": 0.5,
-      "generation": "0f876236a812e893",
-      "model_expected_goals": 2.465413775623272,
+      "generation": "ec092be5cc69b299",
+      "model_expected_goals": 2.4655246458328794,
       "n_action_rows": 7974436,
       "n_attempted": 3961,
       "n_competitions": 80,
       "n_counters_unrecorded": 0,
+      "n_excluded": 0,
       "n_failed": 0,
       "n_matches": 3961,
       "n_oof": 7974436,
-      "reliability_slope": 0.9912837279844693,
+      "reliability_slope": 0.9912835983760511,
       "run_tree_dirty": false,
       "run_tree_state": "clean",
-      "training_commit": "ae10f8a75c84ef7f8b55297c8ac1d96bbfae8a32"
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3"
     },
     "sha256": {
       "MODEL_CARD.md": "d41eee4452fbd00bf4fc703e54f873f4d8cd45fdaaaf5e5b053b4ce6464018dd",
-      "SHA256SUMS": "ccfa71913cfc14b9f1f13bb1b456af454bccd5a6e047d1d4f41598818afce9e3",
-      "metrics.json": "a7f8493f02aaceeec0b236cee25230b42db932c215dfb31ee5d8bd9de60ee44a",
-      "model.json": "7bd1d1fa0ea00fa4dacf26d230ca3b111adf3c69426d9dd255ed8c892e8e9af9"
+      "SHA256SUMS": "1ed31aa5b7939f42724d27a33f308be329b284b77d6a0bae820e23f3d287d841",
+      "metrics.json": "d01ba296535ebb72863c393f2f572ca5ba1025c43bbb510255fe869a992998d6",
+      "model.json": "893f9c714d68106251ce99e4b670f3d60860f89b96c039e0f672826b3174f280"
     }
   },
   "xcross_default": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -1578,24 +2086,24 @@
         "log_loss_lt_uniform": true,
         "pr_auc_gt_base_rate": true
       },
-      "artifact_size_bytes": 186181,
+      "artifact_size_bytes": 300130,
       "candidates": {
         "public": {
           "metrics": {
             "base_rate_brier": 0.030008727738172862,
-            "brier": 0.0295303862541914,
-            "log_loss": 0.12695114463567733,
+            "brier": 0.02953512705862522,
+            "log_loss": 0.12696283012628556,
             "n_usable_folds": 5,
             "positive_rate": 0.03096772791008598,
-            "pr_auc": 0.0872974779264555,
-            "pr_auc_std": 0.022081057079934272
+            "pr_auc": 0.08673616941158695,
+            "pr_auc_std": 0.023152695684467314
           },
           "params": {
-            "learning_rate": 0.040024824991727714,
-            "max_depth": 3.0466648439640007,
-            "min_child_weight": 2.9952852671787142,
-            "n_estimators": 154.28328628761176,
-            "reg_lambda": 3.580151015320821
+            "learning_rate": 0.023835974465955857,
+            "max_depth": 3.3091961204900393,
+            "min_child_weight": 16.204601365234712,
+            "n_estimators": 262.22830117142144,
+            "reg_lambda": 3.973575258159227
           },
           "providers": [
             "idsse",
@@ -1675,27 +2183,27 @@
       ],
       "estimates_are_cv_not_shipped_fit": true,
       "gk_block_ablation": {
-        "delta_log_loss": -0.0002113252878189198,
-        "delta_pr_auc": 0.0022303794318727227,
+        "delta_log_loss": -0.00013458877801894586,
+        "delta_pr_auc": 0.0009287232542783408,
         "note": "reported context (marginal predictive value); NOT the tf19_ready gate",
-        "with_gk_log_loss": 0.12695114463567733,
-        "with_gk_pr_auc": 0.0872974779264555,
-        "without_gk_log_loss": 0.12716246992349625,
-        "without_gk_pr_auc": 0.08506709849458277
+        "with_gk_log_loss": 0.12696283012628556,
+        "with_gk_pr_auc": 0.08673616941158695,
+        "without_gk_log_loss": 0.1270974189043045,
+        "without_gk_pr_auc": 0.0858074461573086
       },
       "gk_substitution_probe": {
-        "gk_dose_ratio_4m_over_2m": 2.0374242198701893,
-        "gk_mean_abs_delta": 0.008421859392644062,
-        "gk_median_abs_delta": 0.0030244968365877867,
-        "gk_median_abs_delta_at_2m": 0.0023102134000509977,
-        "gk_median_abs_delta_at_4m": 0.0047068847343325615,
-        "gk_p90_abs_delta": 0.024499474465847024,
-        "gk_zero_fraction": 0.045,
+        "gk_dose_ratio_4m_over_2m": 2.314410985753442,
+        "gk_mean_abs_delta": 0.008858144013114118,
+        "gk_median_abs_delta": 0.003123882692307234,
+        "gk_median_abs_delta_at_2m": 0.0022551296278834343,
+        "gk_median_abs_delta_at_4m": 0.005219296785071492,
+        "gk_p90_abs_delta": 0.027561236172914526,
+        "gk_zero_fraction": 0.03666666666666667,
         "n_frames_used": 200,
-        "nearest_def_median_abs_delta": 0.001985782291740179,
+        "nearest_def_median_abs_delta": 0.001878807321190834,
         "note": "responsiveness (necessary for TF-19), NOT causal GK primacy (PR-C); nearest-def control is partially self-limiting (floating identity)",
         "random_band_median_abs_delta": 0.0,
-        "random_band_zero_fraction": 0.8622222222222222,
+        "random_band_zero_fraction": 0.8658333333333333,
         "tf19_probe_abs_floor": 0.01,
         "tf19_probe_ratio": 2.0,
         "tf19_ready": false,
@@ -1706,28 +2214,28 @@
       "permutation_importance": {
         "held_out": true,
         "importances": {
-          "ball_r": 0.007225993482528635,
-          "ball_speed": 0.03630967636079597,
-          "ball_theta": 0.0010165187195585223,
-          "box_off_def_ratio": 0.0026523285243376673,
-          "dist_endline": 0.0020485522604122086,
-          "dist_nearest_def": 0.01579871897379592,
-          "dist_nearest_teammate": 0.02696042437166763,
-          "gk_carrier_side": 0.0025984601044850724,
-          "gk_dist_far_post": 0.0035924486376002337,
-          "gk_dist_near_post": 0.002002438404355234,
-          "gk_lateral_offset": 0.0010184689721602746,
-          "gk_r": 0.001249015131150975,
-          "gk_theta": 0.004434508815477798,
-          "score_differential": -0.001973391106160317,
-          "space_controlled": 0.00012839891915057228,
-          "ten_minute_warning": -0.0003225590887135181
+          "ball_r": 0.007004846272903121,
+          "ball_speed": 0.03577682200458388,
+          "ball_theta": 0.0010518143279366525,
+          "box_off_def_ratio": 0.002588429606328573,
+          "dist_endline": 0.0010557265634400432,
+          "dist_nearest_def": 0.015365198118733558,
+          "dist_nearest_teammate": 0.02627354666835474,
+          "gk_carrier_side": 0.0030926092150491773,
+          "gk_dist_far_post": 0.0033130833277519056,
+          "gk_dist_near_post": 0.0017476237906431506,
+          "gk_lateral_offset": 0.0008876897375441291,
+          "gk_r": 0.0007673041758230318,
+          "gk_theta": 0.0034078646854668673,
+          "score_differential": -0.0020815388776777586,
+          "space_controlled": -0.0004362160326142078,
+          "ten_minute_warning": -0.0006284400993993388
         },
         "n_folds_used": 5,
         "n_repeats": 10,
         "note": "CV-held-out, architecture-representative; NOT measured on the production weights' own training data. score_differential importance is qualified by coverage.",
         "score_differential_coverage": 1.0,
-        "score_differential_importance": -0.001973391106160317,
+        "score_differential_importance": -0.0020815388776777586,
         "scoring": "average_precision"
       },
       "probe_gated_on_held_out": false,
@@ -1750,7 +2258,7 @@
         "skillcorner"
       ],
       "reproducibility": "public",
-      "run_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "score_differential_range_probe": {
@@ -1763,15 +2271,15 @@
       "tf19_ready": false
     },
     "sha256": {
-      "SHA256SUMS": "f4d5bd90298e8acca6276c9260df9c6c2fce287055ed8ee70f45f3c877fb73e6",
-      "metadata.json": "7a93753742d3e8bcdd0875828e7497c4a4d4dba1df30c4cb3c4a3ba9dabe6287",
-      "metrics.json": "1d8a1165391eaaee4971bb28343d0759ad8de00dccf1ef5117ce9da7ee347ab3",
-      "model.json": "34a044e308f42eb0074d9512f46ed646b41cc9f0de99b03ea7e1309eaeea1ca4"
+      "SHA256SUMS": "cc6a55e8ccc0e2ca6f13989668adcf56877d4ed0b9be87b1af77e6faafa16151",
+      "metadata.json": "8940c731dd51af24d72ebf8e6f6fe531d4d004ca08adea86c59743b4d2f50729",
+      "metrics.json": "f2dee431b2596d75bc66a5f76db749211bfbd4429458a67503f1b6745a5ca48e",
+      "model.json": "98f8b442b1ec4e74bc60b2efe86c7d6b2f64bf1fc71ba916c39687a8355877d0"
     }
   },
   "xcross_position_only": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -1780,7 +2288,7 @@
         "log_loss_lt_uniform": true,
         "pr_auc_gt_base_rate": true
       },
-      "artifact_size_bytes": 197929,
+      "artifact_size_bytes": 197942,
       "candidates": {
         "public": {
           "metrics": {
@@ -1951,7 +2459,7 @@
         "skillcorner"
       ],
       "reproducibility": "public",
-      "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "score_differential_range_probe": {
@@ -1964,15 +2472,15 @@
       "tf19_ready": false
     },
     "sha256": {
-      "SHA256SUMS": "329478c2cae38ba5321d8f6683e21ab714d5cd4efba95cf084210d3e198e9a63",
-      "metadata.json": "e4f81337c3fb195231bcd12ef68af1f4867bff3645b90b097348201d1eba8b11",
-      "metrics.json": "6057d62cac882804b075373d9d30add0e46a4471072cc0188c0ee9dbf1d405f3",
+      "SHA256SUMS": "3a9cea5a91606a039f2d4efd03aa1dff9184ee8ef83c51d0c46a70eba01fd2d3",
+      "metadata.json": "e2d6a33dd120d11efeb50f9d0c914ae24d9627a0ed4aa9addeb99b66782a71b4",
+      "metrics.json": "b95afaed325b7d3c6cb8d19d5bc690309ecf9e1ad54587b6328c23f77eaedadf",
       "model.json": "a1cce22d15f8f25cf0970b77fc846c1aedad4994f2197e32a35349330ad82703"
     }
   },
   "xshot_default": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -1981,7 +2489,7 @@
         "log_loss_lt_uniform": true,
         "pr_auc_gt_base_rate": true
       },
-      "artifact_size_bytes": 322814,
+      "artifact_size_bytes": 366065,
       "candidates": {
         "public": {
           "metrics": {
@@ -2084,21 +2592,21 @@
         "skillcorner"
       ],
       "reproducibility": "public",
-      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "shipped_variant": "public"
     },
     "sha256": {
-      "SHA256SUMS": "2d508202ce92946ab2d7c60948b5bc4f6c6311a2dbc695c8d1cd174c73fe915a",
-      "metadata.json": "119d2a918ed74e8678b331d7eb0bbc86c2fb8303af364e39926f28c330a4def5",
-      "metrics.json": "fbaa153c4f711a5720001f61242b8c3d1115ef5e1d78abf20a38f1dbfdfecb7c",
-      "model.json": "64bf54c4efedb218caab21d613c94ae76d89c433bf4a7fd2025e1ae0bc4bac60"
+      "SHA256SUMS": "b1257df3d9b24845c7e1ce46f66fbadea756369af6741b437c985dc1a5c01f91",
+      "metadata.json": "e20a2f01dfb9bdc4be547e22f387b14bdcfcb4f5a5765d82e44b40ef2c6370b8",
+      "metrics.json": "62e9f3a059b51e76fa70e94c0a3d252e91eff219427fd43a373878108e17d096",
+      "model.json": "0e2a4c05211fd01e10b957daa1fbe19f86a052d451ee80750e9c6762727912ce"
     }
   },
   "xshot_position_only": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
     "metrics_summary": {
       "acceptance": {
@@ -2107,7 +2615,7 @@
         "log_loss_lt_uniform": true,
         "pr_auc_gt_base_rate": true
       },
-      "artifact_size_bytes": 242797,
+      "artifact_size_bytes": 257426,
       "candidates": {
         "public": {
           "metrics": {
@@ -2210,28 +2718,170 @@
         "skillcorner"
       ],
       "reproducibility": "public",
-      "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+      "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
       "run_tree_dirty": false,
       "run_tree_state": "clean",
       "shipped_variant": "public"
     },
     "sha256": {
-      "SHA256SUMS": "d26df5634cc10db8aeafdb41c9df401b101263313dcdefa1503e23ae6f881687",
-      "metadata.json": "c1b30e1de9ac4b5585fd49ff99d5c3b0b66ce3c5e3eafa9e473ad35a7ab6e11a",
-      "metrics.json": "5c9dcf3dfd6996369ddc0348e928f7ac46716149d593add86dcd6ee9f3460672",
-      "model.json": "dcc2f07e50fd4755aa2d3fd93f274380616d8fc0f862b377143ed5b788a3ab7a"
+      "SHA256SUMS": "00b8e61815124bf5b40567f33ed517b81d555ae309a1932054dbb6e7269ce560",
+      "metadata.json": "b4d86473fdf08aeca48ec35beefa43411a487928fad328c3d07933e4462f9249",
+      "metrics.json": "3dcd0d7d1be1b046cd3e18fc25fc6b3a946fc84879770eb521888066a4f0dfa6",
+      "model.json": "48ed64d4e8f9f9c8c629e5f3bbd5ef4c8c6fc7c1521976c4c2c44d9f58eadbe4"
     }
   },
   "xsuccess": {
-    "adopted_at": "2026-10-19T02:17:38+00:00",
-    "campaign": "bootstrap (shipped before ADR-128)",
+    "adopted_at": "2026-11-10T04:06:35+00:00",
+    "campaign": "cycle1@a1a3b52",
     "env": {},
-    "metrics_summary": {},
+    "metrics_summary": {
+      "auc": 0.8948403992254027,
+      "base_rate": 0.8349647646941684,
+      "brier": 0.08382231441584499,
+      "calibration_in_the_large": {
+        "n_success": 6658333,
+        "sum_pred": 6658261.644620642
+      },
+      "corpus_match_ids_sha256": "f0446a673cf837060ea5f282414547411a6869536eb3191974d9aba6e5be8a56",
+      "corpus_n_matches": 3961,
+      "feature_set": "xgboost",
+      "generation": "101d1a7343eb403d",
+      "hpo_best_params": {
+        "colsample_bytree": 0.6429610536981535,
+        "learning_rate": 0.0753416368360696,
+        "max_depth": 7,
+        "min_child_weight": 19,
+        "n_estimators": 568,
+        "reg_alpha": 0.005697954571199672,
+        "reg_lambda": 0.5058500772009156,
+        "subsample": 0.9140951282979688
+      },
+      "hpo_trials": 30,
+      "n_attempted": 3961,
+      "n_counters_unrecorded": 0,
+      "n_excluded": 0,
+      "n_failed": 0,
+      "n_matches": 3961,
+      "n_oof": 7974388,
+      "n_rows": 7974436,
+      "per_type_reliability": {
+        "bad_touch": {
+          "n": 118658,
+          "obs": 0.0,
+          "pred": 0.0
+        },
+        "clearance": {
+          "n": 183434,
+          "obs": 1.0,
+          "pred": 0.999999986631733
+        },
+        "corner_crossed": {
+          "n": 29544,
+          "obs": 0.32372055239642566,
+          "pred": 0.3283503397357128
+        },
+        "corner_short": {
+          "n": 8396,
+          "obs": 0.8920914721295855,
+          "pred": 0.8905636181676991
+        },
+        "cross": {
+          "n": 83639,
+          "obs": 0.2898049952773228,
+          "pred": 0.2902109209037798
+        },
+        "dribble": {
+          "n": 3191822,
+          "obs": 1.0,
+          "pred": 1.0
+        },
+        "foul": {
+          "n": 108845,
+          "obs": 0.0,
+          "pred": 0.0
+        },
+        "freekick_crossed": {
+          "n": 48739,
+          "obs": 0.3744229467161821,
+          "pred": 0.3765325694650405
+        },
+        "freekick_short": {
+          "n": 56433,
+          "obs": 0.9799053745149114,
+          "pred": 0.9814820127589939
+        },
+        "goalkick": {
+          "n": 63501,
+          "obs": 0.6268247744130013,
+          "pred": 0.6252434259450875
+        },
+        "interception": {
+          "n": 119517,
+          "obs": 0.7062844616247062,
+          "pred": 0.7053575026185603
+        },
+        "keeper_claim": {
+          "n": 16671,
+          "obs": 1.0,
+          "pred": 0.9998855537189194
+        },
+        "keeper_punch": {
+          "n": 5417,
+          "obs": 0.6863577625992247,
+          "pred": 0.6876215683170354
+        },
+        "keeper_save": {
+          "n": 23613,
+          "obs": 0.8295430483208402,
+          "pred": 0.8303650551201899
+        },
+        "pass": {
+          "n": 3337914,
+          "obs": 0.7991601940613209,
+          "pred": 0.7991202794166506
+        },
+        "shot": {
+          "n": 95297,
+          "obs": 0.10427400652696307,
+          "pred": 0.10584826131921876
+        },
+        "shot_freekick": {
+          "n": 4449,
+          "obs": 0.06653180489997752,
+          "pred": 0.06729177967112968
+        },
+        "shot_penalty": {
+          "n": 1481,
+          "obs": 0.7393652937204591,
+          "pred": 0.7359158441595416
+        },
+        "tackle": {
+          "n": 156140,
+          "obs": 0.608863840143461,
+          "pred": 0.6082981557010275
+        },
+        "take_on": {
+          "n": 138745,
+          "obs": 0.564553677610004,
+          "pred": 0.5636902200468819
+        },
+        "throw_in": {
+          "n": 182133,
+          "obs": 0.8333964740052598,
+          "pred": 0.8331706289530662
+        }
+      },
+      "providers": "statsbomb-open (comp 2, season 27), (comp 2, season 44), (comp 7, season 27), (comp 7, season 108), (comp 7, season 235), (comp 9, season 27), (comp 9, season 281), (comp 11, season 1), (comp 11, season 2), (comp 11, season 4), (comp 11, season 21), (comp 11, season 22), (comp 11, season 23), (comp 11, season 24), (comp 11, season 25), (comp 11, season 26), (comp 11, season 27), (comp 11, season 37), (comp 11, season 38), (comp 11, season 39), (comp 11, season 40), (comp 11, season 41), (comp 11, season 42), (comp 11, season 90), (comp 11, season 278), (comp 12, season 27), (comp 12, season 86), (comp 16, season 1), (comp 16, season 2), (comp 16, season 4), (comp 16, season 21), (comp 16, season 22), (comp 16, season 23), (comp 16, season 24), (comp 16, season 25), (comp 16, season 26), (comp 16, season 27), (comp 16, season 37), (comp 16, season 39), (comp 16, season 41), (comp 16, season 44), (comp 16, season 71), (comp 16, season 76), (comp 16, season 276), (comp 16, season 277), (comp 35, season 75), (comp 37, season 4), (comp 37, season 42), (comp 37, season 90), (comp 37, season 281), (comp 43, season 3), (comp 43, season 51), (comp 43, season 54), (comp 43, season 55), (comp 43, season 106), (comp 43, season 269), (comp 43, season 270), (comp 43, season 272), (comp 44, season 107), (comp 49, season 3), (comp 49, season 107), (comp 53, season 106), (comp 53, season 315), (comp 55, season 43), (comp 55, season 282), (comp 72, season 30), (comp 72, season 107), (comp 81, season 48), (comp 81, season 275), (comp 87, season 84), (comp 87, season 268), (comp 87, season 279), (comp 116, season 68), (comp 131, season 281), (comp 135, season 281), (comp 182, season 281), (comp 223, season 282), (comp 1238, season 108), (comp 1267, season 107), (comp 1470, season 274)",
+      "run_tree_dirty": false,
+      "run_tree_state": "clean",
+      "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3"
+    },
     "sha256": {
       "MODEL_CARD.md": "268f16391fca7b188893dd7e8b2c8b85d3349284a27431bbb7cc0645495e455d",
-      "SHA256SUMS": "a50d9fc1a5620187c530aceb639d75e690e171164d4b93087a159c9005de47d0",
-      "metadata.json": "2d4cf74b538ee879d6f095d6e5036b379b1028edfbee6928884950094fed6028",
-      "model.json": "4df8f59457819c7953882a4d071babca2fb4ad2511657ed2a521c52ad355ff4d"
+      "SHA256SUMS": "98c3bce4fbfb90b2c8ee3dc781c2477a1b48a2042a75b21215eb2baa98de014e",
+      "metadata.json": "3e332e7c88733d8d89ea402493a45fde3339387c99be1972bf8a9b8e28a85ab0",
+      "metrics.json": "c6a55b11b461d1b25ec47afc1100178455b66abc3b9d70f491fd4815c26d5bcc",
+      "model.json": "9e7d96afc9e48abc039b98b0fb382dda367830bea9d155566f5977eb668bcf98"
     }
   }
 }

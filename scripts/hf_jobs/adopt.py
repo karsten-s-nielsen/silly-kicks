@@ -5,7 +5,8 @@ OUTSIDE the repo, with a record of what the job read (the token inputs it wrote,
 ``verify`` loads every artifact in ``.venv-hfjobs`` (SHA256SUMS, chirality, feature contract), checks the
 five declared expectations, certifies per the registry policy (`floor.certify`; `identity.compare` for a
 rebaseline driver) and runs the ADR-126 integrity gate for xShot/xCross. ``adopt`` turns a verified
-staging dir into a commit-ready diff -- wheel bundles, the manifest training commits, ``observed.json``,
+staging dir into a commit-ready diff -- wheel bundles, the manifest training commits (of the artifacts with a
+``commit_field``), ``observed.json``,
 re-rendered card regions, verdict JSONs, a CHANGELOG draft -- under the ADR-037 guards (clean tree at the
 campaign commit; a diff limited to the allowlist), runs the full local gate and STOPS: it never commits.
 ``publish`` (an owner go every time) pushes Hub artifacts through the unchanged ADR-088 seam and verifies
@@ -59,6 +60,11 @@ ADOPT_PATHS: tuple[str, ...] = (
 
 class AdoptionRefusedError(RuntimeError):
     """An expectation, a guard or a certification refused the adoption (nothing was written)."""
+
+
+class AdoptionRollbackError(AdoptionRefusedError):
+    """``adopt`` failed in its write phase and could not restore every path (HFU spec 18.3); the message names
+    them, and ``__cause__`` is the original error."""
 
 
 # ---- shared ----------------------------------------------------------------------------------------
@@ -788,6 +794,60 @@ def _set_manifest_commit(text: str, artifact_id: str, commit: str) -> str:
     return text[:start] + "\n".join(lines) + text[end:]
 
 
+def _rollback(run: Callable[..., Any], root: pathlib.Path) -> list[str]:
+    """HFU spec 18.3: restore every path ``git status`` of ``root`` reports -- the root was clean at entry, so each
+    is adopt's own: a tracked path is checked out from HEAD (a deleted file comes back), a new file is removed.
+    Returns the paths it could not restore."""
+    try:
+        p = run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=root,
+        )
+    except Exception as exc:  # reported as the unrestored tree
+        return [f"<git status failed: {exc!r}>"]
+    unrestored: list[str] = []
+    for line in (p.stdout or "").splitlines():
+        if not line.strip():
+            continue
+        code, path = line[:2], line[3:].strip().strip('"')
+        try:
+            if code == "??":
+                (root / path).unlink()
+            else:
+                run(["git", "checkout", "HEAD", "--", path], capture_output=True, text=True, check=True, cwd=root)
+        except Exception:  # every path is attempted, the failures are named
+            unrestored.append(path)
+    return unrestored
+
+
+def _finalize(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
+    """``<staging>/_final/<instance>/``: the instance's staging files with ``metrics.json`` finalized off HF
+    (:func:`scripts._corpus_identity.canonical_probe_ids`; HFU spec 18.6), rebuilt on every call. The wheel bundle,
+    a Hub artifact's ``observed.json`` entry and ``publish`` all read this copy, so they agree byte for byte."""
+    import shutil
+
+    from scripts._corpus_identity import canonical_probe_ids
+
+    src, dst = _artifact_dir(staging, inst_id), staging / "_final" / inst_id
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir(parents=True)
+    for f in sorted(src.iterdir()):
+        if not f.is_file():
+            continue
+        data = f.read_bytes()
+        if f.name == "metrics.json":
+            m = json.loads(data)
+            fin = canonical_probe_ids(m)
+            if fin != m:
+                data = (json.dumps(fin, indent=2) + "\n").encode("utf-8")
+        (dst / f.name).write_bytes(data)
+    return dst
+
+
 def _bundle(a: mf.Artifact, fresh: pathlib.Path, root: pathlib.Path) -> list[str]:
     """Step 5: the allowlisted files into the wheel destination in canonical shape (an allowlisted file the
     fresh artifact lacks is removed; the wheel MODEL_CARD.md stays and is re-rendered in step 7). A public
@@ -893,8 +953,11 @@ def adopt(
     gate: bool = True,
 ) -> dict:
     """Spec 5.7 steps 5-10 over a verified staging dir; never commits. Refuses (writing nothing) on a dirty
-    tree, a HEAD other than the campaign commit, a ``verify.json`` of another commit, or any instance that
-    did not verify. Idempotent: a second run over the same staging dir writes nothing."""
+    tree (the provenance check, then the root's own ``git status``), a HEAD other than the campaign commit, a
+    ``verify.json`` of another commit, or any instance that did not verify. A failure in the write phase restores
+    the tree (HFU spec 18.3); the local gate runs after it, outside the rollback. Idempotent: a second run over the
+    same staging dir writes nothing -- over an uncommitted adoption it refuses at the root status, over a committed
+    one at the campaign commit (the adoption commit moved HEAD), and the write phase itself is a fixed point."""
     from scripts._provenance import git_provenance, require_clean_tree
 
     root = pathlib.Path(root).resolve()
@@ -906,17 +969,44 @@ def adopt(
         raise AdoptionRefusedError(f"adopt needs a clean tree (ADR-037): {exc}") from exc
     if prov.get("commit") != commit:
         raise AdoptionRefusedError(f"HEAD {prov.get('commit')} is not the campaign commit {commit} (ADR-037)")
+    changed = _git_status(run, root)  # the provenance reads the cwd; the root is where adopt writes (HFU spec 18.3)
+    if changed:
+        raise AdoptionRefusedError(f"the root tree is not clean (ADR-037): {sorted(changed)[:10]}")
     rep = _read_json(staging / "verify.json")
     if rep.get("commit") != commit:
         raise AdoptionRefusedError(f"verify.json is for commit {rep.get('commit')}, not {commit}")
     bad = sorted(k for k, v in rep["instances"].items() if not v.get("ok"))
     if bad:
         raise AdoptionRefusedError(f"instances that did not verify: {bad}")
+    now = now or datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+    try:
+        adopted, written, draft = _write_phase(c, commit, rep, staging=staging, now=now, run=run, root=root)
+    except BaseException as exc:  # HFU spec 18.3: a KeyboardInterrupt too
+        unrestored = _rollback(run, root)
+        if unrestored:
+            raise AdoptionRollbackError(f"adopt failed and could not restore {unrestored}") from exc
+        raise
+    out: dict[str, Any] = {"adopted": adopted, "written": sorted(set(written)), "changelog_draft": str(draft)}
+    if gate:
+        out["gate"] = _local_gate(run, root)
+    out["next"] = "commit gate: owner approval required"
+    return out
+
+
+def _write_phase(
+    c: Campaign,
+    commit: str,
+    rep: Mapping[str, Any],
+    *,
+    staging: pathlib.Path,
+    now: str,
+    run: Callable[..., Any],
+    root: pathlib.Path,
+) -> tuple[list[str], list[str], pathlib.Path]:
+    """`adopt`'s writes (spec 5.7 steps 5-9) over a clean root: ``(adopted, written, changelog draft)``."""
     manifest_path = root / "docs" / "artifacts" / "manifest.toml"
     observed_path = root / "docs" / "artifacts" / "observed.json"
     man = mf.load(manifest_path)
-    now = now or datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
-    before = _git_status(run, root)
     written: list[str] = []
     observed = _read_json(observed_path) if observed_path.is_file() else {}
     manifest_text = manifest_path.read_bytes().decode("utf-8").replace("\r\n", "\n")
@@ -933,14 +1023,16 @@ def adopt(
                     raise AdoptionRefusedError(f"{inst_id}: names {len(names)} registered drivers")
                 written += _copy_tree(fresh, root / drivers[names[0]], root)
             continue
+        final = _finalize(staging, inst_id) if row.get("artifacts") else fresh
         for aid in sorted(row.get("artifacts", {})):
             a = man.artifacts[aid]
             if a.kind == "wheel":
-                written += _bundle(a, fresh, root)
+                written += _bundle(a, final, root)
                 observed[aid] = _observed_entry(root / a.path, c.name, commit, now)
             else:
-                observed[aid] = _observed_entry(fresh, c.name, commit, now)
-            manifest_text = _set_manifest_commit(manifest_text, aid, commit)
+                observed[aid] = _observed_entry(final, c.name, commit, now)
+            if a.commit_field:  # an artifact that records no commit keeps its entry (HFU spec 18.2)
+                manifest_text = _set_manifest_commit(manifest_text, aid, commit)
             adopted.append(aid)
     if _write_text_keep_eol(manifest_path, manifest_text):
         written.append(manifest_path.relative_to(root).as_posix())
@@ -969,14 +1061,10 @@ def adopt(
                 written.append((VERDICTS / v.name).as_posix())
     draft = staging / "CHANGELOG-draft.md"
     draft.write_text(_changelog_draft(man, adopted, c.name, commit), encoding="utf-8")
-    stray = sorted(p for p in _git_status(run, root) - before if not _allowed(p, man))
+    stray = sorted(p for p in _git_status(run, root) if not _allowed(p, man))
     if stray:
         raise AdoptionRefusedError(f"adopt changed paths outside the allowlist (ADR-037): {stray}")
-    out: dict[str, Any] = {"adopted": adopted, "written": sorted(set(written)), "changelog_draft": str(draft)}
-    if gate:
-        out["gate"] = _local_gate(run, root)
-    out["next"] = "commit gate: owner approval required"
-    return out
+    return adopted, written, draft
 
 
 # ---- bootstrap + publish ---------------------------------------------------------------------------
@@ -1066,7 +1154,7 @@ def publish(
             raise AdoptionRefusedError(f"publishing to public repos needs --i-have-owner-approval for each: {missing}")
     results: dict[str, Any] = {}
     for a, repo in plan:
-        d = _artifact_dir(staging, src[a.id])
+        d = _finalize(staging, src[a.id])  # the finalized copy adopt also read (HFU spec 18.6)
         if sandbox:
             api.create_repo(repo, repo_type="model", private=True, exist_ok=True)
         (publisher or publish_model_with_card)(api, str(d), repo, model_card=str(REPO_ROOT / (a.card or "")))

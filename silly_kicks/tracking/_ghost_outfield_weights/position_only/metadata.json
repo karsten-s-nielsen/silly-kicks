@@ -20,8 +20,8 @@
   "n_estimators": 500,
   "max_depth": 8,
   "sklearn_version": "1.9.0",
-  "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
-  "training_platform": "dgx-spark-aarch64",
+  "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
+  "training_platform": null,
   "corpus_provenance": {
     "n_games": 179,
     "n_rows": 4170920,

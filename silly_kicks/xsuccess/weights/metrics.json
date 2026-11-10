@@ -1,0 +1,142 @@
+{
+  "auc": 0.8948403992254027,
+  "brier": 0.08382231441584499,
+  "base_rate": 0.8349647646941684,
+  "calibration_in_the_large": {
+    "sum_pred": 6658261.644620642,
+    "n_success": 6658333
+  },
+  "per_type_reliability": {
+    "pass": {
+      "pred": 0.7991202794166506,
+      "obs": 0.7991601940613209,
+      "n": 3337914
+    },
+    "cross": {
+      "pred": 0.2902109209037798,
+      "obs": 0.2898049952773228,
+      "n": 83639
+    },
+    "throw_in": {
+      "pred": 0.8331706289530662,
+      "obs": 0.8333964740052598,
+      "n": 182133
+    },
+    "freekick_crossed": {
+      "pred": 0.3765325694650405,
+      "obs": 0.3744229467161821,
+      "n": 48739
+    },
+    "freekick_short": {
+      "pred": 0.9814820127589939,
+      "obs": 0.9799053745149114,
+      "n": 56433
+    },
+    "corner_crossed": {
+      "pred": 0.3283503397357128,
+      "obs": 0.32372055239642566,
+      "n": 29544
+    },
+    "corner_short": {
+      "pred": 0.8905636181676991,
+      "obs": 0.8920914721295855,
+      "n": 8396
+    },
+    "take_on": {
+      "pred": 0.5636902200468819,
+      "obs": 0.564553677610004,
+      "n": 138745
+    },
+    "foul": {
+      "pred": 0.0,
+      "obs": 0.0,
+      "n": 108845
+    },
+    "tackle": {
+      "pred": 0.6082981557010275,
+      "obs": 0.608863840143461,
+      "n": 156140
+    },
+    "interception": {
+      "pred": 0.7053575026185603,
+      "obs": 0.7062844616247062,
+      "n": 119517
+    },
+    "shot": {
+      "pred": 0.10584826131921876,
+      "obs": 0.10427400652696307,
+      "n": 95297
+    },
+    "shot_penalty": {
+      "pred": 0.7359158441595416,
+      "obs": 0.7393652937204591,
+      "n": 1481
+    },
+    "shot_freekick": {
+      "pred": 0.06729177967112968,
+      "obs": 0.06653180489997752,
+      "n": 4449
+    },
+    "keeper_save": {
+      "pred": 0.8303650551201899,
+      "obs": 0.8295430483208402,
+      "n": 23613
+    },
+    "keeper_claim": {
+      "pred": 0.9998855537189194,
+      "obs": 1.0,
+      "n": 16671
+    },
+    "keeper_punch": {
+      "pred": 0.6876215683170354,
+      "obs": 0.6863577625992247,
+      "n": 5417
+    },
+    "clearance": {
+      "pred": 0.999999986631733,
+      "obs": 1.0,
+      "n": 183434
+    },
+    "bad_touch": {
+      "pred": 0.0,
+      "obs": 0.0,
+      "n": 118658
+    },
+    "dribble": {
+      "pred": 1.0,
+      "obs": 1.0,
+      "n": 3191822
+    },
+    "goalkick": {
+      "pred": 0.6252434259450875,
+      "obs": 0.6268247744130013,
+      "n": 63501
+    }
+  },
+  "n_oof": 7974388,
+  "n_rows": 7974436,
+  "n_matches": 3961,
+  "providers": "statsbomb-open (comp 2, season 27), (comp 2, season 44), (comp 7, season 27), (comp 7, season 108), (comp 7, season 235), (comp 9, season 27), (comp 9, season 281), (comp 11, season 1), (comp 11, season 2), (comp 11, season 4), (comp 11, season 21), (comp 11, season 22), (comp 11, season 23), (comp 11, season 24), (comp 11, season 25), (comp 11, season 26), (comp 11, season 27), (comp 11, season 37), (comp 11, season 38), (comp 11, season 39), (comp 11, season 40), (comp 11, season 41), (comp 11, season 42), (comp 11, season 90), (comp 11, season 278), (comp 12, season 27), (comp 12, season 86), (comp 16, season 1), (comp 16, season 2), (comp 16, season 4), (comp 16, season 21), (comp 16, season 22), (comp 16, season 23), (comp 16, season 24), (comp 16, season 25), (comp 16, season 26), (comp 16, season 27), (comp 16, season 37), (comp 16, season 39), (comp 16, season 41), (comp 16, season 44), (comp 16, season 71), (comp 16, season 76), (comp 16, season 276), (comp 16, season 277), (comp 35, season 75), (comp 37, season 4), (comp 37, season 42), (comp 37, season 90), (comp 37, season 281), (comp 43, season 3), (comp 43, season 51), (comp 43, season 54), (comp 43, season 55), (comp 43, season 106), (comp 43, season 269), (comp 43, season 270), (comp 43, season 272), (comp 44, season 107), (comp 49, season 3), (comp 49, season 107), (comp 53, season 106), (comp 53, season 315), (comp 55, season 43), (comp 55, season 282), (comp 72, season 30), (comp 72, season 107), (comp 81, season 48), (comp 81, season 275), (comp 87, season 84), (comp 87, season 268), (comp 87, season 279), (comp 116, season 68), (comp 131, season 281), (comp 135, season 281), (comp 182, season 281), (comp 223, season 282), (comp 1238, season 108), (comp 1267, season 107), (comp 1470, season 274)",
+  "hpo_trials": 30,
+  "corpus_match_ids_sha256": "f0446a673cf837060ea5f282414547411a6869536eb3191974d9aba6e5be8a56",
+  "corpus_n_matches": 3961,
+  "hpo_best_params": {
+    "n_estimators": 568,
+    "max_depth": 7,
+    "learning_rate": 0.0753416368360696,
+    "min_child_weight": 19,
+    "reg_lambda": 0.5058500772009156,
+    "reg_alpha": 0.005697954571199672,
+    "subsample": 0.9140951282979688,
+    "colsample_bytree": 0.6429610536981535
+  },
+  "feature_set": "xgboost",
+  "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "generation": "101d1a7343eb403d",
+  "n_attempted": 3961,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "n_excluded": 0
+}

@@ -1,10 +1,10 @@
 {
-  "ece": 0.01680112045983158,
-  "reliability_slope": 0.9912837279844693,
-  "brier": 0.13852696776122958,
+  "ece": 0.016801128549492814,
+  "reliability_slope": 0.9912835983760511,
+  "brier": 0.13852695999356615,
   "n_oof": 7974436,
   "corpus_goals_per_match": 2.9575864680636204,
-  "model_expected_goals": 2.465413775623272,
+  "model_expected_goals": 2.4655246458328794,
   "expected_goals_tol": 0.5,
   "n_matches": 3961,
   "n_action_rows": 7974436,
@@ -331,11 +331,14 @@
       274
     ]
   ],
-  "training_commit": "ae10f8a75c84ef7f8b55297c8ac1d96bbfae8a32",
+  "corpus_match_ids_sha256": "f0446a673cf837060ea5f282414547411a6869536eb3191974d9aba6e5be8a56",
+  "corpus_n_matches": 3961,
+  "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
-  "generation": "0f876236a812e893",
+  "generation": "ec092be5cc69b299",
   "n_attempted": 3961,
   "n_failed": 0,
-  "n_counters_unrecorded": 0
+  "n_counters_unrecorded": 0,
+  "n_excluded": 0
 }

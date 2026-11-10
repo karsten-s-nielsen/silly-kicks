@@ -6,7 +6,9 @@ Spec: `docs/superpowers/specs/2026-11-04-hfu-reduce-reads-and-job-exit-design.md
 
 ## Global Constraints
 
-- Branch `feat/minimal-hf-driver`, PR #299; one amend per change; the version stays `4.139.1`.
+- Branch `feat/minimal-hf-driver`, PR #299; one amend per change; the version stays `4.139.1` until the adoption
+  commit, which releases `4.140.0` (owner 2026-11-10). Exception: the
+  launch-7 adoption (Change 11) is a NEW commit on top of `a1a3b52f`, never an amend (spec §18.4).
 - Lint pins (`ci.yml`): `ruff==0.15.7`, `pyright==1.1.409`, `pandas-stubs==2.3.3.260113`; lint at CI scope.
 - Local runs: lint, targeted tests and `tests/scripts/hf_jobs` on its own; the heavy suites, the full pyright and
   the parity tests run in CI (owner rule). No edit of the working tree while a campaign driver runs (the
@@ -136,7 +138,7 @@ Status: APPROVED (A r18, B r17; CONSIDER notes applied). Each task is test-first
 
 ## Change 10 — the launch 6 verify findings (spec §17)
 
-Status: DRAFT r21. Each task is test-first; behaviour beyond the spec is out. Amended into the cycle commit.
+Status: APPROVED (A r21, B r20); implemented and launched (launch 7). Each task is test-first; behaviour beyond the spec is out. Amended into the cycle commit.
 
 - **Task 41 (§17.2):** both trainers `all_public=False`. RED: the AST gate over `scripts/train_*.py` (it finds the 2
   calls and fails today); on launch-6-shaped digest metrics (raw `pergame` pairs hashed, n 17, providers `[idsse,
@@ -156,3 +158,84 @@ Status: DRAFT r21. Each task is test-first; behaviour beyond the spec is out. Am
 - **Task 45 (§17.7):** ADR, the rehydrate docstring, howto, CHANGELOG.
 - **Task 46:** local gates; A/B implementation review; `/final-review`; owner gates (amend, force-push); CI green;
   owner go: preflight and launch 7; retrieve, verify, adopt; Task 27 Step 6.
+
+## Change 11 — adopt the launch 7 artifacts (spec §18)
+
+Status: Tasks 47-50 APPROVED (A r25, B r24); Tasks 51-53 APPROVED (A r27, B r26); Task 54 APPROVED (A r29, B r28). Each task is test-first; behaviour beyond the
+spec is out. A NEW commit on top of `a1a3b52f`.
+
+- **Task 47 (§18.2):** in `adopt`, call `_set_manifest_commit` only when `a.commit_field` is set. RED: the toy repo
+  gains an artifact without `commit_field` and `training_commit` (`toy_nocommit`, wheel destination); `adopt` adopts
+  it, its manifest entry is unchanged byte for byte, and `observed.json` has its entry. Guard: a test over
+  `docs/artifacts/manifest.toml` asserts `training_commit` is present exactly when `commit_field` is.
+- **Task 48 (§18.3):** the root-clean entry check and the rollback, on the real toy git repo. RED: (a), (b), (d), (e)
+  and the idempotence change; regression pins (they pass today and must keep passing): (c), (f).
+  (a) a `_bundle` monkeypatched to write one file, delete one tracked file and then raise leaves `git status` empty
+  (the deleted file is back) and re-raises the same error;
+  (b) the toy tree gets a real uncommitted edit and an untracked file, `git` injected clean: `adopt` refuses at entry
+  ("the root tree is not clean") and both survive byte for byte;
+  (c) the same edit and untracked file, `git` injected dirty: the existing entry refusal; both survive byte for byte;
+  (d) a restore that fails raises `AdoptionRollbackError` naming the path, chained from the original error;
+  (e) a `KeyboardInterrupt` from `_bundle` is rolled back and propagates;
+  (f) a `KeyboardInterrupt` from `_local_gate` (`gate=True`) propagates and leaves the adoption's writes in place;
+  the existing `test_adopt_fails_on_a_path_outside_the_allowlist` also leaves `git status` empty;
+  idempotence (`test_adopt_writes_only_allowlisted_paths_and_is_idempotent`, today its second `adopt` call at
+  lines 279-281 runs on the uncommitted adoption): the test commits the first adoption, then the second run over the
+  same staging dir returns `written == []` (the write phase is a fixed point); a run over the uncommitted adoption refuses ("the root tree is not clean")
+  and writes nothing.
+- **Task 49 (§18.5):** ADR-128 amendment, howto step 8, CHANGELOG, the `adopt.py` docstring. The `manifest.py`
+  docstring and the `manifest.toml` header comment are edited after the Task 50 adoption run (Task 50 step 8): `adopt`
+  imports `manifest.py` and writes `manifest.toml`.
+- **Task 50 (§18.4):** in order:
+  1. Local gates: ruff 0.15.7 check and format at CI scope; pyright on the changed files; the touched tests.
+  2. A/B implementation review of Tasks 47-49.
+  3. Record `sha256sum scripts/hf_jobs/adopt.py` in the ledger; confirm `git diff --stat a1a3b52f` lists no module
+     that `adopt` imports other than `adopt.py`.
+  4. `mkdir -p D:/Temp/hfu-change11 && cp scripts/hf_jobs/adopt.py D:/Temp/hfu-change11/adopt_fixed.py` (owner
+     rule: temp files under `D:\Temp`);
+     its sha256 equals the recorded one.
+  5. `git stash push -u -m change11`; then `git status --porcelain` is empty and `git rev-parse HEAD` is
+     `a1a3b52fba07be3c21131c11df765cf7105524b3`.
+  6. From the repo root (cwd = repo root; `git_provenance` reads the cwd), with `.venv-hfjobs`:
+     load `D:/Temp/hfu-change11/adopt_fixed.py` with `importlib.util.spec_from_file_location("scripts.hf_jobs.adopt", ...)`,
+     register it in `sys.modules["scripts.hf_jobs.adopt"]` before any other `scripts.hf_jobs` import, execute it, and
+     call `adopt(load_campaign(Path("scripts/hf_jobs/campaigns/cycle1.toml")), <HEAD sha>,
+     staging=Path("D:/Development/_staging/cycle1-a1a3b52"), gate=False)`; keep its JSON report.
+  7. Check the adoption: every changed path is allowlisted; each adopted artifact with a `commit_field` has
+     `training_commit = a1a3b52f...`; `match_outcome` and `expected_passing` entries are unchanged.
+  8. `git stash pop` (the stashed change touches no path the adoption writes); then the `manifest.toml` header and
+     the `manifest.py` docstring edits (§18.5), and an A/B delta check of those two edits.
+  9. `/final-review`; owner commit gate (one new commit); owner push gate (no force); CI green; Task 27 Step 6.
+- **Task 51 (§18.6):** `canonical_match_id` and the trainer. RED: `("gradientsports", "gradientsports-10502")` ->
+  `"10502"`; `("sportec", "idsse-DFL-MAT-J03WMX")` -> `"DFL-MAT-J03WMX"`; `("idsse", "DFL-MAT-J03WMX")` and
+  `("gradientsports", "10502")` unchanged; for every `xcross_probe` lock unit, `canonical_match_id(source_provider,
+  game)` has no `f"{source_provider}-"` prefix; `_cohort_files` over a stubbed staged match `gradientsports-10502`
+  records `matches == [["gradientsports", "10502"]]` and `match_groups` keyed `"10502"` (`_load_match` and
+  `_write_probe_sample` stubbed).
+- **Task 52 (§18.6):** `canonical_probe_ids`, the finalized copy, `_bundle`, `observed` and `publish`. RED:
+  `canonical_probe_ids` maps the launch-7 per-game form to the committed form (pairs and fold keys), leaves the
+  committed form and a dashed canonical id unchanged, leaves a metrics without the fields unchanged, and does not
+  mutate its input. The toy `adopt` (a wheel and a Hub artifact whose staging `metrics.json` has per-game probe ids)
+  writes canonical ids into the wheel `metrics.json` and into the Hub artifact's `observed.json` `metrics_summary`,
+  and the observed `metrics.json` hash equals the hash of `<staging>/_final/<instance>/metrics.json`; a toy `publish`
+  (a stub publisher capturing the uploaded dir) uploads that finalized dir, canonical ids included.
+- **Task 53 (§18.6):** docs (ADR-128 item 36, howto step 8, CHANGELOG); local gates; A/B implementation review; then:
+  1. discard the first run's output: each path in the `written` list of `D:/Temp/hfu-change11/adopt_run.log`
+     (tracked: `git checkout HEAD -- <path>`; new: removed); `git status` then lists exactly the Change 11 paths;
+  2. Task 50 steps 3-8 with two modules: record the sha256 of `scripts/hf_jobs/adopt.py` and
+     `scripts/_corpus_identity.py`; `git diff --name-only a1a3b52f -- '*.py'` lists no other module that `adopt`
+     imports; copy both to `D:/Temp/hfu-change11/` and check both sha256; `git stash push -u`; status empty and HEAD
+     `a1a3b52f...`; the runner registers `scripts._corpus_identity` and then `scripts.hf_jobs.adopt` from the copies
+     (`importlib.util.spec_from_file_location`) before any other `scripts` import; `gate=False`;
+  3. check: `tests/test_bundled_probe_ids_are_committed_ids.py` passes on the adopted bundles, and the Hub xCross
+     `observed.json` entries carry canonical ids; `git stash pop`; the §18.5 edits; the A/B delta check.
+- **Task 54 (§18.7):** the two tests rewritten as §18.7 states (RED: on the HEAD bundles, without `metrics.json`,
+  `test_a_bundle_metrics_is_its_committed_cv_record` fails; it passes on the adopted bundles); after the re-adoption
+  run (Task 53 step 3), with the §18.5 edits: the three manifest entries lose `cv_reference` and its comment, and
+  `docs/artifacts/cv_reference/xsuccess.json` is removed; `tests/test_artifact_manifest.py` and
+  `tests/scripts/hf_jobs/test_adopt.py` pass on the adopted tree; the step 8 A/B delta check covers these edits.
+  `test_rebaseline_tolerance.py` takes relative `n_boot_effective` deltas (RED: it failed over the adopted census);
+  with the post-run manifest edits, `match_outcome` and `expected_passing` gain `commit_field` +
+  `training_commit = a1a3b52f...`, and `tests/test_artifact_manifest.py::test_wheel_artifact_matches_its_expectations`
+  passes for both (RED: with the entries but an old commit value it fails); the pairing guard's docstring says
+  "declares". Pin (B IMPL-27): `_finalize` over an existing `_final/<instance>` with a stray file removes it.

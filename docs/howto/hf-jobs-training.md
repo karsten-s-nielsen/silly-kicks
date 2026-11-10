@@ -139,12 +139,18 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    `sb_open` head-to-head caches its open data in `DIR/_open_data/<instance>`. 4 instances run at once. Prints
    `[verify] <i>/<n> <instance> ok|FAIL (<checks>) in <s> s` when each instance ends (an `sb_open` line ends with its
    coverage note) and writes `DIR/verify.json` (instances in campaign order in the returned report).
-8. `adopt --staging DIR` -- on a clean tree at the campaign commit: bundles the verified files into the
+8. `adopt --staging DIR` -- on a clean tree at the campaign commit (the provenance check and the root's own
+   `git status`): bundles the verified files into the
    wheel dirs (a public bundle is rehydrated with the canonical public ids), writes
-   `docs/artifacts/observed.json`, copies each adopted artifact's `training_commit` into
-   `docs/artifacts/manifest.toml` (the one field a tool writes there), re-renders the generated card
+   `docs/artifacts/observed.json`, copies the campaign commit into the `training_commit` of each adopted artifact
+   with a `commit_field` (the one field a tool writes in `docs/artifacts/manifest.toml`), re-renders the generated card
    regions, writes the verdict JSONs and a CHANGELOG draft, runs the full local gate, and STOPS at the
-   commit gate. Its diff touches only the allowlisted paths.
+   commit gate. Its diff touches only the allowlisted paths. A failure while it writes restores the tree (a
+   restore that fails raises `AdoptionRollbackError` naming the paths); the local gate runs after the writes.
+   Commit the adoption as a NEW commit on top of the campaign commit, never an amend: every adopted
+   `training_commit` names that commit. adopt reads each instance from `DIR/_final/<instance>/`, the staging files
+   with `metrics.json` finalized off HF (canonical xCross probe ids); `publish` uploads the same copy. A bundle's
+   own `metrics.json` is its committed CV record; a manifest `cv_reference` is only for a bundle without one.
 9. Owner gate (commit), then declare the re-fit event in the manifest (version, ADR) and re-render the
    cards (`tests/test_card_regions.py` flags a stale region).
 10. `publish --sandbox --staging DIR` (owner go) -- private `silly-kicks/sandbox-<name>` repos, then the

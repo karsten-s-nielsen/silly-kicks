@@ -635,6 +635,8 @@ def _cohort_files(ctx, records: list[pd.DataFrame], refs: dict, provider_filter)
     so a resumed stage rebuilds the identical cohort (the legacy guard `res.skipped` is 0 by construction)."""
     import tempfile
 
+    from scripts._corpus_identity import canonical_match_id
+
     cohort = _new_probe_cohort()
     for rec in records[:PROBE_KEEP]:
         row = rec.iloc[0]
@@ -643,8 +645,9 @@ def _cohort_files(ctx, records: list[pd.DataFrame], refs: dict, provider_filter)
         cohort["frames"].append(frames.copy())
         cohort["actions"].append(actions.copy())
         cohort["home"] = home
-        cohort["matches"].append([str(row["provider"]), str(row["match_id"])])
-        cohort["match_groups"][str(row["match_id"])] = json.loads(row["groups"])
+        mid = canonical_match_id(str(row["provider"]), str(row["match_id"]))  # not the staged name (HFU spec 18.6)
+        cohort["matches"].append([str(row["provider"]), mid])
+        cohort["match_groups"][mid] = json.loads(row["groups"])
     with tempfile.TemporaryDirectory() as tmp:
         ps = Path(tmp) / "sample"
         _write_probe_sample(ps, cohort, list(provider_filter))

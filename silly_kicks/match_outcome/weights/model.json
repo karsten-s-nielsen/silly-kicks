@@ -1,6 +1,6 @@
 {
-  "rho": 0.021614208683848977,
-  "training_commit": "dd133e0bde1c56328bbdd8dabd5ce1643004faf1",
+  "rho": 0.02161420866397881,
+  "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
   "run_tree_dirty": false,
   "corpus": "statsbomb-open",
   "n_matches": 3961

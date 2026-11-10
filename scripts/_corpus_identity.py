@@ -34,6 +34,37 @@ def match_id_pairs(providers, match_ids) -> list[list[str]]:
     return [list(p) for p in sorted({(str(p), str(m)) for p, m in zip(providers, match_ids, strict=True)})]
 
 
+def canonical_match_id(provider: str, match_id: str) -> str:
+    """The canonical id of a match the pipeline names by its staged per-game dir (HFU spec 18.6):
+    ``pergame_name`` gives ``f"{stem provider}-{game}"``. A leading ``f"{q}-"`` is stripped, ``q`` the pair's own
+    provider or its identity (``sportec`` -> ``idsse``); any other id is returned unchanged, so an already-canonical
+    id stays (a dashed ``DFL-MAT-...`` included)."""
+    mid, prov = str(match_id), str(provider)
+    for q in dict.fromkeys((prov, _CONVERTER_TO_IDENTITY.get(prov, prov))):
+        if mid.startswith(f"{q}-"):
+            return mid[len(q) + 1 :]
+    return mid
+
+
+def canonical_probe_ids(metrics: dict) -> dict:
+    """Off-HF finalize of an xCross ``metrics.json`` (HFU spec 18.6): a NEW dict whose ``probe_sample_matches``
+    pairs carry canonical ids (:func:`canonical_match_id`) and whose ``probe_sample_in_training_folds`` keys are
+    mapped through those pairs (a key no pair names stays). A metrics without the fields is returned unchanged."""
+    out = dict(metrics)
+    rename: dict[str, str] = {}
+    pairs = metrics.get("probe_sample_matches")
+    if isinstance(pairs, list):
+        new = []
+        for prov, mid in pairs:
+            rename[str(mid)] = canonical_match_id(prov, mid)
+            new.append([prov, rename[str(mid)]])
+        out["probe_sample_matches"] = new
+    folds = metrics.get("probe_sample_in_training_folds")
+    if isinstance(folds, dict):
+        out["probe_sample_in_training_folds"] = {rename.get(str(k), k): v for k, v in folds.items()}
+    return out
+
+
 def check_expected_variant(expected: str | None, *, all_public: bool) -> None:
     """G1 launch preflight, run BEFORE extraction: an expected ``public`` artifact needs an all-public corpus.
 

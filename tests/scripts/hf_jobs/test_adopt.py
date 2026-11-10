@@ -172,15 +172,31 @@ def _git(root: Path, *args: str) -> None:
     )
 
 
-def _toy_repo(tmp_path: Path) -> tuple[Path, Path]:
+_NOCOMMIT = """
+[[artifacts]]
+id = "toy_nocommit"
+destination = "wheel:silly_kicks/_toy_weights/nocommit"
+job = "ghost_gk"
+variant = "default"
+tier = "owner"
+certification = "owner"
+"""
+
+
+def _toy_repo(tmp_path: Path, *, nocommit: bool = False) -> tuple[Path, Path]:
     root = tmp_path / "repo"
     (root / "docs" / "artifacts").mkdir(parents=True)
-    (root / "docs" / "artifacts" / "manifest.toml").write_text(_TOY_MANIFEST.format(commit="a" * 40), encoding="utf-8")
+    text = _TOY_MANIFEST.format(commit="a" * 40) + (_NOCOMMIT if nocommit else "")
+    (root / "docs" / "artifacts" / "manifest.toml").write_text(text, encoding="utf-8")
     (root / "docs" / "artifacts" / "observed.json").write_text("{}\n", encoding="utf-8")
     w = root / "silly_kicks" / "_toy_weights" / "default"
     w.mkdir(parents=True)
     (w / "model.npz").write_bytes(b"old")
     (w / "metadata.json").write_text(json.dumps({"training_commit": "a" * 40}), encoding="utf-8")
+    if nocommit:
+        n = root / "silly_kicks" / "_toy_weights" / "nocommit"
+        n.mkdir(parents=True)
+        (n / "model.npz").write_bytes(b"old")
     cards = root / "docs" / "huggingface" / "model-cards"
     cards.mkdir(parents=True)
     note = "In silly-kicks 9.9.9 the wheel's bundled `default` was re-fit on toys (`training_commit=aaaaaaa`)."
@@ -206,7 +222,11 @@ def _toy_repo(tmp_path: Path) -> tuple[Path, Path]:
             _INST: {
                 "ok": True,
                 "certification": {"ok": True, "basis": "cv_parity"},
-                "artifacts": {"toy_wheel": {"violations": []}, "toy_hub": {"violations": []}},
+                "artifacts": {
+                    "toy_wheel": {"violations": []},
+                    "toy_hub": {"violations": []},
+                    **({"toy_nocommit": {"violations": []}} if nocommit else {}),
+                },
             }
         },
     }
@@ -276,6 +296,13 @@ def test_adopt_writes_only_allowlisted_paths_and_is_idempotent(tmp_path):
     assert observed["toy_wheel"]["campaign"] == "toy@ccccccc"
     assert set(observed["toy_wheel"]) == {"sha256", "metrics_summary", "env", "campaign", "adopted_at"}
     assert (staging / "CHANGELOG-draft.md").is_file()
+    # HFU spec 18.3: a re-run over the UNCOMMITTED adoption refuses at the root status and writes nothing
+    with pytest.raises(A.AdoptionRefusedError, match="root tree is not clean"):
+        A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=False)  # type: ignore[arg-type]
+    assert _porcelain(root) == status
+    # over the committed adoption the write phase is a fixed point (each adopted_at keeps its date)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "adopted")
     again = A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=False, now="2026-10-19T00:00:00+00:00")  # type: ignore[arg-type]
     assert again["written"] == []
 
@@ -293,6 +320,101 @@ def test_adopt_fails_on_a_path_outside_the_allowlist(tmp_path, monkeypatch):
     monkeypatch.setattr(M, "render_card", leaky)
     with pytest.raises(A.AdoptionRefusedError, match="outside the allowlist"):
         A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=False)  # type: ignore[arg-type]
+    assert _porcelain(root) == ""  # HFU spec 18.3: the refusal rolled every write back, the stray file included
+
+
+def _porcelain(root: Path) -> str:
+    return subprocess.run(  # noqa: S603 -- fixed argv
+        [_GIT, "status", "--porcelain", "--untracked-files=all"], cwd=root, capture_output=True, text=True, check=True
+    ).stdout
+
+
+# ---- HFU spec 18.2/18.3: no manifest commit without a commit_field; a refusal leaves the tree as found ----------
+
+
+def test_adopt_writes_no_manifest_commit_for_an_artifact_without_a_commit_field(tmp_path):
+    root, staging = _toy_repo(tmp_path, nocommit=True)
+    out = A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=False, now="2026-10-18T00:00:00+00:00")  # type: ignore[arg-type]
+    assert "toy_nocommit" in out["adopted"]
+    text = (root / "docs" / "artifacts" / "manifest.toml").read_text(encoding="utf-8")
+    assert text == _TOY_MANIFEST.format(commit=C) + _NOCOMMIT  # its entry unchanged byte for byte
+    observed = json.loads((root / "docs/artifacts/observed.json").read_text(encoding="utf-8"))
+    assert observed["toy_nocommit"]["campaign"] == "toy@ccccccc"
+
+
+def _failing_bundle(exc: BaseException):
+    def bundle(a, fresh, root):
+        d = root / a.path
+        (d / "model.npz").write_bytes(b"partial")  # a tracked file changed
+        (d / "metadata.json").unlink()  # a tracked file deleted
+        (d / "new.bin").write_bytes(b"x")  # a new file
+        raise exc
+
+    return bundle
+
+
+@pytest.mark.parametrize("exc", [RuntimeError("boom"), KeyboardInterrupt()], ids=["error", "keyboard interrupt"])
+def test_a_failure_in_the_write_phase_restores_the_tree(tmp_path, monkeypatch, exc):
+    root, staging = _toy_repo(tmp_path)
+    monkeypatch.setattr(A, "_bundle", _failing_bundle(exc))
+    with pytest.raises(type(exc)) as info:
+        A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=False)  # type: ignore[arg-type]
+    assert info.value is exc  # the original exception, unchanged
+    assert _porcelain(root) == ""
+    w = root / "silly_kicks" / "_toy_weights" / "default"
+    assert (w / "model.npz").read_bytes() == b"old" and (w / "metadata.json").is_file() and not (w / "new.bin").exists()
+
+
+def _pre_existing(root: Path) -> dict[str, bytes]:
+    (root / "docs" / "artifacts" / "observed.json").write_text(
+        '{"mine": 1}' + "\n", encoding="utf-8"
+    )  # uncommitted edit
+    (root / "notes.txt").write_text("my work" + "\n", encoding="utf-8")  # an untracked file
+    return {p: (root / p).read_bytes() for p in ("docs/artifacts/observed.json", "notes.txt")}
+
+
+def _dirty() -> dict:
+    return {**_clean(), "dirty": True, "tree_state": "dirty", "dirty_files": ["notes.txt"]}
+
+
+@pytest.mark.parametrize(
+    ("git", "match"),
+    [(_clean, "root tree is not clean"), (_dirty, "clean tree")],
+    ids=["provenance clean, root dirty", "provenance dirty"],
+)
+def test_an_entry_refusal_keeps_uncommitted_work(tmp_path, git, match):
+    root, staging = _toy_repo(tmp_path)
+    mine = _pre_existing(root)
+    with pytest.raises(A.AdoptionRefusedError, match=match):
+        A.adopt(_Campaign(), C, staging=staging, git=git, root=root, gate=False)  # type: ignore[arg-type]
+    assert {p: (root / p).read_bytes() for p in mine} == mine
+
+
+def test_a_failed_restore_names_the_path(tmp_path, monkeypatch):
+    root, staging = _toy_repo(tmp_path)
+    monkeypatch.setattr(A, "_bundle", _failing_bundle(RuntimeError("boom")))
+
+    def run(argv, **kw):
+        if argv[:2] == ["git", "checkout"]:
+            raise subprocess.CalledProcessError(1, argv)
+        return subprocess.run(argv, **kw)  # noqa: S603 -- the caller's argv
+
+    with pytest.raises(A.AdoptionRollbackError, match=r"model\.npz") as info:
+        A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=False, run=run)  # type: ignore[arg-type]
+    assert isinstance(info.value, A.AdoptionRefusedError) and str(info.value.__cause__) == "boom"
+    assert not (root / "silly_kicks" / "_toy_weights" / "default" / "new.bin").exists()  # every path was attempted
+
+
+def test_an_interrupted_gate_keeps_the_adoption(tmp_path, monkeypatch):
+    root, staging = _toy_repo(tmp_path)
+
+    def gate(run, root):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(A, "_local_gate", gate)
+    with pytest.raises(KeyboardInterrupt):
+        A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=True)  # type: ignore[arg-type]
+    assert "silly_kicks/_toy_weights/default/model.npz" in _porcelain(root)
 
 
 def test_every_registry_trainer_has_a_loader():
@@ -372,10 +494,13 @@ def test_bootstrap_observed_without_write_leaves_the_file_alone(tmp_path, monkey
 # ---- HFU spec 14.4: the committed side of public CV parity; the pinned public builders --------------------
 
 
-def test_committed_metrics_without_reference_raises():
+def test_committed_metrics_without_reference_raises(tmp_path, monkeypatch):
+    """A wheel bundle with neither a ``metrics.json`` nor a ``cv_reference`` has no committed CV record."""
     import dataclasses
 
-    a = dataclasses.replace(MAN.artifacts["expected_passing"], cv_reference=None)
+    (tmp_path / "w").mkdir()
+    monkeypatch.setattr(A, "REPO_ROOT", tmp_path)
+    a = dataclasses.replace(MAN.artifacts["expected_passing"], destination="wheel:w", cv_reference=None)
     with pytest.raises(A.AdoptionRefusedError, match="expected_passing"):
         A._committed_metrics(a, {})
 
@@ -394,21 +519,23 @@ def test_cv_reference_bare_path_and_key(tmp_path, monkeypatch):
     assert A._committed_metrics(dataclasses.replace(base, cv_reference="ref.json"), {}) == {"ece": 0.25}
 
 
-def test_cv_reference_values_match_sources():
+def test_a_bundle_metrics_is_its_committed_cv_record():
+    """HFU spec 18.7: the three artifacts that once named a ``cv_reference`` ship their own ``metrics.json``, which is
+    their committed CV record; the shipped prose still matches it."""
     import re
 
-    research = json.loads(
-        Path("docs/research/territory_counterfactual_construct_validity/metrics.json").read_text(encoding="utf-8")
-    )["completion"]
+    for aid in ("expected_passing", "match_outcome", "xsuccess"):
+        a = MAN.artifacts[aid]
+        own = json.loads((Path(a.path) / "metrics.json").read_text(encoding="utf-8"))
+        assert A._committed_metrics(a, {}) == own, aid
     ep = A._committed_metrics(MAN.artifacts["expected_passing"], {})
-    assert ep == research
     assert (round(ep["auc"], 3), round(ep["ece"], 3), round(ep["brier"], 3)) == (0.794, 0.006, 0.129)
     card = Path("silly_kicks/xsuccess/weights/MODEL_CARD.md").read_text(encoding="utf-8").splitlines()[17]
     m = re.search(r"AUC (\d\.\d+), Brier (\d\.\d+)", card)
     assert m is not None
     auc, brier = float(m.group(1)), float(m.group(2))
-    assert A._committed_metrics(MAN.artifacts["xsuccess"], {}) == {"auc": auc, "brier": brier}
-    assert (auc, brier) == (0.895, 0.084)
+    xs = A._committed_metrics(MAN.artifacts["xsuccess"], {})
+    assert (round(xs["auc"], 3), round(xs["brier"], 3)) == (auc, brier) == (0.895, 0.084)
     model = json.loads(Path("silly_kicks/match_outcome/weights/model.json").read_text(encoding="utf-8"))
     assert A._committed_metrics(MAN.artifacts["match_outcome"], {})["rho"] == model["rho"]
 
@@ -742,3 +869,39 @@ def test_each_open_data_head_to_head_gets_its_own_cache_folder(tmp_path):
         dirs.append(run.calls[0][1]["SILLY_KICKS_CORPUS_CACHE_DIR"])
         assert dirs[-1] == str(staging / "_open_data" / inst.id)
     assert dirs[0] != dirs[1]
+
+
+def test_adopt_finalizes_the_probe_ids_for_the_wheel_and_the_hub_entry(tmp_path):
+    """HFU spec 18.6: ONE finalized copy (<staging>/_final/<instance>) feeds the wheel bundle and the Hub observed
+    entry, so both carry canonical probe ids and the observed metrics.json hash is the finalized file's."""
+    import hashlib
+
+    root, staging = _toy_repo(tmp_path)
+    fresh = staging / _INST
+    m = {
+        "cv_mae_euclidean_mean": 1.1,
+        "probe_sample_matches": [["gradientsports", "gradientsports-10502"]],
+        "probe_sample_in_training_folds": {"gradientsports-10502": False},
+    }
+    (fresh / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=False, now="2026-10-18T00:00:00+00:00")  # type: ignore[arg-type]
+    wheel = json.loads((root / "silly_kicks/_toy_weights/default/metrics.json").read_text(encoding="utf-8"))
+    assert wheel["probe_sample_matches"] == [["gradientsports", "10502"]]
+    assert wheel["probe_sample_in_training_folds"] == {"10502": False}
+    observed = json.loads((root / "docs/artifacts/observed.json").read_text(encoding="utf-8"))
+    assert observed["toy_hub"]["metrics_summary"]["probe_sample_matches"] == [["gradientsports", "10502"]]
+    final = staging / "_final" / _INST / "metrics.json"
+    assert observed["toy_hub"]["sha256"]["metrics.json"] == hashlib.sha256(final.read_bytes()).hexdigest()
+    assert json.loads((fresh / "metrics.json").read_text(encoding="utf-8")) == m  # the staging record is untouched
+
+
+def test_finalize_rebuilds_the_final_copy(tmp_path):
+    """HFU spec 18.6: `_finalize` rebuilds `<staging>/_final/<instance>` on every call (a stray file is gone)."""
+    _root, staging = _toy_repo(tmp_path)
+    stray = staging / "_final" / _INST / "stray.json"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("{}", encoding="utf-8")
+    final = A._finalize(staging, _INST)
+    assert not stray.exists() and sorted(p.name for p in final.iterdir()) == sorted(
+        p.name for p in (staging / _INST).iterdir()
+    )

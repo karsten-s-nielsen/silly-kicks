@@ -31,8 +31,8 @@
   "corpus_visibility": "restricted",
   "corpus_n_matches": 30,
   "reproducibility": "restricted",
-  "reproducibility_note": "Restricted: trained at training_commit b62c1f24a7a9e3361ce416b402ed27da4a59b9e6 on a corpus (statsbomb) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
-  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (statsbomb) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+  "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
   "run_tree_dirty": false,
   "pooling_gate": {
     "primary_only_top1": 0.5096914124655281,

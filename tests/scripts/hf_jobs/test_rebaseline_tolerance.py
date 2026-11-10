@@ -1,9 +1,9 @@
 """HFU spec 17.4 (F32, owner-ratified 2026-11-09): a census rebaseline passes within a stated tolerance.
 
 The fresh census is the REAL committed census plus the differences launch 6 measured (`tier2.icc` 3.1e-15 relative,
-`tier2.lo` +4.52e-6, `n_boot_effective` 399 -> 400, the P4 pass counters of a run, every value of one ranking column
-1.27e-14 relative: launch 6 changed 4,094 of them); each mutation beyond a bound must fail. The real launch-6 census
-(staged outside the repo, so not readable in CI) passed the same check: ledger Ruling, A-IMPL-17.
+`tier2.lo` +4.52e-6, `n_boot_effective` +1 (launch 6: 399 -> 400), the P4 pass counters of a run, every value of one
+ranking column 1.27e-14 relative: launch 6 changed 4,094 of them); each mutation beyond a bound must fail. The real
+launch-6 census (staged outside the repo, so not readable in CI) passed the same check: ledger Ruling, A-IMPL-17.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def _fresh(tmp_path: Path, *, committed: Path = COMMITTED, edit=None, rank_edit=
     t2 = doc["census"]["tier2"]
     t2["icc"] *= 1 + 3.1e-15
     t2["lo"] += 4.52e-6
-    t2["n_boot_effective"] = 400
+    t2["n_boot_effective"] += 1  # relative to the committed census, adopted or not (HFU spec 18.7)
     doc |= {"n_attempted": 1981, "n_failed": 0, "n_counters_unrecorded": 0, "n_excluded": 0, "generation": "x"}
     if edit is not None:
         edit(doc)
@@ -68,7 +68,7 @@ def _lo(doc):
 
 
 def _boot(doc):
-    doc["census"]["tier2"]["n_boot_effective"] = 401
+    doc["census"]["tier2"]["n_boot_effective"] += 1  # +2 in all
 
 
 def _reason(doc):

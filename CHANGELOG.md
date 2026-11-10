@@ -5,11 +5,10 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — minimal HF Jobs driver + resource-sharing overhaul + numba core (ADR-128 amendments 2026-11-02 to 2026-11-09, ADR-076 amendment 2026-11-06)
+## [4.140.0] — 2026-11-10 — minimal HF Jobs driver + resource-sharing overhaul + numba core + the launch-7 re-fit (ADR-128 amendments 2026-11-02 to 2026-11-10, ADR-076 amendment 2026-11-06) (PR-S203)
 
-> The wheel's dependencies change on 2026-11-06 (numba becomes a core dependency). The version stays 4.139.1
-> in this cycle's amend (owner decision 2026-11-06: no version bump in this amend); the bump comes with the release. Every earlier entry in this
-> section is scripts-only.
+> **Why a minor release:** the wheel gains a runtime dependency (numba becomes a core dependency, 2026-11-06), and the
+> launch-7 adoption (2026-11-10) re-fits the bundled weights. Every other entry in this section is scripts-only.
 
 ### Added
 
@@ -169,6 +168,35 @@ Launch 5 finished 20 of 21 instances; xsuccess `fit` timed out twice (spec
 - **Visibility arms (F29).** `arm_policy.compute_arms` keys each staged unit by its `source_provider`, as the
   trainers do; before, every xShot/xCross arm dropped the 7 Bundesliga matches (public 10 of 17).
 - xsuccess is the first instance of `cycle1.toml`.
+
+### Changed — the bundled weights re-fit by launch 7 (2026-11-10)
+
+Launch 7 (campaign `cycle1`, commit `a1a3b52f`) is adopted: 15 wheel bundles carry its weights, and each declared
+`training_commit` is `a1a3b52f` -- `ghost_gk` (default, position_only, sweeper, sweeper_position_only),
+`ghost_outfield` (default, position_only), `receiver_model`, `win_probability`, `xshot_occurrence` and
+`xcross_attempt` (default, position_only each), `match_outcome`, `expected_passing` and `xsuccess`. The last three
+now ship their `metrics.json` (their CV record). The 10 Hub artifacts' `observed.json` entries and the 9 local cards
+with generated regions are updated; the Hub copies change only when they are published (an owner go). One manifest
+re-fit event, `launch7` (4.140.0, ADR-128), replaces the five earlier ones (`f1b`, `tf65`, `adr126`, `hub_velocity`,
+`tf61`), so the cards name this re-fit.
+
+### Fixed — adopting launch 7 (2026-11-10)
+
+Launch 7 finished 21 of 21 instances and verified 21 of 21; `adopt` then refused (spec
+`2026-11-04-hfu-reduce-reads-and-job-exit-design.md` §18, F33-F36; ADR-128 amendment 2026-11-10, items 33-37).
+
+- **Manifest commit (F33).** `adopt` writes `training_commit` only for an artifact with a `commit_field`
+  (`match_outcome` and `expected_passing` declared none); a manifest test pins the pairing. Their bundles do record
+  a commit, so their entries now declare it (`commit_field`) and the manifest checks it.
+- **A refusal leaves the tree as found (F34).** `adopt` also refuses a root with any `git status` change, and its
+  write phase runs under a rollback (`AdoptionRollbackError` names a path it could not restore); the local gate runs
+  after the writes.
+- **Probe ids (F35).** The xCross trainer records canonical probe match ids (`canonical_match_id`), and adoption
+  finalizes launch 7's records (`canonical_probe_ids`) into one copy per instance that the wheel bundle, the Hub
+  `observed.json` entry and `publish` share.
+- **CV record (F36).** `expected_passing`, `match_outcome` and `xsuccess` now ship their own `metrics.json`, which is
+  their CV baseline; their manifest `cv_reference` entries are removed.
+- The launch-7 adoption is a new commit on top of the campaign commit `a1a3b52f`.
 
 ### Fixed — the launch 6 verify findings (2026-11-09)
 
