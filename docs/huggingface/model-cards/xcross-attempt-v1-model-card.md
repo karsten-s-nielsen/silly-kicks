@@ -145,6 +145,6 @@ See the `NOTICE` file in the silly-kicks repository for full bibliographic citat
 
 https://github.com/karsten-s-nielsen/silly-kicks
 
-## Wheel sibling (4.134.0)
+## Wheel sibling (4.140.0)
 
-<!-- generated:hub_note -->In silly-kicks 4.134.0 the wheel's bundled `default` was re-fit on the corrected floor velocities (TF-65 / ADR-120, `training_commit=a34e992`).<!-- /generated:hub_note --> <!-- generated:hub_refit -->This Hub artifact was last re-fit in silly-kicks 4.138.0 (ADR-120, `training_commit=4095251`).<!-- /generated:hub_refit --> This Hub owner-tier `sc_extended` artifact is re-fit on the same corrected floor velocities this cycle (silly-kicks 4.138.0): predictions change within noise from the prior velocity-stale artifact (PR-AUC 0.189). No label defect — xCross was always `type_id`-filtered. The re-fit artifact is pushed by the ADR-088 model-publish step.
+<!-- generated:hub_note -->In silly-kicks 4.140.0 the wheel's bundled `default` was re-fit on the ADR-128 cycle1 campaign (launch 7) (ADR-128, `training_commit=a1a3b52`).<!-- /generated:hub_note --> <!-- generated:hub_refit -->This Hub artifact was last re-fit in silly-kicks 4.140.0 (ADR-128, `training_commit=a1a3b52`).<!-- /generated:hub_refit --> This Hub owner-tier `sc_extended` artifact is re-fit in silly-kicks 4.140.0 (ADR-128 launch 7) on the corrected floor velocities (TF-65 / ADR-120, 4.134.0), first applied to this artifact at 4.138.0; at that 4.138.0 re-fit its predictions changed within noise from the prior velocity-stale artifact (PR-AUC 0.189). No label defect — xCross was always `type_id`-filtered. The re-fit artifact is pushed by the ADR-088 model-publish step.

@@ -109,6 +109,6 @@ Le et al. 2017 (MIT Sloan); Dutta et al. 2024 (arXiv:2406.17220); Pospisil &amp;
   [silly-kicks](https://pypi.org/project/silly-kicks/) (**v4.111.0+** for these both-axes weights) &middot;
   [GitHub](https://github.com/karsten-s-nielsen/silly-kicks) &middot; ADR-067 / ADR-083 / ADR-089.
 
-## F1b re-fit (4.128.0)
+## Latest re-fit (4.140.0)
 
-<!-- generated:refit_head -->**F1b float32-frame re-fit (silly-kicks 4.128.0 / ADR-106; `training_commit=3ca609f`).**<!-- /generated:refit_head --> Re-fit on float32-stored frames (the storage rounding exceeds the trained-model feature-contract atol); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.
+<!-- generated:refit_head -->**HF Jobs launch-7 re-fit (silly-kicks 4.140.0 / ADR-128; `training_commit=a1a3b52`).**<!-- /generated:refit_head --> Re-fit on float32-stored frames (the storage rounding exceeds the trained-model feature-contract atol); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.

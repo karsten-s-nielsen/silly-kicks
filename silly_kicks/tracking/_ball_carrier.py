@@ -18,12 +18,15 @@ import pandas as pd
 
 from silly_kicks.id_compat import restore_id_dtype
 
-try:
-    from ._ball_carrier_numba import _carrier_loop_numba
 
-    _HAS_NUMBA = True
-except ImportError:
-    _HAS_NUMBA = False
+def _carrier_kernel():
+    """The carrier-loop kernel: numba unless ``SILLY_KICKS_BALL_CARRIER_FORCE_NUMPY=1`` (HFU spec 13.2: numba is
+    core, and a missing numba raises instead of selecting the numpy loop silently)."""
+    from silly_kicks import _numba_dispatch
+
+    if not _numba_dispatch.use_numba("BALL_CARRIER"):
+        return _carrier_loop_numpy
+    return _numba_dispatch.import_kernels("silly_kicks.tracking._ball_carrier_numba")._carrier_loop_numba
 
 
 # Library-default carrier-inference params — single source of truth (TF-24 4.7.0
@@ -440,7 +443,7 @@ def infer_ball_carrier(
         pre = _pre_index_frames(frames)
 
     # Phase 2: kernel
-    _kernel = _carrier_loop_numba if _HAS_NUMBA else _carrier_loop_numpy
+    _kernel = _carrier_kernel()
     winner_slot, winner_dist = _kernel(
         bx=pre["bx"],
         by=pre["by"],

@@ -58,7 +58,6 @@ def test_flatten_trees_preserves_local_indices_and_dtypes():
 
 # The @njit kernels below cannot even be imported without the [numba] extra
 # (_ghost_gk_numba raises ImportError at module load); guard the rest of the module.
-pytest.importorskip("numba")
 
 
 def test_leaf_kernels_are_bit_identical_to_numpy_incl_nan():

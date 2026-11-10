@@ -153,4 +153,4 @@ See [TODO.md](TODO.md).
 
 ## Dependencies
 
-Runtime: pandas, numpy, scipy, scikit-learn (no pandera). DAS is native (ADR-107; no `accessible-space` runtime/CI dep — dev-only `das-reference` pins `accessible-space==2.0.15` for the golden parity oracle). Optional: kloppy (tracking parsers), xgboost, catboost, lightgbm, `ruthless-efficiency[optuna]>=0.7.0` + xgboost>=2.0,<4.0 (`[calibration]`/`[train]`), numba (`[numba]`; DAS + pitch-control kernels), `statsbombpy` (importorskip-guarded e2e only). numpy>=2.0 compatible. → `docs/context/conventions-core.md`.
+Runtime: pandas, numpy, scipy, scikit-learn, numba (core, `_numba_dispatch.use_numba`; missing raises; ADR-076) (no pandera). DAS is native (ADR-107; no `accessible-space` runtime/CI dep — dev-only `das-reference` pins `accessible-space==2.0.15` for the golden parity oracle). Optional: kloppy (tracking parsers), xgboost, catboost, lightgbm, `ruthless-efficiency[optuna]>=0.7.0` + xgboost>=2.0,<4.0 (`[calibration]`/`[train]`), `statsbombpy` (importorskip-guarded e2e only). numpy>=2.0 compatible. → `docs/context/conventions-core.md`.

@@ -408,7 +408,14 @@ def _require_corpus(corpus_dir: Path | None) -> Path:
     return Path(corpus_dir)
 
 
-def build_eval(name: str, corpus_dir: Path | None, *, feature_set: str = "faithful") -> dict:
+def build_eval(
+    name: str,
+    corpus_dir: Path | None,
+    *,
+    certification: str,
+    eval_rows: Path | None = None,
+    feature_set: str = "faithful",
+) -> dict:
     """Assemble the REAL eval bundle (the one the floor's δ comparison is meaningful on).
 
     Fail-loud: raises ``EvalDataUnavailableError`` when the data source is not reachable — the job must
@@ -421,14 +428,39 @@ def build_eval(name: str, corpus_dir: Path | None, *, feature_set: str = "faithf
     (xshot/xcross), so a velocity-free ``position_only`` booster is scored on a matching frame
     (``predict_proba`` is strict on ``feature_names``; ADR-123 / spec §5). Ignored by the public evals
     and the ghost/receiver builders (ghost's ``predict_mean`` reindexes to the model's own names).
+    ``certification`` is the TIER's policy, from the caller (HFU spec 14.4), never the job default. A public
+    staged-corpus trainer (xshot/xcross ``public``) scores ``eval_rows``: the run's own extract output, the
+    rows it trained on. No corpus read, no re-extraction.
     """
-    from scripts.hf_jobs.registry import get
-
-    spec = get(name)
-    if spec.certification == "public":  # ADR-128: the certification policy (the `source` field is gone)
-        _require_statsbombpy()
-        return _build_public_eval(name)
+    if certification == "public":
+        if name in _PUBLIC_EVAL_BUILDERS:
+            _require_statsbombpy()
+            return _build_public_eval(name)
+        if eval_rows is None:
+            raise EvalDataUnavailableError(
+                f"{name}: a public head-to-head of a staged-corpus trainer reads --eval-rows (its own extract rows)"
+            )
+        return _eval_from_rows(name, Path(eval_rows), feature_set)
     return _build_owner_eval(name, _require_corpus(corpus_dir), feature_set=feature_set)
+
+
+#: The trainers whose extract output is the classifier eval frame (feature columns + ``_y`` + ``_group``).
+_ROW_TRAINERS = {"xshot_occurrence": "scripts.train_xshot_occurrence", "xcross_attempt": "scripts.train_xcross_attempt"}
+
+
+def _eval_from_rows(name: str, path: Path, feature_set: str) -> dict:
+    """The classifier eval bundle from a run's own extract rows (the `_owner_eval_classifier` shape)."""
+    from importlib import import_module
+
+    if name not in _ROW_TRAINERS:
+        raise EvalDataUnavailableError(f"{name}: no extract-row eval")
+    names = import_module(_ROW_TRAINERS[name])._feature_names(feature_set)
+    rows = pd.read_parquet(path)
+    return {
+        "features": rows[names].reset_index(drop=True),
+        "y": rows["_y"].to_numpy(int),
+        "groups": rows["_group"].astype(str).to_numpy(),
+    }
 
 
 def _public_eval_win_probability() -> dict:  # pragma: no cover - needs statsbombpy + scripts/ (P1 on HF)
@@ -728,9 +760,13 @@ def main() -> None:
     ap.add_argument("--corpus-dir", type=Path, default=None)
     ap.add_argument("--feature-set", default="faithful", help="Eval feature vintage (faithful|position_only).")
     ap.add_argument("--metrics-json", type=Path, required=True)
+    ap.add_argument("--certification", required=True, choices=("public", "owner"), help="the tier policy")
+    ap.add_argument("--eval-rows", type=Path, default=None, help="a public staged-corpus run's own extract rows")
     a = ap.parse_args()
     # fail-loud: real data or EvalDataUnavailableError, never synthetic; feature_set matches the variant vintage.
-    bundle = build_eval(a.trainer, a.corpus_dir, feature_set=a.feature_set)
+    bundle = build_eval(
+        a.trainer, a.corpus_dir, certification=a.certification, eval_rows=a.eval_rows, feature_set=a.feature_set
+    )
     paired = SCORERS[a.trainer](a.committed_dir, a.fresh_dir, bundle)
     existing = json.loads(a.metrics_json.read_text()) if a.metrics_json.exists() else {}
     existing.update(paired)

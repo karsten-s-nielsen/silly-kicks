@@ -137,3 +137,14 @@ def test_post_verify_catches_a_failed_from_hub_load(tmp_path):
         return lambda *_a, **_k: types.SimpleNamespace(returncode=1, stdout="", stderr="IntegrityError: chirality")
 
     assert any("from_hub" in p for p in _verified(tmp_path, broken)["problems"])
+
+
+def test_publish_uploads_the_finalized_copy(tmp_path):
+    """HFU spec 18.6: the Hub copy carries canonical probe ids (the finalized staging copy is what is uploaded)."""
+    api = _Api(tmp_path)
+    s = _staging(tmp_path)
+    m = {"probe_sample_matches": [["gradientsports", "gradientsports-10502"]], "probe_sample_in_training_folds": {}}
+    (s / INST / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    A.publish([AID], sandbox=True, api=api, staging=s, run=_ok_run, publisher=_publisher(api))
+    remote = json.loads(api.remote["silly-kicks/sandbox-ghost-gk-sweeper-v1"]["metrics.json"])
+    assert remote["probe_sample_matches"] == [["gradientsports", "10502"]]

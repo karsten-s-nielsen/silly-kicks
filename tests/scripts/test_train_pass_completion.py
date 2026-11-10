@@ -1,12 +1,5 @@
-"""Task 9: the pass-completion trainer's ``--all-competitions`` full-corpus re-fit mode.
-
-Smoke-level (``not e2e``): ``all_open_competitions`` + ``load_open_data_matches`` are monkeypatched to
-a tiny in-memory fixture, so no network and no real StatsBomb corpus is touched. The single-competition
-default path stays byte-identical; the all-competitions path resolves to a DIFFERENT ``for_each``
-shard generation (the 4.77.1 stale-shard rule -- a corpus change must invalidate the generation).
-The owner-tier ``--source pining`` cross-check runs only through ``scripts/_pass_completion_pining.py``
-(the I1 severance, ADR-123 Amendment B); its loaders are monkeypatched the same way.
-"""
+"""The pass-completion pipeline (HFU spec 15.5a) on a tiny in-memory open-data corpus (no network), and the
+owner-tier pining CLI (``scripts/_pass_completion_pining.py``, the I1 severance, ADR-123 Amendment B)."""
 
 from __future__ import annotations
 
@@ -50,103 +43,101 @@ def _match(game_id: int, *, complete: bool):
     return ("statsbomb", str(game_id), actions, pd.DataFrame(), 1)
 
 
-def _fake_open_data_source_factory(order=None):
-    """An ``open_data_source`` stand-in (Task 8.5): returns ``(refs, load)`` for 2 tiny matches per
-    (competition, season). ``order``, if given, records ``"load"`` the first time the loader runs
-    (the guard-order test asserts the public-only guard precedes the first match load)."""
-    from _fake_corpus import make_ref
+def _patch_open_data(monkeypatch, comps, order=None):
+    """The open-data seams the pipeline calls, over 2 tiny matches per release; ``order`` records the guard and
+    the first load (the guard-order test)."""
+    import scripts._sb_open_data as sod
+    from scripts._driver_sources import LoadedMatch
 
-    def _source(comps, *, match_ids=None, max_matches=None, preserve_native=(), cache_dir=None):
-        refs, by_id = [], {}
-        for competition_id, season_id in comps:
-            base = competition_id * 1000 + season_id
-            for gid, complete in ((base + 1, True), (base + 2, False)):
-                refs.append(make_ref("statsbomb", str(gid)))
-                by_id[str(gid)] = _match(gid, complete=complete)
+    by_id = {str(c * 1000 + s + k): _match(c * 1000 + s + k, complete=True) for c, s in comps for k in (1, 2)}
 
-        def _load(ref):
-            if order is not None and "load" not in order:
-                order.append("load")
-            return by_id[ref.match_id]
+    def _guard():
+        if order is not None:
+            order.append("guard")
 
-        return refs, _load
+    def _load(ref, *, preserve_native=(), cache_dir=None):
+        if order is not None and "load" not in order:
+            order.append("load")
+        return LoadedMatch("statsbomb", ref.match_id, by_id[ref.match_id][2], pd.DataFrame(), 1, None, None)
 
-    return _source
+    def _refs(cs, *, match_ids=None, max_matches=None):
+        return [sod.OpenDataRef(c, s, str(c * 1000 + s + k), 1) for c, s in cs for k in (1, 2)]
+
+    monkeypatch.setattr(sod, "assert_statsbomb_open_data_mode", _guard)
+    monkeypatch.setattr(sod, "all_open_competitions", lambda: list(comps))
+    monkeypatch.setattr(sod, "list_open_data_refs", _refs)
+    monkeypatch.setattr(sod, "load_open_data_match", _load)
+
+
+def _run(tmp_path, args):
+    from tests.scripts._stage_harness import export, run_in_process
+
+    ctx = run_in_process(TPC.PIPELINE, args, store=tmp_path / "store", data_root=None)
+    return ctx, export(ctx, tmp_path / "out")
 
 
 def test_all_competitions_trains_full_corpus_bundle(tmp_path, monkeypatch):
-    """``--all-competitions`` iterates every open competition, shards each's matches, and records
-    ``n_competitions`` + the competition list; the card notes the full public open-data corpus."""
-    comps = [(43, 106), (11, 90)]
-    monkeypatch.setattr("scripts._sb_open_data.all_open_competitions", lambda: list(comps))
-    monkeypatch.setattr("scripts._sb_open_data.open_data_source", _fake_open_data_source_factory())
-    monkeypatch.setattr("scripts._sb_open_data.assert_statsbomb_open_data_mode", lambda: None)
-
-    out = tmp_path / "out"
-    TPC.main(["--all-competitions", "--out", str(out), "--allow-dirty"])
-
-    assert (out / "weights" / "model.json").is_file()
-    assert (out / "weights" / "MODEL_CARD.md").is_file()
-    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-    assert metrics["n_competitions"] == 2
-    assert sorted(tuple(c) for c in metrics["competitions"]) == sorted(comps)
-    card = (out / "weights" / "MODEL_CARD.md").read_text(encoding="utf-8")
-    assert "full public open-data corpus" in card
-    assert "`python scripts/train_pass_completion.py --out <DIR>\n--all-competitions`" in card
-    # the bundle loads back through the ADR-011 integrity path
+    """``--all-competitions`` walks every release and records ``n_competitions`` + the competition list; the
+    bundle loads through the ADR-011 integrity path and the card notes the full public open-data corpus."""
     from silly_kicks.expected_passing import PassCompletionModel
 
-    PassCompletionModel.load(out / "weights")
-
-
-def test_all_competitions_calls_the_public_only_guard_before_load(tmp_path, monkeypatch):
-    """Fail-closed: ``assert_statsbomb_open_data_mode`` runs before any corpus load."""
-    order: list[str] = []
-
-    def _guard():
-        order.append("guard")
-
-    def _all():
-        order.append("all_open_competitions")
-        return [(43, 106)]
-
-    monkeypatch.setattr("scripts._sb_open_data.assert_statsbomb_open_data_mode", _guard)
-    monkeypatch.setattr("scripts._sb_open_data.all_open_competitions", _all)
-    monkeypatch.setattr("scripts._sb_open_data.open_data_source", _fake_open_data_source_factory(order))
-
-    TPC.main(["--all-competitions", "--out", str(tmp_path / "out"), "--allow-dirty"])
-    assert order[0] == "guard"
-    assert order.index("guard") < order.index("load")
-
-
-def test_all_competitions_token_DIFFERS_from_single_competition(tmp_path, monkeypatch):
-    """4.77.1 stale-shard rule: a different corpus MUST resolve to a different shard generation, so
-    a re-run on the same ``--out`` cannot silently reuse the single-competition (WC2022) shards."""
     comps = [(43, 106), (11, 90)]
-    monkeypatch.setattr("scripts._sb_open_data.all_open_competitions", lambda: list(comps))
-    monkeypatch.setattr("scripts._sb_open_data.open_data_source", _fake_open_data_source_factory())
-    monkeypatch.setattr("scripts._sb_open_data.assert_statsbomb_open_data_mode", lambda: None)
-
-    single_root = tmp_path / "single" / "shards"
-    all_root = tmp_path / "all" / "shards"
-    TPC.main(["--out", str(tmp_path / "single"), "--allow-dirty"])
-    TPC.main(["--all-competitions", "--out", str(tmp_path / "all"), "--allow-dirty"])
-
-    single_gens = {p.name for p in single_root.iterdir() if p.is_dir()}
-    all_gens = {p.name for p in all_root.iterdir() if p.is_dir()}
-    assert single_gens and all_gens
-    assert single_gens.isdisjoint(all_gens), (
-        f"all-competitions shard generation {all_gens} collides with the single-competition "
-        f"generation {single_gens}: a corpus change did not invalidate the shard generation"
-    )
+    _patch_open_data(monkeypatch, comps)
+    _ctx, out = _run(tmp_path, ["--all-competitions"])
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["n_competitions"] == 2 and sorted(tuple(c) for c in metrics["competitions"]) == sorted(comps)
+    card = (out / "MODEL_CARD.md").read_text(encoding="utf-8")
+    assert "full public open-data corpus" in card
+    assert "`python -m scripts.train_pass_completion --run-all --store <STORE> --out <DIR>\n--all-competitions`" in card
+    PassCompletionModel.load(out)
 
 
-def test_source_pining_is_refused_on_the_hf_module(tmp_path, capsys):
-    """I1 severance (ADR-123 Amendment B): this module runs on HF and never imports the pining client, so
-    ``--source pining`` without the injected source fails loud, names the owner entry, and does no work."""
-    with pytest.raises(SystemExit):
-        TPC.main(["--source", "pining", "--out", str(tmp_path / "out"), "--allow-dirty"])
-    assert "scripts/_pass_completion_pining.py" in capsys.readouterr().err
+def test_metrics_records_the_open_data_identity(tmp_path, monkeypatch):
+    """HFU spec 14.3: metrics.json records the corpus identity of the refs, which verify compares with the lock."""
+    from scripts._corpus_identity import open_data_identity
+
+    _patch_open_data(monkeypatch, [(43, 106), (11, 90)])
+    _ctx, out = _run(tmp_path, ["--all-competitions"])
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    want = open_data_identity(["43107", "43108", "11091", "11092"])
+    assert {k: metrics[k] for k in want} == want
+
+
+def test_metrics_records_the_corpus_pass_fields(tmp_path, monkeypatch):
+    """Decision P4 (ADR-128), as win_probability and the legacy fit: metrics.json records the extract pass."""
+    _patch_open_data(monkeypatch, [(43, 106), (11, 90)])
+    ctx, out = _run(tmp_path, ["--all-competitions"])
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    want = {"generation": ctx.tokens["extract"], "n_attempted": 4, "n_failed": 0, "n_counters_unrecorded": 0}
+    assert {k: metrics[k] for k in (*want, "n_excluded")} == {**want, "n_excluded": 0}
+
+
+def test_the_public_only_guard_runs_before_any_load(tmp_path, monkeypatch):
+    order: list[str] = []
+    _patch_open_data(monkeypatch, [(43, 106)], order)
+    _run(tmp_path, ["--all-competitions"])
+    assert order[0] == "guard" and order.index("guard") < order.index("load")
+
+
+def test_all_competitions_token_differs_from_single_competition(tmp_path, monkeypatch):
+    """A different corpus resolves to a different `refs` token, so its generation can never be reused."""
+    from scripts._stages import LocalStore, make_context
+    from tests.scripts._stage_harness import PROV, params_from_args
+
+    _patch_open_data(monkeypatch, [(43, 106), (11, 90)])
+
+    def token(args):
+        store = LocalStore(tmp_path)
+        ctx = make_context(TPC.PIPELINE, params_from_args(TPC.PIPELINE, args), PROV, store=store, data_root=None)
+        return ctx.tokens["refs"]
+
+    assert token([]) != token(["--all-competitions"])
+
+
+def test_the_pining_cli_needs_the_injected_source(tmp_path):
+    """I1 severance: the HF module runs the pipeline; its pining CLI cannot run without the injected source."""
+    with pytest.raises(TypeError):
+        TPC.pining_main(["--out", str(tmp_path / "out"), "--allow-dirty"])  # type: ignore[call-arg]
     assert not (tmp_path / "out").exists()
 
 
@@ -182,19 +173,33 @@ def test_the_pining_entry_trains_through_the_injected_source(tmp_path, monkeypat
     assert "`python scripts/_pass_completion_pining.py --out <DIR>\n--source pining --providers statsbomb`" in card
 
 
-@pytest.mark.parametrize(("flag", "value"), [("--competition-id", "11"), ("--season-id", "106")])
-def test_all_competitions_is_mutually_exclusive_with_single_competition_flags(tmp_path, flag, value):
-    """``--all-competitions`` with an explicit ``--competition-id`` OR ``--season-id`` is a contradiction
-    and must abort -- the guard is ``args.competition_id is not None or args.season_id is not None``, so
-    BOTH flags need coverage (a season-only override would silently slip past a competition-only test)."""
-    with pytest.raises(SystemExit):
-        TPC.main(
-            [
-                "--all-competitions",
-                flag,
-                value,
-                "--out",
-                str(tmp_path / "out"),
-                "--allow-dirty",
-            ]
-        )
+def test_card_states_corpus_identity():
+    """HFU spec 14.13: the card states the corpus identity verify checks (count + digest)."""
+    from scripts.train_pass_completion import render_model_card
+
+    card = render_model_card({"corpus_match_ids_sha256": "ab" * 32, "corpus_n_matches": 3961})
+    assert f"Corpus identity: 3961 matches, sha256 {'ab' * 32}" in card
+
+
+@pytest.mark.parametrize(
+    ("metrics", "corpus"),
+    [
+        ({"providers": "statsbomb-open (competition 43, season 106)"}, {"competition_id": 43, "season_id": 106}),
+        ({"providers": "statsbomb-open (all 2 releases)", "n_competitions": 2}, {"all_competitions": True}),
+    ],
+)
+def test_card_reproduce_command_parses_on_the_pipeline_cli(metrics, corpus):
+    """The card's open-data reproduce command is accepted by the real pipeline parser (every required argument)."""
+    import re
+    import shlex
+
+    from scripts._stages import build_parser
+    from scripts.train_pass_completion import render_model_card
+
+    cmd = re.search(r"Reproduce with `([^`]+)`", render_model_card(metrics), re.S)
+    assert cmd is not None
+    argv = shlex.split(cmd.group(1).replace("<STORE>", "s").replace("<DIR>", "o"))
+    assert argv[:3] == ["python", "-m", "scripts.train_pass_completion"]
+    ns = vars(build_parser(TPC.PIPELINE).parse_args(argv[3:]))
+    assert ns["run_all"] and ns["store"] == "s" and str(ns["out"]) == "o"
+    assert {k: ns[k] for k in corpus} == corpus

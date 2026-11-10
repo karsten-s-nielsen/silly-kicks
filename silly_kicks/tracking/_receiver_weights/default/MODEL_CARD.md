@@ -57,6 +57,6 @@ python -m scripts.train_receiver_model --feature-set public --provider statsbomb
 **Attribution.** Power, Hobbs, Ruiz, Wei & Lucey, "Not All Passes Are Created Equal" (KDD 2017). See
 `NOTICE` for full bibliographic citations.
 
-## Provenance (4.128.0)
+## Provenance (4.140.0)
 
-<!-- generated:provenance -->**Provenance (silly-kicks 4.128.0).** `run_commit=b62c1f2` · `corpus_visibility: restricted` · 30 matches<!-- /generated:provenance -->
+<!-- generated:provenance -->**Provenance (silly-kicks 4.140.0).** `run_commit=a1a3b52` · `corpus_visibility: restricted` · 30 matches<!-- /generated:provenance -->

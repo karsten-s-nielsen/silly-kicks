@@ -202,3 +202,15 @@ def test_shard_carries_the_columns_compute_win_probability_needs():
     assert required <= set(shard.columns), (
         f"shard missing compute-required columns: {sorted(required - set(shard.columns))}"
     )
+
+
+def test_calibration_metrics_prints_one_line_per_fold(capsys):
+    """HFU spec 15.3: each CV fold prints ``[progress] win_probability fold <k>/<n> in <s> s``."""
+    import re
+
+    pooled = _synthetic_corpus(6)
+    pooled = _attach_strength(pooled, chronological_strength(pooled))
+    calibration_metrics(pooled, _games_frame(pooled), WinProbabilityParams.default())
+    lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[progress] win_probability fold ")]
+    assert [ln.split()[3] for ln in lines] == [f"{k}/5" for k in range(1, 6)]
+    assert all(re.fullmatch(r"\[progress\] win_probability fold \d/5 in \d+\.\d s", ln) for ln in lines), lines

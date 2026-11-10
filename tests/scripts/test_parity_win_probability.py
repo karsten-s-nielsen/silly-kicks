@@ -31,3 +31,12 @@ def test_w1n1_equals_w2n2(tmp_path):
     assert artifact(tmp_path / "o1") == artifact(tmp_path / "o2")
     assert set(artifact(tmp_path / "o1")) == {"model.json", "SHA256SUMS", "metrics.json", "MODEL_CARD.md"}
     assert completion_out_of_order(tmp_path / "s2", gens["extract"])
+    # HFU spec 14.3: metrics.json records the corpus identity of the listed refs (the toy competition).
+    import json
+
+    from scripts._corpus_identity import open_data_identity
+
+    listed = json.loads((root / "data" / "matches" / "43" / "106.json").read_text(encoding="utf-8"))
+    metrics = json.loads((tmp_path / "o1" / "metrics.json").read_text(encoding="utf-8"))
+    want = open_data_identity([str(m["match_id"]) for m in listed])
+    assert {k: metrics[k] for k in want} == want

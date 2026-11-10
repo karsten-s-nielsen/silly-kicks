@@ -19,9 +19,10 @@ def test_declared_kinds_access_and_visibility_are_valid():
 
 def test_every_mount_declares_its_read_concurrency_and_no_other_access_does():
     """The dataset read gate (`scripts._dataset_reads`): a mounted dataset's job-wide whole-file read cap
-    is declared beside its access; tc3 measured clean at 4 and failed at 8 (2026-10-20 probes)."""
+    is declared beside its access; tc3 measured clean at 4 and failed at 8 (2026-10-20 probes). An open
+    dataset's staged snapshot is mounted too (HFU spec 14.7)."""
     for name, d in D.declared().items():
-        if d.access == "mount":
+        if d.access == "mount" or d.snapshot_repo is not None:
             assert isinstance(d.read_concurrency, int) and d.read_concurrency >= 1, name
         else:
             assert d.read_concurrency is None, name

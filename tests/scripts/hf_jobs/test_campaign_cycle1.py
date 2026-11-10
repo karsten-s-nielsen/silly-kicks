@@ -80,3 +80,10 @@ def test_a_staged_dataset_instance_fails_loud_without_its_dataset():
         ("xcross_attempt", "--dataset"),
         ("xcross_attempt", "--probe-dataset"),
     }
+
+
+def test_the_long_pole_is_the_first_instance():
+    """HFU spec 16.6: a step launches in instance order (`driver.py:125`), so xsuccess (refs, extract, a ~2.7 h hpo
+    and a ~1.5 h fit) comes first in the file; launch 5 started its extract ~1.5 h in."""
+    first = C.instances(C.load_campaign(CYCLE1), "0" * 40)[0]
+    assert (first.job, first.tier) == ("xsuccess", "public")

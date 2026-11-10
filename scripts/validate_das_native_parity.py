@@ -406,12 +406,11 @@ def _time_leg(fn: Callable[[], _LegT], *, repeat: int = 1) -> tuple[_LegT, float
 
 
 def _numba_available() -> bool:
-    try:
-        import numba  # noqa: F401
+    """The DAS family dispatch (HFU spec 13.2): False only under ``SILLY_KICKS_DAS_FORCE_NUMPY=1``; a missing numba
+    raises ``NumbaUnavailableError`` (numba is core), so the numba leg is never skipped silently."""
+    from silly_kicks import _numba_dispatch
 
-        return True
-    except ImportError:
-        return False
+    return _numba_dispatch.use_numba("DAS")
 
 
 def _measure_match(item, *, reference_leg, inferred_leg=None, direction_col: str | None = None) -> pd.DataFrame:

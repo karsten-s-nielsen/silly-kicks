@@ -15,10 +15,12 @@
     "beta": 0.0,
     "gamma": 0.25
   },
-  "training_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
-  "run_commit": "3ca609f8ae4003f411f9939dfde38fb320ff00fc",
+  "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
+  "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
+  "reproducibility": "restricted",
+  "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
   "hyperparameters": {
     "n_estimators": 500,
     "max_depth": 8
@@ -47,7 +49,7 @@
     "cross_fold_std_lt_05m": true,
     "artifact_size_lt_15mb": true
   },
-  "artifact_size_bytes": 2341997,
+  "artifact_size_bytes": 2342040,
   "detection_selection_bias": {
     "keeper_depth_detected_mean": 5.120190465896483,
     "keeper_depth_undetected_mean": 16.316629185469324,

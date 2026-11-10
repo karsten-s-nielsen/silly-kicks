@@ -247,7 +247,7 @@ def test_back_line_batch_matches_legacy_rows():
             if p < 3:
                 continue
             xs, ys = pos[i, :p, 0], pos[i, :p, 1]
-            order = np.argsort(xs) if d0[i] else np.argsort(-xs)
+            order = np.argsort(xs, kind="stable") if d0[i] else np.argsort(-xs, kind="stable")
             xss, yss = xs[order], ys[order]
             ne = _legacy_select_n(xss, n, amn, int(p))
             sx, sy = xss[:ne], yss[:ne]
@@ -296,3 +296,16 @@ def test_compact_rows_left_aligns_valid_slots():
     np.testing.assert_array_equal(counts, [2, 2])
     np.testing.assert_array_equal(out[0, :2], [[1.0, 2.0], [3.0, 4.0]])  # slot order preserved
     np.testing.assert_array_equal(out[1, :2], [[5.0, 6.0], [7.0, 8.0]])
+
+
+@pytest.mark.parametrize(("defends_x0", "width", "flipped_width"), [(True, 40.0, 50.0), (False, 30.0, 40.0)])
+def test_back_line_batch_tie_keeps_input_order(defends_x0, width, flipped_width):
+    """HFU spec 14.10b: ``back_line_batch`` breaks an exact x tie at the back-line cutoff by input order
+    (stable), like ``select_back_line_players``: ``lateral_width`` comes from the first-listed tied defender."""
+    xs = np.array([3.0, 8.0, 7.0, 4.0, 5.0, 5.0])  # the tie at x=5 straddles n=3 in both directions
+    pos = np.stack([xs, 10.0 * np.arange(1, 7)], axis=1)[None]
+    args = dict(n=3, adaptive_max_n=5)
+    got = back_line_batch(pos, np.array([6]), np.array([defends_x0]), **args)
+    assert got["lateral_width"][0] == width
+    flipped = back_line_batch(pos[:, ::-1].copy(), np.array([6]), np.array([defends_x0]), **args)
+    assert flipped["lateral_width"][0] == flipped_width

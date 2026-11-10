@@ -9,7 +9,7 @@ from scripts.hf_jobs import registry as reg
 def test_build_eval_accepts_feature_set_kw():
     # fail-loud when the corpus is absent, but the SIGNATURE must accept feature_set.
     with pytest.raises(h2h.EvalDataUnavailableError):
-        h2h.build_eval("xshot_occurrence", corpus_dir=None, feature_set="position_only")
+        h2h.build_eval("xshot_occurrence", corpus_dir=None, certification="owner", feature_set="position_only")
 
 
 def test_position_only_variant_carries_its_feature_set():

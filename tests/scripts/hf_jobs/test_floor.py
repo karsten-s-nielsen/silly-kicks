@@ -118,3 +118,92 @@ def test_an_unknown_basis_is_refused():
     spec = dataclasses.replace(reg.REGISTRY["ghost_gk"], certification="rebaseline")
     with pytest.raises(ValueError, match="identity"):
         certify(spec, "owner", fresh_metrics={}, committed_metrics={})
+
+
+# ---- HFU spec 14.4: public = in-sample parity (the head-to-head) AND two-sided CV parity ------------------
+
+
+def _h2h(spec, *, ok: bool = True) -> dict:
+    m, d = spec.primary_metric, spec.delta
+    worse = 0.5 + 2 * d if spec.metric_direction == "lower_better" else 0.5 - 2 * d
+    return {f"committed_{m}": 0.5, f"fresh_{m}": 0.5 if ok else worse}
+
+
+@pytest.mark.parametrize(("fresh", "ok"), [(0.0068, True), (0.0065, True), (0.0069, False), (0.0061, False)])
+def test_public_cv_parity_relative_5pct(fresh, ok):
+    spec = reg.REGISTRY["win_probability"]
+    got, d = certify(
+        spec, "public", fresh_metrics={"ece": fresh}, committed_metrics={"ece": 0.0065}, headtohead=_h2h(spec)
+    )
+    assert got is ok
+    assert d["in_sample_parity"]["basis"] == "in_sample_parity" and d["cv_parity"]["metric"] == "ece"
+    assert d["cv_parity"]["rel_tol"] == 0.05
+
+
+def test_public_needs_both_parities():
+    spec = reg.REGISTRY["pass_completion"]
+    good, bad = {"ece": 0.0065}, {"ece": 0.0100}
+    assert certify(spec, "public", fresh_metrics=good, committed_metrics=good, headtohead=_h2h(spec))[0]
+    assert not certify(spec, "public", fresh_metrics=bad, committed_metrics=good, headtohead=_h2h(spec))[0]
+    assert not certify(spec, "public", fresh_metrics=good, committed_metrics=good, headtohead=_h2h(spec, ok=False))[0]
+
+
+@pytest.mark.parametrize(("offset", "ok"), [(5e-7, True), (-5e-7, True), (2e-6, False), (-2e-6, False)])
+def test_rho_parity_two_sided(offset, ok):
+    spec = reg.REGISTRY["match_outcome_dependence"]
+    rho = 0.021614208683848977
+    got, d = certify(
+        spec, "public", fresh_metrics={"rho": rho + offset}, committed_metrics={"rho": rho}, headtohead=_h2h(spec)
+    )
+    assert got is ok and d["cv_parity"]["abs_tol"] == 1e-6
+
+
+def test_public_cv_parity_nan_is_fail_closed():
+    spec = reg.REGISTRY["xsuccess"]
+    got, _ = certify(
+        spec, "public", fresh_metrics={"brier": float("nan")}, committed_metrics={"brier": 0.084}, headtohead=_h2h(spec)
+    )
+    assert not got
+
+
+def test_every_public_certified_trainer_names_a_cv_metric():
+    want = {
+        "win_probability": "ece",
+        "pass_completion": "ece",
+        "xsuccess": "brier",
+        "match_outcome_dependence": "rho",
+        "xshot_occurrence": "candidates.{shipped_variant}.metrics.pr_auc",
+        "xcross_attempt": "candidates.{shipped_variant}.metrics.pr_auc",
+    }
+    public = {
+        s.name: s.cv_metric
+        for s in reg.REGISTRY.values()
+        if "public" in (s.tier_certification or {"-": s.certification}).values()
+    }
+    assert public == want
+
+
+_XC_FRESH = {"shipped_variant": "public", "candidates": {"public": {"metrics": {"pr_auc": 0.08673616941158695}}}}
+_XC_COMMITTED = {"shipped_variant": "public", "candidates": {"public": {"metrics": {"pr_auc": 0.0872974779264555}}}}
+_XC_H2H = {"committed_pr_auc": 0.1753334038608238, "fresh_pr_auc": 0.15699130250937446}  # launch 6
+
+
+def test_public_certification_without_the_in_sample_gate():
+    """HFU spec 17.3 (F31): with ``in_sample_gate=False`` a public run passes on CV parity alone; the head-to-head is
+    recorded, not gated. The launch-6 xCross figures fail with the gate and pass without it."""
+    spec = reg.REGISTRY["xcross_attempt"]
+    kw = {"fresh_metrics": _XC_FRESH, "committed_metrics": _XC_COMMITTED, "headtohead": _XC_H2H}
+    assert not certify(spec, "public", **kw)[0]
+    ok, d = certify(spec, "public", **kw, in_sample_gate=False)
+    assert ok and d["in_sample_parity"]["gated"] is False and d["in_sample_parity"]["regressed"] is True
+
+
+def test_only_the_xcross_default_build_drops_the_in_sample_gate():
+    off = {
+        (name, b.variant)
+        for name, spec in reg.REGISTRY.items()
+        if isinstance(spec, reg.TrainerSpec)
+        for b in spec.builds
+        if not b.in_sample_gate
+    }
+    assert off == {("xcross_attempt", "default")}

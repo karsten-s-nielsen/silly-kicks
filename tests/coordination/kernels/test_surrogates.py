@@ -321,7 +321,6 @@ def test_shifted_slice_lagged_pearson_equals_the_direct_computation(monkeypatch,
 def test_shifted_slice_lagged_pearson_is_numba_independent(monkeypatch):
     # Spec 7.15: results never depend on whether numba is installed -- the edge correction sums in the same ascending
     # order in both paths, so the two backends agree bit for bit.
-    pytest.importorskip("numba")
     rng = np.random.default_rng(21)
     b = rng.normal(0.0, 1.0, 800)
     a = rng.normal(0.0, 1.0, 500)

@@ -44,8 +44,8 @@
     "gamma": 0.25
   },
   "sklearn_version": "1.9.0",
-  "training_commit": "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5",
-  "training_platform": "Linux-6.17.0-1014-nvidia-aarch64-with-glibc2.39",
+  "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
+  "training_platform": "Linux-6.12.113-138.209.amzn2023.x86_64-x86_64-with-glibc2.36",
   "corpus_provenance": {
     "providers": [
       "gradientsports",

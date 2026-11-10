@@ -60,6 +60,12 @@ def test_load_good_artifact(tmp_path):
     assert m.rho == 0.05 and m.training_commit == "abc1234"
 
 
+def test_load_accepts_str(tmp_path):
+    """HFU spec 14.5 (F12): verify's loader passes a ``str`` path."""
+    _write_artifact(tmp_path)
+    assert DependenceModel.load(str(tmp_path)).rho == 0.05
+
+
 def test_load_tampered_sha_raises(tmp_path):
     _write_artifact(tmp_path, tamper=True)
     with pytest.raises(MatchOutcomeIntegrityError, match="SHA-256"):

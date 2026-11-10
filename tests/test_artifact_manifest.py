@@ -78,3 +78,10 @@ def test_observed_fields_never_feed_an_expectation():
     observed_keys = {"sha256", "metrics_summary", "env", "campaign", "adopted_at"}
     for a in MAN.artifacts.values():
         assert not ({k.partition(":")[2].split(".")[0] for k in a.expect} & observed_keys), a.id
+
+
+def test_training_commit_exactly_when_commit_field():
+    """HFU spec 18.2: `adopt` writes a manifest `training_commit` only for an artifact with a `commit_field`, so an
+    entry declares a training commit exactly when it declares the bundle field that records it."""
+    for a in MAN.artifacts.values():
+        assert (a.training_commit is None) == (a.commit_field is None), a.id

@@ -40,11 +40,16 @@ dependencies = [
     "numpy>=1.26.0",
     "scikit-learn>=1.3.1",
     "scipy>=1.10.0",
+    # numba is CORE (HFU spec 13.2, ADR-076 amendment 2026-11-06): every accelerated kernel family dispatches
+    # through silly_kicks._numba_dispatch.use_numba, and a missing numba raises instead of falling back to the
+    # ~12x slower numpy reference. As an optional extra it was absent from [train] and hid that slowdown in HF
+    # training jobs twice. The numpy references run only under SILLY_KICKS_<FAMILY>_FORCE_NUMPY=1.
+    "numba>=0.59.0",
 ]
 
 [project.optional-dependencies]
 kloppy = ["kloppy>=3.18.0"]
-numba = ["numba>=0.59.0"]
+numba = []  # kept as an empty alias: numba is a core dependency now; `silly-kicks[numba]` pins still resolve
 xarray = ["xarray>=2024.1.0"]
 xgboost = ["xgboost>=2.0.0"]
 catboost = ["catboost>=1.2"]
@@ -101,12 +106,10 @@ xshot = ["huggingface_hub>=0.20.0"]
 # re-breaks CI; a migration without the lift cannot install -- so both land in the same commit.
 calibration = [
     "ruthless-efficiency[optuna]>=0.7.0",
+    # The committed TPE-tuned xshot/xcross params reproduce only under optuna 5.0.0 (HFU spec 14.10 I1).
+    "optuna>=5.0.0,<6",
     "xgboost>=2.0,<4.0",
-    # numba compiles the infer_ball_carrier + pitch-control kernels the Stage-1/Stage-2
-    # objectives call once per trial. Without it those run as pure-Python loops — the
-    # dominant cost of a full sweep. Declared here so calibration venvs get the fast path
-    # by default (the TF-24 maintainer sweep ran without it and was needlessly slow).
-    "numba>=0.59.0",
+    # numba (the infer_ball_carrier + pitch-control kernels each trial calls) is a core dependency now.
 ]
 test = [
     "pytest>=7.4.2",
@@ -127,12 +130,9 @@ test = [
     # Metrica production-shape fixtures committed under tests/datasets/{idsse,metrica}/
     # (added in 1.10.0 for the cross-provider parity regression gate).
     "pyarrow>=14.0.0",
-    # numba exercises the @njit pitch-control kernels in test_numba_parity.py AND the native
-    # DAS kernels in test_das_kernel.py / test_das_paired.py (ADR-107). Declared here (not just
-    # optional [numba]) so CI always validates numba parity. accessible-space is NO LONGER a
-    # test dependency: DAS is native, its numerics are pinned against the committed golden
+    # numba (the @njit kernels the parity tests exercise) is a core dependency now. accessible-space is
+    # NOT a test dependency: DAS is native, its numerics are pinned against the committed golden
     # oracle, and the reference-parity tests importorskip the das-reference extra (dev-only).
-    "numba>=0.59.0",
     # huggingface_hub exercises Ghost-GK lazy download path in tests.
     "huggingface_hub>=0.20.0",
     # hypothesis powers the property-based no-ripple invariant test in
@@ -142,6 +142,7 @@ test = [
     # TF-24 calibration harness deps so CI exercises ruthless[optuna] + xgboost (the
     # cache-equivalence + Optuna-smoke tests in tests/calibration/).
     "ruthless-efficiency[optuna]>=0.7.0",  # 0.7.0 required (StoreConfig.objective_id); see [calibration] note
+    "optuna>=5.0.0,<6",  # see [calibration] note (HFU spec 14.10 I1)
     "xgboost>=2.0,<4.0",
     # pyyaml backs the CI-gating tripwire (tests/test_ci_slow_gating_wired.py), which parses
     # .github/workflows/ci.yml. Declared directly so the guard never rides a transitive edge
@@ -164,6 +165,7 @@ test = [
 # trained model gates on its own runtime extra (e.g. [xgboost]), NOT this one.
 train = [
     "ruthless-efficiency[optuna]>=0.7.0",  # 0.7.0 required (StoreConfig.objective_id); see [calibration] note
+    "optuna>=5.0.0,<6",  # see [calibration] note (HFU spec 14.10 I1)
     "xgboost>=2.0,<4.0",
     "pyarrow>=14.0.0",  # trainer caches the extracted feature matrix to parquet (per-match streaming)
     # TRAINING floor, deliberately tighter than the runtime `scikit-learn>=1.3.1` above. Inference
@@ -197,6 +199,9 @@ train = [
     # trainer guard `scripts/_train_guard.require_training_sklearn` enforces the SAME `[1.9, 2)` range
     # at the ghost entry point (raise, don't silently degrade) -- keep the two in lockstep.
     "scikit-learn>=1.9,<2; python_version >= '3.11'",
+    # scripts/_stages.materialize_fileset reads a FileSet once per job under an OS file lock that is released
+    # when its holder dies (HFU spec 13.3). Declared directly; it was only a transitive edge of huggingface_hub.
+    "filelock>=3.12",
 ]
 dev = [
     "ruff>=0.8.0",
@@ -212,6 +217,7 @@ dev = [
 hfjobs = [
     "huggingface_hub>=2.2,<3",
     "statsbombpy>=1.13",
+    "packaging>=23",  # preflight check_numba evaluates `uv export` markers (HFU spec 13.2); declared, not transitive
 ]
 
 [tool.uv]

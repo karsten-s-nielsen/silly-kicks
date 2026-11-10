@@ -25,6 +25,9 @@ import pytest
 
 _SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
 _DRIVERS = ("train_pass_completion", "validate_territory_counterfactual")
+#: The legacy CLI entry each driver guards. train_pass_completion is an ADR-128 pipeline (its guard is
+#: `_stages.main`, gated by test_provenance_wiring); its pining cross-check keeps `pining_main` (HFU spec 15.5a).
+_ENTRY = {"train_pass_completion": "pining_main", "validate_territory_counterfactual": "main"}
 
 
 def _source(name: str) -> str:
@@ -76,9 +79,9 @@ def test_driver_never_shells_out_to_rev_parse_directly(name):
 
 @pytest.mark.parametrize("name", _DRIVERS)
 def test_the_entry_point_enforces_the_clean_tree(name):
-    """require_clean_tree must be called from main() -- the CLI entry point."""
-    main_fn = _function(_source(name), "main")
-    assert main_fn is not None, f"{name}.py has no main()"
+    """require_clean_tree must be called from the CLI entry point."""
+    main_fn = _function(_source(name), _ENTRY[name])
+    assert main_fn is not None, f"{name}.py has no {_ENTRY[name]}()"
     assert _calls_in(main_fn, "require_clean_tree"), (
         f"{name}.py never calls require_clean_tree from main() -- a CLI run could write from a dirty tree."
     )
@@ -86,7 +89,7 @@ def test_the_entry_point_enforces_the_clean_tree(name):
 
 @pytest.mark.parametrize("name", _DRIVERS)
 def test_the_guard_precedes_the_corpus_walk_within_main(name):
-    main_fn = _function(_source(name), "main")
+    main_fn = _function(_source(name), _ENTRY[name])
     assert main_fn is not None
     guard = _calls_in(main_fn, "require_clean_tree")
     walk = _calls_in(main_fn, "load_matches") + _calls_in(main_fn, "for_each")

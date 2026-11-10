@@ -34,6 +34,37 @@ def match_id_pairs(providers, match_ids) -> list[list[str]]:
     return [list(p) for p in sorted({(str(p), str(m)) for p, m in zip(providers, match_ids, strict=True)})]
 
 
+def canonical_match_id(provider: str, match_id: str) -> str:
+    """The canonical id of a match the pipeline names by its staged per-game dir (HFU spec 18.6):
+    ``pergame_name`` gives ``f"{stem provider}-{game}"``. A leading ``f"{q}-"`` is stripped, ``q`` the pair's own
+    provider or its identity (``sportec`` -> ``idsse``); any other id is returned unchanged, so an already-canonical
+    id stays (a dashed ``DFL-MAT-...`` included)."""
+    mid, prov = str(match_id), str(provider)
+    for q in dict.fromkeys((prov, _CONVERTER_TO_IDENTITY.get(prov, prov))):
+        if mid.startswith(f"{q}-"):
+            return mid[len(q) + 1 :]
+    return mid
+
+
+def canonical_probe_ids(metrics: dict) -> dict:
+    """Off-HF finalize of an xCross ``metrics.json`` (HFU spec 18.6): a NEW dict whose ``probe_sample_matches``
+    pairs carry canonical ids (:func:`canonical_match_id`) and whose ``probe_sample_in_training_folds`` keys are
+    mapped through those pairs (a key no pair names stays). A metrics without the fields is returned unchanged."""
+    out = dict(metrics)
+    rename: dict[str, str] = {}
+    pairs = metrics.get("probe_sample_matches")
+    if isinstance(pairs, list):
+        new = []
+        for prov, mid in pairs:
+            rename[str(mid)] = canonical_match_id(prov, mid)
+            new.append([prov, rename[str(mid)]])
+        out["probe_sample_matches"] = new
+    folds = metrics.get("probe_sample_in_training_folds")
+    if isinstance(folds, dict):
+        out["probe_sample_in_training_folds"] = {rename.get(str(k), k): v for k, v in folds.items()}
+    return out
+
+
 def check_expected_variant(expected: str | None, *, all_public: bool) -> None:
     """G1 launch preflight, run BEFORE extraction: an expected ``public`` artifact needs an all-public corpus.
 
@@ -61,13 +92,24 @@ def corpus_identity(providers, match_ids, *, all_public: bool) -> dict:
     """The corpus identity an artifact may record: the exact ids for an all-public corpus, else a digest.
 
     Hub publishes copy ``metrics.json``, so an owner/NDA id must never appear in one; the digest still
-    lets two artifacts be proven to share (or not share) a corpus.
+    lets two artifacts be proven to share (or not share) a corpus. The in-job trainers always pass
+    ``all_public=False`` (HFU spec 17.2, owner 2026-11-09: digest only; gated by
+    ``test_in_job_trainers_record_the_corpus_digest``): the canonical public ids come only from
+    ``_corpus.rehydrate_public_corpus_ids`` at adoption. Do not re-wire the ``all_public=True`` branch into a trainer.
     """
     pairs = match_id_pairs(providers, match_ids)
     if all_public and pairs:
         return {"corpus_match_ids": pairs}
     digest = hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode("utf-8")).hexdigest()
     return {"corpus_match_ids_sha256": digest, "corpus_n_matches": len(pairs)}
+
+
+def open_data_identity(match_ids) -> dict:
+    """The corpus identity of a StatsBomb open-data corpus: the digest over its ``("statsbomb", match_id)``
+    pairs. ONE function for the lock (``sb_open.identity.open``) and every event-only trainer, so verify
+    compares two strings (HFU spec 14.3)."""
+    ids = [str(m) for m in match_ids]
+    return corpus_identity(["statsbomb"] * len(ids), ids, all_public=False)
 
 
 def reproducibility(shipped: str, providers, *, training_commit: str | None = None) -> dict:

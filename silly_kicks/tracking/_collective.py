@@ -6,8 +6,9 @@ Single definition behind ``compute_team_shape`` (centroid, length, width, stretc
 wrapper at the bottom is the one frame-facing entry point. See spec 7.5.
 
 Byte-identity (C1): every reduction runs on a COMPACT ``(R, n)`` slice of rows whose count is exactly
-``n``, so numpy applies its 1-D per-row routine (pairwise summation for n >= 8, the default argsort for
-ties) exactly as the legacy per-group loop did. A trailing-zero-padded row would not reproduce it.
+``n``, so numpy applies its 1-D per-row routine (pairwise summation for n >= 8; the back-line sort is
+stable, so exact x ties keep input order on every platform, HFU spec 14.10b) exactly as the legacy per-group
+loop did. A trailing-zero-padded row would not reproduce it.
 """
 
 from __future__ import annotations
@@ -253,9 +254,9 @@ def back_line_batch(
         xs, ys, d0 = pos[rows, :p, 0], pos[rows, :p, 1], defends_x0[rows]
         order = np.empty(xs.shape, dtype=np.intp)
         if d0.any():
-            order[d0] = np.argsort(xs[d0], axis=1)  # DEFAULT kind == legacy np.argsort(xs)   (C1)
+            order[d0] = np.argsort(xs[d0], axis=1, kind="stable")  # == legacy np.argsort(xs, kind="stable") (C1)
         if (~d0).any():
-            order[~d0] = np.argsort(-xs[~d0], axis=1)  # legacy np.argsort(-xs) -- NOT a reversed ascending sort
+            order[~d0] = np.argsort(-xs[~d0], axis=1, kind="stable")  # legacy -xs sort, NOT a reversed ascending one
         xs_s = np.take_along_axis(xs, order, axis=1)
         ys_s = np.take_along_axis(ys, order, axis=1)
         n_eff = _select_n_batch(xs_s, n, adaptive_max_n, int(p))

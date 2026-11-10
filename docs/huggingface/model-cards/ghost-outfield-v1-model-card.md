@@ -113,6 +113,6 @@ citation.
   [silly-kicks](https://pypi.org/project/silly-kicks/) (v4.109.0+) &middot;
   [GitHub](https://github.com/karsten-s-nielsen/silly-kicks) &middot; ADR-087.
 
-## TF-65 velocity-gap re-fit (4.134.0)
+## Latest re-fit (4.140.0)
 
-<!-- generated:refit_head -->**TF-65 velocity-gap re-fit (silly-kicks 4.134.0 / ADR-120; `training_commit=a34e992`).**<!-- /generated:refit_head --> Re-fit on the dense-grid-corrected floor velocities (TF-65 removed fabricated through-gap velocity on broadcast providers — the prior F1b float32 re-fit at 4.128.0 / ADR-106 is superseded); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.
+<!-- generated:refit_head -->**HF Jobs launch-7 re-fit (silly-kicks 4.140.0 / ADR-128; `training_commit=a1a3b52`).**<!-- /generated:refit_head --> Re-fit on the dense-grid-corrected floor velocities (TF-65 removed fabricated through-gap velocity on broadcast providers — the prior F1b float32 re-fit at 4.128.0 / ADR-106 is superseded); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.

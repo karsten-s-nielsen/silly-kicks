@@ -1,5 +1,5 @@
 {
-  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
   "shipped_variant": "public",
@@ -111,7 +111,7 @@
     "log_loss_lt_uniform": true
   },
   "estimates_are_cv_not_shipped_fit": true,
-  "artifact_size_bytes": 197929,
+  "artifact_size_bytes": 197942,
   "gk_block_ablation": {
     "with_gk_pr_auc": 0.06069169033301035,
     "without_gk_pr_auc": 0.05906447902693603,

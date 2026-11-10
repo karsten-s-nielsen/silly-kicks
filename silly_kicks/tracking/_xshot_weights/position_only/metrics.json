@@ -1,5 +1,5 @@
 {
-  "run_commit": "4095251730ce216decf99ec8e47d8e1162a04a1d",
+  "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
   "shipped_variant": "public",
@@ -111,5 +111,5 @@
     "log_loss_lt_uniform": true
   },
   "estimates_are_cv_not_shipped_fit": true,
-  "artifact_size_bytes": 242797
+  "artifact_size_bytes": 257426
 }

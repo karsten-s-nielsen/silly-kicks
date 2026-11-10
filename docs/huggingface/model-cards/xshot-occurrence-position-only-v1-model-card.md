@@ -116,6 +116,6 @@ See the `NOTICE` file in the silly-kicks repository for full bibliographic citat
 
 https://github.com/karsten-s-nielsen/silly-kicks
 
-## Wheel sibling (4.138.0)
+## Wheel sibling (4.140.0)
 
-<!-- generated:hub_note -->In silly-kicks 4.138.0 the wheel's bundled `position_only` was re-fit on the corrected type_id shot label (ADR-126, `training_commit=4095251`).<!-- /generated:hub_note --> <!-- generated:hub_refit -->This Hub artifact was last re-fit in silly-kicks 4.138.0 (ADR-126, `training_commit=4095251`).<!-- /generated:hub_refit --> This Hub owner-tier `sc_extended_position_only` artifact is re-fit this cycle as well — the same `type_id` label fix (18.9% → 1.34% positive rate) plus the ADR-120 floor-velocity correction. The re-fit weights are pushed by the ADR-088 model-publish step; that re-publish is the point at which the Hub artifact state changes.
+<!-- generated:hub_note -->In silly-kicks 4.140.0 the wheel's bundled `position_only` was re-fit on the ADR-128 cycle1 campaign (launch 7) (ADR-128, `training_commit=a1a3b52`).<!-- /generated:hub_note --> <!-- generated:hub_refit -->This Hub artifact was last re-fit in silly-kicks 4.140.0 (ADR-128, `training_commit=a1a3b52`).<!-- /generated:hub_refit --> This Hub owner-tier `sc_extended_position_only` artifact is re-fit in silly-kicks 4.140.0 (ADR-128 launch 7) with the `type_id` label fix (18.9% → 1.34% positive rate; 4.138.0) and the ADR-120 floor-velocity correction (4.134.0, first applied to this artifact at 4.138.0). The re-fit weights are pushed by the ADR-088 model-publish step; that re-publish is the point at which the Hub artifact state changes.

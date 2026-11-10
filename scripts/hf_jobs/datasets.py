@@ -40,17 +40,24 @@ class Declared:
     #: the receiver reads no home-team map).
     home_teams: bool = True
     #: A mount's most concurrent whole-file reads per job (the dataset read gate, `scripts._dataset_reads`):
-    #: required for ``access = "mount"``, refused otherwise.
+    #: required for ``access = "mount"`` and for a ``snapshot_repo``, refused otherwise.
     read_concurrency: int | None = None
+    #: An open dataset's staged, read-only HF copy of its pinned revision (HFU spec 14.7): jobs mount it.
+    snapshot_repo: str | None = None
 
 
 def _declared_entry(name: str, d: dict) -> Declared:
-    cap = d.get("read_concurrency")
-    if d["access"] == "mount":
+    cap, snapshot = d.get("read_concurrency"), d.get("snapshot_repo")
+    if snapshot is not None and d["access"] != "open":
+        raise ValueError(f'{name}: snapshot_repo applies to access = "open" only (access={d["access"]!r})')
+    if d["access"] == "mount" or snapshot is not None:
         if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1:
             raise ValueError(f"{name}: a mounted dataset must declare read_concurrency = <int >= 1>, got {cap!r}")
     elif cap is not None:
-        raise ValueError(f'{name}: read_concurrency applies to access = "mount" only (access={d["access"]!r})')
+        raise ValueError(
+            f'{name}: read_concurrency applies to a mount only (access = "mount" or a snapshot_repo), '
+            f"access={d['access']!r}"
+        )
     return Declared(
         name,
         d["repo"],
@@ -61,6 +68,7 @@ def _declared_entry(name: str, d: dict) -> Declared:
         d.get("description", ""),
         bool(d.get("home_teams", True)),
         cap,
+        snapshot,
     )
 
 
@@ -205,10 +213,12 @@ def record(
     d = declared()[name]
     stamp = now or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     if d.kind == "statsbomb_open":
+        from scripts._corpus_identity import open_data_identity
         from scripts._sb_open_data import all_open_competitions, list_open_data_refs, pin_open_data_revision
 
         pin_open_data_revision(d.revision)
-        refs = list_open_data_refs(all_open_competitions())
+        comps = all_open_competitions()
+        refs = list_open_data_refs(comps)
         keys = [r.match_id for r in refs]
         entry: dict[str, Any] = {
             "repo": d.repo,
@@ -216,8 +226,14 @@ def record(
             "kind": d.kind,
             "n_units": len(keys),
             "units_sha256": hashlib.sha256(json.dumps(keys).encode()).hexdigest(),
+            # The corpus scope verify checks (HFU spec 14.3): the digest every event-only artifact records,
+            # and the pinned (competition, season) set.
+            "identity": {"open": open_data_identity(keys)},
+            "competitions": sorted([int(c), int(s)] for c, s in comps),
             "recorded_at": stamp,
         }
+        if d.snapshot_repo is not None:
+            entry["snapshot"] = _snapshot_record(d, api)
     else:
         if api is None:
             from huggingface_hub import HfApi
@@ -270,6 +286,33 @@ def record(
     lock[name] = entry
     lock_path.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return entry
+
+
+def _snapshot_record(d: Declared, api: Any) -> dict:
+    """The lock's ``snapshot`` entry (HFU spec 14.7): the snapshot repo's current HF sha and its
+    ``_snapshot.json``. Refuses a snapshot of another revision than the declared data pin."""
+    import huggingface_hub
+
+    if api is None:
+        api = huggingface_hub.HfApi()
+    repo = d.snapshot_repo
+    if repo is None:
+        raise ValueError(f"{d.name}: no snapshot_repo declared")
+    rev = api.dataset_info(repo, revision=None).sha
+    meta_path = huggingface_hub.hf_hub_download(repo, "_snapshot.json", repo_type="dataset", revision=rev)
+    meta = json.loads(pathlib.Path(meta_path).read_text(encoding="utf-8"))
+    if meta["source_revision"] != d.revision:
+        raise ValueError(
+            f"{d.name}: snapshot {repo}@{rev} has source_revision {meta['source_revision']}, "
+            f"the pinned revision is {d.revision}"
+        )
+    return {
+        "revision": rev,
+        "source_revision": meta["source_revision"],
+        "n_files": meta["n_files"],
+        "bytes": meta["bytes"],
+        "unreadable": sorted(meta.get("unreadable", {})),  # upstream files that never parse (HFU spec 14.7)
+    }
 
 
 def stage_files(ctx: Any, st: Any, keys: Sequence[str] | None) -> list[str]:
@@ -361,6 +404,9 @@ def fetch(
 
 
 def main(argv: list[str] | None = None) -> int:
+    from scripts.hf_jobs.liveness import start_job_watch
+
+    start_job_watch("fetch")  # in an HF job only (the download pre-step, HFU spec §11.1)
     ap = argparse.ArgumentParser(prog="python -m scripts.hf_jobs datasets")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("record")

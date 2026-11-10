@@ -17,6 +17,9 @@ unicode, which ``np.save`` writes without pickle.
 from __future__ import annotations
 
 import json
+import math
+import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,6 +45,39 @@ class StudyInputs:
 
 
 _CONFIG = "study_config.json"
+
+
+class TrialPrinter:
+    """The ``OptunaStrategy.run(observer=...)`` sink of a study (HFU spec 14.8): one line per finished trial,
+    ``[progress] study <tag> trial <k>/<n> best=<v> in <s> s``. ruthless documents the observer as a neutral
+    sink that never changes the search. ``k`` counts THIS call's trials (a resumed study continues its global
+    trial numbers); ``best`` is the lowest ``metric`` of this call (the xshot/xcross studies minimise it)."""
+
+    def __init__(self, tag: str, n_trials: int, *, metric: str) -> None:
+        self.tag, self.n_trials, self.metric = tag, n_trials, metric
+        self.k, self.best, self.t0 = 0, math.inf, time.monotonic()
+
+    def __call__(self, event) -> None:
+        self._record(float(event.metrics[self.metric]))
+
+    def optuna_callback(self, study, trial) -> None:
+        """The same line from an ``optuna`` ``study.optimize(callbacks=[...])`` hook (the xsuccess HPO, launch-4
+        finding F21). optuna calls it after each finished trial; it reads the trial and never changes the
+        sampler. A failed trial has no value: it is counted and leaves ``best`` unchanged."""
+        self._record(None if trial.value is None else float(trial.value))
+
+    def _record(self, value: float | None) -> None:
+        self.k += 1
+        if value is not None:
+            self.best = min(self.best, value)
+        s = time.monotonic() - self.t0
+        line = f"[progress] study {self.tag} trial {self.k}/{self.n_trials} best={self.best:.6g} in {s:.1f} s"
+        print(line, file=sys.stderr, flush=True)
+
+
+def print_fold(trainer: str, k: int, n: int, t0: float) -> None:
+    """``[progress] <trainer> fold <k>/<n> in <s> s`` after a CV fold (HFU spec 15.3); ``t0`` is the loop start."""
+    print(f"[progress] {trainer} fold {k}/{n} in {time.monotonic() - t0:.1f} s", file=sys.stderr, flush=True)
 
 
 def _save_str_array(path: Path, arr) -> None:

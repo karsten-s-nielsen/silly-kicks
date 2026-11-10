@@ -26,13 +26,11 @@ def test_numpy_engine(benchmark, packed):
 
 
 def test_numba_serial(benchmark, packed):
-    pytest.importorskip("numba")
     compute_das(packed, DAS_PARAMS, engine="numba")  # JIT warm-up outside the timed region
     benchmark(compute_das, packed, DAS_PARAMS, engine="numba")
 
 
 @pytest.mark.parametrize("n_threads", [2, 4])
 def test_numba_prange(benchmark, packed, n_threads):
-    pytest.importorskip("numba")
     compute_das(packed, DAS_PARAMS, engine="numba", n_threads=n_threads)
     benchmark(compute_das, packed, DAS_PARAMS, engine="numba", n_threads=n_threads)

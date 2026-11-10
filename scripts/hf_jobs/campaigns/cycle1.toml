@@ -1,14 +1,41 @@
 # ADR-128 Cycle 1 campaign (spec 7.2): every migrated job, both xShot/xCross tiers, the census driver,
-# and the three adapter-launched public trainers. Run with:
+# and the public event-only trainers. Run with:
 #   .venv-hfjobs/Scripts/python -m scripts.hf_jobs campaign scripts/hf_jobs/campaigns/cycle1.toml <command>
 # The commit is HEAD at preflight (pushed, CI green). Run keys are derived; never hand-picked.
 
 [campaign]
 name = "cycle1"
 bucket = "silly-kicks/hf-refit-scratch"
-target_minutes = 60
-concurrency_cap = 10
+concurrency_cap = 25
 attempts = 3
+# Resource-sharing overhaul (ADR-128 amendment 2026-11-03). Job-sizing (fix 1): few big jobs, not cap-many.
+units_per_job = 20
+max_shards = 12
+# Launch pacing + backoff (fix 5); 16 launches per step (HFU spec 17.5).
+launch_batch = 16
+backoff_max_s = 300.0
+# Mount-fault outage budget (fix 3): transient sidecar 401s per dataset before it is reported an outage.
+mount_fault_budget = 12
+# Per-dataset concurrent-mount cap (fix 2): the private tc3 is mounted by 7 instances; cap well below that so
+# the CSI mount sidecar is not stormed. Other datasets use the default below.
+mount_cap = 25
+
+[campaign.mount_cap_by_dataset]
+tc3 = 6
+
+# Static per-"job/stage" peak-RSS hint (fix 4) for the memory-heavy stages only (no profiler): ghost_gk extract
+# and cache OOM at 8 workers / 32 GB, so size W down (~3) and escalate any residual over-cap unit solo.
+[campaign.peak_rss_by_stage]
+"ghost_gk/extract" = 8589934592
+"ghost_gk/cache" = 8589934592
+
+# xsuccess first (HFU spec 16.6): the long pole (hpo ~2.7 h, fit ~1.5 h) launches at once; a step launches in
+# instance order.
+[[jobs]]
+job = "xsuccess"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
 
 [[jobs]]
 job = "ghost_gk"
@@ -52,6 +79,8 @@ variants = ["default", "position_only"]
 job = "receiver_model"
 tier = "owner"
 dataset = "sb360"
+# The committed pool (HFU spec 14.2, F10): tc3 holds the 64 Gradient Sports games.
+pool_dataset = "tc3"
 variants = ["default"]
 
 [[jobs]]
@@ -74,12 +103,6 @@ variants = ["default"]
 
 [[jobs]]
 job = "pass_completion"
-tier = "public"
-dataset = "sb_open"
-variants = ["default"]
-
-[[jobs]]
-job = "xsuccess"
 tier = "public"
 dataset = "sb_open"
 variants = ["default"]

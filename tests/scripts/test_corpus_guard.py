@@ -133,3 +133,84 @@ def test_reproducibility_public_and_restricted():
     assert r["reproducibility"] == "restricted"
     assert "abc1234" in r["reproducibility_note"] and "skillcorner" in r["reproducibility_note"]
     assert len(r["reproducibility_note"]) > 20  # the ADR-067 M4 test's floor
+
+
+def test_in_job_trainers_record_the_corpus_digest():
+    """HFU spec 17.2 (owner 2026-11-09: digest only): every `corpus_identity` call in a `scripts/train_*.py` passes the
+    literal `all_public=False`, so a job never records match ids; `adopt` rehydrates the canonical public ids."""
+    import ast
+    import pathlib
+
+    calls = []
+    for path in sorted(pathlib.Path("scripts").glob("train_*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+            if name == "corpus_identity":
+                flag = next((k.value for k in node.keywords if k.arg == "all_public"), None)
+                calls.append((path.name, isinstance(flag, ast.Constant) and flag.value is False))
+    assert len(calls) >= 2 and all(ok for _, ok in calls), calls
+
+
+# ---- HFU spec 18.6: canonical probe match ids ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("provider", "mid", "want"),
+    [
+        ("gradientsports", "gradientsports-10502", "10502"),  # the staged per-game name
+        ("sportec", "idsse-DFL-MAT-J03WMX", "DFL-MAT-J03WMX"),  # the stem provider is the identity
+        ("idsse", "DFL-MAT-J03WMX", "DFL-MAT-J03WMX"),  # already canonical, dashed
+        ("gradientsports", "10502", "10502"),  # already canonical
+        ("skillcorner", "skillcorner", "skillcorner"),  # a name with no game stays
+    ],
+)
+def test_canonical_match_id(provider, mid, want):
+    from scripts._corpus_identity import canonical_match_id
+
+    assert canonical_match_id(provider, mid) == want
+
+
+def test_every_probe_unit_canonicalizes_to_a_bare_game_id():
+    from scripts._corpus_identity import canonical_match_id
+    from scripts.hf_jobs.datasets import staged_units
+
+    for u in staged_units("xcross_probe"):
+        got = canonical_match_id(u["source_provider"], u["game"])
+        assert not got.startswith(f"{u['source_provider']}-"), (u, got)
+
+
+_PERGAME = {
+    "probe_sample_matches": [["gradientsports", "gradientsports-10502"], ["gradientsports", "gradientsports-10503"]],
+    "probe_sample_in_training_folds": {"gradientsports-10502": False, "gradientsports-10503": True},
+    "auc": 0.5,
+}
+_CANONICAL = {
+    "probe_sample_matches": [["gradientsports", "10502"], ["gradientsports", "10503"]],
+    "probe_sample_in_training_folds": {"10502": False, "10503": True},
+    "auc": 0.5,
+}
+
+
+def test_canonical_probe_ids_maps_the_launch7_form_to_the_committed_form():
+    import copy
+
+    from scripts._corpus_identity import canonical_probe_ids
+
+    src = copy.deepcopy(_PERGAME)
+    assert canonical_probe_ids(src) == _CANONICAL
+    assert src == _PERGAME  # the input is not mutated
+
+
+def test_canonical_probe_ids_keeps_a_canonical_or_probe_free_metrics():
+    from scripts._corpus_identity import canonical_probe_ids
+
+    assert canonical_probe_ids(_CANONICAL) == _CANONICAL
+    dashed = {
+        "probe_sample_matches": [["idsse", "DFL-MAT-J03WMX"]],
+        "probe_sample_in_training_folds": {"DFL-MAT-J03WMX": 1},
+    }
+    assert canonical_probe_ids(dashed) == dashed
+    assert canonical_probe_ids({"auc": 0.5}) == {"auc": 0.5}

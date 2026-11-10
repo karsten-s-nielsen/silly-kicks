@@ -81,7 +81,10 @@ See NOTICE for full bibliographic citations.
 
 from __future__ import annotations
 
-from typing import NamedTuple
+import sys
+import time
+from collections.abc import Mapping
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -500,6 +503,32 @@ def _replicate_icc(y, defender_codes, team_codes, members, picked) -> float | No
     return float(val) if np.isfinite(val) else None
 
 
+class _BootstrapProgress:
+    """Counts finished bootstrap replicates and prints ``[progress] bootstrap <k>/<n> convergent=<c>`` at most
+    every ``every_s`` (HFU spec 14.8), and always a final ``n/n`` line (spec 15.5) unless the last line was it; the
+    serial loop reports one replicate, the replicate_map path one chunk."""
+
+    def __init__(self, n: int, every_s: float) -> None:
+        self.n, self.every_s, self.k, self.convergent = n, every_s, 0, 0
+        self.last, self.printed = time.monotonic(), -1
+
+    def update(self, finished: Mapping[Any, float | None]) -> None:
+        self.k += len(finished)
+        self.convergent += sum(v is not None for v in finished.values())
+        now = time.monotonic()
+        if now - self.last >= self.every_s:
+            self._say()
+            self.last = now
+
+    def finish(self) -> None:
+        if self.printed != self.k:
+            self._say()
+
+    def _say(self) -> None:
+        print(f"[progress] bootstrap {self.k}/{self.n} convergent={self.convergent}", file=sys.stderr, flush=True)
+        self.printed = self.k
+
+
 def bootstrap_icc_and_power(
     y,
     defender_codes,
@@ -509,7 +538,7 @@ def bootstrap_icc_and_power(
     alpha,
     effect_size,
     rng_seed,
-    progress_every: int = 50,
+    progress_s: float = 60.0,
     replicate_map=None,
 ) -> dict:
     """CI + power for the defender-share ICC from ONE with-replacement defender-cluster bootstrap pass.
@@ -530,7 +559,11 @@ def bootstrap_icc_and_power(
     seeded stream, in replicate order (the same draw sequence the loop made); the fits may then run in any
     order. ``replicate_map((_replicate_icc, {int_key(i): args_i}))`` returns ``{int_key(i): icc_i | None}``
     and the combination iterates the replicates IN ORDER, so the result is byte-identical to the serial
-    loop (``replicate_map=None``).
+    loop (``replicate_map=None``). It is called ``replicate_map(task, on_done=...)``: ``on_done`` takes each newly
+    finished ``{int_key(i): icc_i | None}`` part, so progress counts completed chunks.
+
+    Progress (HFU spec 14.8): ``[progress] bootstrap <k>/<n> convergent=<c>`` at most every ``progress_s``, on
+    both paths.
 
     BLAS is left MULTI-threaded. Absorption made the sequential REDUCTIONS ``n_team``-sized, but the
     three EMS-trace ``pinv(X'X)`` terms are still O(p^3) at the full-corpus design (``p = 1 + n_def +
@@ -555,19 +588,20 @@ def bootstrap_icc_and_power(
     # WITH replacement -- the SAME draw sequence both loops used, drawn up front in replicate order.
     picks = [rng.integers(0, k, size=k) for _ in range(n_boot)] if k else []
     iccs: list[float] = []
+    progress = _BootstrapProgress(n_boot, progress_s)
     if replicate_map is None:
         for i, picked in enumerate(picks):
             val = _replicate_icc(y, defender_codes, team_codes, members, picked)
             if val is not None:
                 iccs.append(val)
-            if progress_every and (i + 1) % progress_every == 0:
-                print(f"    bootstrap ICC [{i + 1}/{n_boot}]  convergent={len(iccs)}", flush=True)
+            progress.update({i: val})
     else:
         from scripts._stages import int_key
 
         items = {int_key(i): (y, defender_codes, team_codes, members, picked) for i, picked in enumerate(picks)}
-        res = replicate_map((_replicate_icc, items))
+        res = replicate_map((_replicate_icc, items), on_done=progress.update)
         iccs = [v for v in (res[int_key(i)] for i in range(len(picks))) if v is not None]
+    progress.finish()
 
     draws = np.asarray(iccs, dtype=float)
     # Power = fraction of CONVERGENT replicates clearing the effect size (denominator excludes

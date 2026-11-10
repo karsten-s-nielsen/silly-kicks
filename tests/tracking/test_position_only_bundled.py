@@ -48,6 +48,7 @@ _WEIGHTS_ROOT = pathlib.Path(_gg.__file__).parent
 #   _C5 = b62c1f2  combined-cycle C2: xshot/xcross + ghost position_only re-fit at M
 #   _C6 = a34e992  TF-65 velocity-gap ghost default/sweeper re-fit (ADR-120, 4.134.0)
 #   _C7 = 4095251  ADR-126 (4.138.0): xShot type_id label re-fit
+#   _C8 = a1a3b52  ADR-128 launch 7 (4.140.0): every adopted bundle re-fit on the cycle1 campaign
 _MAN = M.load()
 
 
@@ -91,34 +92,29 @@ def test_bundled_position_only_loads_clean(name, cls, root, n_feat):
 def test_bundled_position_only_carry_training_provenance():
     # Bundled weights must be traceable to a commit (test_artifact_provenance_output enforces this
     # over the whole surface; pinned here to the position_only trio for a focused, in-place check).
-    # The combined-cycle C2 re-fit xcross + ghost position_only at M (_C5): xcross on the public arm
-    # (the old sc_extended weights were wrong-corpus) and ghost position_only on the F1b float32 frames
-    # (byte-identical to the 3ca609f archive, re-stamped at the run commit). The xShot position_only
-    # bundle was re-fit again at _C7 for the ADR-126 type_id label fix (4.138.0; the label fix is
-    # independent of velocity, so it is NOT a byte-identical no-op).
+    # All three position_only bundles were re-fit by the ADR-128 launch 7 (4.140.0) at _C8, on the cycle1
+    # campaign; earlier they came from _C5 (xcross, ghost) and _C7 (xShot, the ADR-126 type_id label fix).
     expected = {
-        "_xshot_weights": _MAN.artifacts["xshot_position_only"].training_commit,  # _C7
-        "_xcross_weights": _MAN.artifacts["xcross_position_only"].training_commit,  # _C5
-        "_ghost_gk_weights": _MAN.artifacts["ghost_position_only"].training_commit,  # _C5
+        "_xshot_weights": _MAN.artifacts["xshot_position_only"].training_commit,  # _C8
+        "_xcross_weights": _MAN.artifacts["xcross_position_only"].training_commit,  # _C8
+        "_ghost_gk_weights": _MAN.artifacts["ghost_position_only"].training_commit,  # _C8
     }
     for root, want in expected.items():
         meta = json.loads((_WEIGHTS_ROOT / root / "position_only" / "metadata.json").read_text(encoding="utf-8"))
         assert meta.get("training_commit") == want, f"{root}/position_only training_commit"
 
 
-def test_bundled_ghost_default_is_the_tf65_refit():
-    # The bundled ghost `default` was last re-fit on the dense-grid-corrected floor velocities (TF-65
-    # velocity-gap fix, ADR-120, 4.134.0) at commit _C6, superseding the F1b float32 re-fit (_C4).
-    # Still the same 179-match corpus (incl. skillcorner), still faithful/26-feature. This was a
-    # velocity-bearing retrain trigger -- the velocity-path golden was re-captured (see
-    # test_ghost_gk_velocity_path_unchanged, whose docstring records the measured move).
+def test_bundled_ghost_default_is_the_launch7_refit():
+    # The bundled ghost `default` was last re-fit by the ADR-128 launch 7 (4.140.0) at commit _C8, on the
+    # dense-grid-corrected floor velocities the TF-65 fix (ADR-120, 4.134.0, _C6) introduced. Still the same
+    # 179-match corpus (incl. skillcorner), still faithful/26-feature.
     _clear_variant_caches()
     m = _gg.GhostGkModel.from_variant("default")
     assert m.feature_set == "faithful"
     meta = json.loads((_WEIGHTS_ROOT / "_ghost_gk_weights" / "default" / "metadata.json").read_text(encoding="utf-8"))
     ghost_default = _MAN.artifacts["ghost_default"]
-    assert ghost_default.refit_event == "tf65"  # the manifest declares this bundle as the TF-65 re-fit
-    assert meta["training_commit"] == ghost_default.training_commit  # _C6
+    assert ghost_default.refit_event == "launch7"  # the manifest declares this bundle as the launch-7 re-fit
+    assert meta["training_commit"] == ghost_default.training_commit == "a1a3b52fba07be3c21131c11df765cf7105524b3"  # _C8
     assert meta["feature_set"] == "faithful"
     assert len(meta["feature_names"]) == 26
     assert "skillcorner" in meta["corpus_provenance"]["providers"]

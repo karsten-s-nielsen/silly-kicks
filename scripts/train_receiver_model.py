@@ -404,13 +404,16 @@ _PARAMS = (
 
 
 def _staged_refs(ctx, param: str):
-    """The staged units of the dataset named by ``param`` (none when it is unset)."""
+    """The staged units of the dataset named by ``param`` (none when it is unset); for ``pool_dataset``, only
+    the units of ``pool_provider``."""
     from scripts._driver_sources import staged_flat_refs
 
     dataset = ctx.params[param]
     if not dataset:
         return []
     refs = staged_flat_refs(ctx.data_root, dataset)
+    if param == "pool_dataset":  # only the pool provider's units pool in (HFU spec 14.2, F10)
+        refs = [r for r in refs if r.source_provider == ctx.params["pool_provider"]]
     if param == "dataset" and ctx.params["match_ids_json"]:
         keep = {str(m) for m in json.loads(ctx.params["match_ids_json"])}
         refs = [r for r in refs if r.stem in keep]

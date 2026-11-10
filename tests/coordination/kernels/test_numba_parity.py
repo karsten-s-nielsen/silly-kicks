@@ -5,8 +5,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-pytest.importorskip("numba")
-
 from silly_kicks.coordination._kernels._numba import (
     dominance_count_cross,
     dominance_count_self,

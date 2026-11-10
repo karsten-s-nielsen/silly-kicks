@@ -15,12 +15,12 @@
     "beta": 0.0,
     "gamma": 0.25
   },
-  "training_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
-  "run_commit": "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6",
+  "training_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
+  "run_commit": "a1a3b52fba07be3c21131c11df765cf7105524b3",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
   "reproducibility": "restricted",
-  "reproducibility_note": "Restricted: trained at training_commit b62c1f24a7a9e3361ce416b402ed27da4a59b9e6 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
+  "reproducibility_note": "Restricted: trained at training_commit a1a3b52fba07be3c21131c11df765cf7105524b3 on a corpus (gradientsports, skillcorner, sportec) that includes matches which cannot be redistributed or carries no public-visibility proof (variant 'restricted'), so the weights cannot be reproduced from public data (ADR-067 M4).",
   "hyperparameters": {
     "n_estimators": 500,
     "max_depth": 8
@@ -49,11 +49,11 @@
     "cross_fold_std_lt_05m": true,
     "artifact_size_lt_15mb": true
   },
-  "artifact_size_bytes": 2341647,
+  "artifact_size_bytes": 2341690,
   "detection_selection_bias": {
     "keeper_depth_detected_mean": 5.05032336584333,
     "keeper_depth_undetected_mean": 15.526409788919468,
-    "ball_to_keeper_dist_detected_mean": 23.268318334326782,
+    "ball_to_keeper_dist_detected_mean": 23.26831833432679,
     "ball_to_keeper_dist_undetected_mean": 47.98931663400538,
     "n_detected": 184277,
     "n_undetected": 735727,

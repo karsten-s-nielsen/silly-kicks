@@ -5,6 +5,262 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.140.0] — 2026-11-10 — minimal HF Jobs driver + resource-sharing overhaul + numba core + the launch-7 re-fit (ADR-128 amendments 2026-11-02 to 2026-11-10, ADR-076 amendment 2026-11-06) (PR-S203)
+
+> **Why a minor release:** the wheel gains a runtime dependency (numba becomes a core dependency, 2026-11-06), and the
+> launch-7 adoption (2026-11-10) re-fits the bundled weights. Every other entry in this section is scripts-only.
+
+### Added
+
+- `scripts/hf_jobs/driver.py`: the minimal, stateless HF Jobs campaign driver, now the controller
+  (`python -m scripts.hf_jobs campaign ...` routes to it). It runs on the ADR-128 engine unchanged (`launch`,
+  `executor`, `_stages`) and adds the preflight launch gate on every step, a per-unit coverage crash bound, an
+  inline-reduce trigger (a run over an empty `--shard-keys`), round-robin `--shard` jobs for `download`
+  datasets, per-instance `--plan` isolation, and a baseline-recoverable resume. `launch --dry-run` decides on
+  the same state as `launch`. See the ADR-128 amendment (2026-11-02) and its owner rulings.
+- `scripts/hf_jobs/failures.py`: message-driven job failure classification (FATAL / RERUN / RETRY / terminal),
+  verified against real captured HF `JobInfo` records.
+
+### Changed
+
+- Every HF job gets ONE `run_job` attempt: the driver is the only retry authority, so `attempts` bounds the runs
+  of a unit.
+- `preflight` runs five checks (six since 2026-11-06); the planner's estimate is gone.
+
+### Changed — resource-sharing overhaul (2026-11-03)
+
+The first retrain stalled because the driver fired too many small jobs without sharing rate-limited resources
+(mount-sidecar 401s, HTTP 429 on the bucket, OOM churn, O(N)-per-step coverage reads). Five driver-only fixes,
+tunable in `cycle1.toml` (`units_per_job`, `max_shards`, `mount_cap`, `mount_fault_budget`, `launch_batch`,
+`backoff_max_s`, `peak_rss_by_stage`):
+
+- **Job-sizing:** a stage launches `ceil(units / units_per_job)` jobs capped at `max_shards` — few big jobs, not
+  one per unit to the concurrency cap (the root of the job-count explosion).
+- **Per-dataset mount cap:** at most `mount_cap(dataset)` in-flight jobs mount a dataset at once (counting
+  in-flight plus same-pass launches, every `access=="mount"` dataset of an instance), so the CSI mount sidecar
+  is not stormed.
+- **Coverage set+push:** per-step coverage is recomputed in `created_at` order from a per-`run_key` read-once
+  cache (`_partitions/_coverage/state.json`) instead of re-reading every job's manifest each step — O(active
+  work), not O(all terminal jobs); no more bucket 429s.
+- **Failure attribution by locus:** a `mount_auth_flake` is a per-dataset fault (a dataset over
+  `mount_fault_budget` is reported a mount outage), never a per-unit `attempts` charge; unit crashes/OOM still
+  count per unit; timeouts ride.
+- **Memory sizing + escalation:** `cap_bytes` + the `rss` backend + a static `peak_rss_by_stage` hint size the
+  workers and defer an over-cap unit to a solo whole-box (`--escalate`, W=1) job — no OOM churn.
+- **Launch pacing + backoff:** a step launches at most `launch_batch` jobs; a contention signal — a 429 from
+  `list_jobs`/`launch`, or a rising `mount_auth_flake` rate — backs off the next poll (to `backoff_max_s`) and
+  resets on a clean step.
+- Docs: `docs/howto/hf-jobs-training.md` (command sequence), `docs/howto/compute-pipelines.md` (sizing), the
+  `hf-campaign` skill and the C4 `campaignCtl` container describe the driver.
+
+### Fixed — validation bugs found on the first cycle-1 retrain (2026-11-04)
+
+- **The stage generation depended on the working tree, including untracked files (the plateau).**
+  `_provenance.code_identity` returned `dirty-<git tree hash>` for ANY dirty tree, and the hash `git add -A`s
+  untracked files; the controller's own logs (`_retrain.log`, …) in its cwd kept changing the gen it computed
+  between launch and status, so it read a generation the clean HEAD-clone jobs never wrote → `done=0` → relaunch
+  forever. Now a tree dirty ONLY by untracked files yields the commit (the compute clones HEAD; untracked files
+  aren't in it), while a TRACKED edit still yields the content hash (new `_has_tracked_changes`). `git_provenance`
+  keys and artifact provenance are unchanged (ADR-128 amendment 2026-11-04, decision P9).
+- **A bare `volume mount failed` FATAL-stopped the campaign.** `failures.classify` now RETRIES it (`mount_failed`,
+  routed per-dataset in `_attribute` like `mount_auth_flake`, never charging a unit) instead of FATAL; the
+  specific storage-403 / init-retries mount faults stay FATAL.
+
+### Changed — reduce reads, job exit rule, match-outcome pipeline, job liveness (2026-11-05)
+
+- **A reduce reads the store once.** `reduce_stage` listed and stat'ed the whole generation directory once per
+  unit (~47 M stats for 3,961 units on the HF bucket mount), which timed out the win_probability reduce. A
+  reduce site now lists once and reads each file once (`_stages.read_listed`, `_stages.done_results`; census,
+  ghost_gk and the xcross probe loop too), and verifies every unit before it writes `_summary.json`.
+- **A recorded unit failure no longer fails its HF job.** `max_failures` is a reduce-time rule
+  (`_stages.exceeds_tolerance`): the run job records the failure, runs its other units and exits 0, so it sends
+  no ERROR email; the reduce trigger refuses without a subprocess. `abort_first_k` still exits 3. A local
+  `--run-all` reports `upstream stage '<name>' is incomplete: <n> pending, <n> failed (tolerance <n>)`.
+- **A failure record says where it failed.** `<key>.failed.json` gains a bounded `traceback`; `error` is unchanged.
+- **`match_outcome_dependence` is an ADR-128 pipeline** (`refs` -> per-match `extract` -> `fit`), no longer one
+  5,543 s adapter unit; its `model.json` bytes are the legacy fit's.
+- **Every HF job shows it is alive.** Each in-job process prints an `[alive]` line every 5 minutes (unit, age,
+  code location, child processes) and a `faulthandler` stack dump 10 minutes or more before the job timeout, in
+  a different second per process so the dumps do not interleave (`scripts/hf_jobs/liveness.py`;
+  `SILLY_KICKS_JOB_DEADLINE_EPOCH` exported by the job command). Diagnosis for the silent cv timeout E12;
+  nothing changes outside HF jobs.
+- **A rename the HF bucket mount lost is repaired in the job.** The mount silently lost ~0.3-0.4% of result
+  renames under load (55 in the match-outcome canary; 100 and 148 in two 12-job probes); the writer still saw the
+  file, and `fsync` did not help. Each process now journals its atomic writes (`scripts/_write_confirm.py`) and,
+  at its end, settles 30 s, lists, and repeats `os.replace` from the intact `.tmp` part; a loss it cannot repair
+  fails the worker, and the job relaunches it on the now-pending units. Local runs do not wait.
+- **Preflight takes about a minute, not ~20, and shows its progress.** `check_plans` no longer runs a toy
+  `--run-all` training per module (CI's parity tests already do; a local toy run reproduces none of the real-HF
+  failures); the per-instance `--plan` runs in parallel; every check and every plan prints a timed
+  `[preflight]` line. The report drops the always-empty planner `flags`.
+- **A driver step reads the plans in parallel and says what it did.** Each `launch`/`resume` step read the
+  21 instances' `--plan` one after another (minutes, no output) before it launched anything; it now reads them
+  in parallel (same order, same decisions) and prints one timed `[driver] step` line (a FATAL step prints
+  its `FATAL` line instead).
+
+### Changed — numba is a core dependency; the retrain launch 2 failures (2026-11-06)
+
+- **numba is a core runtime dependency** (`numba>=0.59.0` in `[project] dependencies`; ADR-076 amendment,
+  ADR-008 D3 and ADR-013 amended). As the optional `[numba]` extra it was absent from `[train]`, so HF training
+  jobs ran the ghost-GK leaf walk in its ~12x slower numpy body until the 2 h timeout. `[numba]` stays as an empty
+  alias, so `silly-kicks[numba]` pins still resolve. **Consumer note:** each numba release caps numpy (the locked
+  0.65.1 declares `numpy<2.5`; numba 0.68.1 supports numpy 2.5), so a numpy upgrade waits for a numba release.
+- `silly_kicks/_numba_dispatch.py` is the one dispatch point for the six kernel families (GHOST, DAS,
+  COORDINATION, PITCH_CONTROL, BALL_CARRIER, XTGK): `use_numba(family)` is False only under
+  `SILLY_KICKS_<FAMILY>_FORCE_NUMPY=1` (three switches are new: `PITCH_CONTROL`, `BALL_CARRIER`, `XTGK`), and a
+  missing numba raises `NumbaUnavailableError` (an `ImportError`) instead of a silent numpy fallback. An explicit
+  `compute_das(engine="numba")` or `predict_density(kde_backend="cpu-numba")` requires numba; an explicit numpy
+  engine never imports it. No kernel arithmetic changes: every parity test is unchanged and green.
+- `materialize_fileset` reads a FileSet from the store once per job (a job-local cache owned by
+  `LocalExecutor.run_stage`, filled under a `filelock`; `filelock` is now explicit in `[train]`). Five concurrent
+  cv workers had each read the same 388 MB prep FileSet through the bucket mount for over 6,600 s.
+- Every huggingface_hub request is bounded (`scripts/hf_jobs/hub_client.py`: a request hook fills the `None`
+  timeouts that `paginate` passes explicitly), and a `--plan` read is killed after 600 s with the plan process's
+  stack in the report (`PlanTimeoutError`). Three `--plan` reads had hung the driver for 2 h 10 min.
+- A unit charged by 2 timed-out jobs is STUCK, not relaunched (replaces HFU-TIMEOUT-05); a timeout charges only
+  the units that started in that job, read from its `[unit]` log lines.
+- `preflight` gains `check_numba`: numba must be in the locked job install set for Linux CPython 3.12.
+
+### Added — the job log trail (2026-11-06)
+
+- `[driver] job <id> ... <reason> after <s> s` per job that ends ERROR or CANCELED (once per run) and
+  `[driver] launch ...` per launch; `[unit] <stage>/<key> start` and `... <outcome> in <s> s` per unit;
+  `[job] <done>/<units> done, <failed> failed, exit <rc>, <s> s` at every run exit; `[read] <rel> <MB> MB in <s> s
+  (<MB/s> MB/s)` for every store read of 8 MB or more; `numba=<version>` on every `[alive]` start line.
+
+### Fixed — the launch 3 verify findings (2026-11-07)
+
+Launch 3 verified 15 of 21 instances (spec `2026-11-04-hfu-reduce-reads-and-job-exit-design.md` §14,
+F6-F19; ADR-128 amendment 2026-11-07).
+
+- **Recipes (F6-F8, F10).** The registry pins each instance's corpus-scope and search-size args:
+  `pass_completion` and `xsuccess` train on all open competitions (`train_xsuccess --all-competitions`, 30 HPO
+  trials), the census runs `--all-competitions`, and the receiver pools `tc3`'s Gradient Sports games
+  (`pool_dataset`, `--pool-provider gradientsports`).
+- **Corpus scope (F9, F13).** `datasets record` writes `sb_open.identity.open` and the 80 pinned competitions;
+  the event-only bundles carry a `metrics.json` with the corpus identity (`match_outcome` also `rho`); verify
+  compares it with the lock. Every certified artifact has a corpus-scope check (six gained a count
+  expectation). A rebaseline code delta is an AST change of an input module, docstrings removed.
+- **Public certification (F6, F7, F11, F14).** Public = the head-to-head (in-sample parity) AND two-sided CV
+  parity within 5 % (`rho` within `1e-6`), from the committed `metrics.json` or a manifest `cv_reference`.
+  `headtohead` takes `--certification`; xShot/xCross public is scored on its own extract rows; the open-data
+  builders read the locked revision.
+- **`DependenceModel.load` takes `str` (F12).**
+- **optuna is locked to 5.0.0 (F19).** The committed tuned xShot/xCross parameters reproduce only under it.
+- **The back-line tie-break depended on the platform.** `select_back_line_players` and `compute_defensive_line`
+  (`_collective.back_line_batch`) sorted defenders with numpy's default (unstable) sort, which orders defenders
+  on exactly the same x differently on x86 and ARM. Both now sort stably, so tied defenders keep their input row
+  order on every platform; so does the ghost-outfield nearest-opponent sort. On x86, outputs that read the
+  selected rows' y, ids or slot order (`lateral_width`, `max_lateral_gap`, the ghost-outfield slots, the
+  goalkeeper-influence and packing back lines, and the features built on them) can change, only at such exact
+  ties; the x-based back-line columns do not change (HFU spec 14.10 I2, 14.10b).
+
+### Fixed — the launch 5 findings (2026-11-09)
+
+Launch 5 finished 20 of 21 instances; xsuccess `fit` timed out twice (spec
+`2026-11-04-hfu-reduce-reads-and-job-exit-design.md` §16, F26-F29; ADR-128 amendment 2026-11-09).
+
+- **xsuccess `fit` (F26).** Its CV folds and final fit run on the InnerPool (width 3, the final fit first,
+  `timeout_s` 14,400 s), with `[progress] xsuccess fit <k>/<n> in <s> s`; the result equals the serial fit.
+- **Silent reduce (F27).** `reduce_stage` reads over 8 threads in its `reduce_order` with the `[read]` line.
+- **API requests (F28).** A run re-plans only unreduced instances; `BucketStore` lists its run key once and
+  memoizes reads (per plan: win_probability 47 -> 16, xsuccess 62 -> 16, census 65 -> 17, ghost_gk 25 -> 4).
+- **Visibility arms (F29).** `arm_policy.compute_arms` keys each staged unit by its `source_provider`, as the
+  trainers do; before, every xShot/xCross arm dropped the 7 Bundesliga matches (public 10 of 17).
+- xsuccess is the first instance of `cycle1.toml`.
+
+### Changed — the bundled weights re-fit by launch 7 (2026-11-10)
+
+Launch 7 (campaign `cycle1`, commit `a1a3b52f`) is adopted: 15 wheel bundles carry its weights, and each declared
+`training_commit` is `a1a3b52f` -- `ghost_gk` (default, position_only, sweeper, sweeper_position_only),
+`ghost_outfield` (default, position_only), `receiver_model`, `win_probability`, `xshot_occurrence` and
+`xcross_attempt` (default, position_only each), `match_outcome`, `expected_passing` and `xsuccess`. The last three
+now ship their `metrics.json` (their CV record). The 10 Hub artifacts' `observed.json` entries and the 9 local cards
+with generated regions are updated; the Hub copies change only when they are published (an owner go). One manifest
+re-fit event, `launch7` (4.140.0, ADR-128), replaces the five earlier ones (`f1b`, `tf65`, `adr126`, `hub_velocity`,
+`tf61`), so the cards name this re-fit.
+
+### Fixed — adopting launch 7 (2026-11-10)
+
+Launch 7 finished 21 of 21 instances and verified 21 of 21; `adopt` then refused (spec
+`2026-11-04-hfu-reduce-reads-and-job-exit-design.md` §18, F33-F36; ADR-128 amendment 2026-11-10, items 33-37).
+
+- **Manifest commit (F33).** `adopt` writes `training_commit` only for an artifact with a `commit_field`
+  (`match_outcome` and `expected_passing` declared none); a manifest test pins the pairing. Their bundles do record
+  a commit, so their entries now declare it (`commit_field`) and the manifest checks it.
+- **A refusal leaves the tree as found (F34).** `adopt` also refuses a root with any `git status` change, and its
+  write phase runs under a rollback (`AdoptionRollbackError` names a path it could not restore); the local gate runs
+  after the writes.
+- **Probe ids (F35).** The xCross trainer records canonical probe match ids (`canonical_match_id`), and adoption
+  finalizes launch 7's records (`canonical_probe_ids`) into one copy per instance that the wheel bundle, the Hub
+  `observed.json` entry and `publish` share.
+- **CV record (F36).** `expected_passing`, `match_outcome` and `xsuccess` now ship their own `metrics.json`, which is
+  their CV baseline; their manifest `cv_reference` entries are removed.
+- The launch-7 adoption is a new commit on top of the campaign commit `a1a3b52f`.
+
+### Fixed — the launch 6 verify findings (2026-11-09)
+
+Launch 6 finished 21 of 21 instances; verify passed 16 and failed 5 (spec
+`2026-11-04-hfu-reduce-reads-and-job-exit-design.md` §17, F30-F32; ADR-128 amendment 2026-11-09, items 29-32).
+
+- **Corpus identity (F30).** The xShot/xCross trainers always record the corpus digest (`all_public=False`, gated by
+  `test_in_job_trainers_record_the_corpus_digest`); `adopt` rehydrates the canonical public ids.
+- **xCross default certification (F31).** `VariantBuild.in_sample_gate`: the xCross default build (no parameter
+  match) certifies on CV parity; the in-sample head-to-head is recorded with `"gated": false`.
+- **Census rebaseline (F32).** `DriverSpec.tolerance` + `adopt._within_tolerance`: platform float drift within the
+  owner-ratified bounds passes with `"within_tolerance": true` and the measured differences (one note per parquet
+  column: the count and the largest relative difference). NaN equals only NaN; an infinity equals only itself.
+- `retrieve` and `verify` run 4 instances at once (results in instance order; one open-data cache per instance);
+  `cycle1.toml` `launch_batch` 8 -> 16.
+
+### Fixed — the launch 4 findings (2026-11-08)
+
+Launch 4 ran 14 of 21 instances before the owner stopped it (spec
+`2026-11-04-hfu-reduce-reads-and-job-exit-design.md` §15, F20-F25; ADR-128 amendment 2026-11-08).
+
+- **Log noise (F20).** An HF job hides the three per-match open-data converter warnings (`PYTHONWARNINGS`,
+  scoped to `scripts._sb_open_data`).
+- **Silent long units (F21, F23).** `[progress] <trainer> fold <k>/<n> in <s> s` per CV fold (win_probability,
+  pass_completion, xsuccess); xsuccess prints its per-trial study line; `[read] <stage> results <k>/<n> in <s>
+  s` during a long result read, which now runs over 8 threads in sorted key order; the bootstrap always prints
+  a final line. A gate fails on an optuna study under `scripts/` without a callback.
+- **A 429 ended the driver (F22).** Driver store writes retry a rate limit at 2, 4 and 8 s, then end the step's
+  launches; a lost per-job manifest prints `[driver] job <id> manifest not recorded (rate-limited)`.
+- **xsuccess HPO could not fit the job limit (F24).** A stage may declare `timeout_s`; the xsuccess `hpo` stage
+  runs each trial's 5 folds in parallel and has 14,400 s. The search result is unchanged.
+- **Every retry reloaded the corpus (F25).** `train_pass_completion` and `train_xsuccess` are native ADR-128
+  pipelines (`refs` → per-match `extract` → HPO/CV → `fit`), sharing `scripts/_open_data_stages.py` with
+  `train_win_probability`. `scripts/_pass_completion_pining.py` keeps the pining CLI (`pining_main`). Both
+  write the extract pass fields (`generation`, `n_attempted`, `n_failed`, `n_counters_unrecorded`,
+  `n_excluded`) to `metrics.json`, as before; the pass_completion card's reproduce command is the pipeline
+  CLI (`python -m scripts.train_pass_completion --run-all --store <STORE> --out <DIR> ...`).
+
+### Removed — the adapter stage (2026-11-08)
+
+- `scripts/hf_jobs/adapter.py`, the registry `adapter` field, its liveness role and its tests: no trainer uses
+  the one-unit adapter any more. `train_xsuccess` drops its legacy CLI and `--competitions`.
+
+### Added — progress lines and the open-data snapshot (2026-11-07)
+
+- `[progress] study <tag> trial <k>/<n> best=<v> in <s> s` per study trial (the ruthless observer);
+  `[progress] bootstrap <k>/<n> convergent=<c>` about every 60 s on both census bootstrap paths;
+  `[reduce] <stage> done in <s> s`; `; instances done <d>/<n>` on the driver step line;
+  `[retrieve] <i>/<n> ...` and `[verify] <i>/<n> ... ok|FAIL (<checks>)` per instance. Retrieve reads the
+  extract counters from one listing, in parallel.
+- A staged, read-only snapshot of the pinned open-data commit (`silly-kicks/hf-refit-sb-open`,
+  `stage_open_data`): every `sb_open` job mounts it as its open-data cache and never fetches from GitHub
+  (`OpenDataSnapshotMissError` on a miss). Competitions, match manifests and lineups are cached too. An
+  upstream file that never parses is recorded as `unreadable` (at the pinned commit: one 360 file).
+
+### Removed
+
+- The executor's run-time `max_failures` check, its worker mirror and the `_FAILED_DIR` markers; the adapter's
+  `_SHARD_ROOT_TARGETS` (only `match_outcome_dependence` used it).
+- The Cycle 1 controller: `scripts/hf_jobs/planner.py`, `campaign.step` / `next_actions` / `_job_specs` and the
+  `plan` / `profile` / `summary` commands (use `launch --dry-run` for a plan), the cost-history functions of
+  `ledger.py` (only `job_record` stays), and the campaign file's `target_minutes`. The code stays on the
+  abandoned branch `feat/controller-step-reads` (owner ruling 2026-11-02).
+
 ## [4.139.1] — 2026-10-22 — pandas 3.1 compatibility fix + compute contract harness (ADR-128) (PR-S202)
 
 > **Why a patch release:** pandas 3.1.0 broke `add_gradientsports_player_ids` (see Fixed). The release also

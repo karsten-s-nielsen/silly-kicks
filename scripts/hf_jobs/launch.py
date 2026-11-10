@@ -21,6 +21,7 @@ from typing import Any, Final
 
 from scripts._dataset_reads import READ_CAP_ENV
 from scripts._thread_pin import DETERMINISTIC_VARS
+from scripts.hf_jobs.liveness import DEADLINE_ENV
 
 FLAVOR: Final = "cpu-upgrade"
 IMAGE: Final = "python:3.12.14-bookworm@sha256:dbbe4ceb97851e2e5fa83798b239811f871cb743b259ba3563737349f6bcfaa0"
@@ -30,6 +31,12 @@ REPO_URL = "https://github.com/karsten-s-nielsen/silly-kicks"
 BUCKET_MOUNT = "/scratch"  # the read-write bucket is mounted here inside every job
 DATA_MOUNT: Final = "/data"
 TERMINAL = frozenset({"COMPLETED", "CANCELED", "ERROR", "DELETED"})
+#: HFU spec 15.2: the three known per-match converter warnings, raised for the open-data loader, are hidden in a
+#: job (case-insensitive message prefix, exact module). Every other warning still prints; local runs are unchanged.
+JOB_WARNING_FILTER: Final = ",".join(
+    f"ignore:{prefix}:UserWarning:scripts._sb_open_data"
+    for prefix in ("Inferred xy_fidelity_version", "Inferred shot_fidelity_version", "StatsBomb")
+)
 #: HF Jobs rejects a label value (the job `name` is the `name` label) longer than this, or outside this
 #: alphabet. Real-HF 400s on the Cycle 1 launches (2026-10-19): `Too big: expected string to have <=100
 #: characters at labels.name`, then `Invalid string: must match pattern /^[a-zA-Z0-9_-]*$/ at labels.name`.
@@ -46,13 +53,21 @@ class DatasetMount:
     #: A mount's most concurrent whole-file reads per job (`datasets.toml`; the dataset read gate,
     #: `scripts._dataset_reads`). Required for a mount, refused for any other access.
     read_concurrency: int | None = None
+    #: An open dataset's staged snapshot (HFU spec 14.7): mounted at ``path``, the job's open-data cache.
+    snapshot_repo: str | None = None
+    snapshot_revision: str | None = None
 
     def __post_init__(self) -> None:
-        if self.access == "mount":
+        if self.mounted:
             if not isinstance(self.read_concurrency, int) or self.read_concurrency < 1:
                 raise ValueError(f"{self.name}: a mounted dataset needs read_concurrency >= 1")
         elif self.read_concurrency is not None:
             raise ValueError(f"{self.name}: read_concurrency applies to a mount only (access={self.access!r})")
+
+    @property
+    def mounted(self) -> bool:
+        """The job CSI-mounts it: a ``mount`` dataset, or an open dataset's staged snapshot."""
+        return self.access == "mount" or self.snapshot_revision is not None
 
     @property
     def path(self) -> str:
@@ -145,12 +160,15 @@ def job_env(spec: JobSpec) -> dict[str, str]:
             "SILLY_KICKS_JOB_LABEL": _label(spec),
             "SILLY_KICKS_IN_HF_JOB": "1",  # in-job: an unrecorded dataset is an error, never a local guess
             "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+            "PYTHONWARNINGS": JOB_WARNING_FILTER,
         }
     )
     for d in spec.datasets:
         if d.access == "open":
             env["SILLY_KICKS_OPEN_DATA_REVISION"] = d.revision
-    caps = [d.read_concurrency for d in spec.datasets if d.access == "mount" and d.read_concurrency]
+            if d.snapshot_revision is not None:  # the read-only snapshot is the open-data cache (HFU spec 14.7)
+                env["SILLY_KICKS_CORPUS_CACHE_DIR"] = d.path
+    caps = [d.read_concurrency for d in spec.datasets if d.mounted and d.read_concurrency]
     if caps:  # ONE job-wide gate over every mount: the smallest declared cap (`scripts._dataset_reads`)
         env[READ_CAP_ENV] = str(min(caps))
     env.update(spec.extra_env or {})
@@ -190,6 +208,8 @@ def job_command(spec: JobSpec) -> list[str]:
     extras = "".join(f" --extra {q(e)}" for e in spec.extras)
     lines = [
         "set -euo pipefail",
+        # The job deadline, taken before git and uv; every in-job process inherits it (HFU spec §11.4).
+        f"export {DEADLINE_ENV}=$(( $(date +%s) + {int(spec.timeout_s)} ))",
         "git init -q /work",
         "cd /work",
         f"git remote add origin {q(REPO_URL)}",
@@ -237,6 +257,16 @@ def volumes_for(spec: JobSpec) -> list[Any]:
     for d in spec.datasets:
         if d.access == "mount":
             vols.append(Volume(type="dataset", source=d.repo, mount_path=d.path, revision=d.revision, read_only=True))
+        elif d.snapshot_revision is not None:
+            vols.append(
+                Volume(
+                    type="dataset",
+                    source=d.snapshot_repo,
+                    mount_path=d.path,
+                    revision=d.snapshot_revision,
+                    read_only=True,
+                )
+            )
     return vols
 
 

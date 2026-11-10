@@ -107,6 +107,6 @@ ghosting concept (no density estimation). See the silly-kicks `NOTICE` for the f
   [silly-kicks](https://pypi.org/project/silly-kicks/) (v4.109.0+) &middot;
   [GitHub](https://github.com/karsten-s-nielsen/silly-kicks) &middot; ADR-087.
 
-## F1b re-fit (4.128.0)
+## Latest re-fit (4.140.0)
 
-<!-- generated:refit_head -->**F1b float32-frame re-fit (silly-kicks 4.128.0 / ADR-106; `training_commit=3ca609f`).**<!-- /generated:refit_head --> Re-fit on float32-stored frames (the storage rounding exceeds the trained-model feature-contract atol); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.
+<!-- generated:refit_head -->**HF Jobs launch-7 re-fit (silly-kicks 4.140.0 / ADR-128; `training_commit=a1a3b52`).**<!-- /generated:refit_head --> Re-fit on float32-stored frames (the storage rounding exceeds the trained-model feature-contract atol); the metrics table above reflects this re-fit, and the mirror is republished to match the wheel.

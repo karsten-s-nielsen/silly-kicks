@@ -1,15 +1,11 @@
-"""Optional numba-accelerated ghost-GK KDE hot loop.
+"""numba ghost-GK hot loops: the KDE loop and the leaf-walk kernels.
 
 Serial ``@njit`` fully-fused closed-form weighted-Gaussian KDE over the fixed grid -- no
 ``(kb, m)`` temporaries (the numpy closed-form kernel is memory-bound; this keeps it in
 registers for a ~10x single-thread speedup, kill-gate-validated). Lazily imported only on the
-``cpu-numba`` path:
-
-    try:
-        from ._ghost_gk_numba import _kde_numba_loop
-        _HAS_NUMBA = True
-    except ImportError:
-        _HAS_NUMBA = False
+``cpu-numba`` path. numba is a core dependency (HFU spec 13.2): ``_ghost_gk._use_ghost_numba`` loads the leaf-walk
+kernels through ``silly_kicks._numba_dispatch.import_kernels`` unless ``SILLY_KICKS_GHOST_FORCE_NUMPY=1``, and an
+explicit ``kde_backend="cpu-numba"`` calls ``require_numba`` first; a missing numba raises ``NumbaUnavailableError``.
 
 Setup (weighted covariance + Cholesky PD-branch + det/norm) stays in numpy (``_kde_setup``);
 numba does ONLY the exp+reduction loop, so the singular->uniform boundary stays cho_factor's
@@ -28,8 +24,11 @@ import numpy as np
 
 try:
     from numba import njit  # type: ignore[import-not-found]
-except ImportError as e:  # pragma: no cover - exercised only without the [numba] extra
-    msg = "numba is required for the cpu-numba ghost-GK backend. Install with: pip install silly-kicks[numba]"
+except ImportError as e:  # pragma: no cover - numba is a core dependency (HFU spec 13.2)
+    msg = (
+        "numba is required for the cpu-numba ghost-GK backend (numba is a core dependency of silly-kicks; "
+        "repair the install: pip install --force-reinstall silly-kicks)"
+    )
     raise ImportError(msg) from e
 
 # On-disk cache OFF by default (serverless read-only paths) -- same rationale as

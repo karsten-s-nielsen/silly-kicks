@@ -11,9 +11,12 @@ def _src(name: str) -> str:
     return (_SCRIPTS / f"{name}.py").read_text(encoding="utf-8")
 
 
-def test_train_and_evolve_have_parsers_and_provenance():
+def test_train_is_a_pipeline_and_evolve_has_a_parser_and_provenance():
+    # train_xsuccess is an ADR-128 pipeline (HFU spec 15.5a): its CLI and clean-tree guard are `_stages.main`'s.
+    t = _src("train_xsuccess")
+    assert "PIPELINE = Pipeline(" in t and "raise SystemExit(main(PIPELINE))" in t
     # a real argparse parser -> `--help` is safe (parserless scripts run main() on --help, memory).
-    for name in ("train_xsuccess", "evolve_xsuccess_features"):
+    for name in ("evolve_xsuccess_features",):
         s = _src(name)
         assert "add_argument" in s, f"{name}: no argparse parser"
         assert "require_clean_tree" in s, f"{name}: no clean-tree guard"
@@ -28,9 +31,10 @@ def test_train_and_evolve_are_public_corpus_gated_by_the_open_data_loader():
     # convention; `assert_public_corpus` is a pining-corpus visibility check, circular for open data).
     # The invariant restored here: the trainer loads ONLY open data and NEVER the pining loader,
     # so a bundled artifact cannot train on non-redistributable data.
-    for name in ("train_xsuccess", "evolve_xsuccess_features"):
+    sources = {"train_xsuccess": "_open_data_stages", "evolve_xsuccess_features": "open_data_source"}
+    for name, source in sources.items():
         s = _src(name)
-        assert "open_data_source" in s, f"{name}: not sourced from the public open-data loader"
+        assert source in s, f"{name}: not sourced from the public open-data loader"
         assert "_loader_pining" not in s, f"{name}: imports the pining loader (non-redistributable)"
 
 
@@ -46,3 +50,174 @@ def test_train_shard_schema_has_no_end_columns():
     # END-BLIND: the fit shard must not carry the realized end (target leakage, spec §5.2).
     s = _src("train_xsuccess")
     assert '"end_x"' not in s and '"end_y"' not in s, "train_xsuccess shard leaks the realized end"
+
+
+def _patch_open_data(monkeypatch, comps):
+    """The open-data seams the pipeline calls: 2 matches per release, ids ``c*1000+s+{1,2}``, each with ~60
+    on-ball rows of mixed types and outcomes (the xsuccess shard columns). No network."""
+    import numpy as np
+    import pandas as pd
+
+    import scripts._sb_open_data as sod
+    from scripts._driver_sources import LoadedMatch
+    from silly_kicks.spadl import config as spadlconfig
+
+    types = [spadlconfig.actiontype_id[t] for t in ("pass", "dribble", "cross", "shot")]
+
+    def _actions(gid):
+        rng, n = np.random.default_rng(gid), 60
+        return pd.DataFrame({
+            "game_id": gid, "period_id": 1, "time_seconds": np.arange(n, dtype=float),
+            "type_id": rng.choice(types, n), "result_id": rng.integers(0, 2, n), "bodypart_id": 0,
+            "start_x": rng.uniform(0, 105, n), "start_y": rng.uniform(0, 68, n),
+        })  # fmt: skip
+
+    monkeypatch.setattr(sod, "assert_statsbomb_open_data_mode", lambda: None)
+    monkeypatch.setattr(sod, "all_open_competitions", lambda: list(comps))
+    monkeypatch.setattr(
+        sod,
+        "list_open_data_refs",
+        lambda cs, *, match_ids=None, max_matches=None: [
+            sod.OpenDataRef(c, s, str(c * 1000 + s + k), 1) for c, s in cs for k in (1, 2)
+        ],
+    )
+    monkeypatch.setattr(
+        sod,
+        "load_open_data_match",
+        lambda ref, *, preserve_native=(), cache_dir=None: LoadedMatch(
+            "statsbomb", ref.match_id, _actions(int(ref.match_id)), pd.DataFrame(), 1, None, None
+        ),
+    )
+
+
+def test_xsuccess_metrics_records_the_open_data_identity(tmp_path, monkeypatch):
+    """HFU spec 14.3: metrics.json records the corpus identity of the refs the run trained on (the lock's
+    ``sb_open.identity.open`` function) and ``hpo_trials``; verify compares the identity with the lock."""
+    import json
+
+    import scripts.train_xsuccess as T
+    from scripts._corpus_identity import open_data_identity
+    from tests.scripts._stage_harness import export, run_in_process
+
+    comps = [(43, 106), (11, 90), (55, 43), (2, 27)]
+    _patch_open_data(monkeypatch, comps)
+    ctx = run_in_process(T.PIPELINE, ["--all-competitions"], store=tmp_path / "s", data_root=None)
+    out = export(ctx, tmp_path / "o")
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    want = open_data_identity([str(c * 1000 + s + k) for c, s in comps for k in (1, 2)])
+    assert {k: metrics[k] for k in want} == want
+    assert metrics["hpo_trials"] == 0
+    # Decision P4 (ADR-128), as win_probability and the legacy fit: metrics.json records the extract pass.
+    passed = {"generation": ctx.tokens["extract"], "n_attempted": 8, "n_failed": 0, "n_counters_unrecorded": 0}
+    assert {k: metrics[k] for k in (*passed, "n_excluded")} == {**passed, "n_excluded": 0}
+
+
+def test_hpo_stage_plans_the_long_job_limit_and_the_fold_pool(tmp_path):
+    """HFU spec 15.7: the real xsuccess plan gives ``hpo`` 14,400 s and a 5-wide InnerPool (``_job_spec`` reads
+    ``timeout_s`` from this record, ``test_job_spec_takes_a_stage_timeout_from_the_real_plan``)."""
+    import scripts.train_xsuccess as T
+    from scripts._stages import LocalStore, make_context, plan
+    from tests.scripts._stage_harness import PROV, params_from_args
+
+    ctx = make_context(T.PIPELINE, params_from_args(T.PIPELINE, []), PROV, store=LocalStore(tmp_path), data_root=None)
+    rec = {r["name"]: r for r in plan(ctx)["stages"]}
+    assert {k: rec["hpo"][k] for k in ("timeout_s", "inner_parallel", "inner_width")} == {
+        "timeout_s": 14400,
+        "inner_parallel": True,
+        "inner_width": 5,
+    }
+    assert {rec[n]["timeout_s"] for n in ("refs", "extract")} == {None}
+
+
+def test_card_states_corpus_identity():
+    """HFU spec 14.13: the card states the corpus identity verify checks (count + digest)."""
+    from scripts.train_xsuccess import render_model_card
+
+    card = render_model_card({"corpus_match_ids_sha256": "ab" * 32, "corpus_n_matches": 3961})
+    assert f"Corpus identity: 3961 matches, sha256 {'ab' * 32}" in card
+
+
+class _ReversedPool:
+    """An InnerPool whose units complete in reverse submission order (the out-of-order worst case)."""
+
+    workers = 3
+
+    def __init__(self):
+        self.submitted: list[str] = []
+
+    def map_keyed(self, fn, items, *, on_done=None):
+        self.submitted = list(items)
+        out = {}
+        for k in reversed(self.submitted):
+            out[k] = fn(*items[k])
+            if on_done is not None:
+                on_done(k, out[k])
+        return out
+
+
+def test_fit_map_equals_the_serial_fit(tmp_path, capsys):
+    """HFU spec 16.2 (F26): the fold units and the final fit on the pool give the serial metrics and model bytes;
+    the final fit is submitted first; the pool path prints one `fit k/n` line per inner unit."""
+    import re
+
+    import scripts.train_xsuccess as T
+    from silly_kicks.xsuccess import XSuccessModel
+    from tests.scripts.test_progress_lines import _xsuccess_pooled
+
+    pooled = _xsuccess_pooled()
+    serial_metrics = T.cross_val_metrics(pooled, params=None)
+    model = XSuccessModel().fit(pooled, family="xgboost", params=None)
+    model.save(tmp_path / "serial")
+    serial_files = {f.name: f.read_bytes() for f in sorted((tmp_path / "serial").iterdir())}
+    capsys.readouterr()
+
+    pool = _ReversedPool()
+    metrics, files, feature_set = T._fit_map(pool, pooled, family="xgboost", params=None, work=tmp_path / "w")
+    assert metrics == serial_metrics and files == serial_files and feature_set == model.feature_set
+    assert pool.submitted[0] == "final"
+    lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[progress] xsuccess fit ")]
+    assert [ln.split()[3] for ln in lines] == [f"{k}/6" for k in range(1, 7)]
+    assert all(re.fullmatch(r"\[progress\] xsuccess fit \d/6 in \d+\.\d s", ln) for ln in lines), lines
+
+
+def test_fit_stage_plans_the_long_job_limit_and_width_three(tmp_path):
+    """HFU spec 16.2, 16.7: the real plan record of `fit` carries 14,400 s and a 3-wide InnerPool."""
+    import scripts.train_xsuccess as T
+    from scripts._stages import LocalStore, make_context, plan
+    from tests.scripts._stage_harness import PROV, params_from_args
+
+    ctx = make_context(T.PIPELINE, params_from_args(T.PIPELINE, []), PROV, store=LocalStore(tmp_path), data_root=None)
+    rec = {r["name"]: r for r in plan(ctx)["stages"]}["fit"]
+    assert {k: rec[k] for k in ("timeout_s", "inner_parallel", "inner_width")} == {
+        "timeout_s": 14400,
+        "inner_parallel": True,
+        "inner_width": 3,
+    }
+
+
+def test_a_width_one_pool_runs_the_serial_fit(monkeypatch):
+    """An escalated (width-1) fit runs the serial composition in-process, as the hpo stage does (HFU spec 16.2)."""
+    import types
+
+    import scripts.train_xsuccess as T
+    from tests.scripts._stage_harness import PROV
+    from tests.scripts.test_progress_lines import _xsuccess_pooled
+
+    def no_pool(*a, **k):
+        raise AssertionError("the width-1 fit must not use the pool path")
+
+    upstream = {
+        "extract": _xsuccess_pooled(),
+        "hpo": {"best_params": None},
+        "refs": {"competitions": [[43, 106]], "refs": [{"match_id": "1"}]},
+    }
+    ctx = types.SimpleNamespace(
+        upstream=upstream.__getitem__,
+        params={"family": "xgboost", "hpo_trials": 0},
+        prov=PROV,
+        pool=types.SimpleNamespace(workers=1),
+        summary=lambda stage: {"n_units": 1, "n_failed": 0, "n_excluded": 0},
+        tokens={"extract": "t"},
+    )
+    monkeypatch.setattr(T, "_fit_map", no_pool)
+    assert "model.json" in T._fit_work("only", ctx).files

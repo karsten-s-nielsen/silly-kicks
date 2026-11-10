@@ -141,7 +141,7 @@ def _hpo_once(
     """
     from scripts._input_contract import declare_inputs
     from scripts._provenance import objective_id, store_path_for
-    from scripts._study_shared import read_study_shard, write_study_shard
+    from scripts._study_shared import TrialPrinter, read_study_shard, write_study_shard
     from silly_kicks.tracking._xcross_attempt_objective import XCrossAttemptObjective
 
     # The id depends on the objective CLASS, never its data, so it is known before the shard check.
@@ -181,7 +181,8 @@ def _hpo_once(
             objective_id=oid,  # pyright: ignore[reportCallIssue]  # B m4: ruthless-efficiency 0.7.0 stub omits objective_id
         ),
     )
-    result = OptunaStrategy(cfg, seed=42).run(obj, backend=InProcessBackend())
+    printer = TrialPrinter(tag, n_trials, metric=cfg.metric)  # HFU spec 14.8: one line per trial
+    result = OptunaStrategy(cfg, seed=42).run(obj, backend=InProcessBackend(), observer=printer)
     if result.best is None:
         raise RuntimeError("HPO produced no best candidate")
     params = dict(result.best.candidate.params)
@@ -634,6 +635,8 @@ def _cohort_files(ctx, records: list[pd.DataFrame], refs: dict, provider_filter)
     so a resumed stage rebuilds the identical cohort (the legacy guard `res.skipped` is 0 by construction)."""
     import tempfile
 
+    from scripts._corpus_identity import canonical_match_id
+
     cohort = _new_probe_cohort()
     for rec in records[:PROBE_KEEP]:
         row = rec.iloc[0]
@@ -642,8 +645,9 @@ def _cohort_files(ctx, records: list[pd.DataFrame], refs: dict, provider_filter)
         cohort["frames"].append(frames.copy())
         cohort["actions"].append(actions.copy())
         cohort["home"] = home
-        cohort["matches"].append([str(row["provider"]), str(row["match_id"])])
-        cohort["match_groups"][str(row["match_id"])] = json.loads(row["groups"])
+        mid = canonical_match_id(str(row["provider"]), str(row["match_id"]))  # not the staged name (HFU spec 18.6)
+        cohort["matches"].append([str(row["provider"]), mid])
+        cohort["match_groups"][mid] = json.loads(row["groups"])
     with tempfile.TemporaryDirectory() as tmp:
         ps = Path(tmp) / "sample"
         _write_probe_sample(ps, cohort, list(provider_filter))
@@ -662,11 +666,12 @@ def _probe_comparison_work(key, ctx) -> FileSet:
     """The reported-not-gated comparison cohort (M5): the first `PROBE_KEEP` TRAINING matches of a
     ``--probe-comparison-providers`` provider whose extraction yielded rows, in the legacy iteration order
     (the legacy main pass captured it in-line). Read from the extract unit results, so nothing re-extracts."""
-    from scripts._stages import read_result, sorted_units
+    from scripts._stages import read_listed, sorted_units
 
     st = ctx.pipeline.stage("extract")
     assert isinstance(st, ItemStage)  # noqa: S101 -- the pipeline declares it so
     gen = ctx.generation("extract")
+    names = ctx.store.names(gen)  # ONE listing for the loop (HFU spec section 3); the reads below stay lazy
     providers = _csv(ctx.params["probe_comparison_providers"])
     refs = st.ref_map(ctx)
     records = []
@@ -674,7 +679,7 @@ def _probe_comparison_work(key, ctx) -> FileSet:
         ref = refs[k]
         if ref.prov not in providers or len(records) >= PROBE_KEEP:
             continue
-        rows = read_result(ctx.store, f"{gen}/{k}")
+        rows = read_listed(ctx.store, gen, k, names)
         if not isinstance(rows, pd.DataFrame) or not len(rows):
             continue
         records.append(_capture_record(ref.prov, ref.mid, rows["_group"].to_numpy()))
@@ -1159,8 +1164,9 @@ def _assemble_work(key, ctx):
         "n_rows": len(inp.X),
         "n_positive": int(np.asarray(inp.y).sum()),
         "providers": canonical_providers(inp.providers),
-        # Corpus IDENTITY (spec section 5): exact ids only for an all-public corpus, else a digest.
-        **corpus_identity(inp.providers.tolist(), inp.match_ids.tolist(), all_public=bool(inp.is_public.all())),
+        # Corpus IDENTITY (spec section 5): always the digest in-job (HFU spec 17.2, owner 2026-11-09: digest only);
+        # `adopt` rehydrates the canonical public ids off-HF.
+        **corpus_identity(inp.providers.tolist(), inp.match_ids.tolist(), all_public=False),
         # ADR-067 M4 caveat, emitted here -- never hand-added at bundling (spec 0.11).
         **reproducibility(shipped, candidates[shipped]["providers"], training_commit=run_prov["commit"]),
         "candidates": candidates,

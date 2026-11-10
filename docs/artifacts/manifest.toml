@@ -1,5 +1,6 @@
 # ADR-128 artifact manifest (spec 5.7). HUMAN-WRITTEN, with ONE exception (spec INV-9, 5.7 step 6): `adopt`
-# sets an adopted artifact's `training_commit` to the verified campaign commit. No tool writes any other field.
+# sets the `training_commit` of each adopted artifact with a `commit_field` to the verified campaign commit. No tool
+# writes any other field.
 #
 # Two field classes (INV-9):
 #   * EXPECTATIONS (this file): declared before a run -- destination, job/variant/tier, certification,
@@ -14,46 +15,13 @@
 # carries is a defect (the corpus-policy test's own rule).
 
 # ---- Re-fit events (cards render these; the version / ADR a card states comes from HERE) -----------------
-[events.f1b]
-version = "4.128.0"
-adr = "ADR-106"
-title = "F1b float32-frame re-fit"
-basis = "on float32-stored frames"
-cite = ""
+[events.launch7]
+version = "4.140.0"
+adr = "ADR-128"
+title = "HF Jobs launch-7 re-fit"
+basis = "on the ADR-128 cycle1 campaign (launch 7)"
+cite = "ADR-128, "
 
-[events.tf65]
-version = "4.134.0"
-adr = "ADR-120"
-title = "TF-65 velocity-gap re-fit"
-basis = "on the corrected floor velocities"
-cite = "TF-65 / ADR-120, "
-
-[events.adr126]
-version = "4.138.0"
-adr = "ADR-126"
-title = "ADR-126 xShot type_id label re-fit"
-basis = "on the corrected type_id shot label"
-cite = "ADR-126, "
-
-# Hub-only events (a Hub training_commit that matches no wheel event gets its own entry; values from
-# CHANGELOG.md). [4.138.0]: "This cleared two defects: the ADR-126 xShot label defect, and the ADR-120
-# floor-velocity staleness the owner-tier Hub artifacts had carried."
-[events.hub_velocity]
-version = "4.138.0"
-adr = "ADR-120"
-title = "ADR-120 floor-velocity Hub re-fit"
-basis = "on the corrected floor velocities"
-cite = "TF-65 / ADR-120, "
-
-# [4.116.0]: the TF-61 xSuccess fit, trained on the full redistributable StatsBomb open-data corpus.
-[events.tf61]
-version = "4.116.0"
-adr = "ADR-095"
-title = "TF-61 xSuccess fit"
-basis = "on the full redistributable StatsBomb open-data corpus"
-cite = "TF-61 / ADR-095, "
-
-# ---- Weights roots (replaces WEIGHTS_CLASSIFICATION; reasons copied verbatim) -----------------------------
 [roots."silly_kicks/tracking/_xshot_weights"]
 classification = "frame_geometry"
 reason = "xShot features from frame positions"
@@ -113,9 +81,9 @@ certification = "public"
 dataset = "xshot17"
 naming = "pergame"
 corpus = "public_ids"
-training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "adr126"
+refit_event = "launch7"
 [artifacts.expect]
 "metadata.json:shipped_variant" = "public"
 "metadata.json:provider_list" = ["idsse", "skillcorner"]
@@ -132,9 +100,9 @@ certification = "public"
 dataset = "xshot17"
 naming = "pergame"
 corpus = "public_ids"
-training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "adr126"
+refit_event = "launch7"
 [artifacts.expect]
 "metadata.json:shipped_variant" = "public"
 "metadata.json:provider_list" = ["idsse", "skillcorner"]
@@ -151,9 +119,9 @@ certification = "public"
 dataset = "xshot17"
 naming = "pergame"
 corpus = "public_ids"
-training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "tf65"
+refit_event = "launch7"
 [artifacts.expect]
 "metadata.json:shipped_variant" = "public"
 "metadata.json:provider_list" = ["idsse", "skillcorner"]
@@ -170,9 +138,9 @@ certification = "public"
 dataset = "xshot17"
 naming = "pergame"
 corpus = "public_ids"
-training_commit = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "f1b"
+refit_event = "launch7"
 [artifacts.expect]
 "metadata.json:shipped_variant" = "public"
 "metadata.json:provider_list" = ["idsse", "skillcorner"]
@@ -188,9 +156,9 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "tf65"
+refit_event = "launch7"
 [artifacts.expect]
 "metadata.json:corpus_provenance.providers" = ["gradientsports", "skillcorner", "sportec"]
 "metadata.json:corpus_provenance.n_games" = 179
@@ -204,9 +172,9 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "f1b"
+refit_event = "launch7"
 [artifacts.expect]
 "metadata.json:corpus_provenance.providers" = ["gradientsports", "skillcorner", "sportec"]
 "metadata.json:corpus_provenance.n_games" = 179
@@ -221,9 +189,9 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "tf65"
+refit_event = "launch7"
 [artifacts.expect]
 "metadata.json:corpus_provenance.providers" = ["gradientsports", "skillcorner", "sportec"]
 "metadata.json:corpus_provenance.n_games" = 179
@@ -237,9 +205,9 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "f1b"
+refit_event = "launch7"
 [artifacts.expect]
 "metadata.json:corpus_provenance.providers" = ["gradientsports", "skillcorner", "sportec"]
 "metadata.json:corpus_provenance.n_games" = 179
@@ -253,9 +221,9 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "tf65"
+refit_event = "launch7"
 [artifacts.expect]
 "metadata.json:corpus_provenance.n_games" = 179
 "metadata.json:corpus_provenance.variant" = "default"
@@ -269,9 +237,9 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "f1b"
+refit_event = "launch7"
 [artifacts.expect]
 "metadata.json:corpus_provenance.n_games" = 179
 "metadata.json:corpus_provenance.variant" = "position_only"
@@ -285,11 +253,12 @@ tier = "owner"
 certification = "owner"
 dataset = "sb360"
 naming = "flat"
-training_commit = "b62c1f24a7a9e3361ce416b402ed27da4a59b9e6"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metrics.json:run_commit"
-refit_event = "f1b"
+refit_event = "launch7"
 card = "silly_kicks/tracking/_receiver_weights/default/MODEL_CARD.md"
 [artifacts.expect]
+"metrics.json:corpus_n_matches" = 30  # the corpus-scope check (HFU spec 14.3)
 "metrics.json:providers_trained" = ["statsbomb"]
 "metrics.json:corpus_visibility" = "restricted"
 
@@ -302,7 +271,7 @@ variant = "default"
 tier = "public"
 certification = "public"
 dataset = "sb_open"
-training_commit = "ae10f8a75c84ef7f8b55297c8ac1d96bbfae8a32"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metrics.json:training_commit"
 
 [[artifacts]]
@@ -313,6 +282,8 @@ variant = "default"
 tier = "public"
 certification = "public"
 dataset = "sb_open"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
+commit_field = "model.json:training_commit"
 
 [[artifacts]]
 id = "expected_passing"
@@ -322,6 +293,8 @@ variant = "default"
 tier = "public"
 certification = "public"
 dataset = "sb_open"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
+commit_field = "metrics.json:training_commit"
 
 [[artifacts]]
 id = "xsuccess"
@@ -331,7 +304,7 @@ variant = "default"
 tier = "public"
 certification = "public"
 dataset = "sb_open"
-training_commit = "12e5677e7301a7201c6c5c18160ef6a655bb5f23"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
 
 [[artifacts]]
@@ -389,9 +362,9 @@ certification = "owner"
 dataset = "xshot115"
 naming = "pergame"
 corpus = "digest"
-training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "adr126"
+refit_event = "launch7"
 card = "docs/huggingface/model-cards/xshot-occurrence-v1-model-card.md"
 wheel_sibling = "xshot_default"
 hub_class = "XShotOccurrenceModel"
@@ -410,9 +383,9 @@ certification = "owner"
 dataset = "xshot115"
 naming = "pergame"
 corpus = "digest"
-training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "adr126"
+refit_event = "launch7"
 card = "docs/huggingface/model-cards/xshot-occurrence-position-only-v1-model-card.md"
 wheel_sibling = "xshot_position_only"
 hub_class = "XShotOccurrenceModel"
@@ -431,9 +404,9 @@ certification = "owner"
 dataset = "xshot115"
 naming = "pergame"
 corpus = "digest"
-training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "hub_velocity"
+refit_event = "launch7"
 card = "docs/huggingface/model-cards/xcross-attempt-v1-model-card.md"
 wheel_sibling = "xcross_default"
 hub_class = "XCrossAttemptModel"
@@ -452,9 +425,9 @@ certification = "owner"
 dataset = "xshot115"
 naming = "pergame"
 corpus = "digest"
-training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "hub_velocity"
+refit_event = "launch7"
 card = "docs/huggingface/model-cards/xcross-attempt-position-only-v1-model-card.md"
 wheel_sibling = "xcross_position_only"
 hub_class = "XCrossAttemptModel"
@@ -472,14 +445,15 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "4095251730ce216decf99ec8e47d8e1162a04a1d"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "hub_velocity"
+refit_event = "launch7"
 card = "docs/huggingface/model-cards/ghost-gk-v1-model-card.md"
 wheel_sibling = "ghost_default"
 hub_class = "GhostGkModel"
 hub_role = "hf_only"
 [artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179  # the corpus-scope check (HFU spec 14.3)
 "metrics.json:variant" = "full"
 
 [[artifacts]]
@@ -491,14 +465,15 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "tf65"
+refit_event = "launch7"
 card = "docs/huggingface/model-cards/ghost-gk-sweeper-v1-model-card.md"
 mirror_of = "ghost_sweeper"
 hub_class = "GhostGkModel"
 hub_role = "mirror"
 [artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179  # the corpus-scope check (HFU spec 14.3)
 "metrics.json:variant" = "sweeper"
 
 [[artifacts]]
@@ -510,14 +485,15 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "f1b"
+refit_event = "launch7"
 card = "docs/huggingface/model-cards/ghost-gk-sweeper-position-only-v1-model-card.md"
 mirror_of = "ghost_sweeper_position_only"
 hub_class = "GhostGkModel"
 hub_role = "mirror"
 [artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179  # the corpus-scope check (HFU spec 14.3)
 "metrics.json:variant" = "sweeper_position_only"
 
 [[artifacts]]
@@ -529,14 +505,15 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "a34e992ed57dd7661ebff6d1c88ac3b75d47a0b5"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "tf65"
+refit_event = "launch7"
 card = "docs/huggingface/model-cards/ghost-outfield-v1-model-card.md"
 mirror_of = "outfield_default"
 hub_class = "GhostOutfieldModel"
 hub_role = "mirror"
 [artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179  # the corpus-scope check (HFU spec 14.3)
 "metadata.json:corpus_provenance.variant" = "default"
 
 [[artifacts]]
@@ -548,14 +525,15 @@ tier = "owner"
 certification = "owner"
 dataset = "tc3"
 naming = "flat"
-training_commit = "3ca609f8ae4003f411f9939dfde38fb320ff00fc"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "f1b"
+refit_event = "launch7"
 card = "docs/huggingface/model-cards/ghost-outfield-position-only-v1-model-card.md"
 mirror_of = "outfield_position_only"
 hub_class = "GhostOutfieldModel"
 hub_role = "mirror"
 [artifacts.expect]
+"metadata.json:corpus_provenance.n_games" = 179  # the corpus-scope check (HFU spec 14.3)
 "metadata.json:corpus_provenance.variant" = "position_only"
 
 [[artifacts]]
@@ -566,9 +544,9 @@ variant = "default"
 tier = "public"
 certification = "public"
 dataset = "sb_open"
-training_commit = "12e5677e7301a7201c6c5c18160ef6a655bb5f23"
+training_commit = "a1a3b52fba07be3c21131c11df765cf7105524b3"
 commit_field = "metadata.json:training_commit"
-refit_event = "tf61"
+refit_event = "launch7"
 card = "silly_kicks/xsuccess/weights/MODEL_CARD.md"
 hub_class = ""
 hub_role = "event_only"

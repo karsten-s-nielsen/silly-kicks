@@ -178,3 +178,11 @@ cross-family perf guard (a second family over a pre-populated shared cache recom
 spying `_cache.compute_pitch_control`); and a wiring completeness gate. Concurrency: a shared
 `PitchControlCache` is a mutable memo, safe single-threaded within one `compute_features` pass (a parallel
 executor gives each worker its own); match-scoped, discarded after the pass.
+
+## Amendment (2026-11-06): D3 superseded — numba is a core dependency
+
+D3's "numba is not a runtime dependency" no longer holds. By owner decision 2026-11-06 (ADR-076 amendment, HFU
+spec §13.2), numba is in `[project] dependencies`. The pitch-control kernels dispatch through
+`silly_kicks._numba_dispatch.use_numba("PITCH_CONTROL")`: the numba kernels by default, the numpy references
+only under `SILLY_KICKS_PITCH_CONTROL_FORCE_NUMPY=1`, and a missing numba raises `NumbaUnavailableError` instead
+of selecting the numpy path silently. The parity tests are unchanged.
