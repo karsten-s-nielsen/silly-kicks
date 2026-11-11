@@ -12,9 +12,26 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scripts import _write_confirm
+
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
+
+
+@pytest.fixture(autouse=True)
+def _empty_write_journal():
+    """Every test under ``tests/scripts/`` starts and ends with an empty write journal.
+
+    ``scripts._write_confirm`` keeps one journal for each process. A job process writes, confirms its writes when
+    it ends, and exits. A test process does not exit between tests: a test that writes to a store and never runs
+    the job exit leaves its entries there. The job exit of a later test then looks for the files of that test and
+    raises ``LostWriteError`` (``test_a_journal_entry_does_not_reach_the_next_test``).
+    """
+    _write_confirm.clear()
+    yield
+    _write_confirm.clear()
+
 
 _GK = 22  # goalkick type_id
 

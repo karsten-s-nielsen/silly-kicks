@@ -5,6 +5,88 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.140.1] — 2026-11-10 — xsuccess fit units + a faster ball-carrier pre-index + campaign hygiene (ADR-128 amendment 2026-11-10) (PR-S204)
+
+> **Why a patch release:** the wheel changes (library code: the ball-carrier pre-index and the `XSuccessModel` fit
+> steps, both with equal output), with no public API change and no bundled artifact change. Every other entry in
+> this section is scripts-only.
+
+### Changed
+
+- **`XSuccessModel` fits through private steps, with no output change.** `fit`, `predict_success`, `to_dict` and
+  `save` compose module-level steps (`_training_arrays`, `_fit_booster`, `_calibration_splits`,
+  `_calibration_fold_proba`, `_calibration_oof`, `_isotonic_thresholds`, `_raw_predict`, `_calibrate`,
+  `_metadata_payload`, `_write_metadata_and_sums`). The explicit calibration loop gives the bytes that
+  `cross_val_predict` gave: an oracle test (the 4.140.0 methods, kept verbatim) compares `model.json`,
+  `metadata.json`, `SHA256SUMS` and the predictions for 5, 4, 3 and 2 calibration splits, fewer than 50 rows, an
+  all-fail corpus and `per_type_logistic`. The public signatures do not change.
+- **`_pre_index_frames` (the ball-carrier pre-index) places player rows in one pass, with no output change.** The
+  per-frame DataFrame and its loop are gone. On a synthetic 20,000-frame match the function takes 0.23 s against
+  4.18 s (18 times faster); on HF the former code took 13.5 to 58 s per match. Every `infer_ball_carrier` caller
+  gets the gain. The former function is kept verbatim as a test oracle; the new one equals it on every named
+  frame table and raises the same exception type where it raised. One observable change: on `category` frame
+  keys the function emitted pandas' `observed=False` `FutureWarning` from three `groupby` calls; it now emits
+  none (the player `groupby` is gone; the ball aggregation and the segments state `observed=True`, the pandas 3
+  default, with equal output).
+- **The xsuccess `fit` stage is 36 units (one xgboost fit each), not one unit with an InnerPool.** The driver
+  shards them over jobs; the reduce assembles the bundle. The bundle bytes are the same (an oracle test on five
+  corpus shapes compares the raw bytes of every file). `scripts/train_xsuccess.py` loses `cross_val_metrics`,
+  `_fit_map`, `_fit_task` and the two progress lines `[progress] xsuccess fold k/n` and `[progress] xsuccess fit
+  k/n`; each unit prints its `[unit] fit/<key>` lines.
+
+### Added (scripts only)
+
+- `campaign <file> compare --staging NEW --baseline OLD`: the parity proof of a launch that changes no model, on
+  one rule (`identity.cross_commit_differences`). `artifact_size_bytes` is a provenance key. The baseline side
+  is its adopted copy (`OLD/_final/`, the shipped form) when it has one, its retrieved files otherwise; each
+  line names the form. Launch 8 against launch 7: 20 of 20 trainer artifacts identical, the census verdict ok
+  (nothing adopted).
+- The driver step line names the Hub requests of the step: `hub requests <total> (plans <p>)`, the
+  controller's own plus those of its `--plan` processes; a rate-limited step names its count. The bounded Hub
+  client counts every request (`hub_client.count_request`), and a `--plan` process of a bucket store prints
+  `[plan] hub requests <n>` on stderr, also when it ends with an error (a 429 inside a plan is in the count). A
+  `--plan` that timed out was killed and reports none: the count of that step is a lower bound.
+- `campaign <file> prune` (list) and `prune --delete --i-have-owner-approval <commit7>`: the scratch run keys of
+  superseded commits. Preflight check 7, `check_storage`: the org's private storage headroom.
+- `units_per_job_by_stage` in a campaign file: one stage's own job size (`cycle1.toml`: the 36 xsuccess fits as
+  12 jobs of 3).
+- `plan()` reports `lost_units` and `lost_output`: a `FileSet` result is present only with every member listed;
+  the driver reruns a lost result and then reports it as lost, not as a crash.
+- `post_verify` loads an artifact without a Hub class (`hub_xsuccess`) with the job loader.
+- `tests/test_bundled_card_citations.py`: every file that a bundled `MODEL_CARD.md` cites exists beside it.
+
+### Fixed (scripts only)
+
+- `retrieve` made up to 32 concurrent store reads (4 instances x 8 counter threads) and drew HTTP 429s: one bound
+  of 8 reads for the whole call.
+- Every `STUCK` line ends with the operator path (`fix the cause, stop the driver, then run resume`).
+- `post_verify` of an artifact without a Hub class empties its download folder first, so a file that an earlier
+  publish left there cannot pass for a file of the Hub. `retrieve` runs each instance's `--plan` call under
+  the read bound. `prune` reads a 403 from the HTTP status code or the storage-limit text only, and a refusal
+  ends with one line. Preflight check 7 fails when a listing entry has no `private` field.
+- **The deadline dump of a job process could end that process.** The job watch armed
+  `faulthandler.dump_traceback_later`, a C thread that reads the frames of a running thread without the GIL.
+  Measured on HF (Python 3.12.14; 40 processes per workload, each with a dump every 0.05 s for 3 s, where
+  production prints one dump per process): ended by a signal (SIGSEGV; one SIGBUS) were 18 of 40 processes during an xgboost
+  fit, 38 of 40 during pandas work, 40 of 40 during `infer_ball_carrier`, 40 of 40 during a numba compile, 36
+  of 40 during the numba import; 0 of 40
+  while the main thread slept. Launch 7 printed no dump, so no job was lost. Now a daemon Python thread prints
+  the dump (`liveness.stack_dump`: every thread's Python stack, the main thread first), at the same times, and
+  every liveness record is one write. Proof on HF: 0 of 320 processes ended over about 14,500 dumps of the new
+  kind, in the same 8 workloads. Cost:
+  while a C extension holds the GIL in one long call, the dump waits for that call (ADR-128 amendment
+  2026-11-10, item 47). A `--plan` process prints the same dump 30 s before the driver ends it
+  (`_stages.arm_plan_deadline`); no `faulthandler` call is left in the campaign code.
+- `tests/scripts/hf_jobs/test_job_liveness.py::test_alive_lines_name_the_stuck_function` failed under load: the
+  test set a deadline 3 s from the parent's clock, and on a loaded PC the dump fired inside the numba import of
+  the watch (and the old `faulthandler` dump then ended the child in 4 of 52 forced runs). The old assert also
+  passed on a dump that named the import. The test is now two tests (the beats; the dump): the child sets its
+  own deadline after the import is warm, and the dump assert reads the dump's own lines.
+- `tests/scripts/test_unit_log_lines.py::test_job_summary_line[ok-0]` failed with `LostWriteError` when it ran
+  in one process after two `test_executor.py` tests (CI runs them in different shards): the tests shared the
+  process-wide write journal of `scripts/_write_confirm.py`. `tests/scripts/conftest.py` now empties the journal
+  around every test under `tests/scripts/`. No product code changes.
+
 ## [4.140.0] — 2026-11-10 — minimal HF Jobs driver + resource-sharing overhaul + numba core + the launch-7 re-fit (ADR-128 amendments 2026-11-02 to 2026-11-10, ADR-076 amendment 2026-11-06) (PR-S203)
 
 > **Why a minor release:** the wheel gains a runtime dependency (numba becomes a core dependency, 2026-11-06), and the

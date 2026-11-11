@@ -137,87 +137,15 @@ def test_card_states_corpus_identity():
     assert f"Corpus identity: 3961 matches, sha256 {'ab' * 32}" in card
 
 
-class _ReversedPool:
-    """An InnerPool whose units complete in reverse submission order (the out-of-order worst case)."""
-
-    workers = 3
-
-    def __init__(self):
-        self.submitted: list[str] = []
-
-    def map_keyed(self, fn, items, *, on_done=None):
-        self.submitted = list(items)
-        out = {}
-        for k in reversed(self.submitted):
-            out[k] = fn(*items[k])
-            if on_done is not None:
-                on_done(k, out[k])
-        return out
-
-
-def test_fit_map_equals_the_serial_fit(tmp_path, capsys):
-    """HFU spec 16.2 (F26): the fold units and the final fit on the pool give the serial metrics and model bytes;
-    the final fit is submitted first; the pool path prints one `fit k/n` line per inner unit."""
-    import re
-
-    import scripts.train_xsuccess as T
-    from silly_kicks.xsuccess import XSuccessModel
-    from tests.scripts.test_progress_lines import _xsuccess_pooled
-
-    pooled = _xsuccess_pooled()
-    serial_metrics = T.cross_val_metrics(pooled, params=None)
-    model = XSuccessModel().fit(pooled, family="xgboost", params=None)
-    model.save(tmp_path / "serial")
-    serial_files = {f.name: f.read_bytes() for f in sorted((tmp_path / "serial").iterdir())}
-    capsys.readouterr()
-
-    pool = _ReversedPool()
-    metrics, files, feature_set = T._fit_map(pool, pooled, family="xgboost", params=None, work=tmp_path / "w")
-    assert metrics == serial_metrics and files == serial_files and feature_set == model.feature_set
-    assert pool.submitted[0] == "final"
-    lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[progress] xsuccess fit ")]
-    assert [ln.split()[3] for ln in lines] == [f"{k}/6" for k in range(1, 7)]
-    assert all(re.fullmatch(r"\[progress\] xsuccess fit \d/6 in \d+\.\d s", ln) for ln in lines), lines
-
-
-def test_fit_stage_plans_the_long_job_limit_and_width_three(tmp_path):
-    """HFU spec 16.2, 16.7: the real plan record of `fit` carries 14,400 s and a 3-wide InnerPool."""
+def test_fit_plans_36_units_without_an_inner_pool(tmp_path):
+    """HFU fit-units spec 3.2: the `fit` stage is a fixed grid of 36 units (one xgboost fit each), with no
+    InnerPool and the default job limit; the deterministic byte proof is `test_xsuccess_fit_units.py`."""
     import scripts.train_xsuccess as T
     from scripts._stages import LocalStore, make_context, plan
     from tests.scripts._stage_harness import PROV, params_from_args
 
     ctx = make_context(T.PIPELINE, params_from_args(T.PIPELINE, []), PROV, store=LocalStore(tmp_path), data_root=None)
     rec = {r["name"]: r for r in plan(ctx)["stages"]}["fit"]
-    assert {k: rec[k] for k in ("timeout_s", "inner_parallel", "inner_width")} == {
-        "timeout_s": 14400,
-        "inner_parallel": True,
-        "inner_width": 3,
-    }
-
-
-def test_a_width_one_pool_runs_the_serial_fit(monkeypatch):
-    """An escalated (width-1) fit runs the serial composition in-process, as the hpo stage does (HFU spec 16.2)."""
-    import types
-
-    import scripts.train_xsuccess as T
-    from tests.scripts._stage_harness import PROV
-    from tests.scripts.test_progress_lines import _xsuccess_pooled
-
-    def no_pool(*a, **k):
-        raise AssertionError("the width-1 fit must not use the pool path")
-
-    upstream = {
-        "extract": _xsuccess_pooled(),
-        "hpo": {"best_params": None},
-        "refs": {"competitions": [[43, 106]], "refs": [{"match_id": "1"}]},
-    }
-    ctx = types.SimpleNamespace(
-        upstream=upstream.__getitem__,
-        params={"family": "xgboost", "hpo_trials": 0},
-        prov=PROV,
-        pool=types.SimpleNamespace(workers=1),
-        summary=lambda stage: {"n_units": 1, "n_failed": 0, "n_excluded": 0},
-        tokens={"extract": "t"},
-    )
-    monkeypatch.setattr(T, "_fit_map", no_pool)
-    assert "model.json" in T._fit_work("only", ctx).files
+    assert rec["n_units"] == 36 and rec["units"] == list(T.FIT_UNITS)
+    assert (rec["inner_parallel"], rec["timeout_s"]) == (False, None)
+    assert not hasattr(T, "_fit_map") and not hasattr(T, "cross_val_metrics")

@@ -1,6 +1,6 @@
 """Job liveness (HFU spec §11, Change 4): every covered in-job Python process prints an ``[alive]`` start line at
 once and a line every 300 s (its unit, the unit's age, its main thread's innermost Python frame and its child
-processes), and arms a `faulthandler` dump 600 s before the job's deadline.
+processes), and prints every thread's stack 600 s before the job's deadline (the deadline dump).
 
 E12 (spec §1.1): a cv job ran 2 h and printed nothing after ``Installed 55 packages``, so a stall and a slow fold
 looked the same. Every entry point is tested through its REAL command line with the deadline variable set; the
@@ -54,23 +54,60 @@ def _start_lines(stderr: str, role: str) -> list[str]:
 
 
 def test_alive_lines_name_the_stuck_function():
+    """The beats. The deadline is far away (the `_run` default), so no dump runs in this child."""
     code = textwrap.dedent(
         """
         import time
         from scripts.hf_jobs.liveness import start_job_watch
         start_job_watch("main", interval_s=0.5)
         def _stall():
-            time.sleep(6)
+            time.sleep(3)
         _stall()
         """
     )
-    p = _run(["-c", code], env=_env(dump_in_s=3))
+    p = _run(["-c", code])
     assert p.returncode == 0, p.stderr
     assert len(_start_lines(p.stderr, "main")) == 1
     beats = [ln for ln in p.stderr.splitlines() if ln.startswith("[alive] t main ") and " up=" in ln]
     assert len(beats) >= 2, p.stderr
     assert all(re.search(r" at=\S+:\d+ _stall ", ln) for ln in beats), beats
-    assert "Timeout (" in p.stderr and "_stall" in p.stderr.split("Timeout (", 1)[1]
+    assert "Timeout (" not in p.stderr
+
+
+def test_the_deadline_dump_names_the_stuck_function():
+    """The dump. Two rules keep this test independent of the PC's load (it failed once under load, 2026-11-10):
+
+    - The child sets its OWN deadline after the numba import is warm. `start_job_watch` arms the dump BEFORE its
+      numba probe, so a deadline 3 s from the PARENT's clock fired inside that import when the import was slow:
+      the dump then named the import, not `_stall`.
+    - No beat runs (a long interval), and the assert reads the DUMP's own line format. A beat line also holds
+      the word `_stall`.
+
+    The dump comes from a Python thread, never from the `faulthandler` watchdog: that watchdog reads the frames of
+    a running thread without the GIL and ended working processes with SIGSEGV (HF jobs `6af366809737d9a9e0914f3a`
+    and `6af3700bab34849891acb4a8`: 18 of 40 processes in an xgboost fit, 38 of 40 in pandas work, 40 of 40 in
+    `infer_ball_carrier`).
+    """
+    code = textwrap.dedent(
+        f"""
+        import os
+        import time
+        from silly_kicks._numba_dispatch import numba_version
+        numba_version()
+        from scripts.hf_jobs.liveness import start_job_watch
+        os.environ[{DEADLINE_ENV!r}] = str(int(time.time()) + {MARGIN_S} + 3)
+        start_job_watch("main", interval_s=3600)
+        def _stall():
+            time.sleep(5)
+        _stall()
+        """
+    )
+    p = _run(["-c", code])
+    assert p.returncode == 0, p.stderr
+    assert len(_start_lines(p.stderr, "main")) == 1
+    assert "Timeout (" not in p.stderr, p.stderr  # the header of a `faulthandler` dump
+    assert len(re.findall(r"^\[alive\] t main pid=\d+ deadline dump: ", p.stderr, flags=re.M)) == 1, p.stderr
+    assert re.search(r'File "<string>", line \d+ in _stall', p.stderr), p.stderr
 
 
 @pytest.mark.parametrize(
@@ -112,19 +149,27 @@ def test_pool_children_start_the_watch():
 
 @pytest.fixture
 def liveness(monkeypatch):
-    """The module with its one-start flag reset, and the thread start and the dump recorded, not run."""
+    """The module with its one-start flag reset. No thread starts: each start is recorded, and the dump
+    thread's target runs at once as a recorder, so ``calls["delay"]`` holds the ``(role, delay)`` that
+    `start_job_watch` gave it. ``calls["dump"]`` records a call of the `faulthandler` watchdog (never made)."""
     import faulthandler
     import threading
 
     import scripts.hf_jobs.liveness as mod
 
-    calls: dict[str, list] = {"dump": [], "thread": []}
+    calls: dict[str, list] = {"dump": [], "thread": [], "delay": []}
+
+    def start(self):
+        calls["thread"].append(self.name)
+        if self.name == "sk-dump":
+            self.run()  # the recorder below, with the arguments the watch gave the thread
+
     monkeypatch.setattr(mod, "_started", False)
     monkeypatch.setattr(faulthandler, "dump_traceback_later", lambda *a, **k: calls["dump"].append((a, k)))
-    monkeypatch.setattr(threading.Thread, "start", lambda self: calls["thread"].append(self.name))
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(mod, "_dump_later", lambda role, delay_s, stop: calls["delay"].append((role, delay_s)))
     mod.calls = calls  # type: ignore[attr-defined]
-    yield mod
-    faulthandler.cancel_dump_traceback_later()
+    return mod
 
 
 def test_run_unit_exposes_the_current_unit(tmp_path):
@@ -195,7 +240,7 @@ def test_no_proc_gives_dash(liveness, tmp_path):
 
 def test_watch_is_off_without_the_deadline(liveness, capsys):
     assert liveness.start_job_watch("main", env={}) is False
-    assert liveness.calls == {"dump": [], "thread": []}
+    assert liveness.calls == {"dump": [], "thread": [], "delay": []}
     assert capsys.readouterr().err == ""
 
 
@@ -204,20 +249,147 @@ def test_malformed_deadline_turns_liveness_off(liveness, capsys, bad):
     assert liveness.start_job_watch("main", env={DEADLINE_ENV: bad}) is False
     err = capsys.readouterr().err.splitlines()
     assert len(err) == 1 and "liveness off" in err[0]
-    assert liveness.calls == {"dump": [], "thread": []}
+    assert liveness.calls == {"dump": [], "thread": [], "delay": []}
 
 
-def test_dump_delay_is_the_deadline_minus_the_margin(liveness, monkeypatch):
-    assert liveness.start_job_watch("main", env={DEADLINE_ENV: str(int(time.time()) + 1000)}) is True
-    (args, kwargs) = liveness.calls["dump"][0]
-    timeout = kwargs.get("timeout", args[0] if args else None)
-    assert 398 <= timeout <= 401 and kwargs.get("repeat") is False
-    assert liveness.calls["thread"] == ["sk-alive"]
+def test_dump_delay_is_the_deadline_minus_the_margin(liveness):
+    now = 1_000_000.0
+    assert liveness.dump_delay_s(1_001_000, "main", now) == 400
+    assert liveness.dump_delay_s(1_001_000, "w0", now) == 390
+    assert liveness.dump_delay_s(999_995, "main", now) == 1  # a process that starts inside the margin: the floor
+
+
+@pytest.mark.parametrize(("role", "margin"), [("main", 600), ("reduce", 601), ("w0", 610), ("w1.pool2", 623)])
+def test_the_dump_thread_gets_the_delay_of_its_role(liveness, monkeypatch, role, margin):
+    """`start_job_watch` gives the dump thread `dump_delay_s(deadline, role, now)`: the deadline minus the
+    role's margin for a far deadline, and the 1 s floor for a process that starts inside its margin."""
+    before = time.time()
+    assert liveness.start_job_watch(role, env={DEADLINE_ENV: str(int(before) + 1000)}) is True
+    after = time.time()
+    ((got_role, delay),) = liveness.calls["delay"]
+    assert got_role == role
+    assert int(before) + 1000 - margin - after <= delay <= int(before) + 1000 - margin - before
+    assert delay > 300  # far from the floor
 
     monkeypatch.setattr(liveness, "_started", False)
-    assert liveness.start_job_watch("main", env={DEADLINE_ENV: str(int(time.time()) - 5)}) is True
-    (args, kwargs) = liveness.calls["dump"][1]
-    assert kwargs.get("timeout", args[0] if args else None) == 1
+    assert liveness.start_job_watch(role, env={DEADLINE_ENV: str(int(time.time()) + margin - 5)}) is True
+    assert liveness.calls["delay"][1] == (role, 1)
+
+
+def test_start_dump_thread_starts_one_named_daemon_thread(liveness):
+    thread = liveness.start_dump_thread("plan", 5.0)
+    assert thread.name == "sk-dump" and thread.daemon is True
+    assert liveness.calls["thread"] == ["sk-dump"] and liveness.calls["delay"] == [("plan", 5.0)]
+
+
+@pytest.mark.parametrize(("value", "delay"), [("600", 570.0), ("31.5", 1.5), ("20", 1.0)])
+def test_the_plan_deadline_starts_the_dump_thread_30_s_before_it(liveness, value, delay):
+    """HFU spec 13.4: a `--plan` process prints its stacks `PLAN_DUMP_LEAD_S` before the driver ends it (1 s at
+    the least), with the dump of the job watch -- never with the `faulthandler` watchdog."""
+    from scripts._stages import PLAN_DUMP_LEAD_S, arm_plan_deadline
+
+    assert PLAN_DUMP_LEAD_S == 30
+    assert arm_plan_deadline({"SILLY_KICKS_PLAN_DEADLINE_S": value}) is True
+    assert liveness.calls["delay"] == [("plan", delay)] and liveness.calls["thread"] == ["sk-dump"]
+    assert liveness.calls["dump"] == []  # `faulthandler.dump_traceback_later` is never called
+
+
+@pytest.mark.parametrize("env", [{}, {"SILLY_KICKS_PLAN_DEADLINE_S": "soon"}])
+def test_no_plan_deadline_starts_nothing(liveness, env):
+    from scripts._stages import arm_plan_deadline
+
+    assert arm_plan_deadline(env) is False
+    assert liveness.calls == {"dump": [], "thread": [], "delay": []}
+
+
+def test_the_watch_starts_a_dump_thread_and_never_the_faulthandler_watchdog(liveness):
+    assert liveness.start_job_watch("main", env={DEADLINE_ENV: str(int(time.time()) + 1000)}) is True
+    assert liveness.calls["thread"] == ["sk-dump", "sk-alive"]  # the dump is armed before the numba probe
+    assert liveness.calls["dump"] == []  # `faulthandler.dump_traceback_later` is never called
+
+
+def test_stack_dump_lists_every_thread_main_first():
+    import threading
+
+    import scripts.hf_jobs.liveness as mod
+
+    gate, ready = threading.Event(), threading.Event()
+
+    def _parked_function():
+        ready.set()
+        gate.wait(30)
+
+    t = threading.Thread(target=_parked_function, name="parked-thread", daemon=True)
+    t.start()
+    assert ready.wait(10)
+    try:
+        text = mod.stack_dump("w3")
+    finally:
+        gate.set()
+        t.join(10)
+    lines = text.splitlines()
+    assert re.fullmatch(r"\[alive\] \S+ w3 pid=\d+ deadline dump: \d+ thread\(s\), most recent call first", lines[0])
+    assert lines[1].startswith("Thread MainThread ") and lines[1].endswith(" [main]:")
+    assert re.fullmatch(r'  File ".*liveness\.py", line \d+ in stack_dump', lines[2])  # the most recent call first
+    assert re.search(
+        r'  File ".*test_job_liveness\.py", line \d+ in test_stack_dump_lists_every_thread_main_first', text
+    )
+    parked = text.split("Thread parked-thread ", 1)[1]
+    assert " in _parked_function" in parked and " [main]" not in parked
+
+
+def test_stack_dump_caps_a_deep_stack():
+    import scripts.hf_jobs.liveness as mod
+
+    def deep(k: int) -> str:
+        return mod.stack_dump("main") if k == 0 else deep(k - 1)
+
+    lines = deep(mod.MAX_DUMP_FRAMES + 50).splitlines()
+    heads = [i for i, ln in enumerate(lines) if ln.startswith("Thread ")]
+    block = lines[heads[0] + 1 : heads[1] if len(heads) > 1 else None]  # the main thread's frames
+    assert sum(ln.startswith("  File ") for ln in block) == mod.MAX_DUMP_FRAMES and block[-1] == "  ..."
+
+
+def test_say_writes_one_record_in_one_write(monkeypatch):
+    """Two threads of a process write (the beats and the dump), and so does the main thread. A record whose
+    text and newline are two writes lets another record land between them (seen in the HF proof job: a dump
+    header on the end of another line)."""
+    import scripts.hf_jobs.liveness as mod
+
+    writes: list[str] = []
+
+    class _Stderr:
+        def write(self, text: str) -> int:
+            writes.append(text)
+            return len(text)
+
+        def flush(self) -> None:
+            writes.append("<flush>")
+
+    monkeypatch.setattr(sys, "stderr", _Stderr())
+    mod._say("a record")
+    assert writes == ["a record\n", "<flush>"]
+
+
+def test_dump_later_prints_once_never_raises_and_stops(capsys, monkeypatch):
+    import threading
+
+    import scripts.hf_jobs.liveness as mod
+
+    mod._dump_later("main", 0.0, threading.Event())
+    assert capsys.readouterr().err.count("deadline dump: ") == 1
+
+    stop = threading.Event()
+    stop.set()
+    mod._dump_later("main", 0.0, stop)  # the watch was stopped: no dump
+    assert capsys.readouterr().err == ""
+
+    def boom(role):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(mod, "stack_dump", boom)
+    mod._dump_later("main", 0.0, threading.Event())  # liveness never fails the job it reports on
+    assert "deadline dump failed: RuntimeError: boom" in capsys.readouterr().err
 
 
 def test_dump_times_of_one_job_never_share_a_second(liveness):

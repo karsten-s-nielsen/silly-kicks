@@ -7,6 +7,7 @@ waiting for response headers: huggingface_hub 2.2.0 builds its client with `time
 
 from __future__ import annotations
 
+import re
 import socket
 import subprocess
 import sys
@@ -48,6 +49,95 @@ def test_installed_client_carries_the_hook():
     client = _http.get_session()
     assert H.bound_request_timeout in client.event_hooks["request"]
     assert len(client.event_hooks["request"]) >= 2  # the library's own hook is kept
+
+
+def test_installed_client_counts_each_request():
+    """Every request the process sends through huggingface_hub is counted (a retry and a listing page are
+    requests too), from any thread."""
+    H.install_timeouts()
+    assert H.count_request in _http.get_session().event_hooks["request"]
+    own0, plans0 = H.request_counts()
+
+    def send():
+        for _ in range(500):
+            H.count_request(httpx2.Request("GET", "http://x/"))
+
+    threads = [threading.Thread(target=send) for _ in range(8)]
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # switch threads as often as possible: a count that is not locked loses updates
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(interval)
+    assert H.request_counts() == (own0 + 4000, plans0)
+
+
+def test_plan_requests_line_round_trip(monkeypatch):
+    """A `--plan` process reports its own count in one stderr line; the controller parses the last such line.
+    A process without the Hub client (a local store) made no Hub request and prints no line."""
+    monkeypatch.setattr(H, "_INSTALLED", False)
+    assert H.plan_requests_line() is None
+    H.install_timeouts()
+    H.count_request(httpx2.Request("GET", "http://x/"))
+    own, _ = H.request_counts()
+    line = H.plan_requests_line()
+    assert line == f"[plan] hub requests {own}" and own >= 1
+    assert H.parse_plan_requests(f"[alive] noise\n[plan] hub requests 3\n{line}\n") == own
+
+
+@pytest.mark.parametrize("stderr", [None, "", "no such line\n", "[plan] hub requests many\n"])
+def test_parse_plan_requests_without_a_count(stderr):
+    assert H.parse_plan_requests(stderr) is None
+
+
+def _plan_run(stderr: str):
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, stdout='{"stages": []}', stderr=stderr)
+
+    return run
+
+
+def test_read_plan_adds_the_requests_of_the_plan_process():
+    """`read_plan` adds the count that the plan process printed to the controller's tally of plan requests; a
+    plan without the line (a local store) adds nothing. The plan JSON is unchanged."""
+    inst = C.Instance("job", "public", "default", "m", (), (), "rk")
+    own0, plans0 = H.request_counts()
+    got = C.read_plan(inst, bucket="ns/b", run=_plan_run("[alive] x\n[plan] hub requests 12\n"))
+    assert got == {"stages": []}
+    assert H.request_counts() == (own0, plans0 + 12)
+    C.read_plan(inst, bucket="ns/b", run=_plan_run(""))
+    assert H.request_counts() == (own0, plans0 + 12)
+
+
+def test_read_plan_adds_the_requests_of_a_failed_plan():
+    """A plan that ends with an error printed its count first (`_stages.main`): `read_plan` adds it, then raises.
+    A 429 inside a plan is the case the count is for."""
+    inst = C.Instance("job", "public", "default", "m", (), (), "rk")
+    own0, plans0 = H.request_counts()
+
+    def run(argv, **kwargs):
+        err = "[plan] hub requests 9\nTraceback (most recent call last):\nHfHubHTTPError: 429 Too Many Requests\n"
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr=err)
+
+    with pytest.raises(RuntimeError, match="Too Many Requests"):
+        C.read_plan(inst, bucket="ns/b", run=run)
+    assert H.request_counts() == (own0, plans0 + 9)
+
+
+def test_read_plan_adds_nothing_for_a_plan_that_timed_out():
+    """A plan past its deadline is killed, so it prints no count: the step line is a lower bound for that step."""
+    inst = C.Instance("job", "public", "default", "m", (), (), "rk")
+    own0, plans0 = H.request_counts()
+
+    def run(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, 1, stderr="[alive] x\n")
+
+    with pytest.raises(C.PlanTimeoutError):
+        C.read_plan(inst, bucket="ns/b", run=run)
+    assert H.request_counts() == (own0, plans0)
 
 
 class _SilentServer:
@@ -146,7 +236,42 @@ def test_read_plan_timeout_carries_stack(monkeypatch):
     msg = str(info.value)
     assert "--plan failed (timeout after 3 s)" in msg
     assert 'File "' in msg and "_hang" in msg, msg
+    # The dump is the Python-thread dump of the job watch (never the `faulthandler` watchdog, whose dump can
+    # end the process it reads): its header starts the detail, and the main thread's hung frame comes first.
+    assert "Timeout (" not in msg, msg
+    detail = msg.split("(timeout after 3 s): ", 1)[1]
+    assert re.match(r"\[alive\] \S+ plan pid=\d+ deadline dump: \d+ thread\(s\)", detail), detail
+    assert detail.index(" in _hang") < detail.index(" in <module>")
 
 
 def test_plan_timeout_is_not_rate_limited():
     assert D._plan_rate_limited(C.PlanTimeoutError("--plan failed (timeout after 600 s): rate limit")) is False
+
+
+def _timeout(stderr) -> subprocess.TimeoutExpired:
+    return subprocess.TimeoutExpired(cmd=["python"], timeout=600, stderr=stderr)
+
+
+def test_plan_timeout_detail_starts_at_the_dump_header():
+    """The detail is the child's dump from its header line; what the child printed before it is dropped."""
+    dump = (
+        "[alive] - plan pid=7 deadline dump: 2 thread(s), most recent call first\n"
+        "Thread MainThread (0x1) [main]:\n"
+        '  File "store.py", line 10 in _hang\n'
+        '  File "plan.py", line 3 in <module>\n'
+        "Thread sk-dump (0x2):\n"
+        '  File "liveness.py", line 9 in stack_dump\n'
+    )
+    err = "a warning line\nanother line\n" + dump
+    assert C._plan_timeout_detail(_timeout(err)) == dump
+    assert C._plan_timeout_detail(_timeout(err.encode("utf-8"))) == dump  # POSIX gives bytes
+    long = dump + "".join(f'  File "deep.py", line {i} in level{i}\n' for i in range(400))
+    kept = C._plan_timeout_detail(_timeout("noise\n" + long))
+    assert len(kept) == C.PLAN_DUMP_KEEP_CHARS and kept.startswith("[alive] - plan pid=7 deadline dump: ")
+
+
+def test_plan_timeout_detail_without_a_dump_is_the_stderr_tail():
+    err = "x" * 5000 + "the last line"
+    got = C._plan_timeout_detail(_timeout(err))
+    assert len(got) == C.PLAN_DUMP_KEEP_CHARS and got.endswith("the last line")
+    assert C._plan_timeout_detail(_timeout(None)) == ""

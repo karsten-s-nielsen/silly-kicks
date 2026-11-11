@@ -1250,3 +1250,18 @@ def test_cluster_surrogate_never_rescores_the_period_per_draw():
     assert few[0] == many[0] == 4  # 1 period x 2 teams x 2 axes -- not windows x draws
     assert many[1] > 0  # non-vacuity: the batched null actually ran
     assert few[1] == many[1]  # one kernel call per scored (window, team, axis), independent of the draw count
+
+
+# ============================ ball-carrier pre-index (HFU fit-units spec 4.5) ============================
+def test__pre_index_frames_is_subquadratic():
+    """The one pass over the placed player rows: rows scanned by masks, groupbys and takes grow with the frames."""
+    from silly_kicks.tracking._ball_carrier import _pre_index_frames
+    from tests.tracking.test_pre_index_oracle_equality import _match
+
+    def measure(n):
+        frames = _match(n_frames=n, n_players=6)
+        with rows_scanned_counter() as c:
+            _pre_index_frames(frames)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(64, 256, 1024), label="_pre_index_frames")

@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import time
@@ -94,6 +95,12 @@ def _artifact_dir(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
     return staging / inst_id
 
 
+def _final_dir(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
+    """``<staging>/_final/<instance>/``: the adopted copy of one instance. :func:`_finalize` writes it;
+    :func:`compare_staging` reads it on the baseline side."""
+    return staging / "_final" / inst_id
+
+
 def _open_data_dir(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
     """The open-data cache of one statsbomb_open head-to-head (HFU spec 17.5): one folder per instance, so no two
     concurrent verify workers download into one folder."""
@@ -164,6 +171,25 @@ def _counters(
     return {"totals": totals, "n_counters_unrecorded": missing, "n_read": len(present)}
 
 
+class _BoundedReads:
+    """A store whose ``read_bytes`` and ``names`` hold one shared semaphore: the read bound of `retrieve`. Every
+    other attribute is the wrapped store's."""
+
+    def __init__(self, store: Any, bound: Any) -> None:
+        self._store, self._bound = store, bound
+
+    def read_bytes(self, rel: str) -> bytes | None:
+        with self._bound:
+            return self._store.read_bytes(rel)
+
+    def names(self, rel_dir: str) -> set[str]:
+        with self._bound:
+            return self._store.names(rel_dir)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._store, name)
+
+
 def retrieve(
     c: Campaign,
     commit: str,
@@ -174,24 +200,37 @@ def retrieve(
     plan_fn: Callable[..., dict] = read_plan,
     store_fn: Callable[[str], Any] | None = None,
     workers: int = 4,
+    read_workers: int = 8,
 ) -> dict[str, pathlib.Path]:
     """Copy every reduced instance output into ``<staging>/<run_key>/<variant>/`` (never into the repo),
     with ``<instance>.record.json`` beside it: the job's recorded token inputs per stage and the extract
     counters. An instance whose output stage is not reduced is skipped (and absent from the result). Up to
     ``workers`` instances at once (HFU spec 17.5): each ``[retrieve]`` line prints when its instance ends; the
-    result is in instance order."""
+    result is in instance order. At most ``read_workers`` store reads or listings run at once over ALL instances
+    (HFU fit-units spec C1): 4 instances x 8 counter threads gave 32 concurrent reads and HTTP 429s. An
+    instance's ``--plan`` call reads the store too (one request at a time), so it holds one slot of the bound."""
     import concurrent.futures
+    import threading
 
     from scripts.hf_jobs.store import BucketStore
 
     staging = _outside_repo(staging)
-    open_store = store_fn or (lambda uri: dataclasses.replace(BucketStore.from_uri(uri), api=api))
+    make_store = store_fn or (lambda uri: dataclasses.replace(BucketStore.from_uri(uri), api=api))
+    bound = threading.BoundedSemaphore(max(1, read_workers))
+
+    def open_store(uri: str) -> Any:
+        return _BoundedReads(make_store(uri), bound)
+
+    def bounded_plan(inst: Instance, **kwargs: Any) -> dict:
+        with bound:  # a `--plan` subprocess reads the store one request at a time: it holds one slot
+            return plan_fn(inst, **kwargs)
+
     insts = instances(c, commit, replica=replica)
 
     def one(item: tuple[int, Instance]) -> pathlib.Path | None:
         i, inst = item
         return _retrieve_one(
-            inst, i, len(insts), c=c, commit=commit, staging=staging, plan_fn=plan_fn, open_store=open_store
+            inst, i, len(insts), c=c, commit=commit, staging=staging, plan_fn=bounded_plan, open_store=open_store
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
@@ -831,7 +870,7 @@ def _finalize(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
 
     from scripts._corpus_identity import canonical_probe_ids
 
-    src, dst = _artifact_dir(staging, inst_id), staging / "_final" / inst_id
+    src, dst = _artifact_dir(staging, inst_id), _final_dir(staging, inst_id)
     if dst.exists():
         shutil.rmtree(dst)
     dst.mkdir(parents=True)
@@ -1131,7 +1170,8 @@ def publish(
     ``silly-kicks/sandbox-<name>`` repos, created private BEFORE the ADR-088 seam (whose own
     ``create_repo(exist_ok=True)`` then finds them). A public target needs ``--i-have-owner-approval <repo>``
     for EVERY target repo. Each publish is post-verified: a model-only file set, the remote SHA256SUMS equal
-    to the local one, README equal to `card_bytes(card)`, and a ``from_hub`` round-trip in ``.venv-hfjobs``."""
+    to the local one, README equal to `card_bytes(card)`, and a load round-trip in ``.venv-hfjobs`` (``from_hub``,
+    or the job loader for an artifact without a Hub class; see `post_verify`)."""
     from scripts._hub_publish import MODEL_ONLY_ALLOWLIST, card_bytes, publish_model_with_card
 
     staging = _outside_repo(staging)
@@ -1161,7 +1201,14 @@ def publish(
         results[a.id] = {
             "repo": repo,
             **post_verify(
-                api, repo, a, d, run=run, allowlist=MODEL_ONLY_ALLOWLIST, card=card_bytes(REPO_ROOT / (a.card or ""))
+                api,
+                repo,
+                a,
+                d,
+                run=run,
+                allowlist=MODEL_ONLY_ALLOWLIST,
+                card=card_bytes(REPO_ROOT / (a.card or "")),
+                staging=staging,
             ),
         }
     (staging / "publish.json").write_text(json.dumps(results, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1177,8 +1224,14 @@ def post_verify(
     run: Callable[..., Any],
     allowlist: Sequence[str],
     card: bytes,
+    staging: pathlib.Path,
 ) -> dict:
-    """What the Hub holds after a publish: model-only, the local SHA256SUMS, the rendered card, loadable."""
+    """What the Hub holds after a publish: model-only, the local SHA256SUMS, the rendered card, loadable.
+
+    The load round trip: an artifact that declares a ``hub_class`` loads with that class's ``from_hub``; an
+    artifact without one (``hub_class = ""``, e.g. xsuccess: its class has no ``from_hub``) loads the PUBLISHED
+    files, downloaded to ``<staging>/_post_verify/<repo name>/`` (emptied first, so a file that an earlier run
+    left there cannot pass for a file of the Hub), with the job loader (`load_check`)."""
     files = sorted(s.rfilename for s in (api.model_info(repo).siblings or []))
     problems = []
     nested = [f for f in files if "/" in f]
@@ -1195,9 +1248,100 @@ def post_verify(
     ).read_bytes()
     if readme.replace(b"\r\n", b"\n") != card:
         problems.append("README.md differs from card_bytes(card)")
-    mod, _, cls = LOADERS[a.job].partition(":")
-    code = f"import importlib,sys; getattr(importlib.import_module({mod!r}), {cls!r}).from_hub(sys.argv[1])"
-    p = run([str(HFJOBS_PYTHON), "-c", code, repo], capture_output=True, text=True, check=False, cwd=REPO_ROOT)
-    if p.returncode != 0:
-        problems.append(f"from_hub failed: {(p.stderr or '')[-500:]}")
+    if a.hub_class:
+        mod, _, cls = LOADERS[a.job].partition(":")
+        code = f"import importlib,sys; getattr(importlib.import_module({mod!r}), {cls!r}).from_hub(sys.argv[1])"
+        p = run([str(HFJOBS_PYTHON), "-c", code, repo], capture_output=True, text=True, check=False, cwd=REPO_ROOT)
+        if p.returncode != 0:
+            problems.append(f"from_hub failed: {(p.stderr or '')[-500:]}")
+    else:
+        dest = pathlib.Path(staging) / "_post_verify" / repo.partition("/")[2]
+        if dest.exists():  # load ONLY what this call downloads: a file of an earlier run is not the Hub's
+            shutil.rmtree(dest)
+        api.snapshot_download(repo_id=repo, repo_type="model", local_dir=dest)
+        err = load_check(a.job, dest, run=run)
+        if err is not None:
+            problems.append(f"load failed: {err[-500:]}")
     return {"ok": not problems, "problems": problems, "files": files}
+
+
+# ---- compare (HFU fit-units spec 6 step 3) -----------------------------------------------------------
+
+
+def _staging_run_key(folder: pathlib.Path, campaign: str, job: str, tier: str) -> pathlib.Path | None:
+    """The one ``<campaign>-<commit7>-<job>-<tier>`` folder of ``folder``; ``None`` when there is none. Two
+    matches are ambiguous and refuse."""
+    import re
+
+    pattern = re.compile(rf"^{re.escape(campaign)}-[0-9a-f]{{7}}-{re.escape(job)}-{re.escape(tier)}$")
+    hits = sorted(p for p in folder.iterdir() if p.is_dir() and pattern.fullmatch(p.name))
+    if len(hits) > 1:
+        raise AdoptionRefusedError(f"{folder}: {len(hits)} run keys for {job}-{tier}: {[p.name for p in hits]}")
+    return hits[0] if hits else None
+
+
+def _commit_file(job: str, tier: str, variant: str, man: mf.Manifest) -> str | None:
+    """The file that the instance's manifest ``commit_field`` names, when it is not one of
+    `identity.NORMALIZED` (``model.json`` for match_outcome)."""
+    from scripts.hf_jobs.identity import NORMALIZED
+
+    files = {
+        a.commit_field.partition(":")[0]
+        for a in man.artifacts.values()
+        if (a.job, a.variant, a.tier) == (job, variant, tier) and a.commit_field
+    } - set(NORMALIZED)
+    if len(files) > 1:
+        raise AdoptionRefusedError(f"{job}-{tier}/{variant}: more than one commit file {sorted(files)}")
+    return next(iter(files), None)
+
+
+def compare_staging(c: Any, *, staging: pathlib.Path, baseline: pathlib.Path) -> dict[str, dict]:
+    """Compare the artifacts of two launches, instance by instance (local files only).
+
+    The NEW side is always its RETRIEVED files (``<staging>/<run_key>/<variant>/``): a job must write the shipped
+    form itself. The BASELINE side is its adopted copy (:func:`_final_dir`, the files that `adopt` finalized and
+    `publish` uploaded) when the baseline has one for the instance, its retrieved files otherwise: the baseline of
+    a parity proof is what shipped (launch 8: the retrieved xCross ``metrics.json`` of launch 7 held staged probe
+    names, its adopted copy the canonical ids of HFU spec 18.6, which the trainer writes now).
+
+    One entry per ``<job>-<tier>/<variant>`` of the campaign, in campaign order. A trainer instance:
+    ``{"identical", "differences", "baseline"}`` under `identity.cross_commit_differences`, where ``baseline`` is
+    ``"adopted"`` or ``"retrieved"`` (the form that was read); an instance whose retrieved folder is absent on a
+    side is a difference and names no form. A driver instance (the census): ``{"census_ok", "certification"}`` from
+    ``<staging>/verify.json`` -- ok only when the file exists, names the commit of the staging run keys, and the
+    instance's row is ``ok``."""
+    from scripts.hf_jobs.identity import cross_commit_differences
+    from scripts.hf_jobs.registry import DriverSpec, spec_for
+
+    staging, baseline = pathlib.Path(staging), pathlib.Path(baseline)
+    man = mf.load()
+    verify_path = staging / "verify.json"
+    verify = _read_json(verify_path) if verify_path.is_file() else None
+    out: dict[str, dict] = {}
+    for j in c.jobs:
+        new_rk = _staging_run_key(staging, c.name, j.job, j.tier)
+        old_rk = _staging_run_key(baseline, c.name, j.job, j.tier)
+        for v in j.variants:
+            key = f"{j.job}-{j.tier}/{v}"
+            if isinstance(spec_for(j.job), DriverSpec):
+                row = (verify or {}).get("instances", {}).get(f"{new_rk.name}/{v}") if new_rk is not None else None
+                commit7 = new_rk.name[len(c.name) + 1 :][:7] if new_rk is not None else ""
+                ok = bool(row and row.get("ok") and str((verify or {}).get("commit", "")).startswith(commit7))
+                out[key] = {"census_ok": ok, "certification": (row or {}).get("certification")}
+                continue
+            new_dir = new_rk / v if new_rk is not None else None
+            old_dir = old_rk / v if old_rk is not None else None
+            if new_dir is None or old_dir is None or not new_dir.is_dir() or not old_dir.is_dir():
+                out[key] = {"identical": False, "differences": ["present in only one staging folder"]}
+                continue
+            adopted = _final_dir(baseline, old_dir.relative_to(baseline).as_posix())
+            form = "adopted" if adopted.is_dir() else "retrieved"
+            base_dir = adopted if form == "adopted" else old_dir
+            diffs = cross_commit_differences(new_dir, base_dir, commit_file=_commit_file(j.job, j.tier, v, man))
+            out[key] = {"identical": not diffs, "differences": diffs, "baseline": form}
+    return out
+
+
+def compare_ok(result: Mapping[str, Mapping[str, Any]]) -> bool:
+    """True when every trainer instance is identical and every driver instance is ``census_ok``."""
+    return all(row.get("identical", row.get("census_ok")) is True for row in result.values())

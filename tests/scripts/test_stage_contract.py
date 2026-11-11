@@ -323,3 +323,87 @@ def test_a_memory_failure_below_the_attempt_limit_is_deferred_not_failed(tmp_pat
     for _ in range(s.UNIT_ATTEMPTS - 1):
         s.record_memory_failure(ctx.store, gen, "0001", "over its memory cap")
     assert s.deferred_memory_units(ctx, st, ["0001"]) == set()  # spent: a real failure now
+
+
+# ---- a FileSet result is present only with its members (HFU fit-units spec C4) ------------------------
+
+
+def _fileset_pipeline():
+    """`prep`: one FileSet unit and a FileSet output; `use`: a consumer; `rows`: a parquet unit (never checked)."""
+    return _p(
+        stages=(
+            s.Stage(
+                name="prep",
+                units=lambda c: ["only"],
+                work=lambda k, c: s.FileSet({"X.npy": b"x" * 9, "sub/ids.npy": b"i" * 4}),
+                reduce=lambda r, c: s.FileSet({"out.bin": b"o"}),
+            ),
+            s.Stage(name="use", units=lambda c: ["only"], work=lambda k, c: {"n": 1}, needs=("prep",)),
+            s.Stage(name="rows", units=lambda c: ["only"], work=lambda k, c: pd.DataFrame({"a": [1]})),
+        )
+    )
+
+
+def _fileset_ctx(tmp_path):
+    ctx = _ctx(tmp_path, pipeline=_fileset_pipeline())
+    assert s.run_unit(ctx, ctx.pipeline.stage("prep"), "only", worker="w0") == "done"
+    s.reduce_stage(ctx, "prep")
+    assert s.run_unit(ctx, ctx.pipeline.stage("rows"), "only", worker="w0") == "done"
+    return ctx
+
+
+def _stage(ctx, name):
+    return next(r for r in s.plan(ctx)["stages"] if r["name"] == name)
+
+
+def test_a_complete_fileset_is_unchanged(tmp_path):
+    ctx = _fileset_ctx(tmp_path)
+    prep, use = _stage(ctx, "prep"), _stage(ctx, "use")
+    assert (prep["done"], prep["pending"], prep["reduced"]) == (1, 0, True)
+    assert (prep["lost_units"], prep["lost_output"], use["ready"]) == ([], False, True)
+
+
+def test_a_marker_without_members_is_a_lost_pending_unit(tmp_path):
+    """The launch-7 state: the small marker landed, the large members did not."""
+    import shutil
+
+    ctx = _fileset_ctx(tmp_path)
+    shutil.rmtree(tmp_path / ctx.generation("prep") / "only.files")
+    prep, use = _stage(ctx, "prep"), _stage(ctx, "use")
+    assert (prep["done"], prep["pending"], prep["pending_units"]) == (0, 1, ["only"])
+    assert prep["lost_units"] == ["only"] and prep["reduced"] is False
+    assert use["ready"] is False
+
+
+def test_some_members_missing_is_lost(tmp_path):
+    ctx = _fileset_ctx(tmp_path)
+    (tmp_path / ctx.generation("prep") / "only.files" / "sub" / "ids.npy").unlink()  # a nested member
+    assert _stage(ctx, "prep")["lost_units"] == ["only"]
+
+
+def test_a_memberless_output_beside_complete_units(tmp_path):
+    import shutil
+
+    ctx = _fileset_ctx(tmp_path)
+    shutil.rmtree(tmp_path / ctx.generation("prep") / "_output.files")
+    prep, use = _stage(ctx, "prep"), _stage(ctx, "use")
+    assert (prep["lost_units"], prep["lost_output"], prep["reduced"]) == ([], True, False)
+    assert prep["done"] == 1 and use["ready"] is False
+
+
+def test_a_garbled_marker_is_lost_not_a_crash(tmp_path):
+    ctx = _fileset_ctx(tmp_path)
+    (tmp_path / ctx.generation("prep") / "only.fileset.json").write_bytes(b'{"files": {"X.n')  # a part upload
+    prep = _stage(ctx, "prep")
+    assert prep["lost_units"] == ["only"] and prep["reduced"] is False
+
+
+def test_a_parquet_result_is_never_read_by_the_check(tmp_path, monkeypatch):
+    ctx = _fileset_ctx(tmp_path)
+    reads: list[str] = []
+    real = s.LocalStore.read_bytes
+    monkeypatch.setattr(s.LocalStore, "read_bytes", lambda self, rel: (reads.append(rel), real(self, rel))[1])
+    rows = _stage(ctx, "rows")
+    assert (rows["done"], rows["lost_units"]) == (1, [])
+    assert not any(r.startswith(ctx.generation("rows")) and r.endswith(".parquet") for r in reads)
+    assert any(r.endswith("only.fileset.json") for r in reads)  # the FileSet marker IS read (non-vacuity)

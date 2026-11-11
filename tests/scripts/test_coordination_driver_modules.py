@@ -36,6 +36,17 @@ import silly_kicks.spadl.config as spadlconfig  # noqa: E402
 from silly_kicks.coordination import CoordinationParams  # noqa: E402
 from tests.coordination._fixtures import make_coordination_actions, make_coordination_match  # noqa: E402
 
+# Every frame table these tests build also runs through the pre-index ORACLE (HFU fit-units spec 4.3).
+pytestmark = pytest.mark.usefixtures("shadow_pre_index_oracle")
+
+
+def test_the_shadow_ran(shadow_pre_index_oracle):
+    """Non-vacuity of the oracle shadow in this directory: one carrier inference goes through the wrapper."""
+    from silly_kicks.tracking import infer_ball_carrier
+
+    infer_ball_carrier(_two_possession_match(gap_lo=7.0, gap_hi=9.0))
+    assert shadow_pre_index_oracle["n"] > 0
+
 
 # --------------------------------------------------------------------------- codegen
 def test_codegen_reproduces_the_committed_derivation_module():

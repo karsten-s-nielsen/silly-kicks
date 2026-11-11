@@ -177,20 +177,36 @@ def _xsuccess_pooled(n: int = 400, seed: int = 0) -> pd.DataFrame:
     )
 
 
-@pytest.mark.parametrize("trainer", ["pass_completion", "xsuccess"])
-def test_native_fit_stages_print_fold_lines(trainer, capsys):
-    """HFU spec 15.3: the native pass_completion and xsuccess ``fit`` CV loops print one fold line per fold."""
-    if trainer == "xsuccess":
-        from scripts.train_xsuccess import cross_val_metrics
+def test_native_fit_stages_print_fold_lines(capsys):
+    """HFU spec 15.3: the native pass_completion ``fit`` CV loop prints one fold line per fold. (The xsuccess
+    ``fit`` is 36 stage units since the HFU fit-units cycle: each prints its `[unit]` line, below.)"""
+    from scripts.train_pass_completion import cross_val_metrics
 
-        cross_val_metrics(_xsuccess_pooled(), params=None)
-    else:
-        from scripts.train_pass_completion import cross_val_metrics
+    cross_val_metrics(_xsuccess_pooled())
+    lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[progress] pass_completion fold ")]
+    assert len(lines) == 5, lines
+    for k, ln in enumerate(lines, start=1):
+        assert re.fullmatch(rf"\[progress\] pass_completion fold {k}/5 in \d+\.\d s", ln), ln
 
-        cross_val_metrics(_xsuccess_pooled())
-    lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith(f"[progress] {trainer} fold ")]
-    assert [ln.split()[3] for ln in lines] == [f"{k}/5" for k in range(1, 6)]
-    assert all(re.fullmatch(rf"\[progress\] {trainer} fold \d/5 in \d+\.\d s", ln) for ln in lines), lines
+
+def test_an_xsuccess_fit_unit_prints_its_unit_lines(tmp_path, capsys):
+    """HFU fit-units spec 3.2: the `[progress] xsuccess fold` and `[progress] xsuccess fit` lines are gone with
+    the serial and the InnerPool fit; a `fit` unit prints the `[unit]` start and done lines of every stage unit."""
+    import scripts.train_xsuccess as T
+    from scripts import _stages as s
+    from tests.scripts._stage_harness import PROV, params_from_args
+
+    ctx = s.make_context(
+        T.PIPELINE, params_from_args(T.PIPELINE, []), PROV, store=s.LocalStore(tmp_path), data_root=None
+    )
+    s.write_result(ctx.store, f"{ctx.generation('extract')}/_output", _xsuccess_pooled(n=120))
+    s.write_result(ctx.store, f"{ctx.generation('hpo')}/_output", {"best_params": None})
+    capsys.readouterr()
+    assert s.run_unit(ctx, T.PIPELINE.stage("fit"), "fold0-cal0", worker="w0") == "done"
+    err = capsys.readouterr().err
+    assert "[unit] fit/fold0-cal0 start" in err
+    assert re.search(r"\[unit\] fit/fold0-cal0 done in \d+\.\d s", err), err
+    assert "[progress] xsuccess" not in err
 
 
 def test_xsuccess_hpo_prints_one_line_per_trial(capsys):

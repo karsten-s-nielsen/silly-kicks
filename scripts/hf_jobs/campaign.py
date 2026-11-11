@@ -68,6 +68,14 @@ class Campaign:
     backoff_max_s: float = 300.0
     #: Memory sizing hint: peak RSS bytes keyed by "job/stage" for the memory-heavy stages only.
     peak_rss_by_stage: Mapping[str, int] = dataclasses.field(default_factory=dict)
+    #: A stage's own job size, keyed by "job/stage": it replaces `units_per_job` for that stage (HFU fit-units
+    #: spec 3.4: the 36 xsuccess fits run as 12 jobs of 3, the width that their memory allows).
+    units_per_job_by_stage: Mapping[str, int] = dataclasses.field(default_factory=dict)
+    #: Preflight check 7 (`preflight.check_storage`): the org's private storage must leave the headroom under
+    #: the limit. The limit is 100 GB (owner-verified 2026-11-10, the HF billing page); the headroom is two
+    #: campaigns and a margin.
+    storage_limit_bytes: int = 100_000_000_000
+    storage_headroom_bytes: int = 20_000_000_000
 
     def mount_cap_for(self, dataset: str) -> int:
         return int(self.mount_cap_by_dataset.get(dataset, self.mount_cap))
@@ -122,6 +130,9 @@ def load_campaign(path: str | pathlib.Path) -> Campaign:
         launch_batch=int(c.get("launch_batch", defaults["launch_batch"].default)),
         backoff_max_s=float(c.get("backoff_max_s", defaults["backoff_max_s"].default)),
         peak_rss_by_stage={str(k): int(v) for k, v in (c.get("peak_rss_by_stage") or {}).items()},
+        units_per_job_by_stage={str(k): int(v) for k, v in (c.get("units_per_job_by_stage") or {}).items()},
+        storage_limit_bytes=int(c.get("storage_limit_bytes", defaults["storage_limit_bytes"].default)),
+        storage_headroom_bytes=int(c.get("storage_headroom_bytes", defaults["storage_headroom_bytes"].default)),
     )
 
 
@@ -206,44 +217,33 @@ class PlanTimeoutError(RuntimeError):
     """A ``--plan`` read passed its deadline; the message holds the child's dumped stack."""
 
 
-#: How much of the child's faulthandler dump a plan-timeout report keeps (from the dump's start).
+#: How much of the child's stack dump a plan-timeout report keeps (from the dump's start).
 PLAN_DUMP_KEEP_CHARS = 3000
 
 
 def _plan_timeout_detail(exc: subprocess.TimeoutExpired) -> str:
-    """The child's faulthandler dump, from its start: the dump lists the most recent call FIRST, so its head holds
-    the frame where the plan hung. Without a dump, the stderr tail.
+    """The child's stack dump from its header line (`liveness.stack_dump`: the main thread and the most recent call
+    FIRST, so its head holds the frame where the plan hung). Without a dump, the stderr tail.
     ``TimeoutExpired.stderr`` is ``bytes`` on POSIX even with ``text=True`` and ``str`` on Windows."""
+    from scripts.hf_jobs.liveness import DUMP_MARK
+
     err = exc.stderr
     if isinstance(err, bytes):
         err = err.decode("utf-8", errors="replace")
     err = err or ""
-    start = err.rfind("Timeout (")
-    if start < 0:
+    mark = err.rfind(DUMP_MARK)
+    if mark < 0:
         return err[-PLAN_DUMP_KEEP_CHARS:]
-    return _main_thread_first(err[start:])[:PLAN_DUMP_KEEP_CHARS]
-
-
-def _main_thread_first(dump: str) -> str:
-    """faulthandler dumps the main thread LAST; move its block (the one whose outermost frame is ``<module>``) right
-    after the ``Timeout (...)!`` header, so the kept head names the frame where the plan hung."""
-    header, _, body = dump.partition("\n")
-    blocks, current = [], []
-    for line in body.splitlines():
-        if line.startswith(("Thread 0x", "Current thread 0x")) and current:
-            blocks.append(current)
-            current = []
-        current.append(line)
-    if current:
-        blocks.append(current)
-    main = [b for b in blocks if any(ln.rstrip().endswith(" in <module>") for ln in b)]
-    rest = [b for b in blocks if b not in main]
-    return "\n".join([header, *("\n".join(b) for b in [*main, *rest])])
+    return err[err.rfind("\n", 0, mark) + 1 :][:PLAN_DUMP_KEEP_CHARS]
 
 
 def read_plan(inst: Instance, *, bucket: str, run=subprocess.run) -> dict:
     """The instance's ``--plan`` JSON against its bucket store (read-only; the module is the authority). A read past
-    ``PLAN_TIMEOUT_S`` is killed and raises ``PlanTimeoutError`` with the child's dumped stack."""
+    ``PLAN_TIMEOUT_S`` is killed and raises ``PlanTimeoutError`` with the child's dumped stack. The Hub request
+    count that the plan process prints is added to `hub_client`'s tally, also for a plan that ended with an error
+    (a 429 inside the plan). A plan that timed out was killed and reports none."""
+    from scripts.hf_jobs.hub_client import add_plan_requests, parse_plan_requests
+
     argv = [sys.executable, "-m", inst.module, *inst.args, "--plan", "--store", store_uri(bucket, inst.run_key)]
     env = {**os.environ, PLAN_DEADLINE_ENV: str(PLAN_TIMEOUT_S)}
     try:
@@ -252,6 +252,9 @@ def read_plan(inst: Instance, *, bucket: str, run=subprocess.run) -> dict:
         raise PlanTimeoutError(
             f"{inst.id}: --plan failed (timeout after {PLAN_TIMEOUT_S} s): {_plan_timeout_detail(exc)}"
         ) from None
+    sent = parse_plan_requests(p.stderr)
+    if sent is not None:
+        add_plan_requests(sent)
     if p.returncode != 0:
         raise RuntimeError(f"{inst.id}: --plan failed (rc={p.returncode}): {(p.stderr or '')[-2000:]}")
     return json.loads(p.stdout)
@@ -287,9 +290,9 @@ def _running(jobs: Iterable[Any]) -> tuple[dict[tuple[str, str], set[str]], dict
 
 
 def cmd_preflight(c: Campaign, commit: str, *, api: Any) -> dict:
-    """The six no-spend checks; uploads the report the launch gate (``preflight.require_preflight``, called
-    by ``driver.step``) requires (spec 5.4): commit pushed and green, lockfile and image, API contract,
-    datasets, every instance's ``--plan``."""
+    """The seven no-spend checks; uploads the report the launch gate (``preflight.require_preflight``, called
+    by ``driver.step``) requires (spec 5.4): commit pushed and green, lockfile and image, numba, API contract,
+    datasets, every instance's ``--plan``, and the org's storage headroom (HFU fit-units spec C3)."""
     from scripts.hf_jobs import preflight
     from scripts.hf_jobs.store import BucketStore
 
@@ -303,6 +306,15 @@ def cmd_preflight(c: Campaign, commit: str, *, api: Any) -> dict:
             ("check_api", lambda: preflight.check_api(api)),
             ("check_datasets", lambda: preflight.check_datasets(names, api=api)),
             ("check_plans", lambda: preflight.check_plans(insts)),
+            (
+                "check_storage",
+                lambda: preflight.check_storage(
+                    api,
+                    org=c.bucket.split("/")[0],
+                    limit_bytes=c.storage_limit_bytes,
+                    headroom_bytes=c.storage_headroom_bytes,
+                ),
+            ),
         ]
     )
     report = preflight.assemble_report(c.name, commit, c.sha256, checks)

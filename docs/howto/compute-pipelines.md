@@ -50,9 +50,14 @@ module to read only staged datasets (the I1 gate, below).
   2026-11-05). Both reads run over 8 threads in the caller's order (the reduce: its `reduce_order`) and print
   `[read] <stage> results <k>/<n>` on a long read.
 - `timeout_s`: a stage whose one job needs more than the 7,200 s default declares its HF job limit (the
-  xsuccess `hpo` and `fit`: 14,400 s); it reaches the job through the plan record.
+  xsuccess `hpo`: 14,400 s); it reaches the job through the plan record.
 - `inner_parallel=True` + `inner_width`: the unit runs alone in its job and gets `ctx.pool`, an `InnerPool`
   whose `map_keyed(fn, {key: args})` runs inner tasks (e.g. CV folds) on `--inner-workers` processes.
+  Use it for tasks that must share one unit (the folds of one study trial). When the tasks are whole model
+  fits, make each fit a UNIT: the xsuccess `fit` stage is a fixed grid of 36 units (one xgboost fit each),
+  the driver shards them over jobs (`units_per_job_by_stage` in the campaign file), and the reduce assembles
+  the bundle. A unit that the input does not have returns a small marker value, so the unit list reads no
+  upstream output.
 - `Pipeline(name, module, stages, params, output)`: declaration order is the DAG order; `output` names the
   stage whose `FileSet` `--run-all --out` exports.
 
@@ -67,7 +72,8 @@ unseeded RNG, no iteration over a hash-ordered set into a result, and no thread 
 
 Every finished unit persists with a checksum; a kill loses at most the units in flight; a relaunch skips
 every verified unit and redoes a unit whose checksum fails. A failed unit writes `<key>.failed.json` and
-is retried on the next run; the campaign controller retries it until it has failed twice
+is retried on the next run (the controller's plan also counts a `FileSet` result as present only when every
+member is listed: a lost one is `pending` again, in `lost_units`); the campaign controller retries it until it has failed twice
 (`Constraints.unit_attempts`). Then the stage's `max_failures` decides: within it the stage reduces
 without the unit and names it; over it the controller halts the instance and names the unit. A job that
 ends in ERROR is resumed while a retryable failed unit or (after a timeout) a pending unit remains, until
@@ -79,8 +85,11 @@ killed HPO study unit restarts from trial 0 (R1, ADR-128). A failure record (`<k
 300 s: `[alive] <job label> <role> pid=<pid> up=<s> unit=<stage>/<key> age=<s> at=<file>:<line> <function>
 children=<pid:state:cpu+<s>:wchan,...>`. A slow unit shows its `at=` moving between lines; a stall shows the same
 unit, a growing `age=` and the same `at=`. A child in state `D` with zero CPU waits in the kernel (its `wchan`
-names where, e.g. a FUSE request). 600 s or more before the job timeout each process prints a `faulthandler`
-dump (`Timeout (h:mm:ss)!` and every thread's stack); its start line names that time. Each process of a job
+names where, e.g. a FUSE request). 600 s or more before the job timeout each process prints its deadline
+dump (`[alive] <job label> <role> pid=<pid> deadline dump: <n> thread(s), most recent call first`, then every
+thread's Python stack, the main thread first); its start line names that time. A Python thread prints the dump,
+not the `faulthandler` watchdog: that watchdog ended working processes with SIGSEGV (measured on HF,
+2026-11-10). Each process of a job
 dumps in a different second (`main` at 600 s, `reduce` 601 s, worker `w<i>` at
 600 + 10 × (i + 1) s, its pool child `w<i>.pool<j>` 1 + (j mod 9) s later), so the dumps of processes that start
 before their dump time never share a second. A process that starts after its dump time (for example a worker

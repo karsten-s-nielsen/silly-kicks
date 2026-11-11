@@ -8,6 +8,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+# Every frame table these tests build also runs through the pre-index ORACLE (HFU fit-units spec 4.3).
+pytestmark = pytest.mark.usefixtures("shadow_pre_index_oracle")
+
 
 def _build_dense_fixture(
     *,

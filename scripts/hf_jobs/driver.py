@@ -30,6 +30,7 @@ from typing import NamedTuple
 
 from scripts._stages import exceeds_tolerance
 from scripts.hf_jobs.failures import JobOutcome, classify
+from scripts.hf_jobs.hub_client import request_counts
 from scripts.hf_jobs.preflight import PLAN_WORKERS
 
 #: A job's HF limit unless its stage declares ``timeout_s`` (HFU spec 15.7).
@@ -101,6 +102,7 @@ def step(
     if plan_cache is not None:
         read_plan = _cached_reader(_resolve_read_plan(campaign, read_plan), plan_cache)
     t0 = time.monotonic()
+    sent0 = request_counts()
     try:
         (gate or _default_gate(campaign, commit, api))()
         state = _gather(
@@ -108,7 +110,8 @@ def step(
         )
     except Exception as exc:  # a 429 reading the gate, the plans or `list_jobs`: back off, never crash
         if _is_contention(exc):
-            _say(f"[driver] step: rate-limited after {time.monotonic() - t0:.1f}s; backing off")
+            total, _ = _hub_requests(sent0)
+            _say(f"[driver] step: rate-limited after {time.monotonic() - t0:.1f}s (hub requests {total}); backing off")
             return StepResult(fatal=None, launched=0, done=False, reports=(), in_flight=0, contention=True)
         raise
     state_s = time.monotonic() - t0
@@ -151,10 +154,12 @@ def step(
             contention = True
             break
     for instance_id, reason in reports:
-        print(f"STUCK {instance_id}: {reason}", file=sys.stderr)
+        print(stuck_line(instance_id, reason), file=sys.stderr)
     n = len(state.insts)
+    total, by_plans = _hub_requests(sent0)
     _say(
-        f"[driver] step: plans {n} in {state_s:.1f}s ({len(state.plan_reports)} failed); in flight {in_flight}; "
+        f"[driver] step: plans {n} in {state_s:.1f}s ({len(state.plan_reports)} failed); "
+        f"hub requests {total} (plans {by_plans}); in flight {in_flight}; "
         f"launched {launched}; stuck {len(reports)}; instances done {_instances_done(state.plans)}/{n}"
     )
     return StepResult(
@@ -166,6 +171,15 @@ def step(
         contention=contention,
         mount_faults=sum(state.mount_faults.values()),  # a step-over-step rise signals mount-sidecar contention
     )
+
+
+def _hub_requests(sent0: tuple[int, int]) -> tuple[int, int]:
+    """``(total, plans)``: the Hub requests since the counts ``sent0`` (`hub_client.request_counts`). The total is
+    the controller's own requests plus those of its ``--plan`` processes; ``plans`` is the second part. The
+    step line prints both, so each launch shows its margin to the HF rate limit (HFU fit-units spec 17). A plan
+    that failed is in the count; a plan that timed out was killed and is not, so the total is then a lower bound."""
+    own, plans = request_counts()
+    return (own - sent0[0]) + (plans - sent0[1]), plans - sent0[1]
 
 
 class _State(NamedTuple):
@@ -191,6 +205,7 @@ def _decide(campaign, state: _State, baseline_error_ids: frozenset[str]) -> Deci
         live_jobs=state.live_jobs,
         attempts=campaign.attempts,
         units_per_job=campaign.units_per_job,
+        units_per_job_by_stage=campaign.units_per_job_by_stage,
         max_shards=campaign.max_shards,
         baseline_error_ids=baseline_error_ids,
         coverage=state.coverage,
@@ -426,18 +441,40 @@ def main(argv: Sequence[str] | None = None, *, load=None, make_api=None, head=No
     parser.add_argument("file", type=pathlib.Path)
     parser.add_argument(
         "command",
-        choices=["preflight", "launch", "resume", "status", "cancel", "retrieve", "verify", "adopt", "publish"],
+        choices=[
+            "preflight",
+            "launch",
+            "resume",
+            "status",
+            "cancel",
+            "retrieve",
+            "verify",
+            "adopt",
+            "publish",
+            "compare",
+            "prune",
+        ],
     )
     parser.add_argument("--replica", type=int, default=None)
     parser.add_argument("--poll-s", type=float, default=30.0)
     parser.add_argument("--dry-run", action="store_true", help="launch/resume: print the decision, launch nothing")
     parser.add_argument("--staging", type=pathlib.Path, default=None, help="retrieve/verify/adopt/publish staging dir")
     parser.add_argument("--sandbox", action="store_true", help="publish to private silly-kicks/sandbox-<name> repos")
-    parser.add_argument("--i-have-owner-approval", action="append", default=[], metavar="REPO")
+    parser.add_argument(
+        "--i-have-owner-approval",
+        action="append",
+        default=[],
+        metavar="REPO_OR_COMMIT7",
+        help="publish: a public repo the owner approved; prune --delete: a commit7 the owner approved (once per item)",
+    )
+    parser.add_argument("--delete", action="store_true", help="prune: delete the run keys of the approved commits")
     parser.add_argument("--artifacts", default="", help="publish: comma-separated artifact ids (default: all)")
+    parser.add_argument("--baseline", type=pathlib.Path, default=None, help="compare: the other staging dir")
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
 
     campaign = (load or _load_campaign)(args.file)
+    if args.command == "compare":  # local files only: no HF API, no commit
+        return _compare(campaign, args.staging, args.baseline)
     commit = (head or _git_head)()
     api, token = (make_api or _default_api)()
 
@@ -461,6 +498,22 @@ def main(argv: Sequence[str] | None = None, *, load=None, make_api=None, head=No
 
         print(json.dumps(cmd_cancel(campaign, commit, api=api)))
         return 0
+    if args.command == "prune":  # lists by default; deletes only the commits the owner approved by name
+        from scripts.hf_jobs import prune
+
+        try:
+            result = prune.prune(
+                campaign,
+                head=commit,
+                delete=args.delete,
+                approved=args.i_have_owner_approval,
+                api=api,
+                manifest_commits=prune.manifest_commits(),
+            )
+        except prune.PruneRefusedError as exc:  # a refusal comes before the first delete: one line, exit 1
+            raise SystemExit(f"prune refused: {exc}") from None
+        print(json.dumps(result, indent=2))
+        return 0 if result["ok"] else 1
 
     from scripts.hf_jobs import adopt
 
@@ -489,6 +542,33 @@ def main(argv: Sequence[str] | None = None, *, load=None, make_api=None, head=No
             )
         )
     return 0
+
+
+#: `adopt.compare_staging` row ``baseline`` -> the words of the `compare` line.
+_BASELINE_FORMS = {"adopted": "adopted copy", "retrieved": "retrieved files"}
+
+
+def _compare(campaign, staging, baseline) -> int:
+    """``compare --staging NEW --baseline OLD``: one line per instance, then the JSON; 0 when every artifact is
+    identical under `identity.cross_commit_differences` and the census verdict of NEW is ok (HFU fit-units spec 6).
+    A trainer line names the baseline form that was read: the adopted copy of OLD, or its retrieved files."""
+    from scripts.hf_jobs import adopt
+
+    if staging is None or baseline is None:
+        raise SystemExit("compare needs --staging DIR and --baseline DIR (two retrieved staging folders)")
+    result = adopt.compare_staging(campaign, staging=staging, baseline=baseline)
+    for key, row in result.items():
+        if "census_ok" in row:
+            print(f"[compare] {key} census verdict {'ok' if row['census_ok'] else 'NOT ok'}")
+            continue
+        form = _BASELINE_FORMS.get(row.get("baseline", ""))
+        read = f" (baseline: {form})" if form else ""
+        if row["identical"]:
+            print(f"[compare] {key} IDENTICAL{read}")
+        else:
+            print(f"[compare] {key} DIFFERENT{read}: {'; '.join(row['differences'])}")
+    print(json.dumps(result, indent=2, default=str))
+    return 0 if adopt.compare_ok(result) else 1
 
 
 def _load_campaign(file):
@@ -614,8 +694,11 @@ def decide(
     mount_cap_for: Callable[[str], int] | None = None,
     mount_fault_budget: int = 10**9,
     timeouts: Mapping[tuple[str, str, str], tuple[str, ...]] | None = None,
+    units_per_job_by_stage: Mapping[str, int] | None = None,
 ) -> Decision:
+    units_per_job_default = units_per_job
     cover = coverage or {}
+    per_stage = units_per_job_by_stage or {}  # "<job>/<stage>" -> units per job (HFU fit-units spec 3.4)
     timed_out = timeouts or {}
     red_err = reduce_errors or {}
     mfaults = mount_faults or {}
@@ -648,6 +731,8 @@ def decide(
             if not stage.get("ready", True):
                 break  # upstream not reduced yet: wait
             name = stage["name"]
+            # A stage's own job size (e.g. 36 memory-heavy fits in 12 jobs of 3), else the campaign's.
+            units_per_job = int(per_stage.get(f"{inst.job}/{name}", units_per_job_default))
             if _stage_in_flight(live_jobs, inst, name):
                 break  # this stage already has jobs in flight: wait for them
             # Candidates: pending or recorded-failed units, minus those spent (coverage >= attempts). Memory-
@@ -691,7 +776,7 @@ def decide(
                     )
                 )
             elif not memory_units and not stuck:  # nothing can run: reduce or report
-                spent_pending = sum(1 for u in pending if cover.get((inst.id, name, u), 0) >= attempts)
+                spent_pending = [u for u in pending if cover.get((inst.id, name, u), 0) >= attempts]
                 _reduce_or_report(
                     inst,
                     name,
@@ -703,6 +788,8 @@ def decide(
                     workers,
                     stage_launches,
                     reports,
+                    lost_units=stage.get("lost_units") or (),
+                    lost_output=bool(stage.get("lost_output")),
                 )
             # Truncate to the mount headroom (in flight plus chosen this pass) of every mount dataset. A launch
             # that `step` later drops only under-counts, so the cap is never exceeded.
@@ -719,32 +806,65 @@ def decide(
     return Decision(launches=tuple(launches), done=all_reduced, reports=tuple(reports))
 
 
+#: The operator path of every STUCK report (HFU fit-units spec C5). The driver counts the failed jobs it saw since
+#: it started (the baseline rule), so a unit that the operator repairs stays STUCK in that run: a new run, `resume`,
+#: has a new baseline and attempts the work again.
+OPERATOR_PATH = "stop the driver, then run resume"
+
+
+def stuck_line(instance_id: str, reason: str) -> str:
+    """One ``STUCK <instance>: <reason>`` line that ends with the operator path (a reason that already names
+    the path, as the lost-result reports do, is not given a second one)."""
+    if reason.endswith(OPERATOR_PATH):
+        return f"STUCK {instance_id}: {reason}"
+    return f"STUCK {instance_id}: {reason}; fix the cause, {OPERATOR_PATH}"
+
+
+#: What the operator does after a storage loss (HFU fit-units spec C4): a new driver run has a new baseline.
+LOST_RESULT_PATH = f"free storage, {OPERATOR_PATH}"
+
+
 def _reduce_or_report(
     inst,
     name: str,
     spent: int,
-    spent_pending: int,
+    spent_pending: Sequence[str],
     max_failures,
     reduce_errors: int,
     attempts,
     workers,
     launches,
     reports,
+    *,
+    lost_units: Sequence[str] = (),
+    lost_output: bool = False,
 ) -> None:
     """No unit can run. A spent unit with no record (a crash that wrote no outcome) cannot be reduced over:
     report it. Else trigger the reduce when the spent recorded failures are within ``max_failures``
     (``exceeds_tolerance``, as ``_stages.reduce_stage``), at most ``attempts`` reduce triggers new to this run;
-    else report the stage."""
+    else report the stage.
+
+    A spent unit that the plan lists in ``lost_units`` (a `FileSet` result that lost its members), and a stage
+    with ``lost_output`` whose reduce triggers are spent, are reported as a LOST result, never as a crash or a
+    failed reduce: the jobs ended well and the files are gone (HFU fit-units spec C4)."""
     if spent_pending:
-        reports.append(
-            (inst.id, f"{name}: {spent_pending} unit(s) crashed with no record (coverage == attempts); cannot reduce")
-        )
+        lost = [u for u in spent_pending if u in set(lost_units)]
+        for u in lost:
+            reports.append((inst.id, f"{name}/{u}: result lost (members missing); {LOST_RESULT_PATH}"))
+        crashed = len(spent_pending) - len(lost)
+        if crashed:
+            reports.append(
+                (inst.id, f"{name}: {crashed} unit(s) crashed with no record (coverage == attempts); cannot reduce")
+            )
         return
     if exceeds_tolerance(None if max_failures is None else int(max_failures), spent):
         reports.append((inst.id, f"{name}: {spent} unit(s) failed/crashed over max_failures={max_failures}"))
         return
     if reduce_errors >= attempts:
-        reports.append((inst.id, f"{name}: reduce failed {reduce_errors} time(s) (attempts={attempts})"))
+        if lost_output:
+            reports.append((inst.id, f"{name}: output lost (members missing); {LOST_RESULT_PATH}"))
+        else:
+            reports.append((inst.id, f"{name}: reduce failed {reduce_errors} time(s) (attempts={attempts})"))
         return
     launches.append(Launch(inst.id, (name,), (0, 1), "reduce", workers))
 

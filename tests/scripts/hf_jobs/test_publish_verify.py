@@ -38,6 +38,14 @@ class _Api:
         p.write_bytes(self.remote[repo_id][filename])
         return str(p)
 
+    def snapshot_download(self, *, repo_id, repo_type, local_dir):
+        self.calls.append(("snapshot_download", repo_id, str(local_dir)))
+        for name, data in self.remote[repo_id].items():
+            q = Path(local_dir) / name
+            q.parent.mkdir(parents=True, exist_ok=True)
+            q.write_bytes(data)
+        return str(local_dir)
+
 
 def _publisher(api: _Api):
     def publish(api_, artifact_dir, repo_id, *, model_card):
@@ -104,6 +112,7 @@ def _verified(tmp_path, mutate) -> dict:
         run=run,
         allowlist=MODEL_ONLY_ALLOWLIST,
         card=card_bytes(M.REPO_ROOT / (a.card or "")),
+        staging=staging,
     )
 
 
@@ -148,3 +157,88 @@ def test_publish_uploads_the_finalized_copy(tmp_path):
     A.publish([AID], sandbox=True, api=api, staging=s, run=_ok_run, publisher=_publisher(api))
     remote = json.loads(api.remote["silly-kicks/sandbox-ghost-gk-sweeper-v1"]["metrics.json"])
     assert remote["probe_sample_matches"] == [["gradientsports", "10502"]]
+
+
+# ---- an artifact without a Hub class round-trips with the job loader (HFU fit-units spec C2) ---------
+
+XAID = "hub_xsuccess"
+XINST = "cycle1-ccccccc-xsuccess-public/default"
+XREPO = "silly-kicks/sandbox-xsuccess-v1"
+
+
+def _event_only(tmp_path, rc: int = 0, *, stale: dict[str, bytes] | None = None, lose: str | None = None):
+    """`post_verify` of ``hub_xsuccess`` (``hub_class = ""``) over a faithful fake publish; the run is recorded."""
+    from scripts._hub_publish import MODEL_ONLY_ALLOWLIST
+
+    api, staging, runs = _Api(tmp_path), tmp_path / "staging", []
+    d = staging / XINST
+    d.mkdir(parents=True)
+    (d / "model.json").write_bytes(b"{}")
+    (d / "metadata.json").write_text("{}", encoding="utf-8")
+    (d / "SHA256SUMS").write_text("abc  model.json\n", encoding="utf-8")
+    a = M.load().artifacts[XAID]
+    assert a.hub_class == ""
+    api.create_repo(XREPO, repo_type="model", private=True, exist_ok=True)
+    _publisher(api)(api, str(d), XREPO, model_card=str(M.REPO_ROOT / (a.card or "")))
+
+    dest = staging / "_post_verify" / XREPO.partition("/")[2]
+    for name, data in (stale or {}).items():  # files that an EARLIER post_verify left in the folder
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / name).write_bytes(data)
+    if lose is not None:  # the Hub no longer holds this file
+        del api.remote[XREPO][lose]
+
+    def run(argv, **_k):
+        runs.append([str(x) for x in argv])
+        missing = lose is not None and not (dest / lose).exists()
+        code = 1 if (rc or missing) else 0
+        return types.SimpleNamespace(returncode=code, stdout="", stderr="XSuccessIntegrityError: sha")
+
+    out = A.post_verify(
+        api,
+        XREPO,
+        a,
+        d,
+        run=run,
+        allowlist=MODEL_ONLY_ALLOWLIST,
+        card=card_bytes(M.REPO_ROOT / (a.card or "")),
+        staging=staging,
+    )
+    return api, out, runs, staging
+
+
+def test_post_verify_uses_the_job_loader_without_a_hub_class(tmp_path):
+    api, out, runs, staging = _event_only(tmp_path)
+    assert out["ok"], out
+    dest = staging / "_post_verify" / "sandbox-xsuccess-v1"
+    assert ("snapshot_download", XREPO, str(dest)) in api.calls
+    assert (dest / "model.json").read_bytes() == b"{}"  # the PUBLISHED files are what is loaded
+    assert len(runs) == 1 and str(dest) in runs[0]
+    assert any(".load(" in x for x in runs[0]) and not any("from_hub" in x for x in runs[0])
+
+
+def test_post_verify_does_not_load_a_stale_local_file(tmp_path):
+    """A file that an earlier run left in the folder, and that the Hub no longer holds, is not loaded."""
+    _api, out, _runs, staging = _event_only(tmp_path, stale={"model.json": b"{}", "old.bin": b"x"}, lose="model.json")
+    dest = staging / "_post_verify" / "sandbox-xsuccess-v1"
+    assert not (dest / "model.json").exists() and not (dest / "old.bin").exists()
+    assert not out["ok"] and any(p.startswith("load failed") for p in out["problems"])
+
+
+def test_post_verify_reports_a_failed_job_loader(tmp_path):
+    _api, out, _runs, _staging_dir = _event_only(tmp_path, rc=1)
+    assert not out["ok"] and any(p.startswith("load failed") for p in out["problems"])
+
+
+def test_post_verify_uses_from_hub_with_a_hub_class(tmp_path):
+    runs: list = []
+
+    def recorder(api, repo):
+        def run(argv, **_k):
+            runs.append([str(x) for x in argv])
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        return run
+
+    assert _verified(tmp_path, recorder)["ok"]
+    assert len(runs) == 1 and any("from_hub" in x for x in runs[0])

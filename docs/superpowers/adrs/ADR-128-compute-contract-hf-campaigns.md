@@ -702,6 +702,154 @@ amended-away commits. They were deleted after the owner's go; the owner will not
 `docs/artifacts/cv_reference/xsuccess.json` (removed), the adopted artifacts. The adoption changes the wheel's
 bundled weights, so the release is 4.140.0 (owner 2026-11-10). Spec and plan A/B approved (A r27/r25, B r27/r24; §18.6 A r29/r27, B r29/r26).
 
+## Amendment (2026-11-10): xsuccess fit units, the ball-carrier pre-index, campaign hygiene
+
+Spec `docs/superpowers/specs/2026-11-10-hfu-fit-units-carrier-index-hygiene-design.md` and its plan (A and B
+approved both). The owner set the scope on 2026-11-10 after a read-only measurement of launch 7 (388 jobs, 1,810
+job-minutes). `cpu-upgrade` costs $0.03 per hour, so that launch cost about $0.90. **The measure that decides:**
+an HF change is ranked by wall time per launch, by failed launches and by storage; never by job-minutes.
+
+38. **The xsuccess `fit` held 36 xgboost fits in one unit (63 min of the long pole).** One calibrated fit is 6
+    xgboost fits, and the stage runs 6 calibrated fits. **Decision:** each xgboost fit is a stage unit. The grid
+    is fixed (`FIT_UNITS`: `final` and `fold0` to `fold4`, each with `main` and `cal0` to `cal4`); a unit that the
+    corpus does not have returns `{"absent": true}`. Every unit and the reduce work in the pooled row space
+    (`_cv_splits(pooled)`), and the reduce assembles the bundle and never loads a booster. `XSuccessModel` composes
+    the same private steps (`_model._training_arrays`, `_fit_booster`, `_calibration_splits`,
+    `_calibration_fold_proba`, `_calibration_oof`, `_isotonic_thresholds`, `_raw_predict`, `_calibrate`,
+    `_metadata_payload`, `_write_metadata_and_sums`), so the library and the trainer give the same bytes. The
+    InnerPool path, `cross_val_metrics` and the two `[progress] xsuccess` fit lines are removed; each unit prints
+    its `[unit]` lines.
+39. **A stage can have its own job size.** `units_per_job_by_stage` (a `"job/stage"` map in the campaign file)
+    replaces `units_per_job` for that stage. `cycle1.toml`: `"xsuccess/fit" = 3` with a peak-RSS hint of 8 GiB (the
+    7.26 GiB of a whole calibrated fit bounds one unit), so 12 jobs of 3 units run all 36 fits at once.
+40. **"Identical across commits" has one definition.** `identity.cross_commit_differences`: `metadata.json`,
+    `metrics.json` and the file that the artifact's `commit_field` names are compared without `PROVENANCE_KEYS`;
+    `SHA256SUMS` on the lines of the other files; `MODEL_CARD.md` after each 40-hex commit is replaced; every other
+    file byte for byte. `artifact_size_bytes` is a provenance key (it counts the bytes of files that hold the
+    commit and the job platform string). `campaign <file> compare --staging NEW --baseline OLD` applies the rule to
+    two retrieved staging folders and prints the census verdict of NEW.
+41. **A launch that changes no model is a parity proof, not a re-fit.** When `compare` finds every artifact
+    identical to the shipped launch and the census rebaseline passes, nothing is adopted and nothing is published:
+    the shipped artifacts keep their `training_commit`. A difference is a defect of the change; it is never
+    adopted.
+42. **Launch 7 stopped on the org storage limit.** **Decision:** preflight check 7, `storage` (`preflight.check_storage`): the org's
+    buckets plus `usedStorage` of its private datasets and models must leave `storage_headroom_bytes` (20 GB) under
+    `storage_limit_bytes` (100 GB); a count that cannot be made fails the check. `campaign <file> prune` lists the
+    run keys of every commit other than HEAD; `prune --delete --i-have-owner-approval <commit7>` deletes the named
+    commits' run keys. It refuses HEAD, a commit with a non-terminal job and a commit without a run key, and it
+    touches only keys that are exactly a run key of a job of the campaign.
+43. **A result kept its marker and lost its files.** Over the limit the small `.fileset.json` marker landed and
+    the members did not, so the plan read the unit as done. **Decision:** `plan()` counts a `FileSet` result as
+    present only with every member listed: such a unit is `pending` and named in `lost_units`; a lost stage output
+    sets `lost_output`; either makes the stage not `reduced`. The driver reruns the unit (or the reduce) within its
+    attempts and then reports `result lost` or `output lost`, never a crash. In-job code is unchanged.
+44. **`post_verify` could not load an artifact without a Hub class.** **Decision:** an artifact with a `hub_class`
+    round-trips with `from_hub`; one without (`hub_xsuccess`) is downloaded to `<staging>/_post_verify/` (emptied first) and
+    loaded with the job loader, so only the files that the Hub holds are loaded. A manifest gate ties `hub_class` to the loader.
+45. **`retrieve` made up to 32 concurrent reads.** **Decision:** one bound of 8 store reads for the whole call; an
+    instance's `--plan` subprocess holds one slot of it.
+46. **A repaired unit stays STUCK in the same driver run** (the baseline rule). **Decision:** every `STUCK` line
+    ends with the operator path: fix the cause, stop the driver, then run `resume`.
+47. **The deadline dump could end the process it reports on.** The job watch armed
+    `faulthandler.dump_traceback_later` 600 s or more before the job deadline (the 2026-11-05 amendment). That
+    watchdog is a C thread that reads the frames of a running thread without the GIL. Measured on HF
+    (2026-11-10, jobs `6af366809737d9a9e0914f3a` and `6af3700bab34849891acb4a8`, Python 3.12.14, 40 processes
+    per workload, a dump every 0.05 s for 3 s; production prints ONE dump per process): ended by a signal
+    (SIGSEGV; one SIGBUS) were 18 of 40 processes during an xgboost fit, 38 of 40 during
+    pandas work, 40 of 40 during `infer_ball_carrier`, 40 of 40 during a numba compile, 36 of 40 during the
+    numba import; 0 of 40 while the main
+    thread slept, ran pure Python calls or ran a compiled numba kernel. Launch 7 printed no dump (no job came
+    within 600 s of its timeout), so no job was lost. **Decision:** a daemon Python thread prints the dump
+    (`liveness.stack_dump`: every thread's Python stack, the main thread first, in the `faulthandler` line
+    format); it holds the GIL while it reads the frames. The dump times of the processes of one job do not
+    change. Every `[alive]` record and the dump are ONE write each, so a record of another thread cannot land
+    inside it. **Proof** (HF job `6af378cb9737d9a9e0917f86`, the same 8 workloads, the new `stack_dump` printed
+    every 0.05 s by a Python thread): 0 of 320 processes ended by a signal, over about 14,500 dumps. **Cost:** while a C extension holds the GIL in one long call, the dump waits until that call
+    returns; the `[alive]` lines have the same limit. The plan-timeout dump of `scripts/_stages.py`
+    (controller side, 30 s before the driver ends a `--plan` subprocess; the 2026-11-06 amendment) is the same
+    dump now (`liveness.start_dump_thread`), and `campaign._plan_timeout_detail` reads its header; no
+    `faulthandler` call is left in the campaign code.
+48. **The baseline of a parity proof is the shipped form** (launch 8; amends item 40). `compare` against the
+    retrieved files of launch 7 gave 4 DIFFERENT, all on the xCross `metrics.json`: the launch-7 jobs wrote
+    the staged probe names (`gradientsports-10502`), and the trainer writes the canonical ids since the
+    adoption of launch 7 (the amendment above; HFU spec 18.6). Launch 8 was the first launch with that
+    trainer. The adopted copy of launch 7 (`<staging>/_final/`, the files that `adopt` finalized and `publish`
+    uploaded; for xCross `public`, the bundled `metrics.json` holds `corpus_match_ids` where the adopted copy
+    holds their digest and their count) holds the canonical ids. **Decision:** `compare` reads the baseline's adopted copy
+    (`adopt._final_dir`, which `_finalize` writes) when the baseline has one for the instance, its retrieved
+    files otherwise, and each line names the form. The new side is always its retrieved files: a job must
+    write the shipped form itself, so a trainer that falls back to another form still shows as DIFFERENT.
+    Launch 8 against launch 7 under this rule: 20 of 20 trainer artifacts identical, the census verdict ok.
+49. **The driver measures its Hub requests.** The request count of a `--plan` was measured by hand in two
+    cycles. The script of the first was not kept, and the bound that this cycle's spec wrote counted a store
+    read as one request. Measured on launch 8 (huggingface_hub 2.2.0): a store read is two HTTP requests
+    (`POST paths-info`, `HEAD resolve`; the bytes come over xet), and a listing is one request per 1,000
+    files. One plan of a finished instance: win_probability 20, xsuccess 21, the census 21, ghost_gk/default
+    12 requests (16, 16, 17 and 4 before item 43, which adds one marker read per `FileSet` result).
+    **Decision:** (a) the bound of a plan is in store operations, which the code controls and a test binds:
+    one recursive listing and one marker read per `FileSet` result; the HTTP counts are a measured fact of
+    one library version. (b) The bounded client counts every request (`hub_client.count_request`); a
+    `--plan` process of a bucket store prints `[plan] hub requests <n>` on stderr; `campaign.read_plan` adds
+    it to the controller's tally; the step line prints `hub requests <total> (plans <p>)`, and a
+    rate-limited step prints its count. A plan that fails prints its count before it ends, and `read_plan`
+    adds it before it raises, so a 429 inside a plan is in the count; a plan that timed out was killed and
+    reports none (the count of that step is a lower bound). (c) No request is removed: launch 8 had 208 steps and no
+    rate-limited step. A reduction needs a measured need, and the step line now gives the measure.
+
+**Launch 8** (`abcfda86`, 2026-11-10 to 2026-11-11; spec §17): 397 jobs (394 COMPLETED, 3 `mount_auth_flake`,
+each relaunched), 21 of 21 instances reduced in 3 h 43 min. The xsuccess `fit` stage: 36 units in 12 jobs,
+19 min 36 s from launch to reduced (63 min at launch 7), peak RSS 6.02 to 7.26 GiB per unit. `verify` 21 of 21
+ok; `compare` as in item 48. Nothing was adopted or published: the shipped artifacts keep
+`training_commit = a1a3b52f`.
+
+**The launch-7 measurement that set the scope** (spec §1.2, the same ids; launch 7 on `a1a3b52f`, 388 jobs):
+
+| Id | Measured |
+|---|---|
+| M1 | Wall time 4 h 35 min, with a storage stop. The long pole is xsuccess: `refs` + `extract` 25 min, the `hpo` job 143 min (one unit, 8,470 s for 30 trials), the `fit` job 63 min (one unit, 3,685 s). Every other instance ends inside that window. |
+| M2 | Scheduling wait: median 4 s. Job setup (clone + `uv sync`): median 19 s, 152 job-min in total. |
+| M3 | A job spends about 64 s outside its unit. Cause read from code, not probed: `_write_confirm.JOB_SETTLE_S = 30`, once in the worker and once in the reduce subprocess. |
+| M4 | 15 stage generations were reduced by several jobs: 7,284 of 8,374 reduce seconds. All ended. |
+| M5 | The scratch bucket held 23.3 GB (16.1 GB after the launch-6 run keys were deleted); one campaign is 7.3 GB. The private datasets held 28.4 GB, and 22.07 GB at a second measurement the same day. |
+| M6 | The static import closure of every pipeline module holds the same 178 files (157 core library files, 21 runner files); each pipeline adds 2 to 13 files. |
+| M7 | Launch 6 against launch 7 under the rule of item 40: 16 of 21 artifacts identical; the 5 differences are `metrics.json` of the four xShot/xCross `public` artifacts and `census.json`. |
+| M8 | `_pre_index_frames` takes 13.5 to 58.0 s per match on HF (audit 2026-10-30): 58 s of a 115 s ghost_gk extract unit at 30 Hz. |
+
+**The scope decisions** (owner 2026-11-10; spec §1.3; the item numbers are the handoff's):
+
+| Handoff item | Decision | Reason |
+|---|---|---|
+| 4 xsuccess `fit` as stage units | IN (items 38, 39) | `fit` is 63 min of the long pole (M1). |
+| 10a ball-carrier pre-index | IN (Scope, below) | It serves every `infer_ball_carrier` caller (M8). A wheel change is accepted. |
+| 8 read bound in `retrieve` | IN (item 45) | HTTP 429s during retrieve. |
+| 11 `post_verify` without a Hub class | IN (item 44) | `xsuccess-v1` was verified by hand. |
+| 12 storage: preflight check and prune | IN (item 42) | Launch 7 stopped on the org storage limit (M5). |
+| 13 FileSet member check | IN (item 43) | Over the limit, a result kept its marker and lost its members. |
+| 14 STUCK operator path | IN (item 46) | A repaired unit stayed STUCK until the driver restarted. |
+| 15 card citation gate, `.gitattributes` | IN | The open `TODO.md` row. |
+| The HFU spec §14.10a record | IN | Owner-approved text. |
+| 1 reuse of stage results across commits | DROPPED | M6: a sound derived closure reruns everything on any runner or core-library edit, where campaign fixes land. PR #290 and the ADR-129 stub stay untouched. |
+| 2 job setup: prebuilt image, `uv` wheel cache, `xgboost-cpu` | DROPPED (the whole item) | M2: at most 11 s per job. |
+| 3 stage chaining; the settle time | DROPPED | About 8 and 7 min, off the long pole (M1, M3). The settle guards against lost writes. |
+| 5 hpo startup batch; 6a hpo startup over jobs | DROPPED | M1: about 8 min of 143; the TPE phase has no byte-identical speed-up. |
+| 6b `fit` units over jobs | Delivered by item 4 | The driver shards stage units. |
+| 7 reduce lease | DROPPED | M4: no wall time and no measured harm. The bucket mount gives no reliable lock. |
+| 9 extraction and launch dedupe (all four parts) | DROPPED | M1: no part is on the long pole. |
+| 10b per-frame feature loops | DROPPED | No wall time (M1); a float bit risk. |
+| D1-IMPL-09, -11, -12 | Accepted limits | The "Known limits" of the 2026-11-02 amendment; no measured cost at launch 7. |
+
+No `TODO.md` row is opened for a dropped item (owner).
+
+**Scope.** `scripts/train_xsuccess.py`, `silly_kicks/xsuccess/_model.py`, `silly_kicks/tracking/_ball_carrier.py`
+(the placement part of `_pre_index_frames`, pinned to the former function by an oracle test),
+`scripts/_stages.py` (`plan`), `scripts/hf_jobs/{adopt,campaign,driver,identity,preflight,prune}.py`,
+`scripts/hf_jobs/campaigns/cycle1.toml`, `scripts/hf_jobs/liveness.py` and `arm_plan_deadline` of `scripts/_stages.py` (item 47),
+`scripts/hf_jobs/hub_client.py` and the `--plan` exit of `scripts/_stages.py` (item 49). Items 48 and 49 are a
+second commit on top of the cycle commit, which the launch-8 jobs cloned and which is therefore not amended.
+The second commit also holds one test-only fix: `tests/scripts/conftest.py` empties the `_write_confirm`
+journal around every test (the cycle spec, §17.5).
+The wheel changes (library code); no bundled artifact changes.
+
 ## Related
 
 - **Specs:** `docs/superpowers/specs/2026-10-18-compute-contract-hf-campaigns-design.md`

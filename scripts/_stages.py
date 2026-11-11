@@ -348,16 +348,18 @@ PLAN_DUMP_LEAD_S = 30
 
 
 def arm_plan_deadline(env: Mapping[str, str] = os.environ) -> bool:
-    """When the driver set ``SILLY_KICKS_PLAN_DEADLINE_S`` (``campaign.read_plan``), arm a faulthandler dump
-    ``PLAN_DUMP_LEAD_S`` before it, so a plan read the driver kills leaves its stack in the driver's report.
-    Returns True when armed; a missing or malformed value arms nothing."""
-    import faulthandler
-
+    """When the driver set ``SILLY_KICKS_PLAN_DEADLINE_S`` (``campaign.read_plan``), print every thread's stack
+    ``PLAN_DUMP_LEAD_S`` before it (1 s at the least), so a plan read the driver kills leaves its stack in the
+    driver's report. The dump is the job watch's (`liveness.stack_dump`, from a Python thread): the `faulthandler`
+    watchdog can end the process it dumps (ADR-128 amendment 2026-11-10, item 47). Returns True when armed; a
+    missing or malformed value arms nothing."""
     try:
         deadline = float(env["SILLY_KICKS_PLAN_DEADLINE_S"])
     except (KeyError, ValueError):
         return False
-    faulthandler.dump_traceback_later(timeout=max(1.0, deadline - PLAN_DUMP_LEAD_S), repeat=False)
+    from scripts.hf_jobs.liveness import start_dump_thread
+
+    start_dump_thread("plan", max(1.0, deadline - PLAN_DUMP_LEAD_S))
     return True
 
 
@@ -1066,15 +1068,48 @@ def _failure_record(store: Store, gen: str, key: str) -> dict:
     return rec
 
 
-def _ready(ctx: RunContext, st: AnyStage) -> bool:
-    return all(output_present(ctx, n, verify=False) for n in st.needs)
+def _fileset_members_present(store: Store, gen: str, stem: str) -> bool:
+    """True when every member that the ``<stem>.fileset.json`` marker names is LISTED under ``<stem>.files/``.
+
+    The controller's presence rule for a `FileSet` result (HFU fit-units spec C4). Over the org storage limit the
+    bucket mount accepted writes locally, the small marker landed and the large members were lost: the result
+    then read as done, and a downstream unit failed on it. A marker that is absent, unreadable or not valid JSON
+    (a part upload) counts as lost. A listing check only: no member is read, and a member that is present and
+    corrupt is NOT found here (the in-job verified read finds it)."""
+    raw = store.read_bytes(f"{gen}/{stem}.fileset.json")
+    if raw is None:
+        return False
+    try:
+        members = list(json.loads(raw)["files"])
+    except (ValueError, KeyError, TypeError):
+        return False
+    listed: dict[str, set[str]] = {}
+    for member in members:
+        sub, _, base = str(member).rpartition("/")
+        rel = f"{gen}/{stem}.files" + (f"/{sub}" if sub else "")
+        if rel not in listed:
+            listed[rel] = set(store.names(rel))
+        if base not in listed[rel]:
+            return False
+    return True
 
 
 def plan(ctx: RunContext) -> dict:
-    """The JSON the launcher reads (spec 5.1): per stage token, unit counts, done/pending, readiness."""
+    """The JSON the launcher reads (spec 5.1): per stage token, unit counts, done/pending, readiness.
+
+    A `FileSet` result (a unit result or the stage output) counts as present only with every member listed
+    (`_fileset_members_present`): a unit that lost its members is ``pending`` and named in ``lost_units``; an
+    output that lost its members sets ``lost_output``; either makes the stage not ``reduced``, and ``ready``
+    follows the same rule for each needed stage. This is the CONTROLLER's rule: `unit_states` and
+    `output_present`, which in-job code uses, are unchanged (a writer's own mount always shows its files)."""
     stages = []
+    reduced_by_name: dict[str, bool] = {}
     for st in ctx.pipeline.stages:
         gen = ctx.generation(st.name)
+        names = ctx.store.names(gen)
+        lost_output = _present_suffix(names, _OUTPUT) == ".fileset.json" and not _fileset_members_present(
+            ctx.store, gen, _OUTPUT
+        )
         rec: dict[str, Any] = {
             "name": st.name,
             "needs": list(st.needs),
@@ -1085,8 +1120,11 @@ def plan(ctx: RunContext) -> dict:
             "timeout_s": getattr(st, "timeout_s", None),
             "history_key": _history_key(ctx.token_inputs[st.name]),
             "item_stage": isinstance(st, ItemStage),
-            "ready": _ready(ctx, st),
-            "reduced": output_present(ctx, st.name, verify=False),
+            "ready": all(reduced_by_name[n] for n in st.needs),
+            "reduced": output_present(ctx, st.name, verify=False) and not lost_output,
+            # FileSet results whose members are not all listed (HFU fit-units spec C4)
+            "lost_units": [],
+            "lost_output": lost_output,
             "n_units": None,
             "done": 0,
             "excluded": 0,
@@ -1104,7 +1142,18 @@ def plan(ctx: RunContext) -> dict:
         except UpstreamNotReducedError:
             keys = None
         if keys is not None:
-            states = unit_states(ctx, st, keys, verify=False)
+            states = unit_states(ctx, st, keys, verify=False, names=names)
+            lost = sorted(
+                k
+                for k, v in states.items()
+                if v == "done"
+                and _present_suffix(names, k) == ".fileset.json"
+                and not _fileset_members_present(ctx.store, gen, k)
+            )
+            for k in lost:
+                states[k] = "pending"  # the driver reruns it, as any pending unit
+            rec["lost_units"] = lost
+            rec["reduced"] = rec["reduced"] and not lost
             failed = {k: _failure_record(ctx.store, gen, k) for k in keys if states[k] == "failed"}
             rec.update(
                 n_units=len(keys),
@@ -1120,6 +1169,7 @@ def plan(ctx: RunContext) -> dict:
                 # failed units whose LAST failure was the memory cap: escalated to a job of their own
                 memory_units=[k for k, rec in failed.items() if rec.get("memory")],
             )
+        reduced_by_name[st.name] = bool(rec["reduced"])
         stages.append(rec)
     return {
         "pipeline": ctx.pipeline.name,
@@ -1253,10 +1303,21 @@ def main(pipeline: Pipeline, argv: Sequence[str] | None = None) -> int:
     if not args.plan:
         require_clean_tree(git, allow_dirty=args.allow_dirty)
     prov = {**git, "env": env_provenance(), "code_identity": code_identity(git)}
-    ctx = make_context(pipeline, params, prov, store=open_store(args.store), data_root=args.data_root)
+
+    def context() -> RunContext:
+        return make_context(pipeline, params, prov, store=open_store(args.store), data_root=args.data_root)
+
     if args.plan:
-        print(json.dumps(plan(ctx), sort_keys=True))
+        from scripts.hf_jobs.hub_client import plan_requests_line
+
+        try:
+            print(json.dumps(plan(context()), sort_keys=True))
+        finally:  # also when the read fails (a 429): the driver counts the requests that this process sent
+            line = plan_requests_line()  # a bucket store only: the driver adds the count to its step line
+            if line is not None:
+                print(line, file=sys.stderr, flush=True)
         return 0
+    ctx = context()
     from scripts._parallel_launch import RefusalError
     from scripts.hf_jobs.executor import ExecutorConfig, LocalExecutor, StageFailedError
 
