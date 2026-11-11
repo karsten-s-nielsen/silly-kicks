@@ -1303,10 +1303,21 @@ def main(pipeline: Pipeline, argv: Sequence[str] | None = None) -> int:
     if not args.plan:
         require_clean_tree(git, allow_dirty=args.allow_dirty)
     prov = {**git, "env": env_provenance(), "code_identity": code_identity(git)}
-    ctx = make_context(pipeline, params, prov, store=open_store(args.store), data_root=args.data_root)
+
+    def context() -> RunContext:
+        return make_context(pipeline, params, prov, store=open_store(args.store), data_root=args.data_root)
+
     if args.plan:
-        print(json.dumps(plan(ctx), sort_keys=True))
+        from scripts.hf_jobs.hub_client import plan_requests_line
+
+        try:
+            print(json.dumps(plan(context()), sort_keys=True))
+        finally:  # also when the read fails (a 429): the driver counts the requests that this process sent
+            line = plan_requests_line()  # a bucket store only: the driver adds the count to its step line
+            if line is not None:
+                print(line, file=sys.stderr, flush=True)
         return 0
+    ctx = context()
     from scripts._parallel_launch import RefusalError
     from scripts.hf_jobs.executor import ExecutorConfig, LocalExecutor, StageFailedError
 

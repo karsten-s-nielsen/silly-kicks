@@ -105,3 +105,40 @@ def test_systematic_stop_attaches_the_unit_counts(tmp_path, monkeypatch):
 def test_plan_prints_no_job_line(tmp_path, capsys):
     assert S.main(_pipeline(), ["--store", str(tmp_path), "--plan"]) == 0
     assert "[job] " not in capsys.readouterr().err
+
+
+def test_plan_prints_its_hub_request_count_only_with_a_hub_client(tmp_path, capsys, monkeypatch):
+    """A `--plan` read of a bucket store ends with ``[plan] hub requests <n>`` on stderr (the driver adds it to its
+    step line); a local store installs no Hub client and prints no such line. Stdout is the plan JSON only."""
+    import json
+
+    from scripts.hf_jobs import hub_client as H
+
+    # The test states both client states itself: an earlier test of the process can leave the client installed
+    # (`python -m scripts.hf_jobs` installs it and never removes it).
+    monkeypatch.setattr(H, "_INSTALLED", False)  # a process that opened no hf:// store
+    assert S.main(_pipeline(), ["--store", str(tmp_path), "--plan"]) == 0
+    assert "[plan] hub requests" not in capsys.readouterr().err
+    monkeypatch.setattr(H, "_INSTALLED", True)  # what `open_store` does for an hf:// store
+    assert S.main(_pipeline(), ["--store", str(tmp_path), "--plan"]) == 0
+    out = capsys.readouterr()
+    assert out.err.splitlines()[-1] == f"[plan] hub requests {H.request_counts()[0]}"
+    assert "stages" in json.loads(out.out)
+
+
+@pytest.mark.parametrize("where", ["open_store", "plan"])
+def test_a_plan_that_fails_prints_its_hub_request_count(tmp_path, capsys, monkeypatch, where):
+    """A `--plan` read that ends with an error (a 429 from the Hub) prints its count first, so the driver's step
+    line holds the requests of that plan too. The error still ends the process, and stdout holds no plan."""
+    from scripts.hf_jobs import hub_client as H
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("429 Too Many Requests")
+
+    monkeypatch.setattr(H, "_INSTALLED", True)  # what `open_store` does for an hf:// store
+    monkeypatch.setattr(S, where, boom)
+    with pytest.raises(RuntimeError, match="Too Many Requests"):
+        S.main(_pipeline(), ["--store", str(tmp_path), "--plan"])
+    out = capsys.readouterr()
+    assert out.err.splitlines()[-1] == f"[plan] hub requests {H.request_counts()[0]}"
+    assert out.out == ""

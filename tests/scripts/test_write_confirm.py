@@ -22,13 +22,6 @@ from scripts._driver import _write_bytes_atomically
 DEADLINE_ENV = "SILLY_KICKS_JOB_DEADLINE_EPOCH"
 
 
-@pytest.fixture(autouse=True)
-def _empty_journal():
-    wc.clear()
-    yield
-    wc.clear()
-
-
 def _lose(final: pathlib.Path) -> pathlib.Path:
     """What the mount does: the final vanishes, its temp part keeps the bytes."""
     tmp = wc.journal()[final]
@@ -42,6 +35,17 @@ class _Sleeps:
 
     def __call__(self, s: float) -> None:
         self.calls.append(s)
+
+
+@pytest.mark.parametrize("case", ["one", "two"])
+def test_a_journal_entry_does_not_reach_the_next_test(tmp_path, case):
+    """The journal is one per process, and a test that never runs the job exit leaves its entries there. The job
+    exit of a later test then looked for the files of that test (`LostWriteError`). `tests/scripts/conftest.py`
+    empties the journal around every test. Each case leaves one entry on purpose: the case that runs second fails
+    when the entry of the first one is still there, in either order."""
+    assert wc.journal() == {}
+    _write_bytes_atomically(tmp_path / "left.bin", b"x")  # left on purpose: not confirmed, not forgotten
+    assert set(wc.journal()) == {tmp_path / "left.bin"}
 
 
 def test_nothing_lost_settles_once_and_clears_the_journal(tmp_path):

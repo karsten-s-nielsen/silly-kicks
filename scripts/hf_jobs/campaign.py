@@ -239,7 +239,11 @@ def _plan_timeout_detail(exc: subprocess.TimeoutExpired) -> str:
 
 def read_plan(inst: Instance, *, bucket: str, run=subprocess.run) -> dict:
     """The instance's ``--plan`` JSON against its bucket store (read-only; the module is the authority). A read past
-    ``PLAN_TIMEOUT_S`` is killed and raises ``PlanTimeoutError`` with the child's dumped stack."""
+    ``PLAN_TIMEOUT_S`` is killed and raises ``PlanTimeoutError`` with the child's dumped stack. The Hub request
+    count that the plan process prints is added to `hub_client`'s tally, also for a plan that ended with an error
+    (a 429 inside the plan). A plan that timed out was killed and reports none."""
+    from scripts.hf_jobs.hub_client import add_plan_requests, parse_plan_requests
+
     argv = [sys.executable, "-m", inst.module, *inst.args, "--plan", "--store", store_uri(bucket, inst.run_key)]
     env = {**os.environ, PLAN_DEADLINE_ENV: str(PLAN_TIMEOUT_S)}
     try:
@@ -248,6 +252,9 @@ def read_plan(inst: Instance, *, bucket: str, run=subprocess.run) -> dict:
         raise PlanTimeoutError(
             f"{inst.id}: --plan failed (timeout after {PLAN_TIMEOUT_S} s): {_plan_timeout_detail(exc)}"
         ) from None
+    sent = parse_plan_requests(p.stderr)
+    if sent is not None:
+        add_plan_requests(sent)
     if p.returncode != 0:
         raise RuntimeError(f"{inst.id}: --plan failed (rc={p.returncode}): {(p.stderr or '')[-2000:]}")
     return json.loads(p.stdout)

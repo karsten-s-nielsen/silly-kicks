@@ -95,6 +95,12 @@ def _artifact_dir(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
     return staging / inst_id
 
 
+def _final_dir(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
+    """``<staging>/_final/<instance>/``: the adopted copy of one instance. :func:`_finalize` writes it;
+    :func:`compare_staging` reads it on the baseline side."""
+    return staging / "_final" / inst_id
+
+
 def _open_data_dir(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
     """The open-data cache of one statsbomb_open head-to-head (HFU spec 17.5): one folder per instance, so no two
     concurrent verify workers download into one folder."""
@@ -864,7 +870,7 @@ def _finalize(staging: pathlib.Path, inst_id: str) -> pathlib.Path:
 
     from scripts._corpus_identity import canonical_probe_ids
 
-    src, dst = _artifact_dir(staging, inst_id), staging / "_final" / inst_id
+    src, dst = _artifact_dir(staging, inst_id), _final_dir(staging, inst_id)
     if dst.exists():
         shutil.rmtree(dst)
     dst.mkdir(parents=True)
@@ -1290,11 +1296,18 @@ def _commit_file(job: str, tier: str, variant: str, man: mf.Manifest) -> str | N
 
 
 def compare_staging(c: Any, *, staging: pathlib.Path, baseline: pathlib.Path) -> dict[str, dict]:
-    """Compare the RETRIEVED artifacts of two launches, instance by instance (local files only; never ``_final/``).
+    """Compare the artifacts of two launches, instance by instance (local files only).
+
+    The NEW side is always its RETRIEVED files (``<staging>/<run_key>/<variant>/``): a job must write the shipped
+    form itself. The BASELINE side is its adopted copy (:func:`_final_dir`, the files that `adopt` finalized and
+    `publish` uploaded) when the baseline has one for the instance, its retrieved files otherwise: the baseline of
+    a parity proof is what shipped (launch 8: the retrieved xCross ``metrics.json`` of launch 7 held staged probe
+    names, its adopted copy the canonical ids of HFU spec 18.6, which the trainer writes now).
 
     One entry per ``<job>-<tier>/<variant>`` of the campaign, in campaign order. A trainer instance:
-    ``{"identical", "differences"}`` under `identity.cross_commit_differences`; an instance whose folder is absent
-    on a side is a difference. A driver instance (the census): ``{"census_ok", "certification"}`` from
+    ``{"identical", "differences", "baseline"}`` under `identity.cross_commit_differences`, where ``baseline`` is
+    ``"adopted"`` or ``"retrieved"`` (the form that was read); an instance whose retrieved folder is absent on a
+    side is a difference and names no form. A driver instance (the census): ``{"census_ok", "certification"}`` from
     ``<staging>/verify.json`` -- ok only when the file exists, names the commit of the staging run keys, and the
     instance's row is ``ok``."""
     from scripts.hf_jobs.identity import cross_commit_differences
@@ -1321,8 +1334,11 @@ def compare_staging(c: Any, *, staging: pathlib.Path, baseline: pathlib.Path) ->
             if new_dir is None or old_dir is None or not new_dir.is_dir() or not old_dir.is_dir():
                 out[key] = {"identical": False, "differences": ["present in only one staging folder"]}
                 continue
-            diffs = cross_commit_differences(new_dir, old_dir, commit_file=_commit_file(j.job, j.tier, v, man))
-            out[key] = {"identical": not diffs, "differences": diffs}
+            adopted = _final_dir(baseline, old_dir.relative_to(baseline).as_posix())
+            form = "adopted" if adopted.is_dir() else "retrieved"
+            base_dir = adopted if form == "adopted" else old_dir
+            diffs = cross_commit_differences(new_dir, base_dir, commit_file=_commit_file(j.job, j.tier, v, man))
+            out[key] = {"identical": not diffs, "differences": diffs, "baseline": form}
     return out
 
 

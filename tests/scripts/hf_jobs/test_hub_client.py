@@ -51,6 +51,95 @@ def test_installed_client_carries_the_hook():
     assert len(client.event_hooks["request"]) >= 2  # the library's own hook is kept
 
 
+def test_installed_client_counts_each_request():
+    """Every request the process sends through huggingface_hub is counted (a retry and a listing page are
+    requests too), from any thread."""
+    H.install_timeouts()
+    assert H.count_request in _http.get_session().event_hooks["request"]
+    own0, plans0 = H.request_counts()
+
+    def send():
+        for _ in range(500):
+            H.count_request(httpx2.Request("GET", "http://x/"))
+
+    threads = [threading.Thread(target=send) for _ in range(8)]
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # switch threads as often as possible: a count that is not locked loses updates
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(interval)
+    assert H.request_counts() == (own0 + 4000, plans0)
+
+
+def test_plan_requests_line_round_trip(monkeypatch):
+    """A `--plan` process reports its own count in one stderr line; the controller parses the last such line.
+    A process without the Hub client (a local store) made no Hub request and prints no line."""
+    monkeypatch.setattr(H, "_INSTALLED", False)
+    assert H.plan_requests_line() is None
+    H.install_timeouts()
+    H.count_request(httpx2.Request("GET", "http://x/"))
+    own, _ = H.request_counts()
+    line = H.plan_requests_line()
+    assert line == f"[plan] hub requests {own}" and own >= 1
+    assert H.parse_plan_requests(f"[alive] noise\n[plan] hub requests 3\n{line}\n") == own
+
+
+@pytest.mark.parametrize("stderr", [None, "", "no such line\n", "[plan] hub requests many\n"])
+def test_parse_plan_requests_without_a_count(stderr):
+    assert H.parse_plan_requests(stderr) is None
+
+
+def _plan_run(stderr: str):
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, stdout='{"stages": []}', stderr=stderr)
+
+    return run
+
+
+def test_read_plan_adds_the_requests_of_the_plan_process():
+    """`read_plan` adds the count that the plan process printed to the controller's tally of plan requests; a
+    plan without the line (a local store) adds nothing. The plan JSON is unchanged."""
+    inst = C.Instance("job", "public", "default", "m", (), (), "rk")
+    own0, plans0 = H.request_counts()
+    got = C.read_plan(inst, bucket="ns/b", run=_plan_run("[alive] x\n[plan] hub requests 12\n"))
+    assert got == {"stages": []}
+    assert H.request_counts() == (own0, plans0 + 12)
+    C.read_plan(inst, bucket="ns/b", run=_plan_run(""))
+    assert H.request_counts() == (own0, plans0 + 12)
+
+
+def test_read_plan_adds_the_requests_of_a_failed_plan():
+    """A plan that ends with an error printed its count first (`_stages.main`): `read_plan` adds it, then raises.
+    A 429 inside a plan is the case the count is for."""
+    inst = C.Instance("job", "public", "default", "m", (), (), "rk")
+    own0, plans0 = H.request_counts()
+
+    def run(argv, **kwargs):
+        err = "[plan] hub requests 9\nTraceback (most recent call last):\nHfHubHTTPError: 429 Too Many Requests\n"
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr=err)
+
+    with pytest.raises(RuntimeError, match="Too Many Requests"):
+        C.read_plan(inst, bucket="ns/b", run=run)
+    assert H.request_counts() == (own0, plans0 + 9)
+
+
+def test_read_plan_adds_nothing_for_a_plan_that_timed_out():
+    """A plan past its deadline is killed, so it prints no count: the step line is a lower bound for that step."""
+    inst = C.Instance("job", "public", "default", "m", (), (), "rk")
+    own0, plans0 = H.request_counts()
+
+    def run(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, 1, stderr="[alive] x\n")
+
+    with pytest.raises(C.PlanTimeoutError):
+        C.read_plan(inst, bucket="ns/b", run=run)
+    assert H.request_counts() == (own0, plans0)
+
+
 class _SilentServer:
     """Accepts TCP connections and never answers."""
 

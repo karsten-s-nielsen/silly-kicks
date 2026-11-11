@@ -37,7 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added (scripts only)
 
 - `campaign <file> compare --staging NEW --baseline OLD`: the parity proof of a launch that changes no model, on
-  one rule (`identity.cross_commit_differences`). `artifact_size_bytes` is a provenance key.
+  one rule (`identity.cross_commit_differences`). `artifact_size_bytes` is a provenance key. The baseline side
+  is its adopted copy (`OLD/_final/`, the shipped form) when it has one, its retrieved files otherwise; each
+  line names the form. Launch 8 against launch 7: 20 of 20 trainer artifacts identical, the census verdict ok
+  (nothing adopted).
+- The driver step line names the Hub requests of the step: `hub requests <total> (plans <p>)`, the
+  controller's own plus those of its `--plan` processes; a rate-limited step names its count. The bounded Hub
+  client counts every request (`hub_client.count_request`), and a `--plan` process of a bucket store prints
+  `[plan] hub requests <n>` on stderr, also when it ends with an error (a 429 inside a plan is in the count). A
+  `--plan` that timed out was killed and reports none: the count of that step is a lower bound.
 - `campaign <file> prune` (list) and `prune --delete --i-have-owner-approval <commit7>`: the scratch run keys of
   superseded commits. Preflight check 7, `check_storage`: the org's private storage headroom.
 - `units_per_job_by_stage` in a campaign file: one stage's own job size (`cycle1.toml`: the 36 xsuccess fits as
@@ -74,6 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the watch (and the old `faulthandler` dump then ended the child in 4 of 52 forced runs). The old assert also
   passed on a dump that named the import. The test is now two tests (the beats; the dump): the child sets its
   own deadline after the import is warm, and the dump assert reads the dump's own lines.
+- `tests/scripts/test_unit_log_lines.py::test_job_summary_line[ok-0]` failed with `LostWriteError` when it ran
+  in one process after two `test_executor.py` tests (CI runs them in different shards): the tests shared the
+  process-wide write journal of `scripts/_write_confirm.py`. `tests/scripts/conftest.py` now empties the journal
+  around every test under `tests/scripts/`. No product code changes.
 
 ## [4.140.0] — 2026-11-10 — minimal HF Jobs driver + resource-sharing overhaul + numba core + the launch-7 re-fit (ADR-128 amendments 2026-11-02 to 2026-11-10, ADR-076 amendment 2026-11-06) (PR-S203)
 

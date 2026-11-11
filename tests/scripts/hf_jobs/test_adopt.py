@@ -955,8 +955,9 @@ def test_compare_staging_reports_each_instance(tmp_path):
     new = _compare_staging_dir(tmp_path / "new", _CB)
     old = _compare_staging_dir(tmp_path / "old", _CA)
     got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
-    assert got["xsuccess-public/default"] == {"identical": True, "differences": []}
-    assert got["match_outcome_dependence-public/default"] == {"identical": True, "differences": []}
+    same = {"identical": True, "differences": [], "baseline": "retrieved"}
+    assert got["xsuccess-public/default"] == same
+    assert got["match_outcome_dependence-public/default"] == same
     assert got["build_territory_ranking_census-public/default"]["census_ok"] is True
     assert list(got) == [
         "xsuccess-public/default",
@@ -970,6 +971,65 @@ def test_compare_staging_reports_a_payload_difference(tmp_path):
     old = _compare_staging_dir(tmp_path / "old", _CA)
     row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
     assert row["identical"] is False and any(d.startswith("model.json") for d in row["differences"])
+
+
+def _adopted_copy(root: Path, commit: str, *, feature_names: list[str]) -> Path:
+    """The adopted copy of the toy xsuccess artifact (``<root>/_final/<run_key>/default/``, what `_finalize`
+    writes): the retrieved files, with ``feature_names`` in ``metadata.json`` set to the given value."""
+    import shutil
+
+    inst = f"cycle1-{commit[:7]}-xsuccess-public/default"
+    dst = root / "_final" / inst
+    shutil.copytree(root / inst, dst)
+    (dst / "metadata.json").write_text(json.dumps({"training_commit": commit, "feature_names": feature_names}))
+    return dst
+
+
+def test_compare_staging_reads_the_adopted_copy_of_the_baseline(tmp_path):
+    """The baseline of a parity proof is the SHIPPED form (HFU fit-units spec 6, launch 8): the retrieved files
+    of the baseline differ from the new launch, its adopted copy does not. An instance without an adopted copy
+    is compared with its retrieved files, and each row names the form."""
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    raw = old / f"cycle1-{_CA[:7]}-xsuccess-public" / "default" / "metadata.json"
+    raw.write_text(json.dumps({"training_commit": _CA, "feature_names": ["staged-a"]}))
+    _adopted_copy(old, _CA, feature_names=["a"])
+    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+    assert got["xsuccess-public/default"] == {"identical": True, "differences": [], "baseline": "adopted"}
+    assert got["match_outcome_dependence-public/default"]["baseline"] == "retrieved"
+
+
+def test_compare_staging_takes_the_adopted_copy_over_equal_retrieved_files(tmp_path):
+    """The other side of the rule: the retrieved files of the baseline equal the new launch, its adopted copy
+    does not. The adopted copy is the authority, so the instance is DIFFERENT."""
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    _adopted_copy(old, _CA, feature_names=["shipped"])
+    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
+    assert row["identical"] is False and row["baseline"] == "adopted"
+    assert any(d.startswith("metadata.json") for d in row["differences"])
+
+
+def test_compare_staging_never_reads_the_adopted_copy_of_the_new_side(tmp_path):
+    """A job must write the shipped form itself: the new side is always its retrieved files, even when an
+    adopted copy of the new launch equals the baseline."""
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    raw = new / f"cycle1-{_CB[:7]}-xsuccess-public" / "default" / "metadata.json"
+    raw.write_text(json.dumps({"training_commit": _CB, "feature_names": ["staged-a"]}))
+    _adopted_copy(new, _CB, feature_names=["a"])
+    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
+    assert row["identical"] is False and row["baseline"] == "retrieved"
+
+
+def test_finalize_writes_the_folder_that_compare_reads(tmp_path):
+    """`_finalize` and `compare_staging` agree on where the adopted copy is (one path helper)."""
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    inst = f"cycle1-{_CA[:7]}-xsuccess-public/default"
+    assert A._finalize(old, inst) == A._final_dir(old, inst) == old / "_final" / inst
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
+    assert row == {"identical": True, "differences": [], "baseline": "adopted"}
 
 
 def test_compare_staging_reports_an_instance_in_only_one_folder(tmp_path):

@@ -710,9 +710,77 @@ def test_step_prints_one_timed_progress_line(tmp_path, capsys) -> None:
     lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[driver] step")]
     assert len(lines) == 1, lines
     assert re.fullmatch(
-        r"\[driver\] step: plans 2 in \d+\.\ds \(1 failed\); in flight 0; launched 1; stuck 1; instances done 0/2",
+        r"\[driver\] step: plans 2 in \d+\.\ds \(1 failed\); hub requests 0 \(plans 0\); in flight 0; launched 1; "
+        r"stuck 1; instances done 0/2",
         lines[0],
     ), lines
+
+
+def test_step_line_counts_the_hub_requests(tmp_path, capsys) -> None:
+    """The step line names the Hub requests of the step: the controller's own and those of its `--plan`
+    processes (HFU fit-units spec 17: each launch shows its margin to the rate limit). A second step counts
+    from its own start."""
+    from scripts.hf_jobs import hub_client as H
+
+    plan = _single_stage_plan(tmp_path)
+
+    def read(_inst):
+        H.add_plan_requests(7)  # what `campaign.read_plan` does with the line of the plan process
+        return plan
+
+    def live():
+        for _ in range(3):
+            H.count_request(None)  # the controller's own requests (the job listing)
+        return []
+
+    for _ in range(2):
+        _step(_campaign(), instances=[_inst()], read_plan=read, live_records=live, launch_fn=_LaunchRecorder())
+        line = next(ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[driver] step"))
+        assert "; hub requests 10 (plans 7); in flight " in line, line
+
+
+def test_a_rate_limited_step_names_the_hub_requests_it_sent(tmp_path, capsys) -> None:
+    """The step that ends in a rate limit prints how many requests it sent first."""
+    from scripts.hf_jobs import hub_client as H
+
+    def live():
+        for _ in range(4):
+            H.count_request(None)
+        raise RuntimeError("429 Too Many Requests")
+
+    result = _step(
+        _campaign(),
+        instances=[_inst()],
+        read_plan=lambda _inst: _single_stage_plan(tmp_path),
+        live_records=live,
+        launch_fn=_LaunchRecorder(),
+    )
+    assert result.contention is True
+    line = next(ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[driver] step"))
+    assert re.fullmatch(r"\[driver\] step: rate-limited after \d+\.\ds \(hub requests 4\); backing off", line), line
+
+
+def test_a_step_rate_limited_inside_a_plan_names_the_requests_of_that_plan(capsys) -> None:
+    """A 429 inside a ``--plan`` process: the plan printed its count before it ended, the real `read_plan` adds
+    it before it raises, and the rate-limited line of the step holds it."""
+    import subprocess
+
+    from scripts.hf_jobs import campaign as C
+
+    def run(argv, **kwargs):
+        err = "[plan] hub requests 9\nhuggingface_hub.errors.HfHubHTTPError: 429 Too Many Requests\n"
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr=err)
+
+    result = _step(
+        _campaign(),
+        instances=[_inst()],
+        read_plan=lambda inst: C.read_plan(inst, bucket="ns/b", run=run),
+        live_records=lambda: [],
+        launch_fn=_LaunchRecorder(),
+    )
+    assert result.contention is True
+    line = next(ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[driver] step"))
+    assert re.fullmatch(r"\[driver\] step: rate-limited after \d+\.\ds \(hub requests 9\); backing off", line), line
 
 
 def test_step_line_instances_done(tmp_path, capsys) -> None:
@@ -925,11 +993,17 @@ def test_main_adopt_family_requires_staging() -> None:
 def test_package_main_routes_campaign_to_the_driver(monkeypatch) -> None:
     """``python -m scripts.hf_jobs campaign ...`` routes to the driver's ``main``."""
     import scripts.hf_jobs.__main__ as pkg_main
-    from scripts.hf_jobs import driver
+    from scripts.hf_jobs import driver, hub_client
 
     seen: dict = {}
+    installs: list[int] = []
+    client_before = hub_client._INSTALLED
     monkeypatch.setattr(driver, "main", lambda rest: (seen.setdefault("rest", rest), 0)[1])
+    # The real `install_timeouts` replaces the client factory of the process and stays for every later test.
+    monkeypatch.setattr(hub_client, "install_timeouts", lambda: installs.append(1))
     assert pkg_main.main(["campaign", "camp.toml", "status"]) == 0 and seen["rest"] == ["camp.toml", "status"]
+    assert installs == [1]  # every Hub call of the controller is bounded (HFU spec 13.4)
+    assert hub_client._INSTALLED is client_before  # the test leaves the Hub client of the process as it found it
 
 
 # --- bounded job-sizing (few big jobs, not cap-many) -----------------------------------------
@@ -1440,17 +1514,26 @@ def test_main_compare_exits_by_the_result(monkeypatch, tmp_path, capsys) -> None
     from scripts.hf_jobs import adopt
 
     rows = {
-        "xsuccess-public/default": {"identical": True, "differences": []},
+        "xsuccess-public/default": {"identical": True, "differences": [], "baseline": "adopted"},
         "census-public/default": {"census_ok": True, "certification": {"basis": "rebaseline"}},
     }
     monkeypatch.setattr(adopt, "compare_staging", lambda c, *, staging, baseline: rows)
     argv = ["camp.toml", "compare", "--staging", str(tmp_path / "new"), "--baseline", str(tmp_path / "old")]
     assert main(argv, **_no_api_args()) == 0
-    assert "xsuccess-public/default IDENTICAL" in capsys.readouterr().out
-    rows["xsuccess-public/default"] = {"identical": False, "differences": ["model.json: bytes differ"]}
+    assert "xsuccess-public/default IDENTICAL (baseline: adopted copy)\n" in capsys.readouterr().out
+    rows["xsuccess-public/default"] = {
+        "identical": False,
+        "differences": ["model.json: bytes differ"],
+        "baseline": "retrieved",
+    }
     assert main(argv, **_no_api_args()) == 1
-    assert "xsuccess-public/default DIFFERENT: model.json: bytes differ" in capsys.readouterr().out
-    rows["xsuccess-public/default"] = {"identical": True, "differences": []}
+    line = "xsuccess-public/default DIFFERENT (baseline: retrieved files): model.json: bytes differ\n"
+    assert line in capsys.readouterr().out
+    # an instance in only one folder was compared with no baseline: its line names none
+    rows["xsuccess-public/default"] = {"identical": False, "differences": ["present in only one staging folder"]}
+    assert main(argv, **_no_api_args()) == 1
+    assert "xsuccess-public/default DIFFERENT: present in only one staging folder\n" in capsys.readouterr().out
+    rows["xsuccess-public/default"] = {"identical": True, "differences": [], "baseline": "retrieved"}
     rows["census-public/default"] = {"census_ok": False, "certification": None}
     assert main(argv, **_no_api_args()) == 1
     assert "census-public/default census verdict NOT ok" in capsys.readouterr().out

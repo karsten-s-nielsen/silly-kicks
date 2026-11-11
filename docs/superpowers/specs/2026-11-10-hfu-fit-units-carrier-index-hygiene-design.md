@@ -7,7 +7,11 @@ owner-gated. Scope owner: Karsten. Reviewers A and B (independent); reports in
 both owner-confirmed 2026-11-10: §3.2 "Removed" and the `lost_output` field of C4). Round 1: A and B REQUEST CHANGES. Round 2
 (revision 2): A and B APPROVE, no blocking finding. Revision 3 applies their round-2 notes and two owner rulings
 (§12, §13). Revision 3c (2026-11-10): the build notes (§14), four owner rulings from the implementation review
-(§4.2, §4.5, §15) and the answers to implementation review round 1 (§15).
+(§4.2, §4.5, §15) and the answers to implementation review round 1 (§15). Revision 3d (2026-11-11): §17, the
+record of launch 8 and two owner rulings that it caused (the `compare` baseline; the Hub request count), and a
+third ruling on a test order dependence that the final check found (§17.5). The second commit holds them
+together with the evidence; the cycle commit `abcfda86` is not amended. Revision 3e (2026-11-11): §18, the
+answers to implementation review round 5 and three more owner rulings.
 
 ## 1. Why
 
@@ -371,7 +375,8 @@ same rule.
 - Cost: one small marker read per `FileSet` result per plan (memoized per `--plan` process). Part A adds one
   `FileSet` unit to xsuccess (`final-main`); the other 35 results are parquet. The plan measures the request
   counts on the four instances of HFU spec §16.4 and records them; a count above today's count plus the number of
-  `FileSet` results of the instance is a defect.
+  `FileSet` results of the instance is a defect. **Corrected 2026-11-11 (§17.4):** this bound counted a marker
+  read as one HTTP request; it is two. The bound is in store operations: one marker read per `FileSet` result.
 - The plan checks `scripts/hf_jobs/datasets.py:359-361` (the download plan with `verify=False`) for a
   `uses_dataset` stage that this rule changes.
 - Tests: a store with a marker and a missing member gives a pending unit, `lost_units` and an un-reduced stage;
@@ -472,6 +477,9 @@ The launch is a parity proof. It is not a re-fit.
    deletes (the launch-8 keys are a proof record; the launch-7 keys are the run record of the shipped artifacts).
 
 No tracked edit from `launch` until `compare` ends.
+
+**Amended 2026-11-11 (§17.3):** step 3 reads the baseline side from its adopted copy (`_final/`) when it has
+one. The launch record of step 5 is §17.
 
 ## 7. Tests (each seen to fail first)
 
@@ -650,3 +658,240 @@ after the cycle commit; the commit was amended on his yes). `arm_plan_deadline` 
 watch (`liveness.start_dump_thread`, role `plan`); `campaign._plan_timeout_detail` reads the new header; the
 helper that moved the watchdog's main-thread block to the front is removed, because the new dump lists the main
 thread first. No `faulthandler` call is left in the campaign code.
+
+## 17. Launch 8: the record, three findings, three owner rulings (2026-11-11)
+
+Launch 8 ran at `abcfda86` (owner go 2026-11-10). This section is the record of §6 step 5. Every number of §17.1,
+§17.2 and §17.4 was measured before any tracked file changed. Scratch scripts and logs: `D:\Temp\hfu-next\launch8\`.
+
+### 17.1 The launch record
+
+| Item | Measured |
+|---|---|
+| Preflight | 7 of 7 checks ok. Storage before the launch: 49.93 GB used (the scratch bucket 27.74 GB, the private datasets 22.06 GB, the canary bucket 0.12 GB). |
+| Driver | 2026-11-10T22:29:33Z to 2026-11-11T02:12:10Z: 3 h 42 min 37 s. Exit 0. 208 steps; no FATAL, no STUCK, no failed `--plan`, no rate-limited step. |
+| Jobs | 397: 394 COMPLETED, 3 ERROR. The 3 are `mount_auth_flake` (pass_completion `fit`, ghost_gk sweeper `importance`, ghost_gk sweeper_position_only `cache`); the driver relaunched each (budget 12 per dataset). |
+| Instances | 21 of 21 reduced. `retrieve` 21 of 21. `verify` 21 of 21 ok. |
+| xsuccess `refs` + `extract` | From the driver start to the `hpo` launch: 40 min 28 s (37 `extract` jobs). Launch 7: 25 min (M1). Code not changed; cause not investigated. |
+| xsuccess `hpo` | One unit: 9,654 s (160.9 min) for 30 trials, mean 322 s per trial (early trials about 285 s, late trials 367 to 670 s). Launch 7: 141.2 min. Code not changed; cause not investigated. |
+| xsuccess `fit` | 36 units in 12 jobs, every unit done on attempt 1. From the stage launch (01:52:34Z) to the reduced stage (the driver end): 19 min 36 s. Launch 7: 63 min. Unit wall time 654.9 / 805.6 / 994.8 s (min / median / max); first unit start to last unit end 1,004.5 s; the reduce 65.4 s. |
+| `fit` peak RSS | 6.02 / 6.12 / 7.26 GiB (min / median / max, `rss_scope` unit). The hint is 8 GiB, so 3 units per job is right. |
+
+Against §1.4: the `fit` stage went from 63 min to 19 min 36 s, not to about 12 min. One unit took 655 to 995 s
+where §3.4 expected about 430 s (three units run at once in one job; the cause of the difference was not
+investigated). The complete run took 3 h 43 min, not about 3 h: `refs` + `extract` and `hpo` together took 35 min
+more than at launch 7 with unchanged code. The long pole is still xsuccess: 40 + 161 + 20 min.
+
+### 17.2 The production check of §4.4
+
+One read-only job, `6af389acab34849891acef67`, at `abcfda86`, `cpu-upgrade`, COMPLETED in 542 s, `PRE_INDEX_OK 3`.
+The in-job script: sha256 `3af84fe529da387275a44c414f31b4c6c2bb7cb555cee73a91665369092fd3b4`; the launcher: sha256
+`0ff3b50d0309f110a2cf2bb9002f7cab332463c5a7881f6650fbcef8bb384cf0` (both outside the repo, both read by A and B).
+
+| Match | Rows | Frames | Id dtypes | Oracle | New | Speed-up | Output | Carrier |
+|---|---|---|---|---|---|---|---|---|
+| `gradientsports__10502` | 4,000,957 | 175,969 | `player_id` Int64, `team_id` float64 | 62.52 s | 1.80 s | 34.8x | equal by bits | equal |
+| `skillcorner__1021404` | 1,051,215 | 45,705 | `player_id` object, `team_id` category | 12.86 s | 0.61 s | 21.0x | equal by bits | equal |
+| `idsse__DFL-MAT-J03WMX` | 3,357,241 | 145,967 | `player_id` object, `team_id` category | 40.30 s | 1.75 s | 23.0x | equal by bits | equal |
+
+### 17.3 `compare`: the result, a finding, the baseline rule
+
+**The result with the rule of §6 step 3 as written** (`--baseline D:\Development\_staging\cycle1-a1a3b52`, the
+retrieved files): exit 1. 16 trainer instances IDENTICAL (xsuccess among them), the census verdict ok, 4 DIFFERENT:
+`xcross_attempt` `public` and `sc_extended`, both variants, each with `metrics.json: differs after removing the
+provenance keys`. `model.json`, `metadata.json` and `SHA256SUMS` of the four are equal.
+
+**The cause.** Six leaves of each `metrics.json` differ: `probe_sample_matches[i][1]` and the keys of
+`probe_sample_in_training_folds`. Launch 7 wrote the staged names `gradientsports-10502` and `gradientsports-10503`;
+launch 8 wrote the canonical ids `10502` and `10503`. That is the trainer fix of HFU spec §18.6 (owner 2026-11-10:
+"fix the trainer, and canonicalize at adoption; no rerun"). It entered the code with `53e529b7` (4.140.0), after
+launch 7 ran at `a1a3b52f`, so launch 8 is its first run on HF. This cycle did not change that trainer
+(`git diff bb0c601c..abcfda86` touches neither `scripts/train_xcross_attempt.py` nor `scripts/_corpus_identity.py`).
+So the difference is not a defect of this cycle (§6 step 6). **The defect was in §6 step 3 (the author's):** it
+named the retrieved files of launch 7 as the baseline. The shipped form of launch 7 is its adopted copy.
+
+**Proof that launch 8 equals the shipped form.**
+
+- The tool of `abcfda86`, unchanged, with `--baseline D:\Development\_staging\cycle1-a1a3b52\_final` (the adopted
+  copy, which has the same folder layout): exit 0, 20 of 20 IDENTICAL, the census verdict ok.
+- For each of the four xCross instances: `canonical_probe_ids(launch-7 retrieved metrics)` equals the launch-8
+  retrieved metrics without the provenance keys, and `canonical_probe_ids` changes nothing in the launch-8 metrics.
+- The adopted copy is the shipped form: for xCross `public`, its `model.json`, `metadata.json` and `SHA256SUMS`
+  equal the wheel bundle byte for byte; its `metrics.json` differs from the bundle only by the public-id
+  rehydration that `adopt` does (`corpus_match_ids` in place of the digest and the count).
+
+**The owner's ruling (2026-11-11, "1: fix here"): the tool gets the right baseline, so that this cannot return.**
+Launch 8 adopts nothing, so launch 7 stays the shipped launch and the baseline of every later parity proof.
+
+- `adopt.compare_staging` reads the baseline side from its adopted copy, `<baseline>/_final/<run_key>/<variant>/`,
+  when the baseline has one for the instance, and from its retrieved files otherwise. `adopt._final_dir` is the
+  one path helper; `_finalize` writes that folder.
+- The new side is always its retrieved files. A job must write the shipped form itself, so a trainer that goes
+  back to another form shows as DIFFERENT.
+- Each row has `baseline`: `adopted` or `retrieved`. The line reads `IDENTICAL (baseline: adopted copy)` or
+  `DIFFERENT (baseline: retrieved files): ...`. An instance in only one folder names no form.
+
+The output of `campaign scripts/hf_jobs/campaigns/cycle1.toml compare --staging
+D:\Development\_staging\cycle1-abcfda8 --baseline D:\Development\_staging\cycle1-a1a3b52` with the changed tool
+(exit 0):
+
+```
+[compare] xsuccess-public/default IDENTICAL (baseline: adopted copy)
+[compare] ghost_gk-owner/default IDENTICAL (baseline: adopted copy)
+[compare] ghost_gk-owner/position_only IDENTICAL (baseline: adopted copy)
+[compare] ghost_gk-owner/sweeper IDENTICAL (baseline: adopted copy)
+[compare] ghost_gk-owner/sweeper_position_only IDENTICAL (baseline: adopted copy)
+[compare] ghost_gk-owner/full IDENTICAL (baseline: adopted copy)
+[compare] ghost_outfield-owner/default IDENTICAL (baseline: adopted copy)
+[compare] ghost_outfield-owner/position_only IDENTICAL (baseline: adopted copy)
+[compare] xshot_occurrence-public/default IDENTICAL (baseline: adopted copy)
+[compare] xshot_occurrence-public/position_only IDENTICAL (baseline: adopted copy)
+[compare] xshot_occurrence-sc_extended/default IDENTICAL (baseline: adopted copy)
+[compare] xshot_occurrence-sc_extended/position_only IDENTICAL (baseline: adopted copy)
+[compare] xcross_attempt-public/default IDENTICAL (baseline: adopted copy)
+[compare] xcross_attempt-public/position_only IDENTICAL (baseline: adopted copy)
+[compare] xcross_attempt-sc_extended/default IDENTICAL (baseline: adopted copy)
+[compare] xcross_attempt-sc_extended/position_only IDENTICAL (baseline: adopted copy)
+[compare] receiver_model-owner/default IDENTICAL (baseline: adopted copy)
+[compare] win_probability-public/default IDENTICAL (baseline: adopted copy)
+[compare] build_territory_ranking_census-public/default census verdict ok
+[compare] match_outcome_dependence-public/default IDENTICAL (baseline: adopted copy)
+[compare] pass_completion-public/default IDENTICAL (baseline: adopted copy)
+```
+
+**Pass (§6 step 5):** nothing is adopted and nothing is published. The shipped artifacts keep
+`training_commit = a1a3b52f`.
+
+Tests (each seen to fail first: 6 failed): the adopted copy is read on the baseline side, and an instance without
+one is read from its retrieved files; the adopted copy is the authority when the retrieved files of the baseline
+equal the new launch and the adopted copy does not; the new side never reads its own adopted copy; `_finalize`
+writes the folder that `compare` reads; the three line forms. Mutation check: 5 of 5 mutants caught.
+
+### 17.4 The plan request counts, a second finding, the request count in the step line
+
+One `--plan` of four finished instances, through a counting hook on the Hub client (read-only):
+
+| Instance | Reference (4.140.0) | Bound of C4 as written | Measured | Listing pages | Other requests |
+|---|---|---|---|---|---|
+| win_probability | 16 | 18 | 20 | 12 | 8: `refs` `_output.json` and `.sha256`; the `fit` markers `_output` and `only` |
+| xsuccess | 16 | 19 | 21 | 13 | 8: `refs` `_output.json` and `.sha256`; the `fit` markers `_output` and `final-main` |
+| census | 17 | 19 | 21 | 13 | 8: `refs` `_output.json` and `.sha256`; the `report` markers `_output` and `only` |
+| ghost_gk/default | 4 | 8 | 12 | 4 | 8: the `fit` and `assemble` markers, `_output` and `only` each |
+
+- **The finding (the author's error in C4):** one store read is TWO HTTP requests with huggingface_hub 2.2.0,
+  `POST paths-info` and `HEAD resolve` (the bytes come over xet). C4 counted a marker read as one request. So
+  every measured count is above the bound as written, by the number of `FileSet` results of the instance.
+- **The design holds exactly:** one marker read per `FileSet` result and no extra listing. Measured = reference
+  + 2 x `FileSet` results, plus one listing page for xsuccess (its run key holds 12,105 files, 11,973 at launch 7;
+  a page is 1,000 files).
+- **Effect in launch 8:** none seen. 208 steps, no rate-limited step, no failed `--plan`.
+
+**The owner's ruling (2026-11-11, "1: Do it all"), three parts:**
+
+1. **The bound is in store operations**, which the code controls: per plan, one recursive listing and one marker
+   read per `FileSet` result. `test_the_member_check_adds_one_marker_read_per_fileset_result_and_no_listing`
+   binds it. The HTTP counts above are a measured fact of one library version, not a bound.
+2. **The driver measures its own requests**, so that no scratch script is needed again (the 4.140.0 script was not
+   kept, and the first rewrite of it in this cycle counted 0, because the campaign code installs its own client).
+   `hub_client.count_request` is a request hook of the bounded client: it counts every request of the process (a
+   retry and a listing page are requests). A `--plan` process of a bucket store prints `[plan] hub requests <n>`
+   on stderr when it ends; `campaign.read_plan` adds that count to the controller's tally
+   (`hub_client.add_plan_requests`); a plan that fails reports its count too, and a plan that timed out reports
+   none (amended in review round 5, §18). The step line prints
+   `hub requests <total> (plans <p>)`: the controller's own requests plus those of its plan processes. A
+   rate-limited step prints `rate-limited after <s>s (hub requests <total>); backing off`. The plan JSON does not
+   change.
+3. **No request is removed now.** There is no measured need (part 2 gives the measure for the next launch), and
+   the large term is the listing, not the markers.
+
+Tests (each seen to fail first: 11 failed): the client carries the counting hook, and 8 threads x 500 requests
+count 4,000; the plan line round trip and the last-line rule; a process without the client prints no line;
+`read_plan` adds the count and leaves the plan JSON; a `--plan` of a local store prints no line and one with the
+client prints it after the JSON; the step line with the controller's and the plans' requests over two steps; the
+rate-limited line. Mutation check: 10 of 10 mutants caught. The first form of the counting test let the mutant
+"the hook counts without the lock" pass (a read, a short loop, a write); the test now sets the smallest thread
+switch interval and catches it. A bare `+= 1` without the lock has no switch point between its read and its write
+on CPython 3.12, so no test tells it from the locked form; the lock is the stated guarantee.
+
+### 17.5 A test order dependence that the final check found, the third owner ruling
+
+The final check of the second commit ran `tests/scripts/hf_jobs` and four more test files in one process: 640
+passed, 1 skipped, 1 failed. The failure was `tests/scripts/test_unit_log_lines.py::test_job_summary_line[ok-0]`,
+with `LostWriteError`. It is not a finding of launch 8.
+
+- **Cause:** `scripts/_write_confirm.py` keeps one journal of written files for each process. A job process
+  confirms its writes when it ends, and then it exits. A test process does not exit between tests. Two tests of
+  `tests/scripts/hf_jobs/test_executor.py`
+  (`test_a_deferred_memory_unit_neither_fails_a_strict_stage_nor_lets_it_reduce`,
+  `test_the_stage_cli_escalate_flag_runs_a_deferred_unit`) call `record_memory_failure` in the test process, and
+  a worker subprocess then deletes that marker when the escalated unit is done. The entry stays in the journal of
+  the test process. `test_job_summary_line[ok-0]` runs a real job exit (`_stages.main`), which looks for every
+  journaled file.
+- **No product defect found (read, not tested):** in a job, the process that records a memory failure keeps the
+  claim of that unit. `executor._dispatch` frees a claim only for a `pending` unit, and a recorded unit is
+  `failed`, so no worker of that job runs the unit again and deletes the marker.
+- **Not from the second commit:** the three tests and `_write_confirm.py` are equal to `abcfda86`. The author did
+  not run the failure at a clean copy of `abcfda86`; both reviewers did in round 5, and it fails there (§18).
+- **CI did not see it:** the 12-group split puts the two executor tests in group 3 and `test_job_summary_line` in
+  group 7 (a collect-only listing of the tree with the new tests). A run in one process sees it, and that
+  includes the documented local command `python -m pytest tests/ -m "not e2e"`.
+
+**The owner's ruling (2026-11-11, "1"): fix here.** `tests/scripts/conftest.py` has one autouse fixture,
+`_empty_write_journal`. It empties the journal before and after every test under `tests/scripts/`.
+`tests/scripts/test_write_confirm.py` had the same fixture for its own tests only; that fixture moved, so there is
+one.
+
+Test (seen to fail first): `test_a_journal_entry_does_not_reach_the_next_test`, two cases. Each case expects an
+empty journal at its start and leaves one entry on purpose, so the case that runs second fails in either order.
+Without the fixture: 6 failed and 10 passed in `test_write_confirm.py`, and the three tests above gave 1 failed
+and 4 passed. With the fixture: 16 passed, and 5 passed. Limit: one of the two clears alone passes this test (the
+clear after a test does the work of the clear before the next test). Both stay, as in the former fixture: the
+clear before a test also removes an entry that a test outside `tests/scripts/` left.
+
+## 18. Implementation review round 5 (the second commit) and three more owner rulings
+
+Reports: `D:\Development\_reviews\2026-11-10-hfu-fit-units-impl-r5-{A,B}.md`. Both reviewed the tree with the
+`git diff HEAD` sha256 `406be5c5…c0e2` (15 files). A: APPROVE, 2 should fix. B: APPROVE, 1 consider. Both
+reproduced the real `compare` (the tool of `abcfda86` exit 1; the changed tool exit 0, 20 of 20). Both ran the
+failure of §17.5 at a clean `abcfda86`: it fails there (A: 1 failed, 7 passed; B: 1 failed, 4 passed), so it is
+not from the second commit. Both read `executor._dispatch` and agree with "no product defect"; no test binds it.
+A's revert proof: 26 failed, 174 passed. B's mutation run: 16 of 16 caught.
+
+| Finding | Answer |
+|---|---|
+| A HFU2-IMPL-12 (should fix): `test_plan_prints_its_hub_request_count_only_with_a_hub_client` needed `hub_client._INSTALLED` to be `False`, and `test_package_main_routes_campaign_to_the_driver` leaves it `True` | Fixed: the test sets both client states itself. A's command gave 1 failed, 7 passed; it gives 8 passed. The cause is fixed too (owner ruling 5). |
+| A HFU2-IMPL-13 (should fix): the step-line count left out a `--plan` that failed or timed out, and only this spec said so | Fixed by owner ruling 4. |
+| B HFU2-IMPL-12 (consider): the how-to, ADR-128 item 48 and the `compare_staging` docstring said that `_final/` holds "the files that `adopt` bundled" | Fixed: the three texts say "finalized". The how-to and the ADR name the difference that §17.3 states (xCross `public`: the bundled `metrics.json` holds `corpus_match_ids`, the adopted copy their digest and their count). |
+
+**The owner's rulings (2026-11-11, "Gold standard for all three"):**
+
+4. **A plan that fails reports its count.** `_stages.main` prints `[plan] hub requests <n>` in a `finally` that
+   covers the store open and the plan read, and `campaign.read_plan` adds the count before it raises. So a 429
+   inside a plan is in the rate-limited line of the step. A plan that timed out was killed and reports none: the
+   count of that step is a lower bound, and the how-to, `CHANGELOG.md`, ADR-128 item 49 and the docstrings say
+   so. No count comes from the stack dump of a timeout (it would still be a lower bound, and it would tie the
+   dump code to the request counter).
+5. **The test that left the Hub client installed is fixed at its source.**
+   `test_package_main_routes_campaign_to_the_driver` (in `abcfda86`) called the real `install_timeouts`, which
+   replaces the client factory of the process. The test now replaces that function, asserts one call, and
+   asserts that `hub_client._INSTALLED` is as it found it. No directory-wide fixture: this test is the only one
+   that left the state.
+6. **The four timings of §17.1 get one `TODO.md` row** ("Find the cause of four launch-8 timings before the next
+   HF launch"). The `fit` unit time comes first, because `units_per_job_by_stage` rests on the 430 s estimate.
+
+Tests (each seen to fail first, 5 failed): a `--plan` that fails in the store open or in the plan read prints its
+count last on stderr and nothing on stdout; `read_plan` adds the count of a plan with a non-zero exit and then
+raises; a step whose real `read_plan` gets a 429 from the plan process prints `hub requests 9` in its
+rate-limited line; the package-main test with the `_INSTALLED` assertion and without the replacement. One test
+passed at once, because it states the limit and not a change: `read_plan` adds nothing for a plan that timed out.
+After the change: `test_unit_log_lines.py` 9 passed, `test_hub_client.py` 17 passed, the step selection 5 passed.
+No separate mutation run: the three reverts (the line outside the `finally`, the parse after the raise, the test
+without the replacement) are the state of the failing run.
+
+**Round 6 (narrow: the answers above).** Reports: `…-impl-r6-{A,B}.md`, on the tree with the `git diff HEAD`
+sha256 `4a1edaa6…69f2` (16 files). A: APPROVE, no finding; its two findings RESOLVED; its revert proof gave 4
+failed, 23 passed. B: APPROVE, no finding; its finding RESOLVED; four mutants caught. Only this paragraph changed
+after round 6. On the same tree the author ran `test_stage_reads.py` (21 passed) and `test_stage_contract.py`
+(35 passed), because `scripts/_stages.py` changed and neither reviewer ran them at this state. Not run at this
+state: all of `tests/scripts/hf_jobs` in one process and the full suite (the owner's PC runs nothing heavy,
+owner 2026-11-11). CI is the first full run.

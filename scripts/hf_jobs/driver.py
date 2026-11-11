@@ -30,6 +30,7 @@ from typing import NamedTuple
 
 from scripts._stages import exceeds_tolerance
 from scripts.hf_jobs.failures import JobOutcome, classify
+from scripts.hf_jobs.hub_client import request_counts
 from scripts.hf_jobs.preflight import PLAN_WORKERS
 
 #: A job's HF limit unless its stage declares ``timeout_s`` (HFU spec 15.7).
@@ -101,6 +102,7 @@ def step(
     if plan_cache is not None:
         read_plan = _cached_reader(_resolve_read_plan(campaign, read_plan), plan_cache)
     t0 = time.monotonic()
+    sent0 = request_counts()
     try:
         (gate or _default_gate(campaign, commit, api))()
         state = _gather(
@@ -108,7 +110,8 @@ def step(
         )
     except Exception as exc:  # a 429 reading the gate, the plans or `list_jobs`: back off, never crash
         if _is_contention(exc):
-            _say(f"[driver] step: rate-limited after {time.monotonic() - t0:.1f}s; backing off")
+            total, _ = _hub_requests(sent0)
+            _say(f"[driver] step: rate-limited after {time.monotonic() - t0:.1f}s (hub requests {total}); backing off")
             return StepResult(fatal=None, launched=0, done=False, reports=(), in_flight=0, contention=True)
         raise
     state_s = time.monotonic() - t0
@@ -153,8 +156,10 @@ def step(
     for instance_id, reason in reports:
         print(stuck_line(instance_id, reason), file=sys.stderr)
     n = len(state.insts)
+    total, by_plans = _hub_requests(sent0)
     _say(
-        f"[driver] step: plans {n} in {state_s:.1f}s ({len(state.plan_reports)} failed); in flight {in_flight}; "
+        f"[driver] step: plans {n} in {state_s:.1f}s ({len(state.plan_reports)} failed); "
+        f"hub requests {total} (plans {by_plans}); in flight {in_flight}; "
         f"launched {launched}; stuck {len(reports)}; instances done {_instances_done(state.plans)}/{n}"
     )
     return StepResult(
@@ -166,6 +171,15 @@ def step(
         contention=contention,
         mount_faults=sum(state.mount_faults.values()),  # a step-over-step rise signals mount-sidecar contention
     )
+
+
+def _hub_requests(sent0: tuple[int, int]) -> tuple[int, int]:
+    """``(total, plans)``: the Hub requests since the counts ``sent0`` (`hub_client.request_counts`). The total is
+    the controller's own requests plus those of its ``--plan`` processes; ``plans`` is the second part. The
+    step line prints both, so each launch shows its margin to the HF rate limit (HFU fit-units spec 17). A plan
+    that failed is in the count; a plan that timed out was killed and is not, so the total is then a lower bound."""
+    own, plans = request_counts()
+    return (own - sent0[0]) + (plans - sent0[1]), plans - sent0[1]
 
 
 class _State(NamedTuple):
@@ -530,9 +544,14 @@ def main(argv: Sequence[str] | None = None, *, load=None, make_api=None, head=No
     return 0
 
 
+#: `adopt.compare_staging` row ``baseline`` -> the words of the `compare` line.
+_BASELINE_FORMS = {"adopted": "adopted copy", "retrieved": "retrieved files"}
+
+
 def _compare(campaign, staging, baseline) -> int:
     """``compare --staging NEW --baseline OLD``: one line per instance, then the JSON; 0 when every artifact is
-    identical under `identity.cross_commit_differences` and the census verdict of NEW is ok (HFU fit-units spec 6)."""
+    identical under `identity.cross_commit_differences` and the census verdict of NEW is ok (HFU fit-units spec 6).
+    A trainer line names the baseline form that was read: the adopted copy of OLD, or its retrieved files."""
     from scripts.hf_jobs import adopt
 
     if staging is None or baseline is None:
@@ -541,10 +560,13 @@ def _compare(campaign, staging, baseline) -> int:
     for key, row in result.items():
         if "census_ok" in row:
             print(f"[compare] {key} census verdict {'ok' if row['census_ok'] else 'NOT ok'}")
-        elif row["identical"]:
-            print(f"[compare] {key} IDENTICAL")
+            continue
+        form = _BASELINE_FORMS.get(row.get("baseline", ""))
+        read = f" (baseline: {form})" if form else ""
+        if row["identical"]:
+            print(f"[compare] {key} IDENTICAL{read}")
         else:
-            print(f"[compare] {key} DIFFERENT: {'; '.join(row['differences'])}")
+            print(f"[compare] {key} DIFFERENT{read}: {'; '.join(row['differences'])}")
     print(json.dumps(result, indent=2, default=str))
     return 0 if adopt.compare_ok(result) else 1
 

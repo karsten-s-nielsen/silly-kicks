@@ -769,6 +769,38 @@ an HF change is ranked by wall time per launch, by failed launches and by storag
     (controller side, 30 s before the driver ends a `--plan` subprocess; the 2026-11-06 amendment) is the same
     dump now (`liveness.start_dump_thread`), and `campaign._plan_timeout_detail` reads its header; no
     `faulthandler` call is left in the campaign code.
+48. **The baseline of a parity proof is the shipped form** (launch 8; amends item 40). `compare` against the
+    retrieved files of launch 7 gave 4 DIFFERENT, all on the xCross `metrics.json`: the launch-7 jobs wrote
+    the staged probe names (`gradientsports-10502`), and the trainer writes the canonical ids since the
+    adoption of launch 7 (the amendment above; HFU spec 18.6). Launch 8 was the first launch with that
+    trainer. The adopted copy of launch 7 (`<staging>/_final/`, the files that `adopt` finalized and `publish`
+    uploaded; for xCross `public`, the bundled `metrics.json` holds `corpus_match_ids` where the adopted copy
+    holds their digest and their count) holds the canonical ids. **Decision:** `compare` reads the baseline's adopted copy
+    (`adopt._final_dir`, which `_finalize` writes) when the baseline has one for the instance, its retrieved
+    files otherwise, and each line names the form. The new side is always its retrieved files: a job must
+    write the shipped form itself, so a trainer that falls back to another form still shows as DIFFERENT.
+    Launch 8 against launch 7 under this rule: 20 of 20 trainer artifacts identical, the census verdict ok.
+49. **The driver measures its Hub requests.** The request count of a `--plan` was measured by hand in two
+    cycles. The script of the first was not kept, and the bound that this cycle's spec wrote counted a store
+    read as one request. Measured on launch 8 (huggingface_hub 2.2.0): a store read is two HTTP requests
+    (`POST paths-info`, `HEAD resolve`; the bytes come over xet), and a listing is one request per 1,000
+    files. One plan of a finished instance: win_probability 20, xsuccess 21, the census 21, ghost_gk/default
+    12 requests (16, 16, 17 and 4 before item 43, which adds one marker read per `FileSet` result).
+    **Decision:** (a) the bound of a plan is in store operations, which the code controls and a test binds:
+    one recursive listing and one marker read per `FileSet` result; the HTTP counts are a measured fact of
+    one library version. (b) The bounded client counts every request (`hub_client.count_request`); a
+    `--plan` process of a bucket store prints `[plan] hub requests <n>` on stderr; `campaign.read_plan` adds
+    it to the controller's tally; the step line prints `hub requests <total> (plans <p>)`, and a
+    rate-limited step prints its count. A plan that fails prints its count before it ends, and `read_plan`
+    adds it before it raises, so a 429 inside a plan is in the count; a plan that timed out was killed and
+    reports none (the count of that step is a lower bound). (c) No request is removed: launch 8 had 208 steps and no
+    rate-limited step. A reduction needs a measured need, and the step line now gives the measure.
+
+**Launch 8** (`abcfda86`, 2026-11-10 to 2026-11-11; spec §17): 397 jobs (394 COMPLETED, 3 `mount_auth_flake`,
+each relaunched), 21 of 21 instances reduced in 3 h 43 min. The xsuccess `fit` stage: 36 units in 12 jobs,
+19 min 36 s from launch to reduced (63 min at launch 7), peak RSS 6.02 to 7.26 GiB per unit. `verify` 21 of 21
+ok; `compare` as in item 48. Nothing was adopted or published: the shipped artifacts keep
+`training_commit = a1a3b52f`.
 
 **The launch-7 measurement that set the scope** (spec §1.2, the same ids; launch 7 on `a1a3b52f`, 388 jobs):
 
@@ -811,7 +843,12 @@ No `TODO.md` row is opened for a dropped item (owner).
 **Scope.** `scripts/train_xsuccess.py`, `silly_kicks/xsuccess/_model.py`, `silly_kicks/tracking/_ball_carrier.py`
 (the placement part of `_pre_index_frames`, pinned to the former function by an oracle test),
 `scripts/_stages.py` (`plan`), `scripts/hf_jobs/{adopt,campaign,driver,identity,preflight,prune}.py`,
-`scripts/hf_jobs/campaigns/cycle1.toml`, `scripts/hf_jobs/liveness.py` and `arm_plan_deadline` of `scripts/_stages.py` (item 47). The wheel changes (library code); no bundled artifact changes.
+`scripts/hf_jobs/campaigns/cycle1.toml`, `scripts/hf_jobs/liveness.py` and `arm_plan_deadline` of `scripts/_stages.py` (item 47),
+`scripts/hf_jobs/hub_client.py` and the `--plan` exit of `scripts/_stages.py` (item 49). Items 48 and 49 are a
+second commit on top of the cycle commit, which the launch-8 jobs cloned and which is therefore not amended.
+The second commit also holds one test-only fix: `tests/scripts/conftest.py` empties the `_write_confirm`
+journal around every test (the cycle spec, §17.5).
+The wheel changes (library code); no bundled artifact changes.
 
 ## Related
 

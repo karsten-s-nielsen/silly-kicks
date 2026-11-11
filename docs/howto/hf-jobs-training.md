@@ -87,8 +87,14 @@ ADR-128 amendment 2026-11-02).
    instance with a `download` dataset runs round-robin `--shard I/N` slices instead, since that dataset is
    fetched by shard). An instance whose `--plan` fails is reported; the others go on (a `--plan` that fails with
    an HF rate limit, `Too Many Requests`, makes the step back off instead). The `--plan` reads run
-   in parallel, and each step prints one line to stderr: `[driver] step: plans <n> in <s>s (<k> failed); in
-   flight <i>; launched <l>; stuck <r>; instances done <d>/<n>` (done = the output stage is reduced). A study
+   in parallel, and each step prints one line to stderr: `[driver] step: plans <n> in <s>s (<k> failed); hub
+   requests <q> (plans <p>); in flight <i>; launched <l>; stuck <r>; instances done <d>/<n>` (done = the output
+   stage is reduced). `hub requests` is the number of HTTP requests that the step sent to the Hub: the
+   controller's own plus those of its `--plan` processes (the `plans` part). It is the load to hold against the
+   HF rate limit. A `--plan` that fails reports its requests too (a 429 inside a plan is in the count). A
+   `--plan` that timed out was killed and reports none, so the count of that step is a lower bound. One `--plan`
+   costs one request per 1,000 files of its run key and two requests per file that it
+   reads (measured with huggingface_hub 2.2.0); it reads one marker per `FileSet` result. A study
 unit prints `[progress] study <tag> trial <k>/<n> best=<v> in <s> s` per trial, the census bootstrap
 `[progress] bootstrap <k>/<n> convergent=<c>` about every 60 s and once at the end, a cross-validation loop
 `[progress] <trainer> fold <k>/<n> in <s> s` per fold (the xsuccess `fit` is 36 stage units, one xgboost fit each: every unit prints its `[unit]`
@@ -199,9 +205,18 @@ reached`). At the limit HF also refuses the bucket delete, so clean up BEFORE th
 
 ## Compare two launches
 
-`campaign <file> compare --staging NEW --baseline OLD` compares the retrieved artifacts of two launches (local
-files only, the folders `<staging>/<run_key>/<variant>/`). It prints one line per instance and exits 0 only when
-every artifact is identical and the census verdict of NEW (`NEW/verify.json`) is ok.
+`campaign <file> compare --staging NEW --baseline OLD` compares the artifacts of two launches (local files
+only). It prints one line per instance and exits 0 only when every artifact is identical and the census verdict
+of NEW (`NEW/verify.json`) is ok.
+
+- NEW is always its retrieved files (`NEW/<run_key>/<variant>/`). A job must write the shipped form itself.
+- OLD is its adopted copy (`OLD/_final/<run_key>/<variant>/`: the files that `adopt` finalized and `publish`
+  uploaded) when OLD has one for the instance, its retrieved files otherwise. The baseline of a parity proof is
+  what shipped. Each line names the form: `(baseline: adopted copy)` or `(baseline: retrieved files)`.
+- The adopted copy is not always equal to the wheel bundle. For xCross `public`, the bundled `metrics.json`
+  holds `corpus_match_ids`, and the adopted copy holds their digest and their count.
+
+The rule for one artifact:
 
 - `metadata.json`, `metrics.json` and the file that the artifact's `commit_field` names: equal without the
   provenance keys (`identity.PROVENANCE_KEYS`).
@@ -209,7 +224,8 @@ every artifact is identical and the census verdict of NEW (`NEW/verify.json`) is
 - Every other file: byte for byte.
 
 A launch that changes no model is a parity proof: when `compare` passes against the shipped launch, adopt and
-publish nothing. A difference is a defect of the change.
+publish nothing. A difference is a defect of the change. Keep the staging folder of the shipped launch, with its
+`_final/` folder: it is the baseline of every later parity proof.
 
 ## Recover a STUCK unit
 
