@@ -1282,12 +1282,14 @@ def post_verify(
 # ---- compare (HFU fit-units spec 6 step 3) -----------------------------------------------------------
 
 
-def _staging_run_key(folder: pathlib.Path, campaign: str, job: str, tier: str) -> pathlib.Path | None:
+def _staging_run_key(folder: pathlib.Path, campaign: str | None, job: str, tier: str) -> pathlib.Path | None:
     """The one ``<campaign>-<commit7>-<job>-<tier>`` folder of ``folder``; ``None`` when there is none. Two
-    matches are ambiguous and refuse."""
+    matches are ambiguous and refuse. ``campaign=None`` matches any campaign name (a baseline of `compare`: an
+    artifact is named by its job, tier and variant; HFU launch top-up spec §14.2)."""
     import re
 
-    pattern = re.compile(rf"^{re.escape(campaign)}-[0-9a-f]{{7}}-{re.escape(job)}-{re.escape(tier)}$")
+    name = re.escape(campaign) if campaign is not None else "[A-Za-z0-9_]+"
+    pattern = re.compile(rf"^{name}-[0-9a-f]{{7}}-{re.escape(job)}-{re.escape(tier)}$")
     hits = sorted(p for p in folder.iterdir() if p.is_dir() and pattern.fullmatch(p.name))
     if len(hits) > 1:
         raise AdoptionRefusedError(f"{folder}: {len(hits)} run keys for {job}-{tier}: {[p.name for p in hits]}")
@@ -1309,8 +1311,12 @@ def _commit_file(job: str, tier: str, variant: str, man: mf.Manifest) -> str | N
     return next(iter(files), None)
 
 
-def compare_staging(c: Any, *, staging: pathlib.Path, baseline: pathlib.Path) -> dict[str, dict]:
-    """Compare the artifacts of two launches, instance by instance (local files only).
+def compare_staging(c: Any, *, staging: pathlib.Path, baselines: Sequence[pathlib.Path]) -> dict[str, dict]:
+    """Compare the artifacts of a launch with what shipped, instance by instance (local files only).
+
+    What shipped can come from several launches (HFU launch top-up spec §14.2: launch 7 for 12 artifacts, a refit
+    run for 8). The baseline of an instance is the LAST of ``baselines`` that holds a run key of its job and tier,
+    under any campaign name, with a folder of its variant; the row names that run key (``baseline_run_key``).
 
     The NEW side is always its RETRIEVED files (``<staging>/<run_key>/<variant>/``): a job must write the shipped
     form itself. The BASELINE side is its adopted copy (:func:`_final_dir`, the files that `adopt` finalized and
@@ -1327,14 +1333,15 @@ def compare_staging(c: Any, *, staging: pathlib.Path, baseline: pathlib.Path) ->
     from scripts.hf_jobs.identity import cross_commit_differences
     from scripts.hf_jobs.registry import DriverSpec, spec_for
 
-    staging, baseline = pathlib.Path(staging), pathlib.Path(baseline)
+    staging = pathlib.Path(staging)
+    folders = [pathlib.Path(b) for b in baselines]
     man = mf.load()
     verify_path = staging / "verify.json"
     verify = _read_json(verify_path) if verify_path.is_file() else None
     out: dict[str, dict] = {}
     for j in c.jobs:
         new_rk = _staging_run_key(staging, c.name, j.job, j.tier)
-        old_rk = _staging_run_key(baseline, c.name, j.job, j.tier)
+        old_rks = [(b, _staging_run_key(b, None, j.job, j.tier)) for b in folders]
         for v in j.variants:
             key = f"{j.job}-{j.tier}/{v}"
             if isinstance(spec_for(j.job), DriverSpec):
@@ -1344,15 +1351,21 @@ def compare_staging(c: Any, *, staging: pathlib.Path, baseline: pathlib.Path) ->
                 out[key] = {"census_ok": ok, "certification": (row or {}).get("certification")}
                 continue
             new_dir = new_rk / v if new_rk is not None else None
-            old_dir = old_rk / v if old_rk is not None else None
-            if new_dir is None or old_dir is None or not new_dir.is_dir() or not old_dir.is_dir():
+            holders = [(b, rk / v) for b, rk in old_rks if rk is not None and (rk / v).is_dir()]
+            if new_dir is None or not new_dir.is_dir() or not holders:
                 out[key] = {"identical": False, "differences": ["present in only one staging folder"]}
                 continue
+            baseline, old_dir = holders[-1]  # the last folder that holds the instance
             adopted = _final_dir(baseline, old_dir.relative_to(baseline).as_posix())
             form = "adopted" if adopted.is_dir() else "retrieved"
             base_dir = adopted if form == "adopted" else old_dir
             diffs = cross_commit_differences(new_dir, base_dir, commit_file=_commit_file(j.job, j.tier, v, man))
-            out[key] = {"identical": not diffs, "differences": diffs, "baseline": form}
+            out[key] = {
+                "identical": not diffs,
+                "differences": diffs,
+                "baseline": form,
+                "baseline_run_key": old_dir.parent.name,
+            }
     return out
 
 

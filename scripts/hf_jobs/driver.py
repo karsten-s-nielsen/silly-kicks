@@ -25,18 +25,22 @@ import re
 import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from typing import NamedTuple
 
 from scripts._stages import exceeds_tolerance
 from scripts.hf_jobs.failures import JobOutcome, classify
 from scripts.hf_jobs.hub_client import request_counts
+from scripts.hf_jobs.launch import labels_for, shard_text
+from scripts.hf_jobs.launched import UNLISTED_STEPS, LaunchedJobs
 from scripts.hf_jobs.preflight import PLAN_WORKERS
 
 #: A job's HF limit unless its stage declares ``timeout_s`` (HFU spec 15.7).
 DEFAULT_TIMEOUT_S = 7200
-#: The cpu-upgrade box: 32 GB with 2 GB headroom (the cap an escalate job requests).
-_BOX_RAM = 32 * 1024**3
+#: The cpu-upgrade box: its cgroup `memory.max`, 32,000,000,000 bytes (measured 2026-11-11 in job
+#: 6af4d4e79737d9a9e093649c; HFU launch top-up spec §4), with 2 GiB headroom (the cap an escalate job requests).
+_BOX_RAM = 32_000_000_000
 _HEADROOM = 2 * 1024**3
 
 
@@ -57,6 +61,15 @@ class Launch:
     keyed: bool = True
     #: A memory escalation job: deferred units alone on the whole box (``--escalate``, W=1).
     escalate: bool = False
+    #: The tag of a keyed launch (`launch.keys_tag` of its keys), set here for every keyed launch, a reduce
+    #: trigger included, whoever builds it; empty for an unkeyed one (HFU launch top-up spec §3.4).
+    tag: str = ""
+
+    def __post_init__(self) -> None:
+        if self.keyed and not self.tag:
+            from scripts.hf_jobs.launch import keys_tag
+
+            object.__setattr__(self, "tag", keys_tag(self.keys))
 
 
 @dataclass(frozen=True)
@@ -94,11 +107,13 @@ def step(
     reported: set[str] | None = None,
     fetch_logs: Callable[[str], Iterable[str]] | None = None,
     plan_cache: dict[str, Mapping] | None = None,
+    launched: LaunchedJobs | None = None,
 ) -> StepResult:
     """One stateless step: the launch gate (a passing preflight report for this commit and campaign-file hash),
     then rebuild state, decide and launch. A new FATAL stops before any launch; an instance whose ``--plan``
     fails is reported and skipped. The callables are test seams; their defaults do the real HF I/O."""
     do_launch = _resolve_launch(launch_fn)
+    launched = launched if launched is not None else LaunchedJobs()  # `run` owns one for the run (spec §3.3)
     if plan_cache is not None:
         read_plan = _cached_reader(_resolve_read_plan(campaign, read_plan), plan_cache)
     t0 = time.monotonic()
@@ -106,7 +121,16 @@ def step(
     try:
         (gate or _default_gate(campaign, commit, api))()
         state = _gather(
-            campaign, commit, api, replica, instances, read_plan, live_records, baseline_error_ids, fetch_logs
+            campaign,
+            commit,
+            api,
+            replica,
+            instances,
+            read_plan,
+            live_records,
+            baseline_error_ids,
+            fetch_logs,
+            launched=launched,
         )
     except Exception as exc:  # a 429 reading the gate, the plans or `list_jobs`: back off, never crash
         if _is_contention(exc):
@@ -117,6 +141,10 @@ def step(
     state_s = time.monotonic() - t0
     _say_ended_jobs(state.live_jobs, baseline_error_ids, reported if reported is not None else set())
     in_flight = sum(1 for job in state.live_jobs if classify(job).outcome is JobOutcome.IN_FLIGHT)
+    foreign = _foreign_identity(state.plans, commit)
+    if foreign is not None:  # spec §19.2: the jobs clone `commit`; a plan under another identity reads other tokens
+        print(f"FATAL code_identity: {foreign}", file=sys.stderr)
+        return StepResult(fatal=("code_identity", foreign), launched=0, done=False, reports=(), in_flight=in_flight)
     decision = _decide(campaign, state, baseline_error_ids)
     reports = (*state.plan_reports, *decision.reports)
     if decision.fatal is not None:
@@ -128,7 +156,7 @@ def step(
     readable = {k: v for k, v in state.plans.items() if v is not None}  # `decide` launches only for a readable plan
     # At most concurrency_cap jobs in flight, and at most launch_batch launches per step.
     budget = max(0, min(campaign.concurrency_cap - in_flight, campaign.launch_batch))
-    launched, contention = 0, state.cache_unsaved  # an unsaved coverage cache is a 429: back off after launching
+    n_launched, contention = 0, state.cache_unsaved  # an unsaved coverage cache is a 429: back off after launching
     for launch in decision.launches[:budget]:
         inst = by_id[launch.instance_id]
         store = state.stores[inst.id]
@@ -143,8 +171,10 @@ def step(
                 contention = True
                 break
             raise
-        launched += 1
-        shard = f"{launch.shard[0]}of{launch.shard[1]}"
+        # Before the manifest write: the run knows the job's units also when that write gets a 429 (spec §3.3).
+        launched.add(str(job_id), labels_for(spec), launch.keys, datetime.now(timezone.utc).isoformat())
+        n_launched += 1
+        shard = f"{launch.shard[0]}of{launch.shard[1]}" + (f"-{launch.tag}" if launch.tag else "")
         _say(f"[driver] launch {inst.id}/{launch.stages[0]} {shard} units={len(launch.keys)}")
         # The units THIS job holds, keyed by its id; an empty list marks a reduce trigger.
         rec = next(s for s in readable[inst.id]["stages"] if s["name"] == launch.stages[0])
@@ -160,11 +190,11 @@ def step(
     _say(
         f"[driver] step: plans {n} in {state_s:.1f}s ({len(state.plan_reports)} failed); "
         f"hub requests {total} (plans {by_plans}); in flight {in_flight}; "
-        f"launched {launched}; stuck {len(reports)}; instances done {_instances_done(state.plans)}/{n}"
+        f"launched {n_launched}; stuck {len(reports)}; instances done {_instances_done(state.plans)}/{n}"
     )
     return StepResult(
         fatal=None,
-        launched=launched,
+        launched=n_launched,
         done=decision.done,
         reports=reports,
         in_flight=in_flight,
@@ -195,6 +225,8 @@ class _State(NamedTuple):
     mount_faults: dict
     timeouts: dict
     cache_unsaved: bool = False  # a 429 kept the coverage cache from being saved this step
+    #: The unit list of each in-flight job id of this run's instances; ``None`` when not known (spec §3.3).
+    flight_units: dict[str, tuple[str, ...] | None] | None = None
 
 
 def _decide(campaign, state: _State, baseline_error_ids: frozenset[str]) -> Decision:
@@ -214,6 +246,7 @@ def _decide(campaign, state: _State, baseline_error_ids: frozenset[str]) -> Deci
         mount_cap_for=campaign.mount_cap_for,
         mount_fault_budget=campaign.mount_fault_budget,
         timeouts=state.timeouts,
+        flight_units=state.flight_units or {},
     )
 
 
@@ -225,6 +258,22 @@ def _output_reduced(plan: Mapping | None) -> bool:
 def _instances_done(plans: Mapping[str, Mapping | None]) -> int:
     """The instances whose output stage is reduced (HFU spec 14.8: the step line)."""
     return sum(1 for p in plans.values() if _output_reduced(p))
+
+
+def _foreign_identity(plans: Mapping[str, Mapping | None], commit: str) -> str | None:
+    """The FATAL detail for the first readable plan whose ``code_identity`` is not ``commit`` (a missing value
+    counts as another identity), or ``None``. A tracked edit in the controller's tree moves the identity to
+    ``dirty-<tree hash>``, while every job clones ``commit``: the two then read different stage tokens."""
+    for inst_id, plan in sorted(plans.items()):
+        if plan is None:
+            continue
+        ident = plan.get("code_identity")
+        if ident != commit:
+            return (
+                f"{inst_id} planned under {str(ident)[:18]}, the jobs run {commit[:7]}; the tree changed after "
+                "preflight; restore it, then resume"
+            )
+    return None
 
 
 def _cached_reader(read: Callable, cache: dict[str, Mapping]) -> Callable:
@@ -256,7 +305,8 @@ def _say_ended_jobs(live_jobs: Sequence[Mapping], baseline_error_ids: frozenset[
         after = "-" if wall is None else f"{wall:.0f}"
         _say(
             f"[driver] job {jid} {labels.get('run_key')}/{labels.get('variant')}/{labels.get('stage')} "
-            f"{labels.get('shard', '-')} {verdict.reason or verdict.outcome.value} after {after} s"
+            f"{shard_text(labels) if 'shard' in labels else '-'} "
+            f"{verdict.reason or verdict.outcome.value} after {after} s"
         )
         reported.add(jid)
 
@@ -280,7 +330,17 @@ def _default_gate(campaign, commit: str, api) -> Callable[[], object]:
 
 
 def _gather(
-    campaign, commit: str, api, replica, instances, read_plan, live_records, baseline_error_ids, fetch_logs=None
+    campaign,
+    commit: str,
+    api,
+    replica,
+    instances,
+    read_plan,
+    live_records,
+    baseline_error_ids,
+    fetch_logs=None,
+    *,
+    launched: LaunchedJobs | None = None,
 ) -> _State:
     """The state ``step`` and ``--dry-run`` both decide on, so a dry run shows what a launch would do: the
     instances, the live job records, each instance's ``--plan`` (a failed one becomes a report and ``None``, never
@@ -290,6 +350,15 @@ def _gather(
     insts = _resolve_instances(campaign, commit, replica, instances)
     read = _resolve_read_plan(campaign, read_plan)
     live_jobs = list(_resolve_live_records(api, campaign, commit, live_records)())
+    # A job that this run launched and that the listing does not show yet is held in flight (spec §3.3).
+    launched = launched if launched is not None else LaunchedJobs()
+    held, dropped = launched.reconcile(live_jobs)
+    for job_id, label in dropped:
+        _say(
+            f"[driver] job {job_id} {label} was launched but is not in the listing after {UNLISTED_STEPS} steps; "
+            "its units are free again"
+        )
+    live_jobs += held
     plans: dict[str, Mapping | None] = {}
     plan_reports: list[tuple[str, str]] = []
 
@@ -326,7 +395,29 @@ def _gather(
         fetch_logs=_resolve_fetch_logs(api, fetch_logs),
     )
     reports = tuple(plan_reports)
-    return _State(insts, live_jobs, plans, reports, stores, coverage, reduce_errors, mount_faults, timeouts, unsaved)
+    flight = _flight_units(insts, plans, live_jobs, launched, store_for)
+    return _State(
+        insts, live_jobs, plans, reports, stores, coverage, reduce_errors, mount_faults, timeouts, unsaved, flight
+    )
+
+
+def _flight_units(insts, plans, live_jobs, launched: LaunchedJobs, store_for) -> dict[str, tuple[str, ...] | None]:
+    """The unit list of each in-flight job id of this run's instances (HFU launch top-up spec §3.3): from the run's
+    record, else from the job's manifest in the store, read once in a run (the answer "none" is kept too)."""
+    index = _instance_index(insts, plans)
+    out: dict[str, tuple[str, ...] | None] = {}
+    for job in live_jobs:
+        if classify(job).outcome is not JobOutcome.IN_FLIGHT:
+            continue
+        labels = job.get("labels") or {}
+        job_id = str(job.get("id") or "")
+        if not job_id or (labels.get("run_key"), labels.get("variant")) not in index:
+            continue
+        if not launched.knows(job_id):
+            got = _manifest_for(job, index, store_for)
+            launched.remember(job_id, None if got is None else got[2])
+        out[job_id] = launched.units_of(job_id)
+    return out
 
 
 def _resolve_fetch_logs(api, given: Callable | None) -> Callable[[str], Iterable[str]] | None:
@@ -364,6 +455,7 @@ def run(
     prev_mount_faults = 0
     reported: set[str] = set()  # each ended job prints one line per run
     plan_cache: dict[str, Mapping] = {}  # reduced instances are planned once per run (HFU spec 16.4 A)
+    launched = LaunchedJobs()  # the jobs this run launched (HFU launch top-up spec §3.3)
     for _ in range(max_steps):
         result = do_step(
             campaign,
@@ -374,6 +466,7 @@ def run(
             baseline_error_ids=baseline,
             reported=reported,
             plan_cache=plan_cache,
+            launched=launched,
         )
         if result.fatal is not None:
             return 2
@@ -469,7 +562,13 @@ def main(argv: Sequence[str] | None = None, *, load=None, make_api=None, head=No
     )
     parser.add_argument("--delete", action="store_true", help="prune: delete the run keys of the approved commits")
     parser.add_argument("--artifacts", default="", help="publish: comma-separated artifact ids (default: all)")
-    parser.add_argument("--baseline", type=pathlib.Path, default=None, help="compare: the other staging dir")
+    parser.add_argument(
+        "--baseline",
+        type=pathlib.Path,
+        action="append",
+        default=None,
+        help="compare: a staging dir of what shipped; repeat it, the last that holds an instance is read",
+    )
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
 
     campaign = (load or _load_campaign)(args.file)
@@ -548,21 +647,21 @@ def main(argv: Sequence[str] | None = None, *, load=None, make_api=None, head=No
 _BASELINE_FORMS = {"adopted": "adopted copy", "retrieved": "retrieved files"}
 
 
-def _compare(campaign, staging, baseline) -> int:
+def _compare(campaign, staging, baselines) -> int:
     """``compare --staging NEW --baseline OLD``: one line per instance, then the JSON; 0 when every artifact is
     identical under `identity.cross_commit_differences` and the census verdict of NEW is ok (HFU fit-units spec 6).
     A trainer line names the baseline form that was read: the adopted copy of OLD, or its retrieved files."""
     from scripts.hf_jobs import adopt
 
-    if staging is None or baseline is None:
-        raise SystemExit("compare needs --staging DIR and --baseline DIR (two retrieved staging folders)")
-    result = adopt.compare_staging(campaign, staging=staging, baseline=baseline)
+    if staging is None or not baselines:
+        raise SystemExit("compare needs --staging DIR and at least one --baseline DIR (retrieved staging folders)")
+    result = adopt.compare_staging(campaign, staging=staging, baselines=baselines)
     for key, row in result.items():
         if "census_ok" in row:
             print(f"[compare] {key} census verdict {'ok' if row['census_ok'] else 'NOT ok'}")
             continue
         form = _BASELINE_FORMS.get(row.get("baseline", ""))
-        read = f" (baseline: {form})" if form else ""
+        read = f" (baseline: {form} of {row.get('baseline_run_key')})" if form else ""
         if row["identical"]:
             print(f"[compare] {key} IDENTICAL{read}")
         else:
@@ -612,6 +711,9 @@ def _dry_run(
     )
     state = _gather(campaign, commit, api, replica, instances, read_plan, live_records, baseline)
     decision = _decide(campaign, state, baseline)
+    foreign = _foreign_identity(state.plans, commit)  # what `step` would do: no launch (spec §19.2)
+    if foreign is not None:
+        decision = replace(decision, fatal=("code_identity", foreign), launches=())
     out = {
         "fatal": decision.fatal,
         "done": decision.done,
@@ -622,6 +724,7 @@ def _dry_run(
                 "shard": list(lx.shard),
                 "kind": lx.kind,
                 "keys": len(lx.keys),
+                "tag": lx.tag,
             }
             for lx in decision.launches
         ],
@@ -695,7 +798,11 @@ def decide(
     mount_fault_budget: int = 10**9,
     timeouts: Mapping[tuple[str, str, str], tuple[str, ...]] | None = None,
     units_per_job_by_stage: Mapping[str, int] | None = None,
+    flight_units: Mapping[str, Sequence[str] | None] | None = None,
 ) -> Decision:
+    """The launches, reports and FATAL of one step. A stage with jobs in flight gets jobs for the units that no
+    job of its flight holds (HFU launch top-up spec §3.2); ``flight_units`` names the units of each in-flight job
+    id (``None``: not known). Without it, a stage with a flight waits, as before the top-up."""
     units_per_job_default = units_per_job
     cover = coverage or {}
     per_stage = units_per_job_by_stage or {}  # "<job>/<stage>" -> units per job (HFU fit-units spec 3.4)
@@ -733,8 +840,6 @@ def decide(
             name = stage["name"]
             # A stage's own job size (e.g. 36 memory-heavy fits in 12 jobs of 3), else the campaign's.
             units_per_job = int(per_stage.get(f"{inst.job}/{name}", units_per_job_default))
-            if _stage_in_flight(live_jobs, inst, name):
-                break  # this stage already has jobs in flight: wait for them
             # Candidates: pending or recorded-failed units, minus those spent (coverage >= attempts). Memory-
             # deferred units run only in an escalate job.
             pending = list(stage.get("pending_units") or [])
@@ -747,50 +852,58 @@ def decide(
                 for u in dict.fromkeys([*to_run, *memory_units])
                 if len(timed_out.get((inst.id, name, u), ())) >= TIMEOUT_LIMIT
             ]
-            for u in stuck:
-                jobs = ", ".join(timed_out[(inst.id, name, u)])
-                reports.append((inst.id, f"{name}/{u} timed out {TIMEOUT_LIMIT}x (jobs {jobs})"))
             to_run = [u for u in to_run if u not in stuck]
             memory_units = [u for u in memory_units if u not in stuck]
             stage_launches: list[Launch] = []
-            if memory_units:
+            flight = _stage_flight(live_jobs, inst, name)
+            if flight:  # a stage with jobs in flight makes no report; it can only be topped up (spec §3.2)
                 stage_launches.extend(
-                    _keyed_launches(inst, name, memory_units, units_per_job, max_shards, workers, escalate=True)
-                )
-            if to_run and _keyed(inst):
-                stage_launches.extend(_keyed_launches(inst, name, to_run, units_per_job, max_shards, workers))
-            elif to_run:  # a download instance: round-robin --shard I/N slices (its data is fetched by shard)
-                units = list(stage.get("units") or [])
-                stage_launches.extend(
-                    _round_robin_launches(
-                        inst,
-                        name,
-                        units,
-                        candidates,
-                        to_run,
-                        units_per_job,
-                        max_shards,
-                        workers,
-                        stuck=stuck,
-                        reports=reports,
+                    _top_up(
+                        inst, name, flight, flight_units or {}, to_run, memory_units, units_per_job, max_shards, workers
                     )
                 )
-            elif not memory_units and not stuck:  # nothing can run: reduce or report
-                spent_pending = [u for u in pending if cover.get((inst.id, name, u), 0) >= attempts]
-                _reduce_or_report(
-                    inst,
-                    name,
-                    len(candidates),
-                    spent_pending,
-                    stage.get("max_failures"),
-                    red_err.get((inst.id, name), 0),
-                    attempts,
-                    workers,
-                    stage_launches,
-                    reports,
-                    lost_units=stage.get("lost_units") or (),
-                    lost_output=bool(stage.get("lost_output")),
-                )
+            else:
+                for u in stuck:
+                    jobs = ", ".join(timed_out[(inst.id, name, u)])
+                    reports.append((inst.id, f"{name}/{u} timed out {TIMEOUT_LIMIT}x (jobs {jobs})"))
+                if memory_units:
+                    stage_launches.extend(
+                        _keyed_launches(inst, name, memory_units, units_per_job, max_shards, workers, escalate=True)
+                    )
+                if to_run and _keyed(inst):
+                    stage_launches.extend(_keyed_launches(inst, name, to_run, units_per_job, max_shards, workers))
+                elif to_run:  # a download instance: round-robin --shard I/N slices (its data is fetched by shard)
+                    units = list(stage.get("units") or [])
+                    stage_launches.extend(
+                        _round_robin_launches(
+                            inst,
+                            name,
+                            units,
+                            candidates,
+                            to_run,
+                            units_per_job,
+                            max_shards,
+                            workers,
+                            stuck=stuck,
+                            reports=reports,
+                        )
+                    )
+                elif not memory_units and not stuck:  # nothing can run: reduce or report
+                    spent_pending = [u for u in pending if cover.get((inst.id, name, u), 0) >= attempts]
+                    _reduce_or_report(
+                        inst,
+                        name,
+                        len(candidates),
+                        spent_pending,
+                        stage.get("max_failures"),
+                        red_err.get((inst.id, name), 0),
+                        attempts,
+                        workers,
+                        stage_launches,
+                        reports,
+                        lost_units=stage.get("lost_units") or (),
+                        lost_output=bool(stage.get("lost_output")),
+                    )
             # Truncate to the mount headroom (in flight plus chosen this pass) of every mount dataset. A launch
             # that `step` later drops only under-counts, so the cap is never exceeded.
             mds = _mount_datasets(inst)
@@ -873,7 +986,7 @@ def _job_spec(campaign, commit: str, inst, launch: Launch, plan: Mapping, *, sto
     """The ``launch.JobSpec`` of one Launch. An inner_parallel stage runs one unit with ``inner_width`` threads;
     any other stage runs ``budget`` unit workers. A keyed launch names its units by ``--shard-keys`` (an empty
     list for a reduce trigger); an unkeyed one runs its ``--shard I/N`` slice. Every job gets ONE HF attempt."""
-    from scripts.hf_jobs.launch import BUCKET_MOUNT, JobSpec
+    from scripts.hf_jobs.launch import BUCKET_MOUNT, JobSpec, keys_file_bytes
 
     by_name = {s["name"]: s for s in plan["stages"]}
     stage_rec = by_name[launch.stages[0]]
@@ -894,12 +1007,13 @@ def _job_spec(campaign, commit: str, inst, launch: Launch, plan: Mapping, *, sto
     shard_keys_path: str | None = None
     if launch.keyed:  # an unkeyed (download) shard runs its round-robin --shard I/N slice instead
         index, count = launch.shard
-        # Per variant: sibling variants can share a run_key and a stage token.
+        # Per variant: sibling variants can share a run_key and a stage token. The tag keeps two launches of one
+        # stage with the same (index, count) apart (HFU launch top-up spec §3.4).
         rel = (
             f"_partitions/{plan['pipeline']}/{stage_rec['name']}/{stage_rec['token']}/{inst.variant}/"
-            f"{index}of{count}.json"
+            f"{index}of{count}-{launch.tag}.json"
         )
-        if not _guarded_put(store, rel, json.dumps(sorted(launch.keys)).encode("utf-8")):
+        if not _guarded_put(store, rel, keys_file_bytes(launch.keys)):
             return None  # rate-limited: `step` skips this launch and backs off
         shard_keys_path = f"{BUCKET_MOUNT}/{inst.run_key}/{rel}"
 
@@ -924,6 +1038,7 @@ def _job_spec(campaign, commit: str, inst, launch: Launch, plan: Mapping, *, sto
         extras=(),
         shard_keys_path=shard_keys_path,
         escalate=launch.escalate,
+        tag=launch.tag,
     )
 
 
@@ -1136,16 +1251,53 @@ def _attribute(insts, plans, live_jobs, baseline_error_ids, store_for, *, attemp
     )
 
 
-def _stage_in_flight(live_jobs: Sequence[Mapping], inst, stage: str) -> bool:
-    """True when any job of this (instance, stage) is RUNNING or SCHEDULING (a stage launches in one wave)."""
+def _stage_flight(live_jobs: Sequence[Mapping], inst, stage: str) -> list[Mapping]:
+    """The jobs of this (instance, stage) that are RUNNING or SCHEDULING: the flight of the stage."""
     want = (inst.run_key, inst.variant, stage)
+    flight = []
     for job in live_jobs:
         if classify(job).outcome is not JobOutcome.IN_FLIGHT:
             continue
         labels = job.get("labels") or {}
         if (labels.get("run_key"), labels.get("variant"), labels.get("stage")) == want:
-            return True
-    return False
+            flight.append(job)
+    return flight
+
+
+def _top_up(
+    inst,
+    stage: str,
+    flight: Sequence[Mapping],
+    flight_units: Mapping[str, Sequence[str] | None],
+    to_run: Sequence[str],
+    memory_units: Sequence[str],
+    units_per_job: int,
+    max_shards: int,
+    workers: int,
+) -> list[Launch]:
+    """The launches of a stage that has jobs in flight (HFU launch top-up spec §3.2, cases 2 and 3). None when the
+    instance is not keyed, or a job of the flight has no known unit list or an empty one (a reduce trigger): the
+    stage then waits for its flight. Else the units that no job of the flight holds, in at most
+    ``max_shards - len(flight)`` jobs: the escalation launches first, then the run launches in the room left."""
+    if not _keyed(inst):
+        return []
+    held: set[str] = set()
+    for job in flight:
+        units = flight_units.get(str(job.get("id") or ""))
+        if not units:
+            return []
+        held.update(units)
+    rest = [u for u in to_run if u not in held]
+    rest_memory = [u for u in memory_units if u not in held]
+    room = max_shards - len(flight)
+    if room <= 0:
+        return []
+    out: list[Launch] = []
+    if rest_memory:
+        out.extend(_keyed_launches(inst, stage, rest_memory, units_per_job, room, workers, escalate=True))
+    if rest and room - len(out) >= 1:
+        out.extend(_keyed_launches(inst, stage, rest, units_per_job, room - len(out), workers))
+    return out
 
 
 def _keyed(inst) -> bool:

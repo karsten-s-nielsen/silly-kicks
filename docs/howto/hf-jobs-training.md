@@ -72,7 +72,7 @@ registry pins each instance's corpus-scope and search-size args (`base_args`). R
 Run long commands in the background. The controller is the minimal driver (`scripts/hf_jobs/driver.py`,
 ADR-128 amendment 2026-11-02).
 
-1. `preflight` -- seven no-spend checks (commit pushed and green, lockfile and image, numba in the locked job
+1. `preflight` -- seven no-spend checks (no tracked edit in the tree, commit pushed and green, lockfile and image, numba in the locked job
    install set, API contract, datasets, every instance's `--plan`, run in parallel, and the org's storage headroom). `check_numba` reads
    `uv export --frozen --no-hashes --extra train --group hfjobs` and evaluates each line's marker for Linux
    CPython 3.12: the job must install numba (a core dependency since 2026-11-06; without it the ghost leaf walk
@@ -88,7 +88,19 @@ ADR-128 amendment 2026-11-02).
    first ready, un-reduced stage: up to `concurrency_cap` jobs, each a full `cpu-upgrade` box (8 unit
    workers; an `inner_parallel` stage runs one unit with the box's threads inside) over its explicit keys (an
    instance with a `download` dataset runs round-robin `--shard I/N` slices instead, since that dataset is
-   fetched by shard). An instance whose `--plan` fails is reported; the others go on (a `--plan` that fails with
+   fetched by shard). A stage whose jobs still run gets more jobs: one for each group of the units that no
+   running job of the stage holds, up to `max_shards` jobs of one stage at once. The driver knows the units of a
+   running job from its own record of the jobs it launched, or else from the job's manifest in the store. A stage
+   waits for its running jobs when a running job's units are not known, when a reduce trigger runs, or when the
+   instance has a `download` dataset. A job that the driver launched and that the HF listing does not show yet
+   counts as in flight and holds its units; after 5 listings that do not show it, the driver prints `[driver]
+   job <id> <label> was launched but is not in the listing after 5 steps; its units are free again` (HFU launch
+   top-up spec §3). Every keyed job has a tag: the first 12 hex characters of the sha256 of its keys file. The
+   tag is in the keys file name (`<index>of<count>-<tag>.json`), at the end of the job name
+   (`--<index>of<count>-<tag>`), in the `tag` label, and in the in-job label (`SILLY_KICKS_JOB_LABEL`, so every
+   unit ledger record names one job). Each unit ledger record also holds `cpu_user_s` and `cpu_sys_s`, the CPU
+   time of the unit's process (`cpu_scope` = `process`: an inner pool's children are not in it). An instance
+   whose `--plan` fails is reported; the others go on (a `--plan` that fails with
    an HF rate limit, `Too Many Requests`, makes the step back off instead). The `--plan` reads run
    in parallel, and each step prints one line to stderr: `[driver] step: plans <n> in <s>s (<k> failed); hub
    requests <q> (plans <p>); in flight <i>; launched <l>; stuck <r>; instances done <d>/<n>` (done = the output
@@ -108,8 +120,10 @@ in <s> s` at most every 60 s (once at the end when it read 100 files or more), a
 step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] job <id> manifest not recorded
 (rate-limited)`. A FATAL step prints its `FATAL` line instead, and a rate-limited step
    a `[driver] step: rate-limited ...; backing off` line. Each launch prints `[driver] launch
-   <instance>/<stage> <i>of<n> units=<k>`, and each job of this commit that ends ERROR or CANCELED prints one
-   `[driver] job <id> <instance>/<stage> <shard> <reason> after <s> s` line, once per run, so a failure shows
+   <instance>/<stage> <i>of<n>-<tag> units=<k>` (an unkeyed launch of a `download` instance has no tag and
+   prints `<i>of<n>`), and each job of this commit that ends ERROR or CANCELED prints one
+   `[driver] job <id> <instance>/<stage> <i>of<n>-<tag> <reason> after <s> s` line (a job of a driver before the
+   tag names `<i>of<n>`), once per run, so a failure shows
    in the driver log before the HF email arrives. Every Hub call is bounded (connect 10 s, read 60 s; a stalled
    read is retried), and a `--plan` read is killed after 600 s: the instance is reported `--plan failed
    (timeout after 600 s)` with the plan process's stack dump, and the step goes on (it is not a rate limit).
@@ -127,7 +141,12 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    the baseline). A killed job loses at most its in-flight units; `resume` never redoes a finished unit.
    Make NO tracked edit from `launch` until `adopt` ends: a tracked edit changes the code identity, so every
    controller command (`launch`, `resume`, `status`, `retrieve`, `verify`) computes generations the jobs never
-   wrote, and finished instances read as not reduced (launch 5: retrieve found 2 of 20).
+   wrote, and finished instances read as not reduced (launch 5: retrieve found 2 of 20). Two guards (HFU
+   launch top-up spec §19): check 1 of `preflight` fails on a tracked edit (it names the changed paths), and
+   the driver stops before any launch with `FATAL code_identity: <instance> planned under <identity>, the jobs
+   run <commit7>` when a `--plan` reports another identity. Then restore the tree and `resume`. `retrieve` has
+   no guard of its own: keep the tree clean until `verify` and `compare` end, and draft the run record outside
+   the repo.
 4. `status` -- per instance, stage progress and the running jobs. A failed instance: read its job logs and
    the unit `*.failed.json`; a code defect is a new owner-approved commit, then `resume`.
 5. `cancel` -- cancels every non-terminal job of the campaign commit.
@@ -208,14 +227,19 @@ reached`). At the limit HF also refuses the bucket delete, so clean up BEFORE th
 
 ## Compare two launches
 
-`campaign <file> compare --staging NEW --baseline OLD` compares the artifacts of two launches (local files
-only). It prints one line per instance and exits 0 only when every artifact is identical and the census verdict
-of NEW (`NEW/verify.json`) is ok.
+`campaign <file> compare --staging NEW --baseline OLD [--baseline OLD2 ...]` compares the artifacts of a
+launch with what shipped (local files only). It prints one line per instance and exits 0 only when every
+artifact is identical and the census verdict of NEW (`NEW/verify.json`) is ok.
 
 - NEW is always its retrieved files (`NEW/<run_key>/<variant>/`). A job must write the shipped form itself.
-- OLD is its adopted copy (`OLD/_final/<run_key>/<variant>/`: the files that `adopt` finalized and `publish`
-  uploaded) when OLD has one for the instance, its retrieved files otherwise. The baseline of a parity proof is
-  what shipped. Each line names the form: `(baseline: adopted copy)` or `(baseline: retrieved files)`.
+- What shipped can come from several launches, so `--baseline` can be given more than once. The baseline of an
+  instance is the LAST given folder that holds a run key of its job and tier, under any campaign name
+  (`<campaign>-<commit7>-<job>-<tier>`), with a folder of its variant. Two run keys of one job and tier in one
+  baseline folder are refused.
+- In that folder the baseline is its adopted copy (`OLD/_final/<run_key>/<variant>/`: the files that `adopt`
+  finalized and `publish` uploaded) when it has one, its retrieved files otherwise. The baseline of a parity proof
+  is what shipped. Each line names the form and the run key: `(baseline: adopted copy of <run key>)` or
+  `(baseline: retrieved files of <run key>)`.
 - The adopted copy is not always equal to the wheel bundle. For xCross `public`, the bundled `metrics.json`
   holds `corpus_match_ids`, and the adopted copy holds their digest and their count.
 
@@ -229,6 +253,12 @@ The rule for one artifact:
 A launch that changes no model is a parity proof: when `compare` passes against the shipped launch, adopt and
 publish nothing. A difference is a defect of the change. Keep the staging folder of the shipped launch, with its
 `_final/` folder: it is the baseline of every later parity proof.
+
+A refit of some arms (a campaign in `refit` mode, for example `campaigns/tf46_refit.toml`) is proved in this
+order: run the refit campaign; `retrieve`, `verify` and `adopt` it (a commit); then run the full campaign
+(`cycle1.toml`, unchanged) at that commit and compare it with both launches that shipped:
+`compare --staging <full run> --baseline <the shipped launch> --baseline <the refit run>`. The refit arms are
+read from the refit run, every other arm from the shipped launch (`docs/superpowers/specs/2026-11-11-hfu-launch-topup-design.md` §14.3).
 
 ## Recover a STUCK unit
 

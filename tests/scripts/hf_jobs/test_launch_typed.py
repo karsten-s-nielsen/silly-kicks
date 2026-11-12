@@ -89,6 +89,36 @@ def test_the_job_name_is_explicit_bounded_and_unique():
         assert L.LABEL_PATTERN.fullmatch(name), name
 
 
+def test_the_tag_names_the_keys():
+    """HFU launch top-up spec §3.4: the tag is in the job name, a `tag` label and the in-job label."""
+    import hashlib
+
+    assert L.keys_tag(["b", "a"]) == L.keys_tag(["a", "b"]) == hashlib.sha256(b'["a", "b"]').hexdigest()[:12]
+    assert L.keys_file_bytes(["b", "a"]) == b'["a", "b"]'
+    assert L.keys_tag(["a"]) != L.keys_tag(["b"])
+    s = _spec(tag=L.keys_tag(["a"]))
+    assert L.job_name(s).endswith(f"--1of4-{s.tag}")
+    assert L.labels_for(s)["tag"] == s.tag and L.labels_for(s)["shard"] == "1of4"
+    label = f"ghost_gk.default.extract.1of4-{s.tag}"
+    assert L.label_of(L.labels_for(s)) == label == L.job_env(s)["SILLY_KICKS_JOB_LABEL"]
+    assert L.shard_text(L.labels_for(s)) == f"1of4-{s.tag}"
+
+
+def test_a_spec_without_a_tag_keeps_the_names_of_today():
+    """A guard of today's form (it passes before the change): an unkeyed job, and a job of an earlier driver."""
+    s = _spec()
+    assert "tag" not in L.labels_for(s) and L.job_name(s).endswith("--1of4")
+    assert L.label_of({"job": "j", "variant": "v", "stage": "s", "shard": "0of1"}) == "j.v.s.0of1"
+
+
+def test_two_long_names_that_differ_only_by_the_tag_differ():
+    long = dict(run_key="r" * 90)
+    a = L.job_name(_spec(**long, tag=L.keys_tag(["a"])))
+    b = L.job_name(_spec(**long, tag=L.keys_tag(["b"])))
+    assert a != b and len(a) <= L.LABEL_MAX and len(b) <= L.LABEL_MAX
+    assert L.LABEL_PATTERN.fullmatch(a) and L.LABEL_PATTERN.fullmatch(b)
+
+
 def test_a_label_value_outside_the_hf_alphabet_refuses_before_any_spend():
     api = _FakeApi()
     with pytest.raises(ValueError, match="pattern"):

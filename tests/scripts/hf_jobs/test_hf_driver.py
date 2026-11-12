@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+from collections.abc import Mapping, Sequence
 
 import pytest
 
@@ -72,7 +73,9 @@ def _pipeline(stages, params=_PARAMS, **kw) -> s.Pipeline:
 
 
 def _ctx(tmp_path, stages, params=None):
-    prov = {"commit": "c" * 40, "tree_state": "clean", "code_identity": "c" * 40}
+    # The step tests run `step` at `_COMMIT`; a real plan carries the controller's identity (spec §19.2), so the
+    # fixture plans at that commit too.
+    prov = {"commit": _COMMIT, "tree_state": "clean", "code_identity": _COMMIT}
     return s.make_context(_pipeline(stages), params or {"x": 1}, prov, store=s.LocalStore(tmp_path), data_root=None)
 
 
@@ -294,6 +297,149 @@ def test_no_launch_while_stage_in_flight(tmp_path) -> None:
     inst = _inst()
     decision = _dec(inst, plan, [_running(inst, "extract")])
     assert decision.launches == () and decision.done is False
+
+
+# --- the top-up rule (HFU launch top-up spec §3.2, §3.6; spec tests 2 to 12) ----------------------------------
+
+
+def _fly(inst: Instance, stage: str, held: Mapping[str, Sequence[str] | None]) -> tuple[list[dict], dict]:
+    """In-flight records of ``stage`` with ids, and the ``flight_units`` that name their units."""
+    live = [{**_running(inst, stage, shard=f"{i}of12"), "id": jid} for i, jid in enumerate(held)]
+    return live, dict(held)
+
+
+def _keys(decision) -> list[str]:
+    return [k for lx in decision.launches for k in lx.keys]
+
+
+def test_a_flight_is_topped_up_with_the_units_that_no_job_holds(tmp_path) -> None:
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: ["a", "b", "c"], work=_work()),))
+    inst = _inst()
+    live, units = _fly(inst, "extract", {"j1": ["a"]})
+    d = _dec(inst, _realplan(ctx), live, flight_units=units)
+    assert sorted(_keys(d)) == ["b", "c"] and d.reports == ()
+
+
+def test_the_launch_8_example(tmp_path) -> None:
+    """Spec §3.2: 3,961 units, 6 of 12 jobs in flight with 1,980 units: 6 launches of 1,981 units."""
+    keys = [s.int_key(i) for i in range(3961)]
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: list(keys), work=_work()),))
+    inst = _inst()
+    groups = {f"j{i}": keys[i * 330 : (i + 1) * 330] for i in range(6)}
+    live, units = _fly(inst, "extract", groups)
+    d = _dec(inst, _realplan(ctx), live, flight_units=units)
+    held = {k for g in groups.values() for k in g}
+    assert len(d.launches) == 6 and {len(lx.keys) for lx in d.launches} <= {330, 331}
+    assert len(_keys(d)) == len(set(_keys(d))) == 1981 and not held & set(_keys(d))
+
+
+@pytest.mark.parametrize(("n_flight", "n_launches"), [(11, 1), (12, 0)])
+def test_the_room_of_a_stage_is_max_shards_less_its_flight(tmp_path, n_flight, n_launches) -> None:
+    keys = [f"u{i:02d}" for i in range(15)]
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: list(keys), work=_work()),))
+    inst = _inst()
+    live, units = _fly(inst, "extract", {f"j{i}": [keys[i]] for i in range(n_flight)})
+    d = _dec(inst, _realplan(ctx), live, flight_units=units)
+    assert len(d.launches) == n_launches
+    if n_launches:
+        assert sorted(d.launches[0].keys) == keys[n_flight:]  # one top-up job holds every unit left
+
+
+def test_a_top_up_puts_the_escalation_first_and_fits_the_room(tmp_path) -> None:
+    keys = ["m", "y1", "y2"] + [f"x{i}" for i in range(10)]
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: list(keys), work=_work()),))
+    plan = _realplan(ctx)
+    plan["stages"][0]["memory_units"] = ["m"]
+    inst = _inst()
+    live, units = _fly(inst, "extract", {f"j{i}": [f"x{i}"] for i in range(10)})  # room == 2
+    d = _dec(inst, plan, live, flight_units=units)
+    assert [(lx.escalate, lx.keys) for lx in d.launches] == [(True, ("m",)), (False, ("y1", "y2"))]
+
+
+def test_a_memory_unit_that_no_job_holds_is_escalated_during_a_flight(tmp_path) -> None:
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: ["a", "m"], work=_work()),))
+    plan = _realplan(ctx)
+    plan["stages"][0]["memory_units"] = ["m"]
+    inst = _inst()
+    live, units = _fly(inst, "extract", {"j1": ["a"]})
+    d = _dec(inst, plan, live, flight_units=units)
+    assert [(lx.escalate, lx.keys) for lx in d.launches] == [(True, ("m",))]
+
+
+def test_an_unknown_unit_list_keeps_the_barrier(tmp_path) -> None:
+    """A guard of today's barrier: no top-up when a job of the flight has no known unit list."""
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: ["a", "b", "c"], work=_work()),))
+    plan, inst = _realplan(ctx), _inst()
+    live, units = _fly(inst, "extract", {"j1": ["a"], "j2": None})
+    d = _dec(inst, plan, live, flight_units=units)
+    assert d.launches == () and d.reports == ()
+    no_id = [_running(inst, "extract")]  # a record without an id
+    assert _dec(inst, plan, no_id, flight_units={}).launches == ()
+
+
+def test_a_reduce_trigger_in_flight_keeps_the_barrier(tmp_path) -> None:
+    """A guard: a reduce trigger (an empty unit list) in flight; and a flight that holds every unit."""
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: ["a", "b"], work=_work()),))
+    plan, inst = _realplan(ctx), _inst()
+    live, units = _fly(inst, "extract", {"j1": ["a"], "r1": []})
+    assert _dec(inst, plan, live, flight_units=units).launches == ()
+    live, units = _fly(inst, "extract", {"j1": ["a", "b"]})
+    d = _dec(inst, plan, live, flight_units=units)
+    assert d.launches == () and not d.done
+
+
+def test_a_download_instance_keeps_the_barrier(tmp_path) -> None:
+    """A guard: an unkeyed instance runs its `--shard I/N` slices in one wave."""
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: ["a", "b", "c"], work=_work()),))
+    inst = _download_inst()
+    live, units = _fly(inst, "extract", {"j1": ["a"]})
+    d = decide(
+        instances=[inst], plans={inst.id: _realplan(ctx)}, live_jobs=live, attempts=3, units_per_job=3,
+        max_shards=12, flight_units=units,
+    )  # fmt: skip
+    assert d.launches == ()
+
+
+def test_a_flight_makes_no_stuck_report_and_never_tops_up_a_stuck_unit(tmp_path) -> None:
+    """A guard (its report half): a stage with a flight reports nothing, as before; the report comes when the
+    flight has ended (`test_a_stuck_memory_unit_is_not_escalated`)."""
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: ["a", "b", "c"], work=_work()),))
+    inst = _inst()
+    live, units = _fly(inst, "extract", {"j1": ["a"]})
+    to = {(inst.id, "extract", "b"): ("t0", "t1")}
+    d = _dec(inst, _realplan(ctx), live, flight_units=units, timeouts=to)
+    assert _keys(d) == ["c"] and d.reports == ()
+
+
+def test_a_failed_unit_held_by_a_running_job_waits_for_that_job(tmp_path) -> None:
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: ["a", "b", "c"], work=_work(fail=("b",))),))
+    _run(ctx, "extract", "b")  # b recorded failed
+    plan, inst = _realplan(ctx), _inst()
+    live, units = _fly(inst, "extract", {"j1": ["b"]})
+    assert _keys(_dec(inst, plan, live, flight_units=units)) == ["a", "c"]
+    after = _dec(inst, plan, coverage={(inst.id, "extract", "b"): 1})  # j1 ended: b runs again
+    assert "b" in _keys(after)
+
+
+def test_the_units_of_a_crashed_job_are_topped_up_while_others_run(tmp_path) -> None:
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: ["a", "b", "c", "d"], work=_work()),))
+    inst = _inst()
+    live, units = _fly(inst, "extract", {"j1": ["a"], "j2": ["b"]})
+    live.append(_errored(inst, "extract", _records()["exit_127"]["message"], shard="2of12", job_id="j3"))
+    d = _dec(inst, _realplan(ctx), live, flight_units={**units, "j3": ["c", "d"]})
+    assert sorted(_keys(d)) == ["c", "d"]
+
+
+def test_a_top_up_never_passes_the_mount_cap(tmp_path) -> None:
+    keys = [f"u{i:02d}" for i in range(30)]
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: list(keys), work=_work()),))
+    inst = _mounting("default", "rk", "tc3")
+    live, units = _fly(inst, "extract", {f"j{i}": [keys[i]] for i in range(4)})
+    d = decide(
+        instances=[inst], plans={inst.id: _realplan(ctx)}, live_jobs=live, attempts=3, units_per_job=1,
+        max_shards=12, flight_units=units, mount_cap_for=lambda _d: 6,
+    )  # fmt: skip
+    assert len(d.launches) == 2  # 6 - 4 in flight
 
 
 def test_stage_barrier_one_stage_at_a_time(tmp_path) -> None:
@@ -579,6 +725,17 @@ def test_job_spec_reduce_trigger_stages_an_empty_key_set(tmp_path) -> None:
     assert spec.shard == (0, 1) and spec.shard_keys_path is not None
     assert len(store.uploads) == 1  # the empty shard-keys file was staged
     assert json.loads(next(iter(store.uploads.values()))) == []  # [] -> executor runs nothing, reduces
+
+
+def test_an_escalation_job_is_capped_under_the_cgroup_limit(tmp_path) -> None:
+    """HFU launch top-up spec §4: `memory.max` of a cpu-upgrade job is 32,000,000,000 bytes."""
+    from scripts.hf_jobs.driver import _HEADROOM
+
+    inst, plan = _inst(), _single_stage_plan(tmp_path)
+    launch = Launch(inst.id, ("extract",), (0, 1), "run", 1, ("a",), escalate=True)
+    spec = _job_spec(_campaign(), _COMMIT, inst, launch, plan, store=_FakeStore())
+    assert spec is not None
+    assert spec.cap_bytes == 32_000_000_000 - _HEADROOM
 
 
 # --- step / run / main --------------------------------------------------------
@@ -874,6 +1031,64 @@ def test_step_stops_on_real_fatal_before_launching(tmp_path) -> None:
     )
     assert result.fatal is not None and result.fatal[0] == "storage_limit_403"
     assert result.launched == 0 and recorder.specs == []
+
+
+# --- spec §19.2 E2: no launch from a plan whose code identity is not the commit -------------------------------
+
+
+def test_step_stops_before_any_launch_when_a_plan_has_another_identity(tmp_path, capsys) -> None:
+    inst = _inst()
+    plan = {**_single_stage_plan(tmp_path), "code_identity": "dirty-1a2b3c4d5e6f7a8b"}
+    recorder = _LaunchRecorder()
+    result = _step(
+        _campaign(), instances=[inst], read_plan=lambda _i: plan, live_records=lambda: [], launch_fn=recorder
+    )
+    assert result.fatal is not None and result.fatal[0] == "code_identity"
+    assert result.launched == 0 and recorder.specs == []
+    err = capsys.readouterr().err
+    assert "FATAL code_identity:" in err and inst.id in err
+    assert "dirty-1a2b3c4d5e6f" in err and _COMMIT[:7] in err
+
+
+def test_step_stops_when_a_plan_has_no_identity(tmp_path) -> None:
+    inst = _inst()
+    plan = {k: v for k, v in _single_stage_plan(tmp_path).items() if k != "code_identity"}
+    recorder = _LaunchRecorder()
+    result = _step(
+        _campaign(), instances=[inst], read_plan=lambda _i: plan, live_records=lambda: [], launch_fn=recorder
+    )
+    assert result.fatal is not None and result.fatal[0] == "code_identity"
+    assert result.launched == 0 and recorder.specs == []
+
+
+def _two_plans_first_at_commit(tmp_path):
+    """The mid-run case of spec §19.2: an instance planned at the commit (a reduced one keeps its cached plan)
+    sorts FIRST, and a later instance plans under a dirty identity."""
+    good, bad = _inst("rk1"), _inst("rk2")
+    assert sorted([good.id, bad.id]) == [good.id, bad.id]
+    plan = _single_stage_plan(tmp_path)
+    plans = {good.id: plan, bad.id: {**plan, "code_identity": "dirty-1a2b3c4d5e6f7a8b"}}
+    return [good, bad], (lambda i: plans[i.id])
+
+
+def test_step_stops_when_a_later_plan_has_another_identity(tmp_path) -> None:
+    insts, read = _two_plans_first_at_commit(tmp_path)
+    recorder = _LaunchRecorder()
+    result = _step(_campaign(), instances=insts, read_plan=read, live_records=lambda: [], launch_fn=recorder)
+    assert result.fatal is not None and result.fatal[0] == "code_identity" and "rk2/default" in result.fatal[1]
+    assert result.launched == 0 and recorder.specs == []
+
+
+def test_step_launches_when_every_plan_has_the_commit_identity(tmp_path) -> None:
+    """The positive control of E2 (it passes before E2 too): a plan at the commit launches."""
+    inst = _inst()
+    plan = _single_stage_plan(tmp_path)
+    assert plan["code_identity"] == _COMMIT
+    recorder = _LaunchRecorder()
+    result = _step(
+        _campaign(), instances=[inst], read_plan=lambda _i: plan, live_records=lambda: [], launch_fn=recorder
+    )
+    assert result.fatal is None and result.launched == 1
 
 
 def test_seed_baseline_collects_every_terminal_id() -> None:
@@ -1309,7 +1524,75 @@ def test_launch_line_per_launch(tmp_path, capsys) -> None:
     _step(_campaign(), instances=[inst], read_plan=lambda i: plan, live_records=lambda: [], launch_fn=recorder)
     lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[driver] launch ")]
     assert len(lines) == len(recorder.specs) >= 1
-    assert all(re.fullmatch(rf"\[driver\] launch {re.escape(inst.id)}/extract \d+of\d+ units=\d+", ln) for ln in lines)
+    shard = r"\d+of\d+-[0-9a-f]{12}"  # HFU launch top-up spec §3.4: the line names the tag of the job
+    assert all(re.fullmatch(rf"\[driver\] launch {re.escape(inst.id)}/extract {shard} units=\d+", ln) for ln in lines)
+
+
+def test_the_ended_job_line_names_the_tag_when_the_job_has_one(tmp_path, capsys) -> None:
+    """Spec §3.4: the ended-job line names `<shard>-<tag>`; a job of a driver before the tag names `<shard>`
+    (`test_error_job_line_once`)."""
+    inst, plan = _inst(), _single_stage_plan(tmp_path)
+    job = {
+        "id": "e2",
+        "stage": "ERROR",
+        "message": _records()["exit_127"]["message"],
+        "created_at": "2026-11-06T03:00:00+00:00",
+        "labels": {**_labels(inst, "extract", shard="0of1"), "tag": "0123456789ab"},
+        "wall_s": 5.0,
+    }
+    _step(
+        _campaign(), instances=[inst], read_plan=lambda i: plan, live_records=lambda: [job], launch_fn=_LaunchRecorder()
+    )
+    lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[driver] job e2 ")]
+    assert lines == [f"[driver] job e2 {inst.id}/extract 0of1-0123456789ab unit_crash after 5 s"], lines
+
+
+def test_two_launches_of_one_step_never_share_a_keys_file_or_a_name(tmp_path) -> None:
+    """Spec §3.4, the collision of the code before this cycle: an escalation launch and a run launch of one stage,
+    one step, both `(0, 1)`, wrote one keys file and asked HF for one job name."""
+    from scripts.hf_jobs.launch import job_name, label_of, labels_for
+
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: ["a", "b", "c"], work=_work()),))
+    _run(ctx, "extract", "a")
+    plan = _realplan(ctx)
+    plan["stages"][0]["memory_units"] = ["b"]
+    inst = _inst()
+    launches = _dec(inst, plan).launches
+    assert [(lx.escalate, lx.shard, lx.keys) for lx in launches] == [(True, (0, 1), ("b",)), (False, (0, 1), ("c",))]
+    store = _FakeStore()
+    specs = [_job_spec(_campaign(), _COMMIT, inst, lx, plan, store=store) for lx in launches]
+    assert all(sp is not None for sp in specs)
+    assert len(store.uploads) == 2
+    assert {json.loads(v)[0] for v in store.uploads.values()} == {"b", "c"}
+    assert len({job_name(sp) for sp in specs if sp is not None}) == 2
+    assert len({label_of(labels_for(sp)) for sp in specs if sp is not None}) == 2
+
+
+def test_a_keyed_launch_names_its_keys_file_by_its_tag(tmp_path) -> None:
+    """Spec §3.4: `<index>of<count>-<tag>.json`; the tag is the first 12 hex characters of the sha256 of the file."""
+    import hashlib
+
+    inst, plan = _inst(), _single_stage_plan(tmp_path)
+    lx = Launch(inst.id, ("extract",), (1, 3), "run", 8, ("c", "b"))
+    store = _FakeStore()
+    spec = _job_spec(_campaign(), _COMMIT, inst, lx, plan, store=store)
+    assert spec is not None
+    ((rel, data),) = store.uploads.items()
+    assert data == b'["b", "c"]' and lx.tag == hashlib.sha256(data).hexdigest()[:12] == spec.tag
+    assert rel.endswith(f"/default/1of3-{lx.tag}.json")
+    assert Launch(inst.id, ("extract",), (0, 1), "reduce", 8, ()).tag == hashlib.sha256(b"[]").hexdigest()[:12]
+
+
+def test_a_download_launch_has_no_tag(tmp_path) -> None:
+    """Spec §3.4: an unkeyed launch (a `download` instance) keeps the names of today."""
+    from scripts.hf_jobs.launch import labels_for
+
+    inst, plan = _download_inst(), _single_stage_plan(tmp_path)
+    lx = Launch(inst.id, ("extract",), (1, 2), "run", 8, ("b",), keyed=False)
+    assert lx.tag == ""
+    store = _FakeStore()
+    spec = _job_spec(_campaign(), _COMMIT, inst, lx, plan, store=store)
+    assert spec is not None and spec.tag == "" and "tag" not in labels_for(spec) and store.uploads == {}
 
 
 def test_a_stuck_memory_unit_is_not_escalated(tmp_path) -> None:
@@ -1425,6 +1708,169 @@ def test_step_survives_a_429_on_each_write(tmp_path, monkeypatch, capsys, write)
         assert result.launched == 1  # the step still launches; the cache waits for the next step
 
 
+# --- the record of launched jobs inside a run (HFU launch top-up spec §3.3; spec tests 14 to 17) ---------------
+
+
+def _units_plan(tmp_path, n: int) -> dict:
+    keys = [f"u{i:02d}" for i in range(n)]
+    return _realplan(_ctx(tmp_path, (s.Stage(name="extract", units=lambda c: list(keys), work=_work()),)))
+
+
+def _listing(recorder: _LaunchRecorder, stage: str = "RUNNING") -> list[dict]:
+    """What the HF listing shows for the jobs that ``recorder`` launched (ids ``id1``, ``id2``, ...)."""
+    from scripts.hf_jobs.launch import labels_for
+
+    return [
+        {"id": f"id{i + 1}", "labels": labels_for(sp), "stage": stage, "message": None,
+         "created_at": "2026-11-12T10:00:00+00:00"}
+        for i, sp in enumerate(recorder.specs)
+    ]  # fmt: skip
+
+
+def _launched_keys(recorder: _LaunchRecorder, api: _BucketApi) -> list[str]:
+    """Every key of every launched job, from the keys files the jobs read."""
+    return [k for sp in recorder.specs for k in json.loads(api.files[f"rk/{sp.shard_keys_path.split('/rk/', 1)[1]}"])]
+
+
+def test_a_launch_whose_manifest_write_fails_is_in_the_record(tmp_path, monkeypatch) -> None:
+    from scripts.hf_jobs import driver as D
+    from scripts.hf_jobs.launched import LaunchedJobs
+
+    monkeypatch.setattr(D, "_PUT_BACKOFF_S", (0.0, 0.0, 0.0))
+    inst, plan, rec = _inst(), _single_stage_plan(tmp_path), LaunchedJobs()
+    _step(_campaign(), api=_BucketApi("/by_job/"), instances=[inst], read_plan=lambda _i: plan,
+          live_records=lambda: [], launch_fn=_LaunchRecorder(), launched=rec)  # fmt: skip
+    assert rec.units_of("id1") == ("a", "b", "c")
+
+
+class _CountingApi(_BucketApi):
+    def __init__(self, files: dict) -> None:
+        super().__init__("", files)
+        self.reads: list[str] = []
+
+    def download_bucket_files(self, bucket, pairs, raise_on_missing_files=False) -> None:
+        self.reads.extend(remote for remote, _local in pairs)
+        super().download_bucket_files(bucket, pairs, raise_on_missing_files)
+
+
+def test_a_job_that_the_run_did_not_launch_costs_one_store_read(tmp_path) -> None:
+    """Spec §3.3: a resume meets in-flight jobs of an earlier run; the store's answer is kept for the run, the
+    answer "no manifest" too. A job of a driver before the tag (no `tag` label) is topped up by its manifest."""
+    from scripts.hf_jobs.launched import LaunchedJobs
+
+    inst, plan = _inst(), _units_plan(tmp_path, 6)
+    token = plan["stages"][0]["token"]
+    api = _CountingApi({f"rk/{by_job_rel(plan, 'extract', token, 'x1')}": b'["u00", "u01"]'})
+    live = [{**_running(inst, "extract", shard="0of3"), "id": "x1"}]
+    assert "tag" not in live[0]["labels"]
+    rec, recorder = LaunchedJobs(), _LaunchRecorder()
+    for _ in range(2):
+        _step(_campaign(), api=api, instances=[inst], read_plan=lambda _i: plan, live_records=lambda: live,
+              launch_fn=recorder, launched=rec)  # fmt: skip
+    assert sum("/by_job/x1" in r for r in api.reads) == 1
+    assert sorted(_launched_keys(recorder, api))[:4] == ["u02", "u03", "u04", "u05"]
+
+
+def test_a_job_without_a_manifest_keeps_its_stage_waiting(tmp_path) -> None:
+    """A guard (Review Focus 4): a resume over an in-flight job whose manifest write got a 429 in the earlier run."""
+    from scripts.hf_jobs.launched import LaunchedJobs
+
+    inst, plan = _inst(), _units_plan(tmp_path, 6)
+    api = _CountingApi({})
+    live = [{**_running(inst, "extract", shard="0of3"), "id": "x2"}]
+    rec, recorder = LaunchedJobs(), _LaunchRecorder()
+    for _ in range(2):
+        _step(_campaign(), api=api, instances=[inst], read_plan=lambda _i: plan, live_records=lambda: live,
+              launch_fn=recorder, launched=rec)  # fmt: skip
+    assert recorder.specs == [] and sum("/by_job/x2" in r for r in api.reads) == 1
+
+
+def test_two_steps_fill_the_stage_with_twelve_jobs(tmp_path) -> None:
+    """Spec test 16: budget min(12 - 0, 6) = 6 at step 1; min(12 - 6, 6) = 6 at step 2, room 6."""
+    from scripts.hf_jobs.launched import LaunchedJobs
+
+    inst, plan, rec, recorder, api = _inst(), _units_plan(tmp_path, 24), LaunchedJobs(), _LaunchRecorder(), _BucketApi()
+    camp = _campaign(12, units_per_job=2, launch_batch=6)
+    _step(camp, api=api, instances=[inst], read_plan=lambda _i: plan, live_records=lambda: [], launch_fn=recorder,
+          launched=rec)  # fmt: skip
+    assert len(recorder.specs) == 6
+    first = _listing(recorder)
+    _step(camp, api=api, instances=[inst], read_plan=lambda _i: plan, live_records=lambda: first, launch_fn=recorder,
+          launched=rec)  # fmt: skip
+    keys = _launched_keys(recorder, api)
+    assert len(recorder.specs) == 12 and len(keys) == len(set(keys)) == 24
+
+
+def test_a_launched_job_that_the_listing_does_not_show_holds_its_units(tmp_path, capsys) -> None:
+    """Spec test 15: held as in flight (the budget, the stall rule); dropped after 5 listings, with a line, and its
+    units launched again; a step whose listing got a 429 does not count."""
+    from scripts.hf_jobs.launched import LaunchedJobs
+
+    inst, plan, rec, recorder, api = _inst(), _units_plan(tmp_path, 24), LaunchedJobs(), _LaunchRecorder(), _BucketApi()
+    camp = _campaign(12, units_per_job=2, launch_batch=6)
+
+    def go(live):
+        return _step(camp, api=api, instances=[inst], read_plan=lambda _i: plan, live_records=live,
+                     launch_fn=recorder, launched=rec)  # fmt: skip
+
+    go(lambda: [])  # step 1: id1..id6
+    result = go(lambda: [])  # step 2: the listing shows none of them
+    assert result.in_flight == 6 and len(recorder.specs) == 12  # held; the top-up took the 12 units left
+
+    def limited():
+        raise RuntimeError("429 Too Many Requests")
+
+    assert go(limited).contention is True  # no listing: not counted
+    for _ in range(3):  # steps 3 to 5 with a listing
+        assert go(lambda: []).launched == 0
+    assert "was launched but is not in the listing" not in capsys.readouterr().err
+    result = go(lambda: [])  # the fifth listing without id1..id6
+    err = capsys.readouterr().err
+    assert (
+        sum(f"[driver] job id{i} " in err and "after 5 steps; its units are free again" in err for i in range(1, 7))
+        == 6
+    )
+    assert result.launched == 6 and len(recorder.specs) == 18
+
+
+def test_dry_run_shows_the_top_up(tmp_path, capsys) -> None:
+    """Spec test 17: the dry run reads the manifests of the flight from the store and prints each launch's tag."""
+    from scripts.hf_jobs.driver import _dry_run
+
+    inst, plan = _inst(), _units_plan(tmp_path, 6)
+    token = plan["stages"][0]["token"]
+    api = _BucketApi("", {f"rk/{by_job_rel(plan, 'extract', token, 'x1')}": b'["u00", "u01"]'})
+    live = [{**_running(inst, "extract", shard="0of3"), "id": "x1"}]
+    _dry_run(_campaign(), _COMMIT, api=api, instances=[inst], read_plan=lambda _i: plan, live_records=lambda: live,
+             baseline_error_ids=frozenset())  # fmt: skip
+    out = json.loads(capsys.readouterr().out)
+    assert [(lx["keys"], len(lx["tag"])) for lx in out["launches"]] == [(4, 12)]
+
+
+def test_dry_run_reports_a_foreign_identity_as_fatal_and_no_launch(tmp_path, capsys) -> None:
+    """Spec §19.2: the dry run shows what `step` would do, so a plan under another identity is its FATAL too."""
+    from scripts.hf_jobs.driver import _dry_run
+
+    inst = _inst()
+    plan = {**_units_plan(tmp_path, 6), "code_identity": "dirty-1a2b3c4d5e6f7a8b"}
+    _dry_run(_campaign(), _COMMIT, api=_BucketApi("", {}), instances=[inst], read_plan=lambda _i: plan,
+             live_records=lambda: [], baseline_error_ids=frozenset())  # fmt: skip
+    out = json.loads(capsys.readouterr().out)
+    assert out["fatal"][0] == "code_identity" and "dirty-1a2b3c4d5e6f" in out["fatal"][1]
+    assert out["launches"] == []
+
+
+def test_dry_run_reports_a_later_foreign_identity(tmp_path, capsys) -> None:
+    from scripts.hf_jobs.driver import _dry_run
+
+    insts, read = _two_plans_first_at_commit(tmp_path)
+    _dry_run(_campaign(), _COMMIT, api=_BucketApi("", {}), instances=insts, read_plan=read,
+             live_records=lambda: [], baseline_error_ids=frozenset())  # fmt: skip
+    out = json.loads(capsys.readouterr().out)
+    assert out["fatal"][0] == "code_identity" and "rk2/default" in out["fatal"][1]
+    assert out["launches"] == []
+
+
 def test_guarded_put_retries_a_429_then_succeeds(monkeypatch) -> None:
     from scripts.hf_jobs import driver as D
 
@@ -1513,21 +1959,38 @@ def _no_api_args():
 def test_main_compare_exits_by_the_result(monkeypatch, tmp_path, capsys) -> None:
     from scripts.hf_jobs import adopt
 
+    rk = "cycle1-aaaaaaa-xsuccess-public"
     rows = {
-        "xsuccess-public/default": {"identical": True, "differences": [], "baseline": "adopted"},
+        "xsuccess-public/default": {
+            "identical": True,
+            "differences": [],
+            "baseline": "adopted",
+            "baseline_run_key": rk,
+        },
         "census-public/default": {"census_ok": True, "certification": {"basis": "rebaseline"}},
     }
-    monkeypatch.setattr(adopt, "compare_staging", lambda c, *, staging, baseline: rows)
+    seen: dict = {}
+
+    def fake(c, *, staging, baselines):
+        seen["baselines"] = list(baselines)
+        return rows
+
+    monkeypatch.setattr(adopt, "compare_staging", fake)
     argv = ["camp.toml", "compare", "--staging", str(tmp_path / "new"), "--baseline", str(tmp_path / "old")]
     assert main(argv, **_no_api_args()) == 0
-    assert "xsuccess-public/default IDENTICAL (baseline: adopted copy)\n" in capsys.readouterr().out
+    assert f"xsuccess-public/default IDENTICAL (baseline: adopted copy of {rk})\n" in capsys.readouterr().out
+    # HFU launch top-up spec §14.2 (D6): `--baseline` more than once reaches `compare_staging` in its order
+    assert main([*argv, "--baseline", str(tmp_path / "refit")], **_no_api_args()) == 0
+    assert seen["baselines"] == [tmp_path / "old", tmp_path / "refit"]
+    capsys.readouterr()
     rows["xsuccess-public/default"] = {
         "identical": False,
         "differences": ["model.json: bytes differ"],
         "baseline": "retrieved",
+        "baseline_run_key": rk,
     }
     assert main(argv, **_no_api_args()) == 1
-    line = "xsuccess-public/default DIFFERENT (baseline: retrieved files): model.json: bytes differ\n"
+    line = f"xsuccess-public/default DIFFERENT (baseline: retrieved files of {rk}): model.json: bytes differ\n"
     assert line in capsys.readouterr().out
     # an instance in only one folder was compared with no baseline: its line names none
     rows["xsuccess-public/default"] = {"identical": False, "differences": ["present in only one staging folder"]}

@@ -829,6 +829,7 @@ def _run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any
     base = f"{gen}/{key}"
     attempt = _previous_attempts(ctx.store, base) + 1
     reset_ok = _reset_peak_rss()
+    cpu0 = os.times()  # this process only: an inner pool's children are not in it (`cpu_scope`)
     started = time.time_ns()
     outcome, error, tb = "done", None, None
     unit_ctx = dataclasses.replace(ctx, pool=pool)
@@ -851,6 +852,7 @@ def _run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any
     except Exception as exc:  # broad BY DESIGN: recorded per unit, never swallowed (the for_each rule)
         outcome, error, tb = "failed", f"{type(exc).__name__}: {exc}", format_failure_traceback(exc)
     finished = time.time_ns()
+    cpu1 = os.times()
     if outcome == "failed":
         failure = {"error": error, "attempt": attempt}
         if tb is not None:  # WHERE it failed (HFU spec §4.3): additive; `error` keeps its exact format
@@ -870,6 +872,10 @@ def _run_unit(ctx: RunContext, st: AnyStage, key: str, *, worker: str, pool: Any
         "started_ns": started,
         "finished_ns": finished,
         "wall_s": (finished - started) / 1e9,
+        # HFU launch top-up spec §5: the CPU time of the unit's process beside its wall time.
+        "cpu_user_s": float(cpu1.user - cpu0.user),
+        "cpu_sys_s": float(cpu1.system - cpu0.system),
+        "cpu_scope": "process",
         "peak_rss_bytes": peak,
         "rss_scope": scope,
         "inner_workers": getattr(pool, "workers", None),

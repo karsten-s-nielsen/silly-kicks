@@ -106,7 +106,108 @@ def test_ref_check_requires_head_pushed_and_green():
         key = tuple(argv) if argv[0] == "git" else ("gh",)
         return type("R", (), {"returncode": 0, "stdout": out.get(key, ""), "stderr": ""})()
 
-    assert P.check_ref(SHA, run=run).ok
+    assert P.check_ref(SHA, run=run, identity=lambda: SHA).ok
+
+
+# ---- check 1, the tree (spec §19.1 E1): the controller plans with the commit the jobs clone --------------
+
+
+def _ref_run(calls: list, *, status: str = ""):
+    """A `run` fake for check 1: HEAD is SHA, pushed, CI green; `git status` lists ``status``. Records argv."""
+
+    def run(argv, **kw):
+        calls.append(tuple(argv))
+        out = {
+            ("git", "rev-parse", "HEAD"): SHA + "\n",
+            ("git", "branch", "-r", "--contains", SHA): "  origin/feat/x\n",
+            ("git", "status", "--porcelain", "--untracked-files=no"): status,
+            ("gh",): json.dumps([{"status": "completed", "conclusion": "success", "workflowName": "CI"}]),
+        }
+        key = tuple(argv) if argv[0] == "git" else ("gh",)
+        return type("R", (), {"returncode": 0, "stdout": out.get(key, ""), "stderr": ""})()
+
+    return run
+
+
+def test_check_ref_passes_when_the_identity_is_the_commit():
+    calls: list = []
+    c = P.check_ref(SHA, run=_ref_run(calls), identity=lambda: SHA)
+    assert c.ok and c.name == "ref"
+
+
+def test_check_ref_fails_on_a_tracked_dirty_tree_and_names_the_paths():
+    calls: list = []
+    status = " M docs/a.md\n M docs/b.md\n"
+    c = P.check_ref(SHA, run=_ref_run(calls, status=status), identity=lambda: "dirty-1a2b3c4d5e6f")
+    assert not c.ok and c.name == "ref"
+    assert "dirty-1a2b3c4d5e6f" in c.detail and f"the jobs run {SHA[:7]};" in c.detail
+    assert c.detail.endswith("commit or stash them")
+    assert "docs/a.md" in c.detail and "docs/b.md" in c.detail and "(2)" in c.detail
+    assert not any(a[0] == "gh" for a in calls)  # it fails before the network calls
+    assert ("git", "fetch", "-q", "origin") not in calls
+
+
+def test_check_ref_names_at_most_five_paths():
+    calls: list = []
+    status = "".join(f" M f{i}.py\n" for i in range(7))
+    c = P.check_ref(SHA, run=_ref_run(calls, status=status), identity=lambda: "dirty-0")
+    assert not c.ok and "(7)" in c.detail
+    assert "f4.py" in c.detail and "f5.py" not in c.detail
+
+
+def test_check_ref_fails_on_unknown_provenance():
+    calls: list = []
+    c = P.check_ref(SHA, run=_ref_run(calls), identity=lambda: "unknown-" + "9" * 32)
+    assert not c.ok and "unknown-" in c.detail and "stash" not in c.detail
+    assert not any(a[0] == "gh" for a in calls)
+
+
+def test_check_ref_on_a_clean_tree_at_another_head_names_the_head():
+    calls: list = []
+    other = "b" * 40
+
+    def run(argv, **kw):
+        calls.append(tuple(argv))
+        stdout = other + "\n" if tuple(argv) == ("git", "rev-parse", "HEAD") else ""
+        return type("R", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+
+    c = P.check_ref(SHA, run=run, identity=lambda: other)
+    assert not c.ok and f"HEAD {other[:12]} != campaign commit {SHA[:12]}" == c.detail
+
+
+def test_check_ref_fails_on_any_other_identity_at_the_right_head():
+    calls: list = []
+    c = P.check_ref(SHA, run=_ref_run(calls), identity=lambda: "c" * 40)
+    assert not c.ok and "c" * 18 in c.detail
+    assert not any(a[0] == "gh" for a in calls)
+
+
+def test_check_ref_without_identity_uses_the_driver_identity(monkeypatch):
+    """Production calls ``check_ref(commit)`` (``cmd_preflight``): the DEFAULT must be the driver's identity."""
+    from scripts import _provenance
+
+    monkeypatch.setattr(_provenance, "git_provenance", lambda: {"commit": SHA, "tree_state": "dirty"})
+    monkeypatch.setattr(_provenance, "code_identity", lambda prov: "dirty-0badc0de0bad")
+    calls: list = []
+    c = P.check_ref(SHA, run=_ref_run(calls, status=" M scripts/x.py\n"))
+    assert not c.ok and "dirty-0badc0de0bad" in c.detail and "scripts/x.py" in c.detail
+    assert not any(a[0] == "gh" for a in calls)
+
+
+def test_check_ref_default_identity_is_the_driver_one(monkeypatch):
+    from scripts import _provenance
+
+    prov = {"commit": SHA, "tree_state": "dirty"}
+    monkeypatch.setattr(_provenance, "git_provenance", lambda: prov)
+    seen = []
+
+    def fake_identity(p):
+        seen.append(p)
+        return "dirty-feed"
+
+    monkeypatch.setattr(_provenance, "code_identity", fake_identity)
+    assert P._controller_identity() == "dirty-feed"
+    assert seen == [prov]
 
 
 # ---- check 5: every instance's --plan, in parallel, one progress line each --------------------------------

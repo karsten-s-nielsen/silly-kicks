@@ -927,20 +927,22 @@ def _compare_campaign():
     )
 
 
-def _compare_staging_dir(root: Path, commit: str, *, weights: bytes = b"W", census_ok: bool = True) -> Path:
+def _compare_staging_dir(
+    root: Path, commit: str, *, weights: bytes = b"W", census_ok: bool = True, campaign: str = "cycle1"
+) -> Path:
     """A toy retrieved staging folder: an xsuccess artifact, a match_outcome artifact (the commit inside
     model.json) and a verify.json with the census row."""
     c7 = commit[:7]
-    x = root / f"cycle1-{c7}-xsuccess-public" / "default"
+    x = root / f"{campaign}-{c7}-xsuccess-public" / "default"
     x.mkdir(parents=True)
     (x / "model.json").write_bytes(weights)
     (x / "metadata.json").write_text(json.dumps({"training_commit": commit, "feature_names": ["a"]}))
     (x / "SHA256SUMS").write_text(f"{hashlib.sha256(weights).hexdigest()}  model.json\n")
-    m = root / f"cycle1-{c7}-match_outcome_dependence-public" / "default"
+    m = root / f"{campaign}-{c7}-match_outcome_dependence-public" / "default"
     m.mkdir(parents=True)
     (m / "model.json").write_text(json.dumps({"rho": -0.1, "training_commit": commit}))
     (m / "SHA256SUMS").write_text(f"{hashlib.sha256((m / 'model.json').read_bytes()).hexdigest()}  model.json\n")
-    census = f"cycle1-{c7}-build_territory_ranking_census-public/default"
+    census = f"{campaign}-{c7}-build_territory_ranking_census-public/default"
     (root / census).mkdir(parents=True)
     (root / "verify.json").write_text(
         json.dumps(
@@ -954,10 +956,13 @@ def test_compare_staging_reports_each_instance(tmp_path):
     """Identical under the rule: provenance differs, and match_outcome holds its commit inside model.json."""
     new = _compare_staging_dir(tmp_path / "new", _CB)
     old = _compare_staging_dir(tmp_path / "old", _CA)
-    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+    got = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
     same = {"identical": True, "differences": [], "baseline": "retrieved"}
-    assert got["xsuccess-public/default"] == same
-    assert got["match_outcome_dependence-public/default"] == same
+    assert got["xsuccess-public/default"] == {**same, "baseline_run_key": f"cycle1-{_CA[:7]}-xsuccess-public"}
+    assert got["match_outcome_dependence-public/default"] == {
+        **same,
+        "baseline_run_key": f"cycle1-{_CA[:7]}-match_outcome_dependence-public",
+    }
     assert got["build_territory_ranking_census-public/default"]["census_ok"] is True
     assert list(got) == [
         "xsuccess-public/default",
@@ -969,7 +974,7 @@ def test_compare_staging_reports_each_instance(tmp_path):
 def test_compare_staging_reports_a_payload_difference(tmp_path):
     new = _compare_staging_dir(tmp_path / "new", _CB, weights=b"X")
     old = _compare_staging_dir(tmp_path / "old", _CA)
-    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])["xsuccess-public/default"]
     assert row["identical"] is False and any(d.startswith("model.json") for d in row["differences"])
 
 
@@ -994,8 +999,13 @@ def test_compare_staging_reads_the_adopted_copy_of_the_baseline(tmp_path):
     raw = old / f"cycle1-{_CA[:7]}-xsuccess-public" / "default" / "metadata.json"
     raw.write_text(json.dumps({"training_commit": _CA, "feature_names": ["staged-a"]}))
     _adopted_copy(old, _CA, feature_names=["a"])
-    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
-    assert got["xsuccess-public/default"] == {"identical": True, "differences": [], "baseline": "adopted"}
+    got = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
+    assert got["xsuccess-public/default"] == {
+        "identical": True,
+        "differences": [],
+        "baseline": "adopted",
+        "baseline_run_key": f"cycle1-{_CA[:7]}-xsuccess-public",
+    }
     assert got["match_outcome_dependence-public/default"]["baseline"] == "retrieved"
 
 
@@ -1005,7 +1015,7 @@ def test_compare_staging_takes_the_adopted_copy_over_equal_retrieved_files(tmp_p
     new = _compare_staging_dir(tmp_path / "new", _CB)
     old = _compare_staging_dir(tmp_path / "old", _CA)
     _adopted_copy(old, _CA, feature_names=["shipped"])
-    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])["xsuccess-public/default"]
     assert row["identical"] is False and row["baseline"] == "adopted"
     assert any(d.startswith("metadata.json") for d in row["differences"])
 
@@ -1018,7 +1028,7 @@ def test_compare_staging_never_reads_the_adopted_copy_of_the_new_side(tmp_path):
     raw = new / f"cycle1-{_CB[:7]}-xsuccess-public" / "default" / "metadata.json"
     raw.write_text(json.dumps({"training_commit": _CB, "feature_names": ["staged-a"]}))
     _adopted_copy(new, _CB, feature_names=["a"])
-    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])["xsuccess-public/default"]
     assert row["identical"] is False and row["baseline"] == "retrieved"
 
 
@@ -1028,8 +1038,13 @@ def test_finalize_writes_the_folder_that_compare_reads(tmp_path):
     inst = f"cycle1-{_CA[:7]}-xsuccess-public/default"
     assert A._finalize(old, inst) == A._final_dir(old, inst) == old / "_final" / inst
     new = _compare_staging_dir(tmp_path / "new", _CB)
-    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
-    assert row == {"identical": True, "differences": [], "baseline": "adopted"}
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])["xsuccess-public/default"]
+    assert row == {
+        "identical": True,
+        "differences": [],
+        "baseline": "adopted",
+        "baseline_run_key": f"cycle1-{_CA[:7]}-xsuccess-public",
+    }
 
 
 def test_compare_staging_reports_an_instance_in_only_one_folder(tmp_path):
@@ -1038,7 +1053,7 @@ def test_compare_staging_reports_an_instance_in_only_one_folder(tmp_path):
     new = _compare_staging_dir(tmp_path / "new", _CB)
     old = _compare_staging_dir(tmp_path / "old", _CA)
     shutil.rmtree(old / f"cycle1-{_CA[:7]}-xsuccess-public")
-    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+    got = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
     assert got["xsuccess-public/default"] == {
         "identical": False,
         "differences": ["present in only one staging folder"],
@@ -1050,7 +1065,7 @@ def test_compare_staging_refuses_two_run_keys_on_one_side(tmp_path):
     old = _compare_staging_dir(tmp_path / "old", _CA)
     (old / f"cycle1-{'c' * 7}-xsuccess-public" / "default").mkdir(parents=True)
     with pytest.raises(A.AdoptionRefusedError, match="xsuccess-public"):
-        A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+        A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
 
 
 @pytest.mark.parametrize("fault", ["no_verify_json", "another_commit", "not_ok"])
@@ -1062,8 +1077,73 @@ def test_compare_staging_census_is_not_ok(tmp_path, fault):
     elif fault == "another_commit":
         doc = json.loads((new / "verify.json").read_text())
         (new / "verify.json").write_text(json.dumps({**doc, "commit": "d" * 40}))
-    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+    got = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
     assert got["build_territory_ranking_census-public/default"]["census_ok"] is False
+
+
+def test_compare_staging_finds_a_baseline_of_another_campaign(tmp_path):
+    """D2 (HFU launch top-up spec §14.2): an artifact is named by its job, tier and variant; the campaign that
+    trained it does not matter on the baseline side."""
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    refit = _compare_staging_dir(tmp_path / "refit", _CA, campaign="tf46_refit")
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[refit])["xsuccess-public/default"]
+    assert row == {
+        "identical": True,
+        "differences": [],
+        "baseline": "retrieved",
+        "baseline_run_key": f"tf46_refit-{_CA[:7]}-xsuccess-public",
+    }
+
+
+def test_compare_staging_reads_an_instance_from_the_last_baseline_that_holds_it(tmp_path):
+    """D3: two baselines both hold xsuccess (the second wins); only the first holds match_outcome."""
+    import shutil
+
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    first = _compare_staging_dir(tmp_path / "first", _CA)
+    second = _compare_staging_dir(tmp_path / "second", _CA, campaign="tf46_refit")
+    shutil.rmtree(second / f"tf46_refit-{_CA[:7]}-match_outcome_dependence-public")
+    got = A.compare_staging(_compare_campaign(), staging=new, baselines=[first, second])
+    assert got["xsuccess-public/default"]["baseline_run_key"] == f"tf46_refit-{_CA[:7]}-xsuccess-public"
+    assert got["match_outcome_dependence-public/default"]["baseline_run_key"] == (
+        f"cycle1-{_CA[:7]}-match_outcome_dependence-public"
+    )
+    assert got["xsuccess-public/default"]["identical"] is True
+
+
+def test_compare_staging_with_no_baseline_that_holds_the_instance(tmp_path):
+    """D4: a difference with no form and no run key."""
+    import shutil
+
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    a = _compare_staging_dir(tmp_path / "a", _CA)
+    b = _compare_staging_dir(tmp_path / "b", _CA, campaign="tf46_refit")
+    shutil.rmtree(a / f"cycle1-{_CA[:7]}-xsuccess-public")
+    shutil.rmtree(b / f"tf46_refit-{_CA[:7]}-xsuccess-public")
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[a, b])["xsuccess-public/default"]
+    assert row == {"identical": False, "differences": ["present in only one staging folder"]}
+
+
+def test_compare_staging_refuses_two_campaigns_of_one_artifact_in_one_baseline(tmp_path):
+    """D5: two run keys of one job and tier in one baseline folder are ambiguous."""
+    import shutil
+
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    shutil.copytree(old / f"cycle1-{_CA[:7]}-xsuccess-public", old / f"tf46_refit-{_CA[:7]}-xsuccess-public")
+    with pytest.raises(A.AdoptionRefusedError, match="xsuccess-public"):
+        A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
+
+
+def test_compare_staging_census_reads_only_the_new_launch(tmp_path):
+    """Review Focus 5: several baselines change nothing in the census row (it reads `<new>/verify.json`)."""
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    a = _compare_staging_dir(tmp_path / "a", _CA, census_ok=False)
+    b = _compare_staging_dir(tmp_path / "b", _CA, campaign="tf46_refit", census_ok=False)
+    one = A.compare_staging(_compare_campaign(), staging=new, baselines=[a])
+    two = A.compare_staging(_compare_campaign(), staging=new, baselines=[a, b])
+    key = "build_territory_ranking_census-public/default"
+    assert one[key] == two[key] and two[key]["census_ok"] is True
 
 
 # ---- one read bound for the whole retrieve (HFU fit-units spec C1) ------------------------------------

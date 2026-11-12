@@ -45,11 +45,40 @@ def _sh(run, argv: list[str]) -> tuple[int, str]:
     return p.returncode, (p.stdout or "")
 
 
-def check_ref(commit: str, *, run=subprocess.run) -> Check:
-    """Check 1: the clone commit is local HEAD, is on a remote branch, and has a green CI run."""
+#: At most this many changed tracked paths in the check-1 FAIL detail.
+_TREE_PATHS_SHOWN = 5
+
+
+def _controller_identity() -> str:
+    """The code identity this controller plans with: the value every ``--plan`` digests (``scripts/_stages.py``)
+    and returns as ``code_identity``. One rule, never a second one."""
+    from scripts import _provenance
+
+    return _provenance.code_identity(_provenance.git_provenance())
+
+
+def _tree_detail(commit: str, identity: str, run) -> str:
+    """The check-1 FAIL detail when the controller's code identity is not ``commit``."""
+    where = f"the driver would plan under {identity[:18]}, the jobs run {commit[:7]}"
+    if identity.startswith("dirty-"):
+        _rc, status = _sh(run, ["git", "status", "--porcelain", "--untracked-files=no"])
+        paths = [line[3:].strip() for line in status.splitlines() if line.strip()]
+        shown = ", ".join(paths[:_TREE_PATHS_SHOWN])
+        return f"the tree has tracked changes ({len(paths)}): {shown}; {where}; commit or stash them"
+    if identity.startswith("unknown-"):
+        return f"the code provenance of this tree is unknown (git failed?); {where}"
+    return f"the controller's code identity is not the commit; {where}"
+
+
+def check_ref(commit: str, *, run=subprocess.run, identity: Callable[[], str] = _controller_identity) -> Check:
+    """Check 1: the clone commit is local HEAD, the controller plans with it (no tracked edit; spec §19.1), it is
+    on a remote branch, and it has a green CI run. The tree test runs before any network call."""
     rc, head = _sh(run, ["git", "rev-parse", "HEAD"])
     if rc or head.strip() != commit:
         return Check("ref", False, f"HEAD {head.strip()[:12]} != campaign commit {commit[:12]}")
+    ident = identity()
+    if ident != commit:  # HEAD is the commit, but the controller would plan with something else
+        return Check("ref", False, _tree_detail(commit, ident, run))
     _sh(run, ["git", "fetch", "-q", "origin"])
     rc, remote = _sh(run, ["git", "branch", "-r", "--contains", commit])
     if rc or not remote.strip():
