@@ -888,3 +888,53 @@ def test_build_xshot_labels_bit_identical_after_refactor():
     y = build_xshot_labels(frames_index, shots, horizon_seconds=1.0)
     np.testing.assert_array_equal(np.asarray(y), np.array([0, 1, 1, 0, 0]))  # GOLDEN (frozen pre-refactor)
     assert np.asarray(y).dtype == np.dtype(int)
+
+
+# --- ADR-130: the stoppage filter (Task 3 of the stoppage-gate plan) ---
+
+# Taken on main 2a0cb92b (D:/Temp/tf46-recut/port/golden_prepare.py, before the edit): rows, positives, digest.
+_XS_MAIN_ROWS, _XS_MAIN_POSITIVES = 20, 8
+_XS_MAIN_DIGEST = "073d8e66a9fdc6a98f91744f653feb5c08e06e5f0668de22c65bd1f307b8d109"
+
+
+def _xs_digest(feats, y, g) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    h.update(",".join(map(str, feats.columns)).encode())
+    h.update(np.round(feats.to_numpy(dtype="float64"), 9).tobytes())
+    h.update(np.asarray(y, dtype="int64").tobytes())
+    h.update(",".join(map(str, g)).encode())
+    return h.hexdigest()
+
+
+def _xs_shots():
+    import pandas as pd
+
+    return pd.DataFrame(
+        {"game_id": [1], "period_id": [1], "team_id": [2], "time_seconds": [0.30], "type_id": [_SHOT_TID]}
+    )
+
+
+def test_prepare_without_a_stoppage_column_equals_main():
+    # The oracle: the value of this call on main 2a0cb92b, before the stoppage filter existed (ADR-130).
+    X, y, g = xs.prepare_xshot_training_data(_synthetic_match_frames(n_frames=20), _xs_shots(), home_team_id=1)
+    assert (len(X), int(np.asarray(y).sum())) == (_XS_MAIN_ROWS, _XS_MAIN_POSITIVES)
+    assert _xs_digest(X, y, g) == _XS_MAIN_DIGEST
+
+
+def test_prepare_drops_dead_unknown_and_unknown_horizon_frames():
+    frames = _synthetic_match_frames(n_frames=20)  # frame k at k * 0.04 s
+    state = {5: "dead", 12: "unknown"}
+    frames["stoppage_state"] = frames["frame_id"].map(state).fillna("live")
+    *_rest, keys = xs.prepare_xshot_training_data(
+        frames, _xs_shots(), home_team_id=1, horizon_seconds=0.1, return_keys=True
+    )
+    # 5 dead, 12 unknown; 10 and 11 reach frame 12 within 0.1 s; frame 9 (0.36 s) does not (0.48 - 0.36 > 0.1).
+    assert set(keys["frame_id"]) == set(range(20)) - {5, 10, 11, 12}
+
+
+def test_prepare_with_an_all_live_stoppage_column_keeps_every_frame_of_main():
+    frames = _synthetic_match_frames(n_frames=20).assign(stoppage_state="live")
+    X, y, g = xs.prepare_xshot_training_data(frames, _xs_shots(), home_team_id=1)
+    assert _xs_digest(X, y, g) == _XS_MAIN_DIGEST

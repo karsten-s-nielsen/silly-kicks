@@ -722,7 +722,9 @@ def verify(
 
     def one(item: tuple[int, Instance]) -> dict | None:
         i, inst = item
-        return _verify_one(inst, i, len(insts), commit=commit, staging=staging, man=man, observed=observed, run=run)
+        return _verify_one(
+            inst, i, len(insts), commit=commit, staging=staging, man=man, observed=observed, run=run, mode=c.mode
+        )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         rows = list(pool.map(one, enumerate(insts, start=1)))
@@ -747,6 +749,7 @@ def _verify_one(
     man: mf.Manifest,
     observed: Mapping[str, Any],
     run: Callable[..., Any],
+    mode: str = "rematerialize",
 ) -> dict | None:
     """:func:`verify` for instance ``i`` of ``n``: its report row, or ``None`` when it was not retrieved. Every
     file it writes is this instance's own (the head-to-head, the open-data cache, the integrity verdict)."""
@@ -775,11 +778,22 @@ def _verify_one(
     # instance has one (a Hub mirror / sibling shares it), else the Hub artifact's observed metrics.
     ref = next((a for a in targets if a.kind == "wheel"), targets[0])
     fresh_metrics = _read_json(fresh / "metrics.json") if (fresh / "metrics.json").is_file() else {}
-    row["certification"] = _certify(spec, inst, ref, fresh, fresh_metrics, observed, run=run)
+    comparison = _certify(spec, inst, ref, fresh, fresh_metrics, observed, run=run)
+    if mode == "refit":  # ADR-130: the arm passes on its own acceptance gates; the comparison is reported
+        gates = fresh_metrics.get("acceptance") or {}
+        ok = bool(gates) and all(bool(v) for v in gates.values())
+        row["certification"] = {
+            "ok": ok,
+            "basis": "refit_fresh_acceptance",
+            "acceptance": gates,
+            "comparison": comparison,
+        }
+    else:
+        row["certification"] = comparison
     checks = {"load": row["load_error"] is None, "certification": bool(row["certification"]["ok"])}
     if _dataset_kind_of(inst) == "statsbomb_open":  # the committed side has no ids (HFU spec 14.3)
         row["coverage_note"] = coverage_note(cv_ok=bool(row["certification"].get("cv_parity", {}).get("ok")))
-    if inst.job in INTEGRITY_FAMILIES:
+    if inst.job in INTEGRITY_FAMILIES and mode != "refit":  # a refit does not reproduce the committed model
         row["integrity"] = _integrity(ref, fresh, record, _committed_metrics(ref, observed), staging, run=run)
         checks["integrity"] = bool(row["integrity"]["go"])
     for a in targets:

@@ -31,6 +31,7 @@ from silly_kicks.tracking._ball_carrier import (
     infer_ball_carrier,
 )
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
+from silly_kicks.tracking._stoppages import training_frame_mask
 from silly_kicks.tracking._velocity_availability import (
     variant_key_for_velocity as _variant_key_for_velocity,
 )
@@ -468,6 +469,9 @@ class XShotOccurrenceModel:
         # bundled artifacts previously carried a hand-patched value (ADR-054 c487c49); this closes
         # that gap so the trainer produces it end-to-end, matching train_ghost_gk (ADR-106).
         self.training_commit: str | None = None
+        # The stoppage rule and the per-provider stoppage sources of the training frames (ADR-130). Written into
+        # metadata.json only when set, so a re-save of an older bundle stays byte-identical.
+        self.stoppage_provenance: dict | None = None
 
     def fit(
         self,
@@ -559,6 +563,8 @@ class XShotOccurrenceModel:
             # appended it) so a re-save stays byte-identical (test_weights_bundle_golden).
             "training_commit": self.training_commit,
         }
+        if self.stoppage_provenance is not None:
+            metadata["stoppage_provenance"] = self.stoppage_provenance
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:
             for fname in ["model.json", "metadata.json"]:
@@ -621,6 +627,7 @@ class XShotOccurrenceModel:
         model.shipped_variant = meta.get("shipped_variant")
         model.provider_list = meta.get("provider_list")
         model.training_commit = meta.get("training_commit")
+        model.stoppage_provenance = meta.get("stoppage_provenance")
         model._booster = load_xgb_booster_base_score_safe(path / "model.json")
 
         from silly_kicks.tracking._chirality import verify_chirality
@@ -860,7 +867,9 @@ def prepare_xshot_training_data(
     types = _DEFAULT_SHOT_TYPES if shot_types is None else tuple(shot_types)
 
     work = frames
-    if "ball_state" in frames.columns:
+    if "stoppage_state" in frames.columns:  # ADR-130: dead frames and unknown label horizons are not training rows
+        work = frames[training_frame_mask(frames, horizon_seconds=horizon_seconds)]
+    elif "ball_state" in frames.columns:
         work = frames[frames["ball_state"].astype(str) == "alive"]
     if len(work) == 0:
         empty = pd.DataFrame(

@@ -515,3 +515,46 @@ def test_xfns_silent_nan_on_frames_none():
     result = fn(states, None)
     assert list(result.columns) == ["xcross_attempt_a0", "xcross_attempt_a1", "xcross_attempt_a2"]
     assert result.isna().all(axis=None)
+
+
+# --- ADR-130: the stoppage filter (Task 3 of the stoppage-gate plan) ---
+
+# Taken on main 2a0cb92b (D:/Temp/tf46-recut/port/golden_prepare.py, before the edit): rows, positives, digest.
+_XC_MAIN_ROWS, _XC_MAIN_POSITIVES = 4, 3
+_XC_MAIN_DIGEST = "84cdd971d8a6074097957779816a96df4f686638308a23f4524dd926a79bf5f6"
+
+
+def _xc_digest(feats, y, g) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    h.update(",".join(map(str, feats.columns)).encode())
+    h.update(np.round(feats.to_numpy(dtype="float64"), 9).tobytes())
+    h.update(np.asarray(y, dtype="int64").tobytes())
+    h.update(",".join(map(str, g)).encode())
+    return h.hexdigest()
+
+
+def test_prepare_without_a_stoppage_column_equals_main():
+    # The oracle: the value of this call on main 2a0cb92b, before the stoppage filter existed (ADR-130).
+    frames, actions = _mini_match()
+    X, y, g = xc.prepare_xcross_training_data(frames, actions, home_team_id="A")
+    assert (len(X), int(np.asarray(y).sum())) == (_XC_MAIN_ROWS, _XC_MAIN_POSITIVES)
+    assert _xc_digest(X, y, g) == _XC_MAIN_DIGEST
+
+
+def test_prepare_skips_dead_unknown_and_unknown_horizon_frames():
+    frames, actions = _mini_match()  # frames 1..4 at 0.0, 0.4, 0.8, 1.2 s
+    base, _, _ = xc.prepare_xcross_training_data(frames, actions, home_team_id="A")
+    dead = frames.assign(stoppage_state=frames["frame_id"].map({2: "dead"}).fillna("live"))
+    X, _, _ = xc.prepare_xcross_training_data(dead, actions, home_team_id="A")
+    assert len(X) == len(base) - 1
+    unknown = frames.assign(stoppage_state=frames["frame_id"].map({4: "unknown"}).fillna("live"))
+    X, _, _ = xc.prepare_xcross_training_data(unknown, actions, home_team_id="A", horizon_seconds=0.5)
+    assert len(X) == len(base) - 2  # frame 4 is unknown; frame 3 (0.8 s) reaches it within 0.5 s
+
+
+def test_prepare_with_an_all_live_stoppage_column_keeps_every_frame_of_main():
+    frames, actions = _mini_match()
+    X, y, g = xc.prepare_xcross_training_data(frames.assign(stoppage_state="live"), actions, home_team_id="A")
+    assert _xc_digest(X, y, g) == _XC_MAIN_DIGEST

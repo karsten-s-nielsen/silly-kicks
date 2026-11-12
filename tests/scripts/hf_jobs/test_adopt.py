@@ -1167,3 +1167,58 @@ def test_retrieve_never_reads_more_than_eight_at_once(tmp_path):
     A.retrieve(c, C, staging=tmp_path / "s1", plan_fn=plan_fn, store_fn=lambda _uri: serial, read_workers=1)
     assert serial.peak == 1
     assert _records(tmp_path / "s8") == _records(tmp_path / "s1") and len(_records(tmp_path / "s8")) == 21
+
+
+# ---- ADR-130: verify in refit mode ------------------------------------------------------------------------------
+
+
+def _refit_world(tmp_path, monkeypatch, gates: dict):
+    """One retrieved refit instance (xShot, public, default) with a fresh metrics.json carrying ``gates``. The
+    committed-model comparison fails, and `_integrity` must not run: refit mode reports one, skips the other."""
+    from scripts.hf_jobs import campaign as Camp
+
+    c = Camp.load_campaign(Path("scripts/hf_jobs/campaigns/tf46_refit.toml"))
+    inst = next(
+        i for i in Camp.instances(c, C) if (i.job, i.tier, i.variant) == ("xshot_occurrence", "public", "default")
+    )
+    staging = tmp_path / "staging"
+    fresh = staging / inst.id
+    fresh.mkdir(parents=True)
+    (fresh / "metrics.json").write_text(json.dumps({"acceptance": gates}), encoding="utf-8")
+    A._record_path(staging, inst.id).write_text(json.dumps({}), encoding="utf-8")
+
+    def _no_integrity(*_a, **_k):
+        raise AssertionError("refit mode must not run the _integrity reproduces check")
+
+    monkeypatch.setattr(A, "_integrity", _no_integrity)
+    monkeypatch.setattr(A, "_certify", lambda *a, **k: {"ok": False, "reason": "differs from the committed model"})
+    monkeypatch.setattr(A, "load_check", lambda *a, **k: None)
+    monkeypatch.setattr(A, "expectation_violations", lambda *a, **k: [])
+    return c, inst, staging
+
+
+@pytest.mark.parametrize(
+    ("gates", "ok"),
+    [
+        ({"enough_usable_folds": True, "pr_auc_gt_base_rate": True}, True),
+        ({"enough_usable_folds": True, "pr_auc_gt_base_rate": False}, False),
+        ({}, False),
+    ],
+)
+def test_refit_mode_passes_an_arm_on_its_own_acceptance_gates(tmp_path, monkeypatch, gates, ok):
+    c, inst, staging = _refit_world(tmp_path, monkeypatch, gates)
+    row = A._verify_one(
+        inst, 1, 1, commit=C, staging=staging, man=MAN, observed={}, run=lambda *a, **k: None, mode=c.mode
+    )
+    assert row is not None and row["ok"] is ok and "integrity" not in row
+    cert = row["certification"]
+    assert cert["basis"] == "refit_fresh_acceptance" and cert["acceptance"] == gates
+    assert cert["comparison"] == {"ok": False, "reason": "differs from the committed model"}  # reported, not gated
+
+
+def test_rematerialize_mode_still_runs_the_integrity_check(tmp_path, monkeypatch):
+    _c, inst, staging = _refit_world(tmp_path, monkeypatch, {"enough_usable_folds": True})
+    with pytest.raises(AssertionError, match="must not run the _integrity"):
+        A._verify_one(
+            inst, 1, 1, commit=C, staging=staging, man=MAN, observed={}, run=lambda *a, **k: None, mode="rematerialize"
+        )

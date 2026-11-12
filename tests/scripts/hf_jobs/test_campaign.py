@@ -136,3 +136,39 @@ def test_storage_values_default_when_the_campaign_file_has_none(tmp_path):
     p.write_text("\n".join(lines) + "\n", encoding="utf-8")
     c = C.load_campaign(p)
     assert (c.storage_limit_bytes, c.storage_headroom_bytes) == (100_000_000_000, 20_000_000_000)
+
+
+# ---- ADR-130: the campaign mode and the refit campaign file --------------------------------------------------
+
+REFIT = pathlib.Path("scripts/hf_jobs/campaigns/tf46_refit.toml")
+
+
+def _with_mode(tmp_path, mode: str | None) -> pathlib.Path:
+    text = CYCLE1.read_text(encoding="utf-8")
+    if mode is not None:
+        text = text.replace("[campaign]\n", f'[campaign]\nmode = "{mode}"\n', 1)
+    p = tmp_path / "c.toml"
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def test_the_campaign_mode_defaults_to_rematerialize_and_accepts_refit(tmp_path):
+    assert C.load_campaign(_with_mode(tmp_path, None)).mode == "rematerialize"
+    assert C.load_campaign(_with_mode(tmp_path, "refit")).mode == "refit"
+
+
+def test_the_campaign_mode_refuses_any_other_value(tmp_path):
+    with pytest.raises(ValueError, match="mode"):
+        C.load_campaign(_with_mode(tmp_path, "retrain"))
+
+
+def test_tf46_refit_holds_exactly_the_eight_refit_instances():
+    c = C.load_campaign(REFIT)
+    got = {(i.job, i.tier, i.variant) for i in C.instances(c, "0" * 40)}
+    want = {
+        (job, tier, variant)
+        for job in ("xshot_occurrence", "xcross_attempt")
+        for tier in ("public", "sc_extended")
+        for variant in ("default", "position_only")
+    }
+    assert c.mode == "refit" and got == want and c.concurrency_cap == 8

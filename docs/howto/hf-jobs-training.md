@@ -55,7 +55,10 @@ open-data cache; a cache miss raises `OpenDataSnapshotMissError` and never fetch
 ## The campaign file
 
 `scripts/hf_jobs/campaigns/<name>.toml` (committed, INV-7): the bucket, `concurrency_cap` (the in-flight
-ceiling), `attempts` (the per-unit bound; each HF job itself gets one attempt), the resource-sharing knobs
+ceiling), `attempts` (the per-unit bound; each HF job itself gets one attempt), an optional `mode`
+(`rematerialize`, the default: `verify` requires the fresh run to reproduce the committed model; `refit`: new
+data replaces the model on purpose, so `verify` passes each arm on its own acceptance gates and reports the
+comparison with the committed model; ADR-130), the resource-sharing knobs
 (`units_per_job`/`max_shards` size a stage into few big jobs; `units_per_job_by_stage` gives one `"job/stage"` its own job size; `mount_cap` + `mount_cap_by_dataset` bound
 concurrent mounts of a dataset; `mount_fault_budget`; `launch_batch` + `backoff_max_s` pace launches; a
 `peak_rss_by_stage` hint sizes memory-heavy stages — ADR-128 amendment 2026-11-03), and per job the trainer or

@@ -59,7 +59,7 @@ _KEY_COLUMNS = ("game_id", "period_id", "frame_id", "player_id", "x", "y", "team
 #: different", not "when a column changed".**
 # tc3-frames-3: TF-65 dense-grid preprocess adds accel_x/accel_y/accel + pos_var/vel_var/accel_var
 # and moves vx/vy/x_smoothed (shape + content change -> a new generation).
-_SHARD_SCHEMA_VERSION = "tc3-frames-3"
+_SHARD_SCHEMA_VERSION = "tc3-frames-4"  # ADR-130: the stoppage columns
 
 
 def _checksum(df: pd.DataFrame) -> str:
