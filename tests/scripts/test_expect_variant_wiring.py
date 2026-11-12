@@ -94,7 +94,8 @@ def test_restricted_run_records_a_digest_never_ids(tmp_path):
 @TRAINERS
 def test_prep_persists_the_inputs_and_enumerates_the_studies(trainer, tmp_path):
     """The ``prep`` stage (the old ``--prep-only``): the --arms policy + persistence + the study enumeration
-    are real; only extract and prep run. A paired payload yields the 3 x k nested tags + the 3 arm studies."""
+    are real; only extract and prep run. A paired payload yields the 3 x k nested tags + the 3 arm studies, then
+    one ADR-131 gate-fold study per cv arm and gate fold (``{arm}_gf{k}``, k < cv_arms[arm])."""
     from scripts._stages import ItemStage, LocalStore, make_context, reduce_stage, run_unit, sorted_units
     from scripts._study_shared import load_study_inputs
     from scripts._toy_corpora import xshot_arms
@@ -114,7 +115,9 @@ def test_prep_persists_the_inputs_and_enumerates_the_studies(trainer, tmp_path):
     assert cfg["run_paired"] is True
     k = 4  # 4 public games -> StratifiedGroupKFold(4) public folds
     want = [f"{n}_f{f}" for f in range(k) for n in ("full", "public", "sc_extended")]
-    assert cfg["study_tags"] == [*want, "full", "public", "sc_extended"]
+    gf = [f"{n}_gf{g}" for n in sorted(cfg["cv_arms"]) for g in range(cfg["cv_arms"][n])]
+    assert sorted(cfg["cv_arms"]) == ["full", "public", "sc_extended"]
+    assert cfg["study_tags"] == [*want, "full", "public", "sc_extended", *gf]
     assert sorted_units(ctx, trainer.PIPELINE.stage("study")) == sorted(cfg["study_tags"])
     root, inp = trainer._inputs(ctx)
     assert list(load_study_inputs(root).X.columns) == trainer._feature_names("faithful")

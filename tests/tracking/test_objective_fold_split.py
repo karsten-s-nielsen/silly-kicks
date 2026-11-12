@@ -160,8 +160,33 @@ def test_cv_metrics_split_equals_the_monolith(ns):
     got = tr._cv_metrics_combine(folds, float(y.mean()))
     assert list(got) == list(want)  # same keys, same order (metrics.json bytes)
     assert got == want
-    assert tr._cv_metrics(X, y, g, P, negative_subsample=ns, seed=3) == want
+    m = tr._cv_metrics(X, y, g, P, negative_subsample=ns, seed=3)
+    # ADR-131 Hyrum: the existing keys keep their names, order and values; `skill` and `fold_params` follow them.
+    assert list(m)[: len(want)] == list(want)
+    assert {k: m[k] for k in want} == want
+    assert list(m)[len(want) :] == ["skill", "fold_params"]
     assert got["n_usable_folds"] >= 2, "non-vacuity: the folds really fitted"
+
+
+@pytest.mark.parametrize("ns", [None, 0.5], ids=["full-balance", "train-subsample"])
+def test_return_oof_keeps_the_tuple(ns):
+    """ADR-131: `return_oof=True` adds the held-out predictions and the TRUE training rate; the tuple is unchanged."""
+    from scripts import train_xshot_occurrence as tr
+    from silly_kicks.tracking import _xcross_eval as ev
+
+    X, y, g = _data(4)
+    for i, a, b in tr._cv_metrics_plan(y, g):
+        plain = tr._cv_metrics_fold(X, y, i, a, b, P, ns, 3)
+        out = tr._cv_metrics_fold(X, y, i, a, b, P, ns, 3, return_oof=True)
+        assert out is not None
+        res, p, rate = out
+        assert res == plain and len(p) == len(b) and rate == float(y[a].mean())
+    for i, a, b in ev._cv_score_plan(y, g):
+        plain = ev._cv_score_fold(X, y, i, a, b, P, seed=5, negative_subsample=ns)
+        out = ev._cv_score_fold(X, y, i, a, b, P, seed=5, negative_subsample=ns, return_oof=True)
+        assert out is not None
+        res, p, rate = out
+        assert res == plain and len(p) == len(b) and rate == float(y[a].mean())
 
 
 def _legacy_xcross_cv_score(X, y, groups, params, *, seed=42, negative_subsample=None) -> dict:  # noqa: N803

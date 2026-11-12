@@ -459,19 +459,21 @@ def _bundled_params():
 
 @pytest.mark.e2e
 def test_xshot_gradientsports_e2e():
-    """On real multi-provider data, the bundled-hyperparameter model beats the base rate on
-    BOTH discrimination (PR-AUC > base rate) and calibration (Brier < base-rate Brier)."""
+    """On real multi-provider data, the bundled-hyperparameter model passes all seven ADR-131 forecast-skill gates:
+    Brier, log-loss and within-fold PR-AUC skill over the training-fold rate, each with its match-bootstrap bound."""
     import sys
 
     sys.path.insert(0, "scripts")
-    from train_xshot_occurrence import _cv_metrics, _gates
+    from train_xshot_occurrence import _cv_metrics
 
-    X, y, groups, _prov = _e2e_load_real(["skillcorner", "idsse", "gradientsports"], max_per_provider=3)  # type: ignore[misc]
+    from silly_kicks.tracking._artifact_integrity import skill_gates
+
+    # 6 per provider (about 18 matches, the public arm's scale): 9 matches cannot show the Brier gain's match-bootstrap
+    # bound at 95% (owner ruling 2026-11-12: enlarge the corpus, keep the all-seven assertion).
+    X, y, groups, _prov = _e2e_load_real(["skillcorner", "idsse", "gradientsports"], max_per_provider=6)  # type: ignore[misc]
     m = _cv_metrics(X, y, groups, _bundled_params())
-    g = _gates(m)
-    assert g["pr_auc_gt_base_rate"], m
-    assert g["brier_lt_base_rate_brier"], m
-    assert g["log_loss_lt_uniform"], m
+    g = skill_gates(m)
+    assert all(g.values()), (g, m["skill"])
 
 
 @pytest.mark.e2e
@@ -596,6 +598,19 @@ def test_train_script_fail_closed_writes_no_artifact(tmp_path):
     assert result.returncode != 0
     assert not (Path(tmp_path) / "out" / "model.json").exists()
     assert list((Path(tmp_path) / "store").rglob("only.metrics_FAILED.json")), "the gate failure left no record"
+    _assert_failed_on_a_skill_bound(Path(tmp_path) / "store")
+
+
+def _assert_failed_on_a_skill_bound(store):
+    """ADR-131: the degenerate corpus fails at least one match-bootstrap lower-bound gate, and the payload carries the
+    full skill dict."""
+    import json
+
+    (failed,) = [json.loads(p.read_text()) for p in store.rglob("only.metrics_FAILED.json")]
+    acc = failed["acceptance"]
+    assert not all(acc.values())
+    assert not all(acc[k] for k in ("brier_gain_lb95_gt_0", "log_loss_gain_lb95_gt_0", "pr_auc_lift_lb95_gt_0")), acc
+    assert "skill" in failed["candidates"][failed["shipped_variant"]]["metrics"]
 
 
 def test_publish_verify_only(tmp_path):

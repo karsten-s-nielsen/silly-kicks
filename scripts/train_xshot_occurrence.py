@@ -26,7 +26,7 @@ import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple, overload
 
 import numpy as np
 import pandas as pd
@@ -34,6 +34,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
 
 from scripts._stages import ItemStage, Param, Pipeline, Stage, main
+from silly_kicks.tracking._artifact_integrity import skill_gates
 
 sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
@@ -148,8 +149,23 @@ def _cv_metrics_plan(y, groups) -> list[tuple[int, np.ndarray, np.ndarray]]:
     return [(i, tr, te) for i, (tr, te) in enumerate(skf.split(np.zeros((len(y), 1)), y, groups))]
 
 
-def _cv_metrics_fold(X, y, fold_i, tr, te, params, negative_subsample=None, seed=42):
-    """One fold of `_cv_metrics`: ``(log_loss, brier, pr_auc | None)``, or None for a skipped fold."""
+@overload
+def _cv_metrics_fold(
+    X, y, fold_i, tr, te, params, negative_subsample=..., seed=..., *, return_oof: Literal[False] = ...
+) -> tuple[float, float, float | None] | None: ...
+
+
+@overload
+def _cv_metrics_fold(
+    X, y, fold_i, tr, te, params, negative_subsample=..., seed=..., *, return_oof: Literal[True]
+) -> tuple[tuple[float, float, float | None], np.ndarray, float] | None: ...
+
+
+def _cv_metrics_fold(
+    X, y, fold_i, tr, te, params, negative_subsample=None, seed=42, *, return_oof: bool = False
+) -> tuple[float, float, float | None] | tuple[tuple[float, float, float | None], np.ndarray, float] | None:
+    """One fold of `_cv_metrics`: ``(log_loss, brier, pr_auc | None)``, or None for a skipped fold. With
+    ``return_oof`` (ADR-131): ``(that tuple, held-out predictions, the training rows' TRUE positive rate)``."""
     import xgboost as xgb
     from sklearn.metrics import average_precision_score, brier_score_loss, log_loss
 
@@ -169,7 +185,8 @@ def _cv_metrics_fold(X, y, fold_i, tr, te, params, negative_subsample=None, seed
     clf.fit(Xtr.to_numpy(float), ytr)
     p = clf.predict_proba(X.iloc[te].to_numpy(float))[:, 1]
     pr = float(average_precision_score(y[te], p)) if len(np.unique(y[te])) == 2 else None
-    return (float(log_loss(y[te], p, labels=[0, 1])), float(brier_score_loss(y[te], p)), pr)
+    res = (float(log_loss(y[te], p, labels=[0, 1])), float(brier_score_loss(y[te], p)), pr)
+    return (res, p, float(y[tr].mean())) if return_oof else res
 
 
 def _cv_metrics_combine(fold_results, positive_rate: float) -> dict:
@@ -191,28 +208,37 @@ def _cv_metrics_combine(fold_results, positive_rate: float) -> dict:
 
 
 def _cv_metrics(X, y, groups, params, *, negative_subsample=None, seed=42) -> dict:
-    """Label-stratified, match-grouped CV at FIXED params -> gate metrics on the TRUE balance.
+    """Label-stratified, match-grouped CV -> gate metrics on the TRUE balance.
 
-    ``negative_subsample`` thins negatives in the TRAIN fold only; the held-out fold (and hence
-    every reported metric + the base-rate baselines) always uses the true, unsubsampled balance
+    ``params`` is one params dict for every fold, or a sequence of per-fold dicts (ADR-131 nested CV: fold k at the
+    params of its study ``{arm}_gf{k}``). ``negative_subsample`` thins negatives in the TRAIN fold only; the held-out
+    fold (and hence every reported metric + the base-rate baselines) always uses the true, unsubsampled balance
     (PR-S80 M3 -- the fix for the prior pre-split contamination footgun). ADR-128: the composition of
-    `_cv_metrics_plan` / `_cv_metrics_fold` / `_cv_metrics_combine` (exact-equality tested).
+    `_cv_metrics_plan` / `_cv_metrics_fold` / `_cv_metrics_combine` (exact-equality tested), plus the ADR-131
+    ``skill`` and ``fold_params`` keys -- the same result as the staged `cv` reduce.
     """
-    folds = [
-        _cv_metrics_fold(X, y, i, tr, te, params, negative_subsample, seed) for i, tr, te in _cv_metrics_plan(y, groups)
+    from collections.abc import Mapping
+
+    from scripts._study_shared import cv_skill, cv_unit
+
+    plan = _cv_metrics_plan(y, groups)
+    nested = not isinstance(params, Mapping)
+    fold_params = [dict(fp) for fp in params] if nested else [dict(params)] * len(plan)
+    if len(fold_params) != len(plan):
+        raise ValueError(f"per-fold params: {len(fold_params)} given for {len(plan)} gate folds")
+    rate = float(np.asarray(y).mean())
+    units = [
+        cv_unit(
+            _cv_metrics_fold(X, y, i, tr, te, fold_params[i], negative_subsample, seed, return_oof=True),
+            rate,
+            te,
+            y,
+            groups,
+        )
+        for i, tr, te in plan
     ]
-    return _cv_metrics_combine(folds, float(np.asarray(y).mean()))
-
-
-def _gates(m: dict) -> dict:
-    pr = m["pr_auc"]
-    br = m["brier"]
-    return {
-        "enough_usable_folds": m.get("n_usable_folds", 0) >= 2,  # P5
-        "pr_auc_gt_base_rate": bool(pr == pr and pr > m["positive_rate"]),  # NaN-safe strict
-        "brier_lt_base_rate_brier": bool(br == br and br < m["base_rate_brier"]),
-        "log_loss_lt_uniform": m["log_loss"] < float(np.log(2)),
-    }
+    m = _cv_metrics_combine([u["fold"] for u in units], rate)
+    return {**m, "skill": cv_skill(units, nested=nested), "fold_params": fold_params}
 
 
 def _fit_score(X_tr, y_tr, X_te, y_te, params, *, negative_subsample=None, seed=42) -> float:
@@ -574,7 +600,7 @@ def _prep_work(key, ctx):
     import tempfile
 
     from scripts._stages import FileSet
-    from scripts._study_shared import persist_study_inputs, stoppage_block
+    from scripts._study_shared import persist_study_inputs, stoppage_block, study_tags
     from scripts.hf_jobs.arms import match_key, parse_arms
 
     p = ctx.params
@@ -598,11 +624,12 @@ def _prep_work(key, ctx):
     }
     if run_paired:
         _, _, folds = _public_folds(X, y, groups, is_public)
-        study_tags = [f"{name}_f{fold}" for fold in range(len(folds)) for name in sorted(arms)] + sorted(arms)
         cv_arms = {name: _cv_n_splits(groups[mask]) for name, mask in sorted(arms.items())}
     else:
-        study_tags = ["single"]
+        folds = []
         cv_arms = {"single": _cv_n_splits(groups)}
+    # ADR-131: plus one nested study per cv arm and gate fold ({arm}_gf{k}), for the cv stage's nested gate.
+    tags = study_tags(list(arms), len(folds), cv_arms, run_paired=run_paired)
     config = {
         "n_trials": p["n_trials"],
         "negative_subsample": p["negative_subsample"],
@@ -614,7 +641,7 @@ def _prep_work(key, ctx):
         "expect_variant": None,  # ADR-123 Amendment B: --expect-variant removed (pining-path preflight)
         "ship_order": list(armspec.ship_order),
         "objective_inputs": objective_inputs,
-        "study_tags": study_tags,
+        "study_tags": tags,
         "cv_arms": cv_arms,
         # ADR-130: the stoppage rule and the per-provider counts, for metrics.json and the bundle's metadata.
         "stoppage": stoppage_block(combined),
@@ -669,7 +696,12 @@ def _inputs(ctx):
 def _study_rows(inp, tag: str) -> np.ndarray:
     """The row positions a study ``tag`` tunes on (the legacy `run_one_study` / main row logic):
     ``{arm}_f{k}`` -> the arm's rows minus fold k's public games; an arm name -> the arm's rows;
-    ``single`` -> every row."""
+    ``single`` -> every row; ``{arm}_gf{k}`` (ADR-131, checked first) -> the arm's rows outside gate fold k."""
+    from scripts._study_shared import gate_fold_rows
+
+    gf = gate_fold_rows(tag, lambda arm: _arm_rows(inp, arm), _cv_metrics_plan, inp.y, inp.groups)
+    if gf is not None:
+        return gf
     if tag == "single":
         return np.arange(len(inp.y))
     name, sep, fold_s = tag.rpartition("_f")
@@ -764,18 +796,16 @@ def _cv_units(ctx) -> list[str]:
     return [join_key((arm, int_key(k))) for arm in sorted(arms) for k in range(int(arms[arm]))]
 
 
-def _arm_params(ctx, arm: str) -> dict:
-    """An arm's FINAL params: its full-rows study (the arm name), or ``single`` on the non-paired path."""
-    return ctx.upstream("study")[arm]["params"]
-
-
 def _arm_rows(inp, arm: str) -> np.ndarray:
     return np.arange(len(inp.y)) if arm == "single" else np.flatnonzero(inp.arms[arm])
 
 
-def _cv_work(key, ctx) -> dict:
-    """One fold of `_cv_metrics` for one arm, at that arm's final params (+ the arm's TRUE base rate, so
-    the reduce never re-loads the design matrix)."""
+def _cv_work(key, ctx):
+    """One fold of `_cv_metrics` for one arm, at the params of that gate fold's nested study ``{arm}_gf{k}``
+    (ADR-131). Returns the fold's FileSet: the metrics tuple, the arm's TRUE base rate and the held-out arrays, so the
+    reduce never re-loads the design matrix."""
+    from scripts._study_shared import cv_unit, cv_unit_fileset, gate_fold_params
+
     _root, inp = _inputs(ctx)
     arm, _, fold_s = key.rpartition("__")
     rows = _arm_rows(inp, arm)
@@ -783,19 +813,27 @@ def _cv_work(key, ctx) -> dict:
     fold_i = int(fold_s)
     _i, tr, te = _cv_metrics_plan(y, groups)[fold_i]
     cfg = inp.config
-    res = _cv_metrics_fold(X, y, fold_i, tr, te, _arm_params(ctx, arm), cfg["negative_subsample"], cfg["seed"])
-    return {"fold": res, "positive_rate": float(np.asarray(y).mean())}
+    params = gate_fold_params(ctx, arm, fold_i)
+    out = _cv_metrics_fold(X, y, fold_i, tr, te, params, cfg["negative_subsample"], cfg["seed"], return_oof=True)
+    return cv_unit_fileset(cv_unit(out, float(np.asarray(y).mean()), te, y, groups))
 
 
 def _cv_reduce(results, ctx) -> dict:
-    """``{arm: _cv_metrics dict}``, each arm's folds combined in FOLD order (sorted fold keys)."""
+    """``{arm: _cv_metrics dict}``, each arm's folds combined in FOLD order (sorted fold keys), plus the ADR-131
+    ``skill`` dict from the pooled held-out rows and the per-fold nested ``fold_params``."""
+    from scripts._study_shared import cv_skill, gate_fold_params, read_cv_unit
+
     by_arm: dict[str, list] = {}
     for key in sorted(results):
         arm, _, _fold = key.rpartition("__")
-        by_arm.setdefault(arm, []).append(results[key])
+        by_arm.setdefault(arm, []).append(read_cv_unit(results[key]))
     return {
-        arm: _cv_metrics_combine([r["fold"] for r in folds], folds[0]["positive_rate"])
-        for arm, folds in sorted(by_arm.items())
+        arm: {
+            **_cv_metrics_combine([u["fold"] for u in units], units[0]["positive_rate"]),
+            "skill": cv_skill(units, nested=True),
+            "fold_params": [gate_fold_params(ctx, arm, k) for k in range(len(units))],
+        }
+        for arm, units in sorted(by_arm.items())
     }
 
 
@@ -875,7 +913,7 @@ def _fit_work(key, ctx):
     cfg = inp.config
     sel = ctx.upstream("select")
     shipped, candidates = sel["shipped"], sel["candidates"]
-    acceptance = _gates(candidates[shipped]["metrics"])
+    acceptance = skill_gates(candidates[shipped]["metrics"])
     print(f"Shipped variant: {shipped}; gates: {acceptance}")
     if not all(acceptance.values()):
         failed = {"candidates": candidates, "acceptance": acceptance, "shipped_variant": shipped}
@@ -934,7 +972,7 @@ def _assemble_work(key, ctx):
         # ADR-067 M4 caveat, emitted here -- never hand-added at bundling (spec 0.11).
         **reproducibility(shipped, candidates[shipped]["providers"], training_commit=run_prov["commit"]),
         "candidates": candidates,
-        "acceptance": _gates(candidates[shipped]["metrics"]),
+        "acceptance": skill_gates(candidates[shipped]["metrics"]),
         "stoppage": cfg.get("stoppage"),  # ADR-130
         "estimates_are_cv_not_shipped_fit": True,
         "artifact_size_bytes": sum(len(b) for b in fit.files.values()),

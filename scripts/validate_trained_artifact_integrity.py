@@ -7,8 +7,11 @@ it composes TWO layers into a GO/NO-GO verdict:
    corpus must reproduce its shipped ``metrics.json`` headline (``n_rows``/``n_positive`` exact,
    candidate ``pr_auc``/``positive_rate`` within a relative tolerance). A mismatch is a HARD STOP.
 2. **Construct-validity on the ABSOLUTE metrics** -- a physically-DERIVED base-rate plausibility band
-   (:func:`silly_kicks.tracking._artifact_integrity.base_rate_plausible`), ``pr_auc > positive_rate``
-   (lift), ``brier < base_rate_brier`` (calibration), and enough usable folds.
+   (:func:`silly_kicks.tracking._artifact_integrity.base_rate_plausible`), the forecast-skill gates of ADR-131
+   (:func:`silly_kicks.tracking._artifact_integrity.skill_gates`, the same rule as the trainers' acceptance):
+   ``lift_ok`` is the PR-AUC lift and its lower bound, ``calibration_ok`` is the Brier and log-loss skill and their
+   lower bounds (proper-score skill: calibration and resolution), and enough usable folds. A metrics dict without
+   the ADR-131 ``skill`` block fails both (fail-closed).
 
 Why both: the committed xShot defect (22% positive rate) PASSED ``pr_auc > base_rate`` -- only the
 base-rate band + the reproduction tripwire catch it. Certifying "matches the committed ``pr_auc``"
@@ -27,7 +30,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from silly_kicks.tracking._artifact_integrity import MODEL_INTEGRITY_TOL, base_rate_plausible
+from silly_kicks.tracking._artifact_integrity import MODEL_INTEGRITY_TOL, base_rate_plausible, skill_gates
 
 _MIN_USABLE_FOLDS = 5
 
@@ -81,8 +84,7 @@ def verdict(
     m = fresh["candidates"][cand]["metrics"]
     pr = m.get("pr_auc")
     base = m.get("positive_rate")
-    brier = m.get("brier")
-    base_brier = m.get("base_rate_brier")
+    g = skill_gates(m)  # ADR-131: the trainers' own rule, so the two gates cannot disagree
     tol = MODEL_INTEGRITY_TOL.get(family, 1.5)
     base_ok = base is not None and base_rate_plausible(
         base,
@@ -97,8 +99,13 @@ def verdict(
         "candidate": cand,
         "reproduced": reproduces(shipped, fresh, rel_tol=rel_tol),
         "base_rate_ok": bool(base_ok),
-        "lift_ok": bool(pr is not None and base is not None and pr > base),
-        "calibration_ok": bool(brier is not None and base_brier is not None and brier < base_brier),
+        "lift_ok": g["pr_auc_lift_gt_0"] and g["pr_auc_lift_lb95_gt_0"],
+        "calibration_ok": (
+            g["brier_skill_gt_0"]
+            and g["log_loss_skill_gt_0"]
+            and g["brier_gain_lb95_gt_0"]
+            and g["log_loss_gain_lb95_gt_0"]
+        ),
         "enough_folds": bool(m.get("n_usable_folds", 0) >= _MIN_USABLE_FOLDS),
         "positive_rate": base,
         "pr_auc": pr,

@@ -182,6 +182,7 @@ def test_train_script_smoke_position_only(tmp_path):
 def test_train_script_fail_closed_writes_no_artifact(tmp_path):
     """Fail-closed: a corpus that cannot beat the base rate -> non-zero exit, NO bundled artifact; the legacy
     ``metrics_FAILED.json`` payload is kept beside the failed ``fit`` unit."""
+    import json
     from pathlib import Path
 
     data = _write_synthetic_train_dir(tmp_path, learnable=False)
@@ -189,6 +190,11 @@ def test_train_script_fail_closed_writes_no_artifact(tmp_path):
     assert result.returncode != 0
     assert not (Path(tmp_path) / "out" / "model.json").exists()  # fail-closed: no artifact written
     assert list((Path(tmp_path) / "store").rglob("only.metrics_FAILED.json")), "the gate failure left no record"
+    # ADR-131: at least one match-bootstrap lower-bound gate fails, and the payload carries the full skill dict.
+    (failed,) = [json.loads(p.read_text()) for p in (Path(tmp_path) / "store").rglob("only.metrics_FAILED.json")]
+    acc = failed["acceptance"]
+    assert not all(acc[k] for k in ("brier_gain_lb95_gt_0", "log_loss_gain_lb95_gt_0", "pr_auc_lift_lb95_gt_0")), acc
+    assert "skill" in failed["candidates"][failed["shipped_variant"]]["metrics"]
 
 
 # --- Task 12: exports + atomic mirror ---
@@ -268,9 +274,10 @@ def test_objective_cache_equivalence_with_train_subsample():
 
 @pytest.mark.parametrize("seed,ns", [(42, None), (7, None), (7, 0.5)])
 def test_cv_metrics_delegates_to_eval_cv_score(seed, ns):
-    """M4 (closed by extraction): the acceptance gate (_cv_metrics) and the ablation share ONE
-    _cv_score, so they use identical folds for ANY seed / negative_subsample. Exact equality (same
-    call), exercised on the seed + ns axes the old parity test could not see."""
+    """M4 (closed by extraction): the acceptance gate (_cv_metrics) and the ablation (_cv_score) compose the SAME
+    `_xcross_eval` plan / fold / combine (ADR-131: _cv_metrics adds the skill block on top), so they use identical
+    folds for ANY seed / negative_subsample. Exact equality, exercised on the seed + ns axes the old parity test could
+    not see."""
     import importlib.util
     from pathlib import Path
 
@@ -289,7 +296,7 @@ def test_cv_metrics_delegates_to_eval_cv_score(seed, ns):
 
     m = trainer._cv_metrics(X, y, groups, params, seed=seed, negative_subsample=ns)
     s = ev._cv_score(X, y, groups, params, seed=seed, negative_subsample=ns)
-    assert m["pr_auc"] == s["pr_auc"]  # exact: _cv_metrics literally calls _cv_score
+    assert m["pr_auc"] == s["pr_auc"]  # exact: the same plan / fold / combine
     assert m["log_loss"] == s["log_loss"]
     assert {"positive_rate", "base_rate_brier"} <= set(m)  # the gate keys still present
 

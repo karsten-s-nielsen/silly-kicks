@@ -5,6 +5,42 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.142.0] — 2026-11-12 — nested-CV forecast-skill acceptance gates for xShot/xCross (ADR-131) (PR-S206)
+
+> **Why a minor release:** the wheel changes (`silly_kicks/tracking/_artifact_integrity.py` gains the forecast-skill
+> gates; `_xcross_eval._cv_score_fold` gains `return_oof`), and the xShot/xCross trainers' acceptance rule changes.
+> The bundled weights do not change in this release; the refit follows the corpus-widening cycle (owner ruling
+> 2026-11-12).
+
+### Changed
+
+- **The xShot/xCross acceptance gates are nested-CV forecast skill (ADR-131).** The old bars (`brier < base*(1-base)`,
+  `pr_auc > base`, `log_loss < ln 2`) are replaced. The first was biased low: on run 9a a constant forecast at the
+  training-fold rate failed it. Seven gates, all required: `enough_usable_folds`; Brier skill, log-loss skill and the
+  within-fold PR-AUC lift, each above 0 against each row's training folds' TRUE positive rate; and each of the three
+  gains with a one-sided 95% match-cluster bootstrap lower bound above 0 (2,000 draws, seed 0, `np.percentile(gain, 5)`;
+  pre-registered constants). Gate fold k is scored at the params of a nested study `{arm}_gf{k}`, tuned on the arm's
+  rows outside fold k; the shipped fit still uses the arm's full-rows study.
+- **`metrics.json` (Hyrum):** each candidate gains `skill` (the point quantities, the bootstrap bounds, the no-gain
+  fractions, `n_empty_fold_draws` / `n_one_class_fold_draws`, `nested`) and `fold_params`. The acceptance keys
+  `pr_auc_gt_base_rate`, `brier_lt_base_rate_brier` and `log_loss_lt_uniform` are removed; the new keys are
+  `brier_skill_gt_0`, `log_loss_skill_gt_0`, `pr_auc_lift_gt_0`, `brier_gain_lb95_gt_0`, `log_loss_gain_lb95_gt_0`,
+  `pr_auc_lift_lb95_gt_0`. `pr_auc` / `brier` / `log_loss` keep their names and are now nested-CV values (fold-mean
+  `pr_auc` moved +0.03% to −3.32% on the run 9a arms, inside the 0.05 tolerances of `reproduces` and
+  `PUBLIC_CV_REL_TOL`).
+- **The integrity verdict uses the same rule (amends ADR-126):** `validate_trained_artifact_integrity.verdict`'s
+  `lift_ok` = the PR-AUC lift gate and its bound; `calibration_ok` = the Brier and log-loss skill gates and their
+  bounds. A metrics dict without `skill` fails both.
+- **The cv stage:** each fold unit returns a FileSet (`fold.json`, `te.npy`, `p.npy`, `y.npy`, `groups.npy`); the
+  reduce pools the held-out rows (`scripts/_study_shared.cv_skill`) and never loads the design matrix. The study stage
+  runs 5 more studies per cv arm. An arm name containing `_gf` is refused.
+
+### Added
+
+- `forecast_skill`, `skill_gates`, `weighted_average_precision` and the `SKILL_*` constants in
+  `silly_kicks/tracking/_artifact_integrity.py` (private).
+- ADR-131; `docs/context/trained-models.md` and `AGENTS.md` pointers.
+
 ## [4.141.0] — 2026-11-11 — the stoppage gate for xShot/xCross training (ADR-130) (PR-S205)
 
 > **Why a minor release:** the wheel changes (library code): xShot/xCross training drops dead-ball frames, and
