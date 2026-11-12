@@ -1460,9 +1460,9 @@
       "gradientsports": "int"
     },
     "public_ids": null,
-    "recorded_at": "2026-10-18T22:00:16+00:00",
+    "recorded_at": "2026-11-12T01:23:02+00:00",
     "repo": "silly-kicks/hf-refit-xcross-probe",
-    "revision": "bdb0f64e4d3b244f7337826ddb7af81f989c1a60",
+    "revision": "2d8d49f806764b8b2a9baebb1886764ec680045a",
     "units": [
       {
         "game": "gradientsports-10502",
@@ -1477,7 +1477,7 @@
     ]
   },
   "xshot115": {
-    "generation": "ac98a040f3c2ec8c",
+    "generation": "ada5d8fc055400cf",
     "home_teams": true,
     "identity": {
       "flat": {
@@ -1496,9 +1496,9 @@
       "skillcorner": "str"
     },
     "public_ids": null,
-    "recorded_at": "2026-10-18T21:59:11+00:00",
+    "recorded_at": "2026-11-12T01:23:26+00:00",
     "repo": "silly-kicks/hf-refit-xshot115",
-    "revision": "deb7f148cbc533232f6eb383a64581cda0923e2d",
+    "revision": "01cdd776ada427c6a5ea9973f7b47e93f516d2d9",
     "units": [
       {
         "game": "DFL-MAT-J03WMX",
@@ -2078,7 +2078,7 @@
     ]
   },
   "xshot17": {
-    "generation": "g",
+    "generation": "cdcf02f22ef2c96a",
     "home_teams": true,
     "identity": {
       "flat": {
@@ -2166,9 +2166,9 @@
         "2017461"
       ]
     ],
-    "recorded_at": "2026-10-18T21:59:00+00:00",
+    "recorded_at": "2026-11-12T01:23:07+00:00",
     "repo": "silly-kicks/hf-refit-xshot17",
-    "revision": "c8ea92a3b7415e46e6d1d467487e59ba6d798a98",
+    "revision": "7cd4ed7ff6941c121a345f774734b4cd5771ab59",
     "units": [
       {
         "game": "DFL-MAT-J03WMX",
