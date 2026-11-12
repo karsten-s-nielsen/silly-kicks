@@ -76,6 +76,10 @@ class Campaign:
     #: campaigns and a margin.
     storage_limit_bytes: int = 100_000_000_000
     storage_headroom_bytes: int = 20_000_000_000
+    #: How `verify` judges an instance (ADR-130): ``rematerialize`` (the fresh run must reproduce the committed
+    #: model: the `_integrity` check) or ``refit`` (new data replaces the model on purpose: each arm passes on its
+    #: own acceptance gates, and the comparison with the committed model is reported, not gated).
+    mode: str = "rematerialize"
 
     def mount_cap_for(self, dataset: str) -> int:
         return int(self.mount_cap_by_dataset.get(dataset, self.mount_cap))
@@ -114,6 +118,9 @@ def load_campaign(path: str | pathlib.Path) -> Campaign:
         for j in raw.get("jobs", [])
     )
     defaults = Campaign.__dataclass_fields__
+    mode = str(c.get("mode", defaults["mode"].default))
+    if mode not in ("rematerialize", "refit"):
+        raise ValueError(f"{path}: campaign mode {mode!r} is not one of rematerialize, refit")
     return Campaign(
         name=c["name"],
         bucket=c["bucket"],
@@ -133,6 +140,7 @@ def load_campaign(path: str | pathlib.Path) -> Campaign:
         units_per_job_by_stage={str(k): int(v) for k, v in (c.get("units_per_job_by_stage") or {}).items()},
         storage_limit_bytes=int(c.get("storage_limit_bytes", defaults["storage_limit_bytes"].default)),
         storage_headroom_bytes=int(c.get("storage_headroom_bytes", defaults["storage_headroom_bytes"].default)),
+        mode=mode,
     )
 
 

@@ -430,6 +430,9 @@ def finalize_xshot_frames(rows: list[dict], game) -> pd.DataFrame:
     frames["z"] = 0.0
     frames["frame_rate"] = 10.0
     frames["ball_state"] = "alive"
+    # ADR-130: a toy dataset is staged like a real one, with the stoppage columns (all frames live here).
+    frames["stoppage_state"] = "live"
+    frames["stoppage_source"] = "events"
     return frames
 
 
@@ -570,6 +573,9 @@ def finalize_xcross_frames(rows: list[dict], game, provider: str = "synthetic") 
     frames["z"] = 0.0
     frames["frame_rate"] = 10.0
     frames["ball_state"] = "alive"
+    # ADR-130: a toy dataset is staged like a real one, with the stoppage columns (all frames live here).
+    frames["stoppage_state"] = "live"
+    frames["stoppage_source"] = "events"
     frames["source_provider"] = provider
     frames["vx"] = 0.0
     frames["vy"] = 0.0

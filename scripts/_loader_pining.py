@@ -621,15 +621,21 @@ def _build_match(provider, match_id, paths, tracking_limit, *, with_velocity: bo
     ``load_matches`` reads ``report.geometry_excluded`` to DROP a geometrically-broken skillcorner
     match. The 5-tuple arity is uniform across providers so the retry wrapper + caller unpack cleanly.
     """
+    # ADR-130: every tracking provider's frames leave here with `stoppage_state` / `stoppage_source`. IDSSE frames
+    # record the dead ball (`ball_state`); SkillCorner and Gradient Sports frames do not, so their spans come from
+    # the SkillCorner game-interruption markers and the Gradient Sports restart and goal actions.
+    from silly_kicks.tracking._stoppages import event_stoppage_spans, skillcorner_stoppage_spans, with_stoppage_state
+
     if provider == "idsse":
         actions, frames, home = _build_idsse(paths, match_id, tracking_limit, with_velocity=with_velocity)
-        return actions, frames, home, None, None
+        return actions, with_stoppage_state(frames, spans=None), home, None, None
     if provider == "skillcorner":
         actions, frames, home, report = _build_skillcorner(paths, match_id, tracking_limit, with_velocity=with_velocity)
-        return actions, frames, home, None, report
+        spans = skillcorner_stoppage_spans(_read_skillcorner_events(paths))
+        return actions, with_stoppage_state(frames, spans=spans), home, None, report
     if provider == "gradientsports":
         actions, frames, home = _build_gradientsports(paths, tracking_limit, with_velocity=with_velocity)
-        return actions, frames, home, None, None
+        return actions, with_stoppage_state(frames, spans=event_stoppage_spans(actions)), home, None, None
     if provider == "statsbomb":
         # SB360 freeze-frames carry no per-player temporal history, so `tracking_limit` (a frame
         # cap for continuous tracking) is inapplicable and deliberately ignored.
@@ -992,12 +998,16 @@ def _skillcorner_actions(paths):
     with open(paths["metadata"], encoding="utf-8") as fh:
         meta = json.load(fh)
     home_team_id = str(meta["home_team"]["id"])  # authoritative; matches native tracking team ids
-    ev_path = paths["events"]
-    raw_events = (
-        pd.read_parquet(ev_path) if str(ev_path).endswith(".parquet") else pd.read_csv(ev_path, low_memory=False)
-    )
-    actions, _evt_report = sk_spadl.convert_to_actions(raw_events, meta)
+    actions, _evt_report = sk_spadl.convert_to_actions(_read_skillcorner_events(paths), meta)
     return actions, home_team_id
+
+
+def _read_skillcorner_events(paths) -> pd.DataFrame:
+    """The SkillCorner dynamic-events table (CSV, or parquet in the newer artifact schema)."""
+    ev_path = paths["events"]
+    if str(ev_path).endswith(".parquet"):
+        return pd.read_parquet(ev_path)
+    return pd.read_csv(ev_path, low_memory=False)
 
 
 def _build_skillcorner(paths, match_id, tracking_limit, *, with_velocity: bool = True):

@@ -12,7 +12,7 @@ from silly_kicks.tracking._provider_visibility import (
 
 
 def test_observed_members():
-    assert _DEAD_BALL_OBSERVED_PROVIDERS == frozenset({"sportec", "idsse", "gradientsports"})
+    assert _DEAD_BALL_OBSERVED_PROVIDERS == frozenset({"sportec", "idsse"})
     for p in _DEAD_BALL_OBSERVED_PROVIDERS:
         assert dead_ball_observed(p) is True
 
@@ -20,6 +20,8 @@ def test_observed_members():
 def test_skillcorner_and_metrica_unobserved():
     assert dead_ball_observed("skillcorner") is False
     assert dead_ball_observed("metrica") is False
+    # Owner rulings 2026-10-26 and 2026-11-11 (ADR-130): the Gradient Sports loader writes a constant "alive".
+    assert dead_ball_observed("gradientsports") is False
 
 
 def test_unclassified_provider_raises():

@@ -165,3 +165,34 @@ def load_study_inputs(shard_root: str | Path) -> StudyInputs:
         config=json.loads((root / _CONFIG).read_text(encoding="utf-8")),
         arms=arms,
     )
+
+
+#: The extract side columns that carry a match's stoppage counts (ADR-130), one per `STOPPAGE_SUMMARY_KEYS` entry.
+STOPPAGE_SIDE_PREFIX = "_st_"
+
+
+def stoppage_side_columns(frames: pd.DataFrame, *, horizon_seconds: float, label_times: pd.DataFrame) -> dict:
+    """The per-match stoppage counts as extract side columns (``_st_<key>``), broadcast on every row of the match."""
+    from silly_kicks.tracking._stoppages import stoppage_summary
+
+    counts = stoppage_summary(frames, horizon_seconds=horizon_seconds, label_times=label_times)
+    return {f"{STOPPAGE_SIDE_PREFIX}{k}": int(v) for k, v in counts.items()}
+
+
+def stoppage_block(combined: pd.DataFrame) -> dict:
+    """The trained model's stoppage record (``metrics.json`` and ``metadata.json``; ADR-130): the rule version and,
+    per provider, the summed per-match counts of the extract side columns (one row per match, so a count is not
+    multiplied by the match's row count)."""
+    from silly_kicks.tracking._stoppages import STOPPAGE_RULE_VERSION, STOPPAGE_SUMMARY_KEYS
+
+    cols = [f"{STOPPAGE_SIDE_PREFIX}{k}" for k in STOPPAGE_SUMMARY_KEYS]
+    per_match = combined.drop_duplicates(["_provider", "_match_id"])
+    providers = (
+        {
+            str(p): {k: int(g[f"{STOPPAGE_SIDE_PREFIX}{k}"].sum()) for k in STOPPAGE_SUMMARY_KEYS}
+            for p, g in per_match.groupby("_provider", sort=True)
+        }
+        if set(cols) <= set(combined.columns)
+        else {}
+    )
+    return {"rule_version": STOPPAGE_RULE_VERSION, "providers": providers}

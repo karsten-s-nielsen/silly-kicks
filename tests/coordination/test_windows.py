@@ -375,6 +375,15 @@ def test_only_longer_than_max_stoppage_splits():
     assert resolve_stoppages(frames, actions=over, provider="idsse", max_stoppage_s=25.0, mode="events").n_splits == 1
 
 
+def test_gradient_sports_takes_the_event_intervals_and_refuses_ball_state_mode():
+    # ADR-130: Gradient Sports frames carry a constant "alive", so its stoppages come from the events.
+    gs = make_coordination_match(seconds=120.0, hz=10.0, provider="gradientsports")
+    actions = make_coordination_actions(gs, restarts=[(60.0, "throw_in")])
+    assert resolve_stoppages(gs, actions=actions, provider="gradientsports", max_stoppage_s=1.0).source == "events"
+    with pytest.raises(ValueError, match="cannot be honoured"):
+        resolve_stoppages(gs, actions=actions, provider="gradientsports", max_stoppage_s=1.0, mode="ball_state")
+
+
 def test_dead_ball_observed_unclassified_provider_raises():
     frames = make_coordination_match(seconds=20.0, hz=10.0, provider="idsse")
     with pytest.raises(ValueError, match="_DETECTION_AWARE_PROVIDERS"):

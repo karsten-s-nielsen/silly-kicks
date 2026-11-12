@@ -483,9 +483,11 @@ def _extract_load(ref: _PergameRef, ctx):
     ``team_id`` of the frames (the legacy rule)."""
     from scripts._driver_sources import dataset_dir, read_dataset_parquet
     from scripts.hf_jobs.repackage import _id_to_name, _shot_type_ids, _shots_frame
+    from silly_kicks.tracking._stoppages import require_stoppage_state
 
     root = dataset_dir(ctx.data_root, ctx.params["dataset"])
     frames = read_dataset_parquet(root / ref.files[0])
+    require_stoppage_state(frames, ref.prov)  # ADR-130: fail closed on a dataset staged without it
     apath = root / ref.files[1]
     actions = read_dataset_parquet(apath) if apath.exists() else pd.DataFrame(columns=["type_id"])
     shots = _shots_frame(actions, _shot_type_ids(), _id_to_name())
@@ -502,6 +504,13 @@ def _extract_work(item, ctx) -> pd.DataFrame | None:
     if collision:
         raise ValueError(f"side columns {sorted(collision)} collide with feature names")
     prov, mid, shots, frames, home = item
+    from scripts._study_shared import stoppage_side_columns
+
+    side = stoppage_side_columns(
+        frames,
+        horizon_seconds=ctx.params["horizon_seconds"],
+        label_times=shots.reindex(columns=["period_id", "time_seconds"]),
+    )
     X, y, groups = prepare_xshot_training_data(
         frames,
         shots,
@@ -518,6 +527,7 @@ def _extract_work(item, ctx) -> pd.DataFrame | None:
         _group=np.asarray(groups),
         _provider=str(prov),
         _match_id=str(mid),  # per-row match id (the arm key)
+        **side,  # ADR-130: the match's stoppage counts
     )
 
 
@@ -564,7 +574,7 @@ def _prep_work(key, ctx):
     import tempfile
 
     from scripts._stages import FileSet
-    from scripts._study_shared import persist_study_inputs
+    from scripts._study_shared import persist_study_inputs, stoppage_block
     from scripts.hf_jobs.arms import match_key, parse_arms
 
     p = ctx.params
@@ -606,6 +616,8 @@ def _prep_work(key, ctx):
         "objective_inputs": objective_inputs,
         "study_tags": study_tags,
         "cv_arms": cv_arms,
+        # ADR-130: the stoppage rule and the per-provider counts, for metrics.json and the bundle's metadata.
+        "stoppage": stoppage_block(combined),
     }
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "inputs"
@@ -884,6 +896,7 @@ def _fit_work(key, ctx):
     model.shipped_variant = shipped
     model.provider_list = candidates[shipped]["providers"]
     model.training_commit = cfg["run_prov"]["commit"]
+    model.stoppage_provenance = cfg.get("stoppage")  # ADR-130
     model.fit(Xfit, pd.Series(yfit), carrier_params=DEFAULT_CARRIER_PARAMS, horizon_seconds=cfg["horizon_seconds"])
     with tempfile.TemporaryDirectory() as tmp:
         art = Path(tmp) / "xshot_occurrence_v1"
@@ -922,6 +935,7 @@ def _assemble_work(key, ctx):
         **reproducibility(shipped, candidates[shipped]["providers"], training_commit=run_prov["commit"]),
         "candidates": candidates,
         "acceptance": _gates(candidates[shipped]["metrics"]),
+        "stoppage": cfg.get("stoppage"),  # ADR-130
         "estimates_are_cv_not_shipped_fit": True,
         "artifact_size_bytes": sum(len(b) for b in fit.files.values()),
     }
@@ -946,7 +960,7 @@ PIPELINE = Pipeline(
             reduce=_extract_reduce,
             reduce_order=_mid_of,
             declare=_extract_declare,
-            cross_commit_version="xshot-extract-1",
+            cross_commit_version="xshot-extract-2",  # ADR-130: the extract carries the stoppage gate
             uses_dataset=True,
             max_failures=0,  # the legacy raised on any failed match
         ),

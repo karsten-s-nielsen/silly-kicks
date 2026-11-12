@@ -5,6 +5,36 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.141.0] — 2026-11-11 — the stoppage gate for xShot/xCross training (ADR-130) (PR-S205)
+
+> **Why a minor release:** the wheel changes (library code): xShot/xCross training drops dead-ball frames, and
+> `dead_ball_observed("gradientsports")` becomes `False`. The bundled xShot/xCross weights do not change in this
+> release; their refit follows in the Part Deux cycle's launch 9.
+
+### Added
+
+- **The stoppage gate (`silly_kicks/tracking/_stoppages.py`, private).** Frames of SkillCorner and Gradient Sports,
+  whose `ball_state` is always `"alive"`, get `stoppage_state` (`live` / `dead` / `unknown`) and `stoppage_source`:
+  from the SkillCorner game-interruption markers, the Gradient Sports restart and goal actions, the ball beyond a
+  line by more than 0.11 m, and the period edges. `ball_state` is not written.
+- **`Campaign.mode`** (`rematerialize` default, `refit`) and `scripts/hf_jobs/campaigns/tf46_refit.toml`. In `refit`
+  mode `verify` skips the `_integrity` check and passes each arm on its own acceptance gates; the comparison with the
+  committed model is reported.
+
+### Changed
+
+- **xShot/xCross training drops dead and unknown frames.** `prepare_xshot_training_data` and
+  `prepare_xcross_training_data` keep a frame only where `stoppage_state == "live"` and no `unknown` frame lies within
+  its label horizon. Without the column they behave as before (pinned by values taken on 4.140.1).
+- **Both trainers fail closed** on a SkillCorner or Gradient Sports match without `stoppage_state`, and record
+  `stoppage` in `metrics.json` and `stoppage_provenance` in the bundle's `metadata.json`.
+- **Hyrum: Gradient Sports leaves `_DEAD_BALL_OBSERVED_PROVIDERS`** (`dead_ball_observed("gradientsports")` is now
+  `False`). TF-58 `resolve_stoppages` takes the event intervals for a Gradient Sports match in `auto` mode, and
+  `mode="ball_state"` raises for it. The committed TF-58 artifacts that hold Gradient Sports matches are stale (a
+  `TODO.md` row).
+- **Hyrum: the staged frame schema token is `tc3-frames-4`**; the loader adds the two stoppage columns to every
+  tracking provider's frames. `xshot115`, `xshot17` and `xcross_probe` are re-staged.
+
 ## [4.140.1] — 2026-11-10 — xsuccess fit units + a faster ball-carrier pre-index + campaign hygiene (ADR-128 amendment 2026-11-10) (PR-S204)
 
 > **Why a patch release:** the wheel changes (library code: the ball-carrier pre-index and the `XSuccessModel` fit

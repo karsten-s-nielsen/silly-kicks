@@ -13,38 +13,44 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from scripts import train_xcross_attempt as xc
 from scripts._toy_corpora import TOY_GENERATION
 
 
-def _write_game(root: Path, *, home_map: dict | None, game_id: str = "g7") -> None:
+def _write_game(
+    root: Path, *, home_map: dict | None, game_id: str = "g7", stoppage: bool = True, provider: str = "skillcorner"
+) -> None:
     shards = root / "shards" / TOY_GENERATION
     shards.mkdir(parents=True, exist_ok=True)
     (root / "_actions").mkdir(parents=True, exist_ok=True)
     # first non-ball team_id is AWAY -> the first-team fallback would pick AWAY
-    pd.DataFrame(
+    frames = pd.DataFrame(
         {
             "game_id": [game_id, game_id, game_id],
             "is_ball": [True, False, False],
             "team_id": [pd.NA, "AWAY", "HOME"],
-            "source_provider": ["skillcorner", "skillcorner", "skillcorner"],
+            "source_provider": [provider] * 3,
             "x": [0.0, 1.0, 2.0],
             "y": [0.0, 3.0, 4.0],
         }
-    ).to_parquet(shards / f"skillcorner__{game_id}.parquet")
+    )
+    if stoppage:  # ADR-130: a dataset staged with the stoppage columns (tc3-frames-4)
+        frames = frames.assign(stoppage_state="live", stoppage_source="events")
+    frames.to_parquet(shards / f"{provider}__{game_id}.parquet")
     pd.DataFrame({"game_id": [game_id], "type_name": ["cross"]}).to_parquet(
-        root / "_actions" / f"skillcorner__{game_id}.parquet"
+        root / "_actions" / f"{provider}__{game_id}.parquet"
     )
     if home_map is not None:
         (root / "home_teams.json").write_text(json.dumps(home_map), encoding="utf-8")
 
 
-def _loaded(tmp_path: Path, home_map: dict | None):
+def _loaded(tmp_path: Path, home_map: dict | None, **game):
     from scripts._stages import LocalStore, make_context
     from tests.scripts._stage_harness import PROV, params_from_args
 
-    _write_game(tmp_path / "data" / "toy", home_map=home_map)
+    _write_game(tmp_path / "data" / "toy", home_map=home_map, **game)
     args = ["--dataset", "toy", "--probe-dataset", "probe", "--arms-json", '{"arms": {"public": ["x"]}}']
     ctx = make_context(
         xc.PIPELINE,
@@ -62,6 +68,18 @@ def test_home_map_overrides_first_team(tmp_path):
     assert prov == "skillcorner"
     assert mid == "skillcorner-g7"  # the repackaged per-game dir name (the legacy `_source_key` match id)
     assert home == "HOME"
+
+
+@pytest.mark.parametrize("provider", ["skillcorner", "gradientsports"])
+def test_a_match_without_stoppage_columns_is_refused_for_an_unobserved_provider(tmp_path, provider):
+    # ADR-130: the load serves the extract and the probe stages, so both refuse such a dataset.
+    with pytest.raises(ValueError, match="stoppage_state"):
+        _loaded(tmp_path, None, stoppage=False, provider=provider)
+
+
+def test_a_match_of_an_observed_provider_needs_no_stoppage_columns(tmp_path):
+    prov, *_ = _loaded(tmp_path, None, stoppage=False, provider="sportec")
+    assert prov == "sportec"
 
 
 def test_falls_back_to_first_team_without_map(tmp_path):

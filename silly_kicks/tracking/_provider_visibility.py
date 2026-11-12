@@ -28,8 +28,10 @@ _FULLY_OBSERVED_PROVIDERS = frozenset({"gradientsports", "sportec", "idsse", "me
 
 # TF-58 D20: which providers' native feeds carry a RELIABLE dead-ball signal (`ball_state`). skillcorner and
 # metrica hard-code ball_state="alive" (tracking/skillcorner.py, tracking/metrica.py), so a stoppage split
-# reading only `ball_state` would silently do nothing on them -- they are unobserved BY CONSTRUCTION.
-_DEAD_BALL_OBSERVED_PROVIDERS = frozenset({"sportec", "idsse", "gradientsports"})
+# reading only `ball_state` would silently do nothing on them -- they are unobserved BY CONSTRUCTION. Gradient
+# Sports is unobserved too: its loader writes a constant "alive" (scripts/_loader_pining.py; owner rulings
+# 2026-10-26 and 2026-11-11, ADR-130); its stoppages come from its events (tracking/_stoppages.py).
+_DEAD_BALL_OBSERVED_PROVIDERS = frozenset({"sportec", "idsse"})
 
 
 def dead_ball_observed(provider: str) -> bool:

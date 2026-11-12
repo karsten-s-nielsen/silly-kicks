@@ -69,6 +69,12 @@ def test_public_run_records_a_digest_and_public_reproducibility(trainer, tmp_pat
     want = corpus_identity(provs, mids, all_public=False)
     assert metrics["corpus_match_ids_sha256"] == want["corpus_match_ids_sha256"]
     assert metrics["reproducibility"] == "public"
+    # ADR-130: the stoppage record, in metrics.json and in the bundle's metadata.json.
+    stoppage = metrics["stoppage"]
+    assert stoppage["rule_version"] == 1 and set(stoppage["providers"]) == {prov for prov, _ in _keys(data)}
+    meta_name = "metadata.json"
+    meta = json.loads(next((tmp_path / "out").rglob(meta_name)).read_text(encoding="utf-8"))
+    assert meta["stoppage_provenance"] == stoppage
 
 
 @pytest.mark.slow

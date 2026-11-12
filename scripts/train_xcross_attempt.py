@@ -531,9 +531,12 @@ def _load_match(ref: _PergameRef, ctx):
     xcross USES home to sign score_differential (PA-H1), so the training dataset's ``home_teams.json``
     overrides the first-team heuristic (keyed by game_id; TF-65 C2). The probe pass never had a map."""
     from scripts._driver_sources import dataset_dir, read_dataset_parquet
+    from silly_kicks.tracking._stoppages import require_stoppage_state
 
     root = dataset_dir(ctx.data_root, ctx.params[ref.dataset_param])
     frames = read_dataset_parquet(root / ref.files[0])
+    # ADR-130: fail closed on a dataset staged without it; this load serves the extract and the probe stages.
+    require_stoppage_state(frames, ref.prov)
     actions = read_dataset_parquet(root / ref.files[1])
     home = None
     home_map = _home_map(ctx) if ref.dataset_param == "dataset" else None
@@ -567,7 +570,17 @@ def _prepare(item, ctx):
 
 def _extract_work(item, ctx) -> pd.DataFrame | None:
     """One match -> its tidy feature rows + the four side columns (the legacy `_extract._work`), or None."""
-    prov, mid, *_ = item
+    prov, mid, actions, frames, _home = item
+    from scripts._study_shared import stoppage_side_columns
+    from silly_kicks.spadl import config as spc
+    from silly_kicks.tracking._xcross_attempt import _DEFAULT_CROSS_TYPES
+
+    crosses = actions[actions["type_id"].isin([spc.actiontype_id[t] for t in _DEFAULT_CROSS_TYPES])]
+    side = stoppage_side_columns(
+        frames,
+        horizon_seconds=ctx.params["horizon_seconds"],
+        label_times=crosses.reindex(columns=["period_id", "time_seconds"]),
+    )
     X, y, groups = _prepare(item, ctx)
     if not len(X):
         return None  # "ran, produced no usable row"
@@ -576,6 +589,7 @@ def _extract_work(item, ctx) -> pd.DataFrame | None:
         _group=np.asarray(groups),
         _provider=str(prov),
         _match_id=str(mid),  # per-row match id (the arm key)
+        **side,  # ADR-130: the match's stoppage counts
     )
 
 
@@ -722,7 +736,7 @@ def _prep_work(key, ctx):
     ``run_paired``, the D21 objective inputs and the B6 range probe -- persisted ONCE as a FileSet."""
     import tempfile
 
-    from scripts._study_shared import persist_study_inputs
+    from scripts._study_shared import persist_study_inputs, stoppage_block
     from scripts.hf_jobs.arms import match_key, parse_arms
 
     p = ctx.params
@@ -772,6 +786,8 @@ def _prep_work(key, ctx):
         "score_differential_range_probe": sd_probe,
         "study_tags": study_tags,
         "cv_arms": cv_arms,
+        # ADR-130: the stoppage rule and the per-provider counts, for metrics.json and the bundle's metadata.
+        "stoppage": stoppage_block(combined),
     }
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "inputs"
@@ -1053,6 +1069,7 @@ def _fit_work(key, ctx):
     model.shipped_variant = shipped
     model.provider_list = candidates[shipped]["providers"]
     model.training_commit = cfg["run_prov"]["commit"]
+    model.stoppage_provenance = cfg.get("stoppage")  # ADR-130
     model.fit(Xfit, pd.Series(yfit), carrier_params=DEFAULT_CARRIER_PARAMS, horizon_seconds=cfg["horizon_seconds"])
     with tempfile.TemporaryDirectory() as tmp:
         art = Path(tmp) / "xcross_attempt_v1"
@@ -1171,6 +1188,7 @@ def _assemble_work(key, ctx):
         **reproducibility(shipped, candidates[shipped]["providers"], training_commit=run_prov["commit"]),
         "candidates": candidates,
         "acceptance": _gates(candidates[shipped]["metrics"]),
+        "stoppage": cfg.get("stoppage"),  # ADR-130
         "estimates_are_cv_not_shipped_fit": True,
         "artifact_size_bytes": sum(len(b) for b in fit.files.values()),
     }
@@ -1202,7 +1220,7 @@ PIPELINE = Pipeline(
             reduce=_extract_reduce,
             reduce_order=_mid_of,
             declare=_extract_declare,
-            cross_commit_version="xcross-extract-1",
+            cross_commit_version="xcross-extract-2",  # ADR-130: the extract carries the stoppage gate
             uses_dataset=True,
             max_failures=0,  # the legacy raised on any failed match
         ),
@@ -1216,7 +1234,7 @@ PIPELINE = Pipeline(
             reduce_order=_mid_of,
             params=("probe_providers",),
             declare=_extract_declare,
-            cross_commit_version="xcross-probe-1",
+            cross_commit_version="xcross-probe-2",  # ADR-130: the probe work filters through the stoppage gate
             uses_dataset=True,
             dataset_param="probe_dataset",
             max_failures=0,

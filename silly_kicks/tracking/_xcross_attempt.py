@@ -29,6 +29,7 @@ from silly_kicks.tracking._ball_carrier import (
 )
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
+from silly_kicks.tracking._stoppages import training_frame_mask
 from silly_kicks.tracking._velocity_availability import (
     variant_key_for_velocity as _variant_key_for_velocity,
 )
@@ -446,13 +447,23 @@ def prepare_xcross_training_data(
     goal_map = resolve_defended_goals(frames)  # H1: precompute once, from FULL frames
     score_fn = _build_score_lookup(actions, home_team_id) if _has_results(actions) else None
     has_ball_state = "ball_state" in poss.columns  # M3: column-presence guard (mirror xS:655)
+    # ADR-130: with a stoppage column, dead frames and unknown label horizons are not training rows. The frames are
+    # skipped here, not dropped up front, so the carrier inference and the goal map still see the full frames.
+    keep_frames = None
+    if "stoppage_state" in frames.columns:
+        ok = training_frame_mask(frames, horizon_seconds=horizon_seconds)
+        kept = frames.loc[ok, ["game_id", "period_id", "frame_id"]].drop_duplicates()
+        keep_frames = set(kept.itertuples(index=False, name=None))
 
     feat_rows: list[pd.DataFrame] = []
     frame_index_rows: list[dict] = []
     meta_details: list[dict] = []
     coverage = {"in_domain": 0, "carrier_resolved": 0}  # L-2 carrier-coverage log
     for (gid, pid, fid), grp in poss.groupby(["game_id", "period_id", "frame_id"], sort=False):
-        if has_ball_state:
+        if keep_frames is not None:
+            if (gid, pid, fid) not in keep_frames:
+                continue
+        elif has_ball_state:
             ball_row = grp[grp["is_ball"]]
             # M3: judge ball_state on the ball row (row-level), not .all() over every player row
             if len(ball_row) and str(ball_row["ball_state"].iloc[0]) == "dead":
@@ -661,6 +672,9 @@ class XCrossAttemptModel:
         # Training commit (clean tree); written into metadata by save() so a retrain re-stamps it
         # rather than dropping the hand-patched value the bundle carried (ADR-054 c487c49; ADR-106).
         self.training_commit: str | None = None
+        # The stoppage rule and the per-provider stoppage sources of the training frames (ADR-130). Written
+        # into metadata.json only when set, so a re-save of an older bundle stays byte-identical.
+        self.stoppage_provenance: dict | None = None
 
     def fit(
         self,
@@ -733,6 +747,8 @@ class XCrossAttemptModel:
             # re-save stays byte-identical (test_weights_bundle_golden).
             "training_commit": self.training_commit,
         }
+        if self.stoppage_provenance is not None:
+            metadata["stoppage_provenance"] = self.stoppage_provenance
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:
             for fname in ["model.json", "metadata.json"]:
@@ -787,6 +803,7 @@ class XCrossAttemptModel:
         model.shipped_variant = meta.get("shipped_variant")
         model.provider_list = meta.get("provider_list")
         model.training_commit = meta.get("training_commit")
+        model.stoppage_provenance = meta.get("stoppage_provenance")
         model._booster = load_xgb_booster_base_score_safe(path / "model.json")
 
         from silly_kicks.tracking._chirality import verify_chirality
