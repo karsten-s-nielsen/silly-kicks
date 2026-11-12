@@ -9,8 +9,15 @@ band inputs are consistent with the n_rows used by the reproduction check.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from scripts import validate_trained_artifact_integrity as V
+
+
+def _skill(**bootstrap_overrides):
+    """A passing ADR-131 ``skill`` dict (all six skill gates True), with optional bootstrap overrides."""
+    bootstrap = {"brier_gain_lb": 0.0004, "log_loss_gain_lb": 0.01, "pr_auc_lift_lb": 0.05, **bootstrap_overrides}
+    return {"brier_skill": 0.04, "log_loss_skill": 0.16, "pr_auc_lift": 0.07, "bootstrap": bootstrap}
 
 
 def _shipped():
@@ -25,10 +32,40 @@ def _shipped():
                     "brier": 0.0140,
                     "base_rate_brier": 0.0152,
                     "n_usable_folds": 5,
+                    "skill": _skill(),
                 }
             }
         },
     }
+
+
+def _fresh_with(skill) -> dict[str, Any]:
+    fresh: dict[str, Any] = dict(_shipped(), n_events=21, fps=10.0, horizon_s=1.0)
+    fresh["candidates"] = {"public": {"metrics": dict(_shipped()["candidates"]["public"]["metrics"], skill=skill)}}
+    return fresh
+
+
+def test_verdict_maps_skill_gates():
+    """ADR-131: lift_ok = the PR-AUC point gate and its bound; calibration_ok = the Brier and log-loss point gates and
+    their bounds (the same rule as the trainers' acceptance)."""
+    v = V.verdict("xshot_occurrence", _shipped(), _fresh_with(_skill()), rel_tol=0.05)
+    assert v["lift_ok"] and v["calibration_ok"]
+    v = V.verdict("xshot_occurrence", _shipped(), _fresh_with(_skill(brier_gain_lb=-1e-6)), rel_tol=0.05)
+    assert v["lift_ok"] and not v["calibration_ok"]
+    v = V.verdict("xshot_occurrence", _shipped(), _fresh_with(_skill(log_loss_gain_lb=-1e-6)), rel_tol=0.05)
+    assert v["lift_ok"] and not v["calibration_ok"]
+    v = V.verdict("xshot_occurrence", _shipped(), _fresh_with(_skill(pr_auc_lift_lb=-1e-6)), rel_tol=0.05)
+    assert not v["lift_ok"] and v["calibration_ok"]
+
+
+def test_verdict_fails_closed_without_skill():
+    """An old-shape metrics dict passes the old bars (brier < base_rate_brier, pr_auc > positive_rate) but has no
+    ``skill``: both keys are False and the verdict is NO-GO."""
+    fresh = _fresh_with(None)
+    del fresh["candidates"]["public"]["metrics"]["skill"]
+    v = V.verdict("xshot_occurrence", _shipped(), fresh, rel_tol=0.05)
+    assert not v["lift_ok"] and not v["calibration_ok"]
+    assert V.is_go(v) is False
 
 
 def test_reproduces_passes_on_match_fails_on_perturbation():

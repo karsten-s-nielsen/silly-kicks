@@ -1,6 +1,7 @@
 # ADR-126: Trained-artifact integrity gate + xShot label-filter defect
 
 **Status:** Accepted (number provisional — re-confirm next-free at the commit gate; see "ADR/version ladder")
+**Amended by:** ADR-131 (2026-11-12) — the verdict's `lift_ok` and `calibration_ok` now read the forecast-skill gates (`skill_gates`), the same rule as the trainers' acceptance.
 **Date:** 2026-10-16
 **Spec:** `docs/superpowers/specs/2026-10-15-trained-artifact-integrity-xshot-label-defect-design.md`
 **Plan:** `docs/superpowers/plans/2026-10-15-trained-artifact-integrity-xshot-label-defect-plan.md`

@@ -35,6 +35,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
 
 from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, join_key, main
+from silly_kicks.tracking._artifact_integrity import skill_gates
 
 sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
@@ -192,27 +193,44 @@ def _hpo_once(
 
 
 def _cv_metrics(X, y, groups, params, *, negative_subsample=None, seed=42) -> dict:
-    """Label-stratified, match-grouped CV at FIXED params -> gate metrics on the TRUE balance.
+    """Label-stratified, match-grouped CV -> gate metrics on the TRUE balance.
 
-    M4: scoring is delegated to silly_kicks.tracking._xcross_eval._cv_score so the acceptance gate
-    and the GK-block ablation share ONE implementation (identical folds for any seed/negative_subsample
-    -- no drift). `_cv_metrics` re-adds only its two gate-specific keys (positive_rate, base_rate_brier).
+    M4: the folds are `_xcross_eval`'s plan / fold / combine, the SAME pieces `_cv_score` composes for the GK-block
+    ablation (identical folds for any seed/negative_subsample -- no drift). ``params`` is one params dict for every
+    fold, or a sequence of per-fold dicts (ADR-131 nested CV: fold k at the params of its study ``{arm}_gf{k}``).
+    Adds the two gate-specific keys (positive_rate, base_rate_brier) and the ADR-131 ``skill`` and ``fold_params``
+    keys -- the same result as the staged `cv` reduce.
     """
+    from collections.abc import Mapping
+
+    from scripts._study_shared import cv_skill, cv_unit
     from silly_kicks.tracking import _xcross_eval as ev
 
-    s = ev._cv_score(X, y, groups, params, seed=seed, negative_subsample=negative_subsample)
+    plan = ev._cv_score_plan(y, groups)
+    nested = not isinstance(params, Mapping)
+    fold_params = [dict(fp) for fp in params] if nested else [dict(params)] * len(plan)
+    if len(fold_params) != len(plan):
+        raise ValueError(f"per-fold params: {len(fold_params)} given for {len(plan)} gate folds")
     base = float(np.asarray(y, dtype=int).mean())
-    return {**s, "positive_rate": base, "base_rate_brier": base * (1 - base)}
-
-
-def _gates(m: dict) -> dict:
-    pr = m["pr_auc"]
-    br = m["brier"]
+    units = [
+        cv_unit(
+            ev._cv_score_fold(
+                X, y, i, tr, te, fold_params[i], seed=seed, negative_subsample=negative_subsample, return_oof=True
+            ),
+            base,
+            te,
+            y,
+            groups,
+        )
+        for i, tr, te in plan
+    ]
+    s = ev._cv_score_combine([u["fold"] for u in units])
     return {
-        "enough_usable_folds": m.get("n_usable_folds", 0) >= 2,
-        "pr_auc_gt_base_rate": bool(pr == pr and pr > m["positive_rate"]),  # NaN-safe strict
-        "brier_lt_base_rate_brier": bool(br == br and br < m["base_rate_brier"]),
-        "log_loss_lt_uniform": m["log_loss"] < float(np.log(2)),
+        **s,
+        "positive_rate": base,
+        "base_rate_brier": base * (1 - base),
+        "skill": cv_skill(units, nested=nested),
+        "fold_params": fold_params,
     }
 
 
@@ -736,7 +754,7 @@ def _prep_work(key, ctx):
     ``run_paired``, the D21 objective inputs and the B6 range probe -- persisted ONCE as a FileSet."""
     import tempfile
 
-    from scripts._study_shared import persist_study_inputs, stoppage_block
+    from scripts._study_shared import persist_study_inputs, stoppage_block, study_tags
     from scripts.hf_jobs.arms import match_key, parse_arms
 
     p = ctx.params
@@ -766,11 +784,12 @@ def _prep_work(key, ctx):
     }
     if run_paired:
         _, _, folds = _public_folds(X, y, groups, is_public)
-        study_tags = [f"{name}_f{fold}" for fold in range(len(folds)) for name in sorted(arms)] + sorted(arms)
         cv_arms = {name: _cv_n_splits(groups[mask]) for name, mask in sorted(arms.items())}
     else:
-        study_tags = ["single"]
+        folds = []
         cv_arms = {"single": _cv_n_splits(groups)}
+    # ADR-131: plus one nested study per cv arm and gate fold ({arm}_gf{k}), for the cv stage's nested gate.
+    tags = study_tags(list(arms), len(folds), cv_arms, run_paired=run_paired)
     config = {
         "n_trials": p["n_trials"],
         "negative_subsample": p["negative_subsample"],
@@ -784,7 +803,7 @@ def _prep_work(key, ctx):
         "expect_variant": None,  # ADR-123 Amendment B: --expect-variant removed (pining-path preflight)
         "ship_order": list(armspec.ship_order),
         "score_differential_range_probe": sd_probe,
-        "study_tags": study_tags,
+        "study_tags": tags,
         "cv_arms": cv_arms,
         # ADR-130: the stoppage rule and the per-provider counts, for metrics.json and the bundle's metadata.
         "stoppage": stoppage_block(combined),
@@ -836,7 +855,14 @@ def _inputs(ctx):
 
 
 def _study_rows(inp, tag: str) -> np.ndarray:
-    """The row positions a study ``tag`` tunes on (the legacy `run_one_study` / main row logic)."""
+    """The row positions a study ``tag`` tunes on (the legacy `run_one_study` / main row logic); a nested gate-fold
+    tag ``{arm}_gf{k}`` (ADR-131, checked first) -> the arm's rows outside gate fold k."""
+    from scripts._study_shared import gate_fold_rows
+    from silly_kicks.tracking._xcross_eval import _cv_score_plan
+
+    gf = gate_fold_rows(tag, lambda arm: _arm_rows(inp, arm), _cv_score_plan, inp.y, inp.groups)
+    if gf is not None:
+        return gf
     if tag == "single":
         return np.arange(len(inp.y))
     name, sep, fold_s = tag.rpartition("_f")
@@ -931,9 +957,11 @@ def _arm_rows(inp, arm: str) -> np.ndarray:
     return np.arange(len(inp.y)) if arm == "single" else np.flatnonzero(inp.arms[arm])
 
 
-def _cv_work(key, ctx) -> dict:
-    """One fold of `_cv_metrics` (`_xcross_eval._cv_score`) for one arm at the arm's final params, plus the
-    arm's TRUE base rate (so the reduce never re-loads the design matrix)."""
+def _cv_work(key, ctx):
+    """One fold of `_cv_metrics` (`_xcross_eval`'s fold) for one arm, at the params of that gate fold's nested study
+    ``{arm}_gf{k}`` (ADR-131). Returns the fold's FileSet: the metrics tuple, the arm's TRUE base rate and the held-out
+    arrays, so the reduce never re-loads the design matrix."""
+    from scripts._study_shared import cv_unit, cv_unit_fileset, gate_fold_params
     from silly_kicks.tracking import _xcross_eval as ev
 
     _root, inp = _inputs(ctx)
@@ -943,28 +971,39 @@ def _cv_work(key, ctx) -> dict:
     fold_i = int(fold_s)
     _i, tr, te = ev._cv_score_plan(y, groups)[fold_i]
     cfg = inp.config
-    params = ctx.upstream("study")[arm]["params"]
-    res = ev._cv_score_fold(
-        X, y, fold_i, tr, te, params, seed=cfg["seed"], negative_subsample=cfg["negative_subsample"]
+    out = ev._cv_score_fold(
+        X,
+        y,
+        fold_i,
+        tr,
+        te,
+        gate_fold_params(ctx, arm, fold_i),
+        seed=cfg["seed"],
+        negative_subsample=cfg["negative_subsample"],
+        return_oof=True,
     )
-    return {"fold": res, "positive_rate": float(np.asarray(y, dtype=int).mean())}
+    return cv_unit_fileset(cv_unit(out, float(np.asarray(y, dtype=int).mean()), te, y, groups))
 
 
 def _cv_reduce(results, ctx) -> dict:
-    """``{arm: _cv_metrics dict}``, each arm's folds combined in FOLD order (sorted fold keys)."""
+    """``{arm: _cv_metrics dict}``, each arm's folds combined in FOLD order (sorted fold keys), plus the ADR-131
+    ``skill`` dict from the pooled held-out rows and the per-fold nested ``fold_params``."""
+    from scripts._study_shared import cv_skill, gate_fold_params, read_cv_unit
     from silly_kicks.tracking import _xcross_eval as ev
 
     by_arm: dict[str, list] = {}
     for key in sorted(results):
         arm, _, _fold = key.rpartition("__")
-        by_arm.setdefault(arm, []).append(results[key])
+        by_arm.setdefault(arm, []).append(read_cv_unit(results[key]))
     out = {}
-    for arm, folds in sorted(by_arm.items()):
-        base = folds[0]["positive_rate"]
+    for arm, units in sorted(by_arm.items()):
+        base = units[0]["positive_rate"]
         out[arm] = {
-            **ev._cv_score_combine([r["fold"] for r in folds]),
+            **ev._cv_score_combine([u["fold"] for u in units]),
             "positive_rate": base,
             "base_rate_brier": base * (1 - base),
+            "skill": cv_skill(units, nested=True),
+            "fold_params": [gate_fold_params(ctx, arm, k) for k in range(len(units))],
         }
     return out
 
@@ -1048,7 +1087,7 @@ def _fit_work(key, ctx):
     cfg = inp.config
     sel = ctx.upstream("select")
     shipped, candidates = sel["shipped"], sel["candidates"]
-    acceptance = _gates(candidates[shipped]["metrics"])
+    acceptance = skill_gates(candidates[shipped]["metrics"])
     print(f"Shipped variant: {shipped}; gates: {acceptance}")
     if not all(acceptance.values()):
         failed = {"candidates": candidates, "acceptance": acceptance, "shipped_variant": shipped}
@@ -1187,7 +1226,7 @@ def _assemble_work(key, ctx):
         # ADR-067 M4 caveat, emitted here -- never hand-added at bundling (spec 0.11).
         **reproducibility(shipped, candidates[shipped]["providers"], training_commit=run_prov["commit"]),
         "candidates": candidates,
-        "acceptance": _gates(candidates[shipped]["metrics"]),
+        "acceptance": skill_gates(candidates[shipped]["metrics"]),
         "stoppage": cfg.get("stoppage"),  # ADR-130
         "estimates_are_cv_not_shipped_fit": True,
         "artifact_size_bytes": sum(len(b) for b in fit.files.values()),

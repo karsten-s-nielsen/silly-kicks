@@ -46,6 +46,39 @@ class StudyInputs:
 
 _CONFIG = "study_config.json"
 
+#: The tag suffix of a nested gate-fold study (ADR-131): ``{arm}_gf{k}`` tunes on the arm's rows outside gate fold k.
+#: It never collides with the paired path's ``{name}_f{fold}`` tags, which use the public folds.
+GATE_FOLD_SEP = "_gf"
+
+
+def study_tags(arm_names, n_public_folds: int, cv_arms: dict[str, int], *, run_paired: bool) -> list[str]:
+    """The ``study`` stage's tags: today's set (the paired ``{name}_f{fold}`` studies and the full-rows studies, or
+    ``single``), then one nested gate-fold study per cv arm and gate fold (ADR-131), in sorted-arm, fold order.
+
+    An arm name that contains ``_gf`` is refused: ``x_gf1`` would collide with arm ``x``'s gate-fold study tag, and
+    `gate_fold_rows` would resolve it to arm ``x``'s rows."""
+    clash = sorted(n for n in [*arm_names, *cv_arms] if GATE_FOLD_SEP in n)
+    if clash:
+        raise ValueError(f"arm names must not contain {GATE_FOLD_SEP!r} (the gate-fold study suffix): {clash}")
+    if run_paired:
+        names = sorted(arm_names)
+        tags = [f"{name}_f{fold}" for fold in range(n_public_folds) for name in names] + names
+    else:
+        tags = ["single"]
+    return tags + [f"{arm}{GATE_FOLD_SEP}{k}" for arm in sorted(cv_arms) for k in range(int(cv_arms[arm]))]
+
+
+def gate_fold_rows(tag: str, arm_rows, plan, y: np.ndarray, groups: np.ndarray) -> np.ndarray | None:
+    """The rows a nested gate-fold study ``{arm}_gf{k}`` tunes on: the arm's rows (``arm_rows(arm)``, ascending)
+    outside gate fold ``k`` of the trainer's gate fold ``plan(y, groups)``, ascending. ``None`` if ``tag`` is not a
+    gate-fold tag. An unknown arm raises (from ``arm_rows``)."""
+    name, sep, k = tag.rpartition(GATE_FOLD_SEP)
+    if not (sep and name and k.isdigit()):
+        return None
+    rows = arm_rows(name)
+    _i, tr, _te = plan(y[rows], groups[rows])[int(k)]
+    return rows[np.sort(tr)]
+
 
 class TrialPrinter:
     """The ``OptunaStrategy.run(observer=...)`` sink of a study (HFU spec 14.8): one line per finished trial,
@@ -196,3 +229,89 @@ def stoppage_block(combined: pd.DataFrame) -> dict:
         else {}
     )
     return {"rule_version": STOPPAGE_RULE_VERSION, "providers": providers}
+
+
+# --- The cv stage's nested gate (ADR-131): fold-unit payloads and the pooled skill --------------------------------
+
+
+def gate_fold_params(ctx, arm: str, k: int) -> dict:
+    """The params of gate fold ``k`` of ``arm``: its nested study ``{arm}_gf{k}`` (ADR-131)."""
+    return ctx.upstream("study")[f"{arm}{GATE_FOLD_SEP}{k}"]["params"]
+
+
+def _npy(arr: np.ndarray) -> bytes:
+    import io
+
+    buf = io.BytesIO()
+    np.save(buf, arr, allow_pickle=False)
+    return buf.getvalue()
+
+
+def _from_npy(data: bytes) -> np.ndarray:
+    import io
+
+    return np.load(io.BytesIO(data), allow_pickle=False)
+
+
+def cv_unit(out, positive_rate: float, te, y, groups) -> dict:
+    """One cv fold unit's payload. ``out`` is the fold function's ``return_oof=True`` result ``(metrics_tuple, p,
+    train_rate)``, or None for a skipped fold (no rows). ``te`` are the held-out positions within the arm's rows;
+    ``y`` and ``groups`` are the arm's labels and match labels."""
+    if out is None:
+        return {
+            "fold": None,
+            "positive_rate": positive_rate,
+            "train_rate": None,
+            "te": np.zeros(0, dtype=np.int64),
+            "p": np.zeros(0, dtype=np.float64),
+            "y": np.zeros(0, dtype=np.int8),
+            "groups": np.zeros(0, dtype="<U1"),
+        }
+    res, p, train_rate = out
+    te = np.asarray(te, dtype=np.int64)
+    return {
+        "fold": list(res),
+        "positive_rate": positive_rate,
+        "train_rate": train_rate,
+        "te": te,
+        "p": np.asarray(p, dtype=np.float64),
+        "y": np.asarray(y)[te].astype(np.int8),
+        "groups": np.asarray(groups)[te].astype(str),
+    }
+
+
+def cv_unit_fileset(unit: dict):
+    """The unit as a FileSet: ``fold.json`` (the metrics tuple, the arm's rate, the training rate) and the held-out
+    arrays ``te.npy``, ``p.npy``, ``y.npy``, ``groups.npy`` (pickle-free)."""
+    from scripts._stages import FileSet
+
+    head = {k: unit[k] for k in ("fold", "positive_rate", "train_rate")}
+    files = {"fold.json": json.dumps(head, allow_nan=True).encode("utf-8")}
+    files.update({f"{k}.npy": _npy(unit[k]) for k in ("te", "p", "y", "groups")})
+    return FileSet(files)
+
+
+def read_cv_unit(fs) -> dict:
+    """The inverse of `cv_unit_fileset`."""
+    unit = json.loads(fs.files["fold.json"])
+    unit.update({k: _from_npy(fs.files[f"{k}.npy"]) for k in ("te", "p", "y", "groups")})
+    return unit
+
+
+def cv_skill(units: list[dict], *, nested: bool) -> dict | None:
+    """The ADR-131 ``skill`` dict of one arm from its cv units in FOLD order (the list position is the gate fold).
+    The usable folds' held-out rows are pooled in ascending arm-row order, so the result does not depend on the order
+    the units completed in. None when no fold was usable (the skill gates then fail closed)."""
+    from silly_kicks.tracking._artifact_integrity import forecast_skill
+
+    usable = [(k, u) for k, u in enumerate(units) if u["fold"] is not None]
+    if not usable:
+        return None
+    te = np.concatenate([u["te"] for _, u in usable])
+    order = np.argsort(te, kind="stable")
+    y = np.concatenate([u["y"] for _, u in usable])[order]
+    p = np.concatenate([u["p"] for _, u in usable])[order]
+    r = np.concatenate([np.full(len(u["te"]), u["train_rate"], dtype=np.float64) for _, u in usable])[order]
+    fold = np.concatenate([np.full(len(u["te"]), k) for k, u in usable])[order]
+    groups = np.concatenate([u["groups"] for _, u in usable])[order]
+    return forecast_skill(y, p, r, fold, groups, nested=nested)

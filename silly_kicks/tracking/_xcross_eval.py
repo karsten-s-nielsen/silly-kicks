@@ -12,6 +12,8 @@ See docs/superpowers/specs/2026-06-06-tf17-xcross-pr-b-design.md.
 
 from __future__ import annotations
 
+from typing import Literal, overload
+
 import numpy as np
 import pandas as pd
 
@@ -40,6 +42,40 @@ def _cv_score_plan(y, groups) -> list[tuple[int, np.ndarray, np.ndarray]]:
     return [(i, tr, te) for i, (tr, te) in enumerate(skf.split(np.zeros((len(y), 1)), y, groups))]
 
 
+#: One fold's metrics tuple: ``(log_loss, brier, pr_auc | None)``.
+FoldMetrics = tuple[float, float, float | None]
+
+
+@overload
+def _cv_score_fold(
+    X: pd.DataFrame,
+    y,
+    fold_i: int,
+    tr: np.ndarray,
+    te: np.ndarray,
+    params: dict,
+    *,
+    seed: int = ...,
+    negative_subsample: float | None = ...,
+    return_oof: Literal[False] = ...,
+) -> FoldMetrics | None: ...
+
+
+@overload
+def _cv_score_fold(
+    X: pd.DataFrame,
+    y,
+    fold_i: int,
+    tr: np.ndarray,
+    te: np.ndarray,
+    params: dict,
+    *,
+    seed: int = ...,
+    negative_subsample: float | None = ...,
+    return_oof: Literal[True],
+) -> tuple[FoldMetrics, np.ndarray, float] | None: ...
+
+
 def _cv_score_fold(
     X: pd.DataFrame,
     y,
@@ -50,9 +86,11 @@ def _cv_score_fold(
     *,
     seed: int = 42,
     negative_subsample: float | None = None,
-) -> tuple[float, float, float | None] | None:
+    return_oof: bool = False,
+) -> FoldMetrics | tuple[FoldMetrics, np.ndarray, float] | None:
     """One fold of `_cv_score`: ``(log_loss, brier, pr_auc | None)``, or None for a skipped fold.
-    ``seed`` drives ONLY ``negative_subsample`` (``seed + fold_i``), exactly as `_cv_score` does."""
+    ``seed`` drives ONLY ``negative_subsample`` (``seed + fold_i``), exactly as `_cv_score` does. With ``return_oof``
+    (ADR-131): ``(that tuple, held-out predictions, the training rows' TRUE positive rate)``."""
     import xgboost as xgb
     from sklearn.metrics import average_precision_score, brier_score_loss, log_loss
 
@@ -72,7 +110,8 @@ def _cv_score_fold(
     clf.fit(Xtr.to_numpy(float), ytr)
     p = clf.predict_proba(X.iloc[te].to_numpy(float))[:, 1]
     pr = float(average_precision_score(y[te], p)) if len(np.unique(y[te])) == 2 else None
-    return (float(log_loss(y[te], p, labels=[0, 1])), float(brier_score_loss(y[te], p)), pr)
+    res = (float(log_loss(y[te], p, labels=[0, 1])), float(brier_score_loss(y[te], p)), pr)
+    return (res, p, float(y[tr].mean())) if return_oof else res
 
 
 def _cv_score_combine(fold_results) -> dict:

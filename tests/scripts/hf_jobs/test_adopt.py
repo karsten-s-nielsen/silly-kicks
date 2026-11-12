@@ -1200,8 +1200,8 @@ def _refit_world(tmp_path, monkeypatch, gates: dict):
 @pytest.mark.parametrize(
     ("gates", "ok"),
     [
-        ({"enough_usable_folds": True, "pr_auc_gt_base_rate": True}, True),
-        ({"enough_usable_folds": True, "pr_auc_gt_base_rate": False}, False),
+        ({"enough_usable_folds": True, "brier_skill_gt_0": True, "brier_gain_lb95_gt_0": True}, True),
+        ({"enough_usable_folds": True, "brier_skill_gt_0": True, "brier_gain_lb95_gt_0": False}, False),
         ({}, False),
     ],
 )
