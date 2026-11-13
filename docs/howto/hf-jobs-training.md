@@ -44,7 +44,8 @@ neutral shapes (INV-5); how a dataset was built stays off HF.
 After a dataset is staged, record it: `python -m scripts.hf_jobs datasets record <name>`. It MEASURES the
 staged dataset and writes the pinned revision, the unit list and the expected corpus identity (digest + n;
 `public_ids`: the units of the `public` arm) into `scripts/hf_jobs/datasets.lock.json`. For tracking data it checks
-the declared `provenance` against the `_corpus` registries (ADR-132). `datasets show
+the declared `provenance` against the `_corpus` registries, and refuses a provider it cannot classify as tracking
+or non-tracking (ADR-132). `datasets show
 <name>` prints the record. `adopt` checks every artifact against it (INV-9).
 
 The open data (`sb_open`) is pinned to a GitHub commit and read in a job from a staged, read-only snapshot of

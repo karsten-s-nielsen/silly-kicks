@@ -53,10 +53,13 @@ that the public xCross `position_only` arm is underpowered at that size. Ten new
 6. **Per-job arms** (ruling r3). A visibility-gated campaign job declares `arms` (a non-empty subset of `public`,
    `sc_extended`). The wheel jobs get both arms and ship the rule's choice; the Hub jobs get `sc_extended` only.
    Preflight refuses a gated job without `arms`, an arm the dataset lacks, and one arm that is a strict subset of the
-   dataset's units (a single-arm job studies and gates on every row but fits on its arm's rows).
+   dataset's units, held-out probe units included (a single-arm job studies and gates on every row but fits on its
+   arm's rows, and a probe row in that study would break the probe's held-out status).
 7. **Dataset fields and private repos.** `datasets.toml` replaces `visibility` with `raw` (`redistributable` /
    `restricted`) and `provenance` (`public` / `extended`). `datasets record` checks `provenance` for tracking data
    (`public` iff every staged unit is publicly obtainable) and records `public_ids` as the units of the `public` arm.
+   A dataset is tracking when its providers are in the registries and non-tracking when they are known non-tracking
+   sources (`arm_policy._NON_TRACKING_PROVIDERS`: `snapshot`, the SB360 shards); a provider in neither set refuses.
    Every repo this repo stages must be a private Hub repo; `datasets record` and the campaign preflight refuse
    otherwise, fail-closed on an API error. `receiver_model`'s `--corpus-visibility` maps from `provenance`.
 8. **The adoption contract.** `tier` stays the channel (store key, `Instance.id`, manifest matching). The new manifest
