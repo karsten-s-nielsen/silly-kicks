@@ -240,6 +240,7 @@ def _toy_repo(tmp_path: Path, *, nocommit: bool = False) -> tuple[Path, Path]:
     verify = {
         "commit": C,
         "campaign": "toy",
+        "manifest_sha256": A._manifest_sha256(text),  # the manifest that verify checked (ADR-132 item 10)
         "instances": {
             _INST: {
                 "ok": True,
@@ -437,6 +438,337 @@ def test_an_interrupted_gate_keeps_the_adoption(tmp_path, monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=True)  # type: ignore[arg-type]
     assert "silly_kicks/_toy_weights/default/model.npz" in _porcelain(root)
+
+
+# ---- ADR-132 item 10: the spec 7.1 manifest edit (the expectation edit) and the verify binding ---------------
+
+_MANIFEST_REL = "docs/artifacts/manifest.toml"
+_NOW = "2026-11-13T00:00:00+00:00"
+_TOY_CAMPAIGN = """[campaign]
+name = "toy"
+bucket = "silly-kicks/toy-scratch"
+concurrency_cap = 1
+attempts = 1
+
+[[jobs]]
+job = "ghost_gk"
+tier = "owner"
+dataset = "tc3"
+variants = ["default"]
+"""
+_OTHER = """
+[[artifacts]]
+id = "toy_other"
+destination = "wheel:silly_kicks/_toy_weights/other"
+job = "ghost_gk"
+variant = "sweeper"
+tier = "owner"
+certification = "owner"
+training_commit = "{b}"
+commit_field = "metadata.json:training_commit"
+refit_event = "e1"
+""".format(b="b" * 40)
+_EVENT = '\n[events.x]\nversion = "9.9.8"\nadr = "ADR-998"\ntitle = "x"\nbasis = "x"\ncite = ""\n'
+
+
+def _toy_campaign(tmp_path: Path):
+    """A campaign whose ``instances`` produce ``(ghost_gk, default, owner)``: the toy entries ``toy_wheel`` and
+    ``toy_hub`` (and never ``toy_other``, variant ``sweeper``)."""
+    from scripts.hf_jobs.campaign import load_campaign
+
+    p = tmp_path / "toy_campaign.toml"
+    p.write_text(_TOY_CAMPAIGN, encoding="utf-8")
+    return load_campaign(p)
+
+
+def _manifest_text(root: Path) -> str:
+    return (root / _MANIFEST_REL).read_text(encoding="utf-8")
+
+
+def _set_manifest(root: Path, text: str) -> bytes:
+    (root / _MANIFEST_REL).write_text(text, encoding="utf-8")
+    return (root / _MANIFEST_REL).read_bytes()
+
+
+def _edit_entry(root: Path, aid: str, old: str, new: str) -> bytes:
+    """Replace ``old`` with ``new`` inside the block of the artifact ``aid`` only; return the new manifest bytes."""
+    text = _manifest_text(root)
+    start = text.index(f'\nid = "{aid}"\n')
+    nxt = text.find("\n[[artifacts]]", start)
+    end = len(text) if nxt == -1 else nxt
+    block = text[start:end]
+    assert block.count(old) == 1, (aid, old)
+    return _set_manifest(root, text[:start] + block.replace(old, new) + text[end:])
+
+
+def _commit_all(root: Path, message: str) -> None:
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", message)
+
+
+def _reverify(root: Path, staging: Path) -> None:
+    """The operator runs verify again after the edit: ``verify.json`` names the working manifest."""
+    rep = json.loads((staging / "verify.json").read_text(encoding="utf-8"))
+    rep["manifest_sha256"] = A._manifest_sha256(_manifest_text(root))
+    (staging / "verify.json").write_text(json.dumps(rep), encoding="utf-8")
+
+
+def _adopt_edit(tmp_path: Path, root: Path, staging: Path, git=_dirty) -> dict:
+    return A.adopt(_toy_campaign(tmp_path), C, staging=staging, git=git, root=root, gate=False, now=_NOW)
+
+
+def _refused_and_kept(tmp_path: Path, root: Path, staging: Path, edited: bytes, match: str) -> None:
+    """The adoption is refused with ``match``, and the tree is exactly the operator's edit (nothing written)."""
+    with pytest.raises(A.AdoptionRefusedError, match=match):
+        _adopt_edit(tmp_path, root, staging)
+    assert (root / _MANIFEST_REL).read_bytes() == edited
+    assert _porcelain(root).splitlines() == [f" M {_MANIFEST_REL}"]
+
+
+def test_expectation_edit_loads_equals_load():
+    assert M.loads(M.MANIFEST.read_text(encoding="utf-8"), base=M.MANIFEST.resolve().parents[2]) == M.load()
+
+
+def test_expectation_edit_is_adopted(tmp_path):
+    root, staging = _toy_repo(tmp_path)
+    _edit_entry(
+        root,
+        "toy_wheel",
+        'certification = "owner"',
+        'certification = "public"\nshipped_arm = "public"\ndataset = "tc3"',
+    )
+    _reverify(root, staging)
+    out = _adopt_edit(tmp_path, root, staging)
+    assert sorted(out["adopted"]) == ["toy_hub", "toy_wheel"]
+    man = M.load(root / _MANIFEST_REL)
+    w = man.artifacts["toy_wheel"]
+    assert (w.certification, w.shipped_arm, w.dataset, w.training_commit) == ("public", "public", "tc3", C)
+    assert man.artifacts["toy_hub"].training_commit == C
+
+
+@pytest.mark.parametrize(
+    ("aid", "field", "old", "new"),
+    [
+        ("toy_wheel", "training_commit", f'training_commit = "{"a" * 40}"', f'training_commit = "{"d" * 40}"'),
+        ("toy_wheel", "destination", "_toy_weights/default", "_toy_weights/moved"),
+        ("toy_wheel", "tier", 'tier = "owner"', 'tier = "public"'),
+        ("toy_wheel", "refit_event", 'refit_event = "e1"', 'refit_event = "e2"'),
+        ("toy_wheel", "commit_field", '"metadata.json:training_commit"', '"metrics.json:training_commit"'),
+        ("toy_hub", "card", "toy-v1-model-card.md", "toy-v2-model-card.md"),
+    ],
+)
+def test_expectation_edit_refuses_a_non_expectation_field(tmp_path, aid, field, old, new):
+    root, staging = _toy_repo(tmp_path)
+    edited = _edit_entry(root, aid, old, new)
+    _reverify(root, staging)
+    _refused_and_kept(tmp_path, root, staging, edited, rf"{aid}\.{field} changed")
+
+
+def test_expectation_edit_refuses_an_edit_of_another_entry(tmp_path):
+    root, staging = _toy_repo(tmp_path)
+    _set_manifest(root, _manifest_text(root) + _OTHER)
+    _commit_all(root, "other")
+    edited = _edit_entry(root, "toy_other", 'certification = "owner"', 'certification = "owner"\ndataset = "tc3"')
+    _reverify(root, staging)
+    _refused_and_kept(tmp_path, root, staging, edited, r"toy_other changed.*not an entry of this campaign")
+
+
+def test_expectation_edit_refuses_a_change_outside_the_artifacts(tmp_path):
+    root, staging = _toy_repo(tmp_path)
+    edited = _set_manifest(root, _manifest_text(root) + _EVENT)
+    _reverify(root, staging)
+    _refused_and_kept(tmp_path, root, staging, edited, r"top-level table 'events' changed")
+
+
+@pytest.mark.parametrize("change", ["add", "remove", "reorder"])
+def test_expectation_edit_refuses_a_changed_artifact_list(tmp_path, change):
+    root, staging = _toy_repo(tmp_path)
+    if change != "add":
+        _set_manifest(root, _manifest_text(root) + _OTHER)
+        _commit_all(root, "other")
+    text = _manifest_text(root)
+    if change == "add":
+        edited = _set_manifest(root, text + _OTHER)
+    elif change == "remove":
+        edited = _set_manifest(root, text.replace(_OTHER, ""))
+    else:  # toy_other moves in front of toy_wheel
+        body = text.replace(_OTHER, "")
+        first = body.index("\n[[artifacts]]")
+        edited = _set_manifest(root, body[:first] + _OTHER.rstrip("\n") + "\n" + body[first:])
+    _reverify(root, staging)
+    _refused_and_kept(tmp_path, root, staging, edited, r"the artifact list changed")
+
+
+@pytest.mark.parametrize(
+    ("removed", "old"),
+    [("corpus", 'corpus = "digest"\n'), ("expect key 'metadata.json:b'", '\n"metadata.json:b" = "2"')],
+)
+def test_expectation_edit_refuses_a_removal(tmp_path, removed, old):
+    root, staging = _toy_repo(tmp_path)
+    _edit_entry(
+        root,
+        "toy_wheel",
+        'refit_event = "e1"',
+        'refit_event = "e1"\ncorpus = "digest"\n[artifacts.expect]\n"metadata.json:a" = "1"\n"metadata.json:b" = "2"',
+    )
+    _commit_all(root, "expectations at HEAD")
+    edited = _edit_entry(root, "toy_wheel", old, "")
+    _reverify(root, staging)
+    _refused_and_kept(tmp_path, root, staging, edited, rf"toy_wheel removes {re.escape(removed)}")
+
+
+def test_expectation_edit_refuses_an_undeclared_dataset(tmp_path):
+    root, staging = _toy_repo(tmp_path)
+    edited = _edit_entry(root, "toy_wheel", 'certification = "owner"', 'certification = "owner"\ndataset = "nowhere"')
+    _reverify(root, staging)
+    _refused_and_kept(tmp_path, root, staging, edited, r"toy_wheel\.dataset 'nowhere' is not a declared")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "old", "new"),
+    [
+        ("shipped_arm", "full", 'certification = "owner"', 'certification = "owner"\nshipped_arm = "full"'),
+        ("corpus", "none", 'certification = "owner"', 'certification = "owner"\ncorpus = "none"'),
+        ("certification", "legacy", 'certification = "owner"', 'certification = "legacy"'),
+    ],
+)
+def test_expectation_edit_refuses_a_value_outside_its_domain(tmp_path, field, value, old, new):
+    root, staging = _toy_repo(tmp_path)
+    edited = _edit_entry(root, "toy_wheel", old, new)
+    _reverify(root, staging)
+    _refused_and_kept(tmp_path, root, staging, edited, rf"toy_wheel\.{field} = '{value}' is not one of")
+
+
+@pytest.mark.parametrize("other", ["tracked", "untracked"])
+def test_expectation_edit_refuses_a_second_change(tmp_path, other):
+    """A PRESERVATION test: a root with more than the manifest changed is answered by today's checks, with
+    today's message. Green before and after the change; mutant (j) (a second path accepted) turns it red."""
+    root, staging = _toy_repo(tmp_path)
+    edited = _edit_entry(root, "toy_wheel", 'certification = "owner"', 'certification = "public"')
+    if other == "tracked":
+        (root / "docs" / "artifacts" / "observed.json").write_text('{"mine": 1}\n', encoding="utf-8")
+    else:
+        (root / "notes.txt").write_text("my work\n", encoding="utf-8")
+    _reverify(root, staging)
+    with pytest.raises(A.AdoptionRefusedError, match="clean tree"):
+        _adopt_edit(tmp_path, root, staging)
+    assert (root / _MANIFEST_REL).read_bytes() == edited
+    assert len(_porcelain(root).splitlines()) == 2
+
+
+def test_expectation_edit_refuses_a_manifest_changed_after_verify(tmp_path):
+    root, staging = _toy_repo(tmp_path)
+    edited = _edit_entry(root, "toy_wheel", 'certification = "owner"', 'certification = "public"')
+    _refused_and_kept(tmp_path, root, staging, edited, r"the manifest changed after verify")
+
+
+def test_expectation_edit_refuses_a_verify_report_without_a_digest(tmp_path):
+    root, staging = _toy_repo(tmp_path)
+    rep = json.loads((staging / "verify.json").read_text(encoding="utf-8"))
+    del rep["manifest_sha256"]
+    (staging / "verify.json").write_text(json.dumps(rep), encoding="utf-8")
+    with pytest.raises(A.AdoptionRefusedError, match=r"no manifest_sha256"):
+        A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=False)  # type: ignore[arg-type]
+    assert _porcelain(root) == ""
+
+
+def test_expectation_edit_refuses_a_clean_root_verified_on_another_manifest(tmp_path):
+    """Rule 11 on the CLEAN path (review A C1-IMPL-01): verify ran on another manifest, the root is clean."""
+    root, staging = _toy_repo(tmp_path)
+    rep = json.loads((staging / "verify.json").read_text(encoding="utf-8"))
+    other = _manifest_text(root).replace('certification = "owner"', 'certification = "public"', 1)
+    rep["manifest_sha256"] = A._manifest_sha256(other)
+    (staging / "verify.json").write_text(json.dumps(rep), encoding="utf-8")
+    with pytest.raises(A.AdoptionRefusedError, match=r"the manifest changed after verify"):
+        A.adopt(_Campaign(), C, staging=staging, git=_clean, root=root, gate=False)  # type: ignore[arg-type]
+    assert _porcelain(root) == ""
+
+
+def test_expectation_edit_refuses_a_declared_dataset_without_a_record(tmp_path, monkeypatch):
+    """Rule 10's "locked" half (reviews A C1-IMPL-02, B XS187-C1-01): declared is not enough. ``unrecorded`` is
+    declared (beside the committed datasets) and has no lock entry."""
+    real = A._declared
+    monkeypatch.setattr(A, "_declared", lambda: {**real(), "unrecorded": object()})
+    root, staging = _toy_repo(tmp_path)
+    edited = _edit_entry(
+        root, "toy_wheel", 'certification = "owner"', 'certification = "owner"\ndataset = "unrecorded"'
+    )
+    _reverify(root, staging)
+    _refused_and_kept(
+        tmp_path, root, staging, edited, r"toy_wheel\.dataset 'unrecorded' is not a declared, locked dataset"
+    )
+
+
+def test_expectation_edit_checks_every_present_value_not_only_the_changed_ones(tmp_path):
+    """Rule 10 reads every present value of a campaign entry (reviews A C1-IMPL-02, B XS187-C1-02): a value outside
+    its domain at HEAD is refused even when the edit leaves it unchanged."""
+    root, staging = _toy_repo(tmp_path)
+    _edit_entry(root, "toy_wheel", 'certification = "owner"', 'certification = "legacy"')
+    _commit_all(root, "an out-of-domain value at HEAD")
+    edited = _edit_entry(
+        root, "toy_wheel", 'certification = "legacy"', 'certification = "legacy"\nshipped_arm = "public"'
+    )
+    _reverify(root, staging)
+    _refused_and_kept(tmp_path, root, staging, edited, r"toy_wheel\.certification = 'legacy' is not one of")
+
+
+def test_expectation_edit_refuses_a_deleted_manifest(tmp_path):
+    """Review A C1-IMPL-03: a deleted manifest is a refusal, not a FileNotFoundError."""
+    root, staging = _toy_repo(tmp_path)
+    (root / _MANIFEST_REL).unlink()
+    with pytest.raises(A.AdoptionRefusedError, match=r"manifest edit: the manifest is deleted"):
+        _adopt_edit(tmp_path, root, staging)
+    assert _porcelain(root).splitlines() == [f" D {_MANIFEST_REL}"]
+
+
+def test_expectation_edit_refuses_a_foreign_head(tmp_path):
+    root, staging = _toy_repo(tmp_path)
+    edited = _edit_entry(root, "toy_wheel", 'certification = "owner"', 'certification = "public"')
+    _reverify(root, staging)
+    with pytest.raises(A.AdoptionRefusedError, match=r"is not the campaign commit"):
+        _adopt_edit(tmp_path, root, staging, git=lambda: {**_dirty(), "commit": "d" * 40})
+    assert (root / _MANIFEST_REL).read_bytes() == edited
+
+
+def test_expectation_edit_rollback_keeps_the_edit(tmp_path, monkeypatch):
+    root, staging = _toy_repo(tmp_path)
+    edited = _edit_entry(root, "toy_wheel", 'certification = "owner"', 'certification = "public"')
+    _reverify(root, staging)
+    monkeypatch.setattr(A, "_bundle", _failing_bundle(RuntimeError("boom")))
+    with pytest.raises(RuntimeError, match="boom"):
+        _adopt_edit(tmp_path, root, staging)
+    assert (root / _MANIFEST_REL).read_bytes() == edited
+    assert _porcelain(root).splitlines() == [f" M {_MANIFEST_REL}"]
+    w = root / "silly_kicks" / "_toy_weights" / "default"
+    assert (w / "model.npz").read_bytes() == b"old" and not (w / "new.bin").exists()
+
+
+def test_expectation_edit_second_adopt_refuses_at_the_status(tmp_path):
+    root, staging = _toy_repo(tmp_path)
+    _edit_entry(root, "toy_wheel", 'certification = "owner"', 'certification = "public"')
+    _reverify(root, staging)
+    _adopt_edit(tmp_path, root, staging)
+    status = _porcelain(root)
+    with pytest.raises(A.AdoptionRefusedError, match=r"root tree is not clean.*_toy_weights/default"):
+        _adopt_edit(tmp_path, root, staging, git=_clean)
+    assert _porcelain(root) == status
+
+
+def test_expectation_edit_verify_records_the_manifest_digest(tmp_path):
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    A.verify(_toy_campaign(tmp_path), C, staging=staging)
+    rep = json.loads((staging / "verify.json").read_text(encoding="utf-8"))
+    assert rep["manifest_sha256"] == A._manifest_sha256(M.MANIFEST.read_text(encoding="utf-8"))
+
+
+def test_expectation_edit_digest_ignores_training_commit_and_comments():
+    """Rule 11: the tool-written field and the layout do not move the digest; any value does."""
+    text = _TOY_MANIFEST.format(commit="a" * 40)
+    base = A._manifest_sha256(text)
+    assert A._manifest_sha256(_TOY_MANIFEST.format(commit=C)) == base
+    assert A._manifest_sha256("# another comment\n" + text.replace("\n", "\r\n")) == base
+    assert A._manifest_sha256(text.replace('certification = "owner"', 'certification = "public"', 1)) != base
 
 
 def test_every_registry_trainer_has_a_loader():

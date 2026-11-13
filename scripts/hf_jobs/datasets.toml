@@ -36,6 +36,15 @@ access = "mount"
 read_concurrency = 4  # the tc3 measurement (same mount type)
 description = "115-match idsse + SkillCorner corpus: the Hub sc_extended xShot and xCross artifacts"
 
+[datasets.xshot187]
+repo = "silly-kicks/hf-refit-xshot187"
+kind = "flat_tc3"
+raw = "restricted"
+provenance = "extended"
+access = "mount"
+read_concurrency = 4  # the tc3 measurement (same mount type)
+description = "187-match idsse + SkillCorner + Gradient Sports corpus (ADR-132): both xShot/xCross arms"
+
 [datasets.xcross_probe]
 repo = "silly-kicks/hf-refit-xcross-probe"
 kind = "pergame"
