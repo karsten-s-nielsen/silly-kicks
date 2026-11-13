@@ -143,7 +143,9 @@ the int / str id mix a real multi-provider corpus has. A reduce that concatenate
 On HF the campaign driver (`scripts/hf_jobs/driver.py`, ADR-128 amendments 2026-11-02/03) sizes without a
 profile: a stage is split into `ceil(units / units_per_job)` jobs capped at `max_shards` (few big jobs, not one
 per unit), and each job is one full `cpu-upgrade` box (8 unit workers; an `inner_parallel` stage runs one unit
-at a time with `min(8, inner_width)` inner workers). A memory-heavy stage with a `peak_rss_by_stage` hint is
+at a time with `min(8, inner_width)` inner workers). A stage whose jobs still run gets jobs for the units that
+no running job holds, up to `max_shards` jobs of the stage at once (ADR-128 amendment 2026-11-11). A memory-heavy
+stage with a `peak_rss_by_stage` hint is
 sized down and capped (`--cap-bytes` + the auto-detected `rss` watchdog; `RLIMIT_AS` bounds address space and
 failed every unit there); an over-cap unit is deferred and re-run solo on the whole box (`--escalate`, W=1).
 CPUs and RAM come from the cgroup (`available_cpus`, `available_ram_bytes`), never the container's host view.

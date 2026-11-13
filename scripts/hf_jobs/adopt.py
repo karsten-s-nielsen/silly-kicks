@@ -26,10 +26,10 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Any
+from typing import Any, TypeVar
 
 from scripts.hf_jobs import manifest as mf
-from scripts.hf_jobs.campaign import REPO_ROOT, Campaign, Instance, instances, read_plan, store_uri
+from scripts.hf_jobs.campaign import REPO_ROOT, Campaign, Instance, instances, rate_limited, read_plan, store_uri
 
 HFJOBS_PYTHON = REPO_ROOT / ".venv-hfjobs" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 VERDICTS = pathlib.Path("docs/research/trained_artifact_integrity/verdicts")
@@ -140,7 +140,8 @@ def _counters(
 ) -> dict:
     """An ItemStage's per-unit counters merged in sorted key order (`_stages.item_counters`'s rule). HFU spec
     14.9: ONE listing of the generation (``store.names``); only the ``<key>.counters.json`` files present are read,
-    over ``workers`` threads; the merge stays in sorted key order, so the totals are the serial ones.
+    in batches of ``_READ_BATCH`` (one `_read_many` call each; HFU launch top-up spec §22.2a) over ``workers``
+    threads; the merge stays in sorted key order, so the totals are the serial ones.
     ``n_counters_unrecorded`` counts the units with neither a counters nor an excluded file in the listing.
     A long read prints ``[retrieve] <label> counters <k>/<units>`` at most every ``progress_s``."""
     import concurrent.futures
@@ -152,15 +153,18 @@ def _counters(
     names = store.names(gen)
     present = [k for k in keys if f"{k}.counters.json" in names]
     missing = sum(1 for k in keys if f"{k}.counters.json" not in names and f"{k}.excluded.json" not in names)
-    raw: dict[str, bytes | None] = {}
+    # HFU launch top-up spec §22.2a (F3): the files in batches of `_READ_BATCH`, one `_read_many` call each.
+    rels = [f"{gen}/{k}.counters.json" for k in present]
+    by_rel: dict[str, bytes | None] = {}
     last = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = {pool.submit(store.read_bytes, f"{gen}/{k}.counters.json"): k for k in present}
+        futures = [pool.submit(_read_many, store, rels[i : i + _READ_BATCH]) for i in range(0, len(rels), _READ_BATCH)]
         for fut in concurrent.futures.as_completed(futures):
-            raw[futures[fut]] = fut.result()
+            by_rel.update(fut.result())
             if time.monotonic() - last >= progress_s:
-                print(f"[retrieve] {label} counters {len(raw)}/{len(keys)}", file=sys.stderr, flush=True)
+                print(f"[retrieve] {label} counters {len(by_rel)}/{len(keys)}", file=sys.stderr, flush=True)
                 last = time.monotonic()
+    raw = {k: by_rel[f"{gen}/{k}.counters.json"] for k in present}
     totals: dict = {}
     for k in present:  # sorted key order: the serial merge
         blob = raw[k]
@@ -171,20 +175,70 @@ def _counters(
     return {"totals": totals, "n_counters_unrecorded": missing, "n_read": len(present)}
 
 
-class _BoundedReads:
-    """A store whose ``read_bytes`` and ``names`` hold one shared semaphore: the read bound of `retrieve`. Every
-    other attribute is the wrapped store's."""
+#: The files of one `read_many` batch: one `download_bucket_files` call (HFU launch top-up spec §22.2a).
+_READ_BATCH = 200
 
-    def __init__(self, store: Any, bound: Any) -> None:
-        self._store, self._bound = store, bound
+
+def _read_many(store: Any, rels: Sequence[str]) -> dict[str, bytes | None]:
+    """``{rel: bytes or None}``: the store's ``read_many`` (one call for the batch) when it has one, else one
+    ``read_bytes`` for each rel. The one place that chooses: `_counters` takes any store with ``read_bytes`` and
+    ``names`` (a `LocalStore`, the test fakes)."""
+    many = getattr(store, "read_many", None)
+    if many is not None:
+        return many(rels)
+    return {rel: store.read_bytes(rel) for rel in rels}
+
+
+#: The waits (s) of `retrieve` before each retry of a rate-limited call: 450 s in all, more than the 5-min window of
+#: the account limit (2500 requests). HFU launch top-up spec §22.2: run 9b's retrieve crashed twice on a 429 from
+#: the xet token that `huggingface_hub` does not retry.
+_READ_BACKOFF_S: tuple[float, ...] = (30.0, 60.0, 120.0, 240.0)
+
+
+_T = TypeVar("_T")
+
+
+def _rate_limited_call(what: str, fn: Callable[[], _T], *, sleep: Callable[[float], object], bound: Any = None) -> _T:
+    """``fn()`` under ``bound`` (when given). A rate-limited error (`campaign.rate_limited`) is retried after each
+    ``_READ_BACKOFF_S`` wait, with one ``[retrieve] rate-limited`` line; the wait holds no slot of ``bound``. The
+    last error, and any other error, raises."""
+    n = len(_READ_BACKOFF_S)
+    for i, wait in enumerate((*_READ_BACKOFF_S, None), start=1):
+        try:
+            if bound is None:
+                return fn()
+            with bound:
+                return fn()
+        except Exception as exc:
+            if wait is None or not rate_limited(exc):
+                raise
+            print(f"[retrieve] rate-limited ({what}); retry {i}/{n} in {wait:g} s", file=sys.stderr, flush=True)
+            sleep(wait)
+    raise AssertionError("unreachable: the last wait is None")
+
+
+class _BoundedReads:
+    """A store whose ``read_bytes``, ``names`` and ``read_many`` (one call per batch) hold one shared semaphore (the
+    read bound of `retrieve`) and wait out a rate limit (spec §22.2). Every other attribute is the wrapped store's."""
+
+    def __init__(self, store: Any, bound: Any, *, sleep: Callable[[float], object] = time.sleep) -> None:
+        self._store, self._bound, self._sleep = store, bound, sleep
 
     def read_bytes(self, rel: str) -> bytes | None:
-        with self._bound:
-            return self._store.read_bytes(rel)
+        return _rate_limited_call(
+            f"read {rel}", lambda: self._store.read_bytes(rel), sleep=self._sleep, bound=self._bound
+        )
 
     def names(self, rel_dir: str) -> set[str]:
-        with self._bound:
-            return self._store.names(rel_dir)
+        return _rate_limited_call(
+            f"names {rel_dir}", lambda: self._store.names(rel_dir), sleep=self._sleep, bound=self._bound
+        )
+
+    def read_many(self, rels: Sequence[str]) -> dict[str, bytes | None]:
+        """One slot and one retry for the whole batch (spec §22.2a), around `_read_many` of the wrapped store."""
+        return _rate_limited_call(
+            f"read_many {len(rels)} files", lambda: _read_many(self._store, rels), sleep=self._sleep, bound=self._bound
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._store, name)
@@ -201,6 +255,7 @@ def retrieve(
     store_fn: Callable[[str], Any] | None = None,
     workers: int = 4,
     read_workers: int = 8,
+    sleep: Callable[[float], object] = time.sleep,
 ) -> dict[str, pathlib.Path]:
     """Copy every reduced instance output into ``<staging>/<run_key>/<variant>/`` (never into the repo),
     with ``<instance>.record.json`` beside it: the job's recorded token inputs per stage and the extract
@@ -208,7 +263,9 @@ def retrieve(
     ``workers`` instances at once (HFU spec 17.5): each ``[retrieve]`` line prints when its instance ends; the
     result is in instance order. At most ``read_workers`` store reads or listings run at once over ALL instances
     (HFU fit-units spec C1): 4 instances x 8 counter threads gave 32 concurrent reads and HTTP 429s. An
-    instance's ``--plan`` call reads the store too (one request at a time), so it holds one slot of the bound."""
+    instance's ``--plan`` call reads the store too (one request at a time), so it holds one slot of the bound.
+    A rate-limited read, listing or plan call waits and retries (``_READ_BACKOFF_S``; HFU launch top-up spec §22.2);
+    ``sleep`` is a test seam."""
     import concurrent.futures
     import threading
 
@@ -219,11 +276,11 @@ def retrieve(
     bound = threading.BoundedSemaphore(max(1, read_workers))
 
     def open_store(uri: str) -> Any:
-        return _BoundedReads(make_store(uri), bound)
+        return _BoundedReads(make_store(uri), bound, sleep=sleep)
 
     def bounded_plan(inst: Instance, **kwargs: Any) -> dict:
-        with bound:  # a `--plan` subprocess reads the store one request at a time: it holds one slot
-            return plan_fn(inst, **kwargs)
+        # a `--plan` subprocess reads the store one request at a time: it holds one slot
+        return _rate_limited_call(f"plan {inst.id}", lambda: plan_fn(inst, **kwargs), sleep=sleep, bound=bound)
 
     insts = instances(c, commit, replica=replica)
 
@@ -1282,12 +1339,14 @@ def post_verify(
 # ---- compare (HFU fit-units spec 6 step 3) -----------------------------------------------------------
 
 
-def _staging_run_key(folder: pathlib.Path, campaign: str, job: str, tier: str) -> pathlib.Path | None:
+def _staging_run_key(folder: pathlib.Path, campaign: str | None, job: str, tier: str) -> pathlib.Path | None:
     """The one ``<campaign>-<commit7>-<job>-<tier>`` folder of ``folder``; ``None`` when there is none. Two
-    matches are ambiguous and refuse."""
+    matches are ambiguous and refuse. ``campaign=None`` matches any campaign name (a baseline of `compare`: an
+    artifact is named by its job, tier and variant; HFU launch top-up spec §14.2)."""
     import re
 
-    pattern = re.compile(rf"^{re.escape(campaign)}-[0-9a-f]{{7}}-{re.escape(job)}-{re.escape(tier)}$")
+    name = re.escape(campaign) if campaign is not None else "[A-Za-z0-9_]+"
+    pattern = re.compile(rf"^{name}-[0-9a-f]{{7}}-{re.escape(job)}-{re.escape(tier)}$")
     hits = sorted(p for p in folder.iterdir() if p.is_dir() and pattern.fullmatch(p.name))
     if len(hits) > 1:
         raise AdoptionRefusedError(f"{folder}: {len(hits)} run keys for {job}-{tier}: {[p.name for p in hits]}")
@@ -1309,8 +1368,12 @@ def _commit_file(job: str, tier: str, variant: str, man: mf.Manifest) -> str | N
     return next(iter(files), None)
 
 
-def compare_staging(c: Any, *, staging: pathlib.Path, baseline: pathlib.Path) -> dict[str, dict]:
-    """Compare the artifacts of two launches, instance by instance (local files only).
+def compare_staging(c: Any, *, staging: pathlib.Path, baselines: Sequence[pathlib.Path]) -> dict[str, dict]:
+    """Compare the artifacts of a launch with what shipped, instance by instance (local files only).
+
+    What shipped can come from several launches (HFU launch top-up spec §14.2: launch 7 for 12 artifacts, a refit
+    run for 8). The baseline of an instance is the LAST of ``baselines`` that holds a run key of its job and tier,
+    under any campaign name, with a folder of its variant; the row names that run key (``baseline_run_key``).
 
     The NEW side is always its RETRIEVED files (``<staging>/<run_key>/<variant>/``): a job must write the shipped
     form itself. The BASELINE side is its adopted copy (:func:`_final_dir`, the files that `adopt` finalized and
@@ -1327,14 +1390,15 @@ def compare_staging(c: Any, *, staging: pathlib.Path, baseline: pathlib.Path) ->
     from scripts.hf_jobs.identity import cross_commit_differences
     from scripts.hf_jobs.registry import DriverSpec, spec_for
 
-    staging, baseline = pathlib.Path(staging), pathlib.Path(baseline)
+    staging = pathlib.Path(staging)
+    folders = [pathlib.Path(b) for b in baselines]
     man = mf.load()
     verify_path = staging / "verify.json"
     verify = _read_json(verify_path) if verify_path.is_file() else None
     out: dict[str, dict] = {}
     for j in c.jobs:
         new_rk = _staging_run_key(staging, c.name, j.job, j.tier)
-        old_rk = _staging_run_key(baseline, c.name, j.job, j.tier)
+        old_rks = [(b, _staging_run_key(b, None, j.job, j.tier)) for b in folders]
         for v in j.variants:
             key = f"{j.job}-{j.tier}/{v}"
             if isinstance(spec_for(j.job), DriverSpec):
@@ -1344,15 +1408,21 @@ def compare_staging(c: Any, *, staging: pathlib.Path, baseline: pathlib.Path) ->
                 out[key] = {"census_ok": ok, "certification": (row or {}).get("certification")}
                 continue
             new_dir = new_rk / v if new_rk is not None else None
-            old_dir = old_rk / v if old_rk is not None else None
-            if new_dir is None or old_dir is None or not new_dir.is_dir() or not old_dir.is_dir():
+            holders = [(b, rk / v) for b, rk in old_rks if rk is not None and (rk / v).is_dir()]
+            if new_dir is None or not new_dir.is_dir() or not holders:
                 out[key] = {"identical": False, "differences": ["present in only one staging folder"]}
                 continue
+            baseline, old_dir = holders[-1]  # the last folder that holds the instance
             adopted = _final_dir(baseline, old_dir.relative_to(baseline).as_posix())
             form = "adopted" if adopted.is_dir() else "retrieved"
             base_dir = adopted if form == "adopted" else old_dir
             diffs = cross_commit_differences(new_dir, base_dir, commit_file=_commit_file(j.job, j.tier, v, man))
-            out[key] = {"identical": not diffs, "differences": diffs, "baseline": form}
+            out[key] = {
+                "identical": not diffs,
+                "differences": diffs,
+                "baseline": form,
+                "baseline_run_key": old_dir.parent.name,
+            }
     return out
 
 

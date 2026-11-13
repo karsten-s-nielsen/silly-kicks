@@ -5,6 +5,44 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.142.1] — 2026-11-12 — HF campaigns: top-up launches, one decision per shared generation, a retrieve that waits out a rate limit (PR-S207)
+
+The wheel does not change: every entry is scripts only (the HF campaign tooling). Run 9b (`cycle1.toml` whole)
+reproduced the 12 trainer artifacts outside xShot/xCross (`compare`: `IDENTICAL`).
+
+### Changed (scripts only)
+
+- **The HF campaign driver tops up a stage while its jobs run** (HFU launch top-up spec, ADR-128 amendment
+  2026-11-11). A stage with jobs in flight gets jobs for the units that no running job holds, up to `max_shards`
+  jobs of one stage at once; before, the other units waited for the whole wave. At launch 8 the wave rule cost
+  about 30 min on the long pole (xsuccess `extract`: 7 waves, 36.7 min for about 6 min of work).
+- **Every keyed HF job has a tag**: the first 12 hex characters of the sha256 of its keys file, in the keys file
+  name (`<index>of<count>-<tag>.json`), the job name, a `tag` label and the in-job label (`SILLY_KICKS_JOB_LABEL`).
+  The `[driver] launch` and ended-job lines name it.
+- `campaign <file> compare` takes `--baseline` more than once: the baseline of an instance is the last folder
+  that holds a run key of its job and tier, under any campaign name; each line names the run key it read.
+- The unit ledger record holds `cpu_user_s`, `cpu_sys_s` and `cpu_scope` (`process`).
+- **No HF launch from a tree that the jobs do not run** (ADR-128 amendment 2026-11-11, item 56): `preflight`
+  check 1 fails on a tracked edit and names the paths, and the driver stops before any launch with
+  `FATAL code_identity` when a `--plan` reports another code identity than the commit.
+- **The driver decides a shared generation once in a step** (ADR-128 amendment 2026-11-11, item 57): instances
+  of one run key whose stage has one generation (the ghost_gk variants at `validate`; `default` and `full` at
+  `extract` to `importance`) no longer each launch the same units. Run 9b ran one `validate` unit in 5 concurrent
+  jobs; the output did not change.
+- `campaign <file> retrieve` waits out an HF rate limit: a rate-limited read, listing or `--plan` call is retried
+  after 30, 60, 120 and 240 s, with a `[retrieve] rate-limited` line. Run 9b's retrieve crashed twice on a 429 that
+  `huggingface_hub` does not retry.
+- `campaign <file> retrieve` reads the extract counters files in batches of 200, one `download_bucket_files` call
+  each: 13 calls for run 9b's 1,436 files.
+
+### Fixed (scripts only)
+
+- In one step, an escalation launch and a run launch of one stage could get the same keys file and the same job
+  name: the second keys file write replaced the first, so the escalation job ran the other job's units. The tag
+  makes them differ. No launch had shown it.
+- `driver._BOX_RAM` is the measured cgroup limit of a `cpu-upgrade` job, 32,000,000,000 bytes; the escalation
+  cap was above it.
+
 ## [4.142.0] — 2026-11-12 — nested-CV forecast-skill acceptance gates for xShot/xCross (ADR-131) (PR-S206)
 
 > **Why a minor release:** the wheel changes (`silly_kicks/tracking/_artifact_integrity.py` gains the forecast-skill

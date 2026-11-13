@@ -719,6 +719,48 @@ def test_counters_read_count(tmp_path):
     assert sorted(store.reads) == [f"g/k{i:02d}.counters.json" for i in range(7)]
 
 
+# ---- F3: the counters in batches (HFU launch top-up spec §22.2a) ---------------------------------------------
+
+
+class _BatchStore(_CountingStore):
+    """A `_CountingStore` with `read_many`: it records every batch it is given (threads: order not fixed)."""
+
+    def __init__(self, root: Path):
+        import threading
+
+        super().__init__(root)
+        self.batches: list[tuple[str, ...]] = []
+        self.lock = threading.Lock()
+
+    def read_many(self, rels):
+        with self.lock:
+            self.batches.append(tuple(rels))
+        return {r: self.inner.read_bytes(r) for r in rels}
+
+
+def test_counters_reads_in_batches_of_200(tmp_path):
+    keys = [f"k{i:03d}" for i in range(450)]
+    store = _BatchStore(tmp_path / "s")
+    for i, k in enumerate(keys):
+        store.write_bytes(f"g/{k}.counters.json", json.dumps({"n_events": i + 1}).encode())
+    stage = {"generation": "g", "units": keys}
+    got = A._counters(store, stage, workers=4)
+    rels = [f"g/{k}.counters.json" for k in keys]
+    assert sorted(store.batches) == sorted([tuple(rels[:200]), tuple(rels[200:400]), tuple(rels[400:])])
+    assert store.reads == []  # no read of one file
+    assert got["n_read"] == 450 and got["totals"]["n_events"] == sum(range(1, 451))
+    one_by_one = A._counters(_CountingStore(tmp_path / "s"), stage)  # no `read_many`: one read for each file
+    assert one_by_one["totals"] == got["totals"]
+
+
+def test_read_many_without_a_batch_read_uses_read_bytes(tmp_path):
+    store, _stage = _counter_fixture(tmp_path)  # `_CountingStore` has no `read_many`
+    rels = ["g/k00.counters.json", "g/k08.counters.json"]  # k08 is excluded: it has no counters file
+    got = A._read_many(store, rels)
+    assert store.reads == rels
+    assert got == {"g/k00.counters.json": store.inner.read_bytes("g/k00.counters.json"), "g/k08.counters.json": None}
+
+
 def test_retrieve_lines(tmp_path, capsys):
     import pandas as pd
 
@@ -927,20 +969,22 @@ def _compare_campaign():
     )
 
 
-def _compare_staging_dir(root: Path, commit: str, *, weights: bytes = b"W", census_ok: bool = True) -> Path:
+def _compare_staging_dir(
+    root: Path, commit: str, *, weights: bytes = b"W", census_ok: bool = True, campaign: str = "cycle1"
+) -> Path:
     """A toy retrieved staging folder: an xsuccess artifact, a match_outcome artifact (the commit inside
     model.json) and a verify.json with the census row."""
     c7 = commit[:7]
-    x = root / f"cycle1-{c7}-xsuccess-public" / "default"
+    x = root / f"{campaign}-{c7}-xsuccess-public" / "default"
     x.mkdir(parents=True)
     (x / "model.json").write_bytes(weights)
     (x / "metadata.json").write_text(json.dumps({"training_commit": commit, "feature_names": ["a"]}))
     (x / "SHA256SUMS").write_text(f"{hashlib.sha256(weights).hexdigest()}  model.json\n")
-    m = root / f"cycle1-{c7}-match_outcome_dependence-public" / "default"
+    m = root / f"{campaign}-{c7}-match_outcome_dependence-public" / "default"
     m.mkdir(parents=True)
     (m / "model.json").write_text(json.dumps({"rho": -0.1, "training_commit": commit}))
     (m / "SHA256SUMS").write_text(f"{hashlib.sha256((m / 'model.json').read_bytes()).hexdigest()}  model.json\n")
-    census = f"cycle1-{c7}-build_territory_ranking_census-public/default"
+    census = f"{campaign}-{c7}-build_territory_ranking_census-public/default"
     (root / census).mkdir(parents=True)
     (root / "verify.json").write_text(
         json.dumps(
@@ -954,10 +998,13 @@ def test_compare_staging_reports_each_instance(tmp_path):
     """Identical under the rule: provenance differs, and match_outcome holds its commit inside model.json."""
     new = _compare_staging_dir(tmp_path / "new", _CB)
     old = _compare_staging_dir(tmp_path / "old", _CA)
-    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+    got = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
     same = {"identical": True, "differences": [], "baseline": "retrieved"}
-    assert got["xsuccess-public/default"] == same
-    assert got["match_outcome_dependence-public/default"] == same
+    assert got["xsuccess-public/default"] == {**same, "baseline_run_key": f"cycle1-{_CA[:7]}-xsuccess-public"}
+    assert got["match_outcome_dependence-public/default"] == {
+        **same,
+        "baseline_run_key": f"cycle1-{_CA[:7]}-match_outcome_dependence-public",
+    }
     assert got["build_territory_ranking_census-public/default"]["census_ok"] is True
     assert list(got) == [
         "xsuccess-public/default",
@@ -969,7 +1016,7 @@ def test_compare_staging_reports_each_instance(tmp_path):
 def test_compare_staging_reports_a_payload_difference(tmp_path):
     new = _compare_staging_dir(tmp_path / "new", _CB, weights=b"X")
     old = _compare_staging_dir(tmp_path / "old", _CA)
-    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])["xsuccess-public/default"]
     assert row["identical"] is False and any(d.startswith("model.json") for d in row["differences"])
 
 
@@ -994,8 +1041,13 @@ def test_compare_staging_reads_the_adopted_copy_of_the_baseline(tmp_path):
     raw = old / f"cycle1-{_CA[:7]}-xsuccess-public" / "default" / "metadata.json"
     raw.write_text(json.dumps({"training_commit": _CA, "feature_names": ["staged-a"]}))
     _adopted_copy(old, _CA, feature_names=["a"])
-    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
-    assert got["xsuccess-public/default"] == {"identical": True, "differences": [], "baseline": "adopted"}
+    got = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
+    assert got["xsuccess-public/default"] == {
+        "identical": True,
+        "differences": [],
+        "baseline": "adopted",
+        "baseline_run_key": f"cycle1-{_CA[:7]}-xsuccess-public",
+    }
     assert got["match_outcome_dependence-public/default"]["baseline"] == "retrieved"
 
 
@@ -1005,7 +1057,7 @@ def test_compare_staging_takes_the_adopted_copy_over_equal_retrieved_files(tmp_p
     new = _compare_staging_dir(tmp_path / "new", _CB)
     old = _compare_staging_dir(tmp_path / "old", _CA)
     _adopted_copy(old, _CA, feature_names=["shipped"])
-    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])["xsuccess-public/default"]
     assert row["identical"] is False and row["baseline"] == "adopted"
     assert any(d.startswith("metadata.json") for d in row["differences"])
 
@@ -1018,7 +1070,7 @@ def test_compare_staging_never_reads_the_adopted_copy_of_the_new_side(tmp_path):
     raw = new / f"cycle1-{_CB[:7]}-xsuccess-public" / "default" / "metadata.json"
     raw.write_text(json.dumps({"training_commit": _CB, "feature_names": ["staged-a"]}))
     _adopted_copy(new, _CB, feature_names=["a"])
-    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])["xsuccess-public/default"]
     assert row["identical"] is False and row["baseline"] == "retrieved"
 
 
@@ -1028,8 +1080,13 @@ def test_finalize_writes_the_folder_that_compare_reads(tmp_path):
     inst = f"cycle1-{_CA[:7]}-xsuccess-public/default"
     assert A._finalize(old, inst) == A._final_dir(old, inst) == old / "_final" / inst
     new = _compare_staging_dir(tmp_path / "new", _CB)
-    row = A.compare_staging(_compare_campaign(), staging=new, baseline=old)["xsuccess-public/default"]
-    assert row == {"identical": True, "differences": [], "baseline": "adopted"}
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])["xsuccess-public/default"]
+    assert row == {
+        "identical": True,
+        "differences": [],
+        "baseline": "adopted",
+        "baseline_run_key": f"cycle1-{_CA[:7]}-xsuccess-public",
+    }
 
 
 def test_compare_staging_reports_an_instance_in_only_one_folder(tmp_path):
@@ -1038,7 +1095,7 @@ def test_compare_staging_reports_an_instance_in_only_one_folder(tmp_path):
     new = _compare_staging_dir(tmp_path / "new", _CB)
     old = _compare_staging_dir(tmp_path / "old", _CA)
     shutil.rmtree(old / f"cycle1-{_CA[:7]}-xsuccess-public")
-    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+    got = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
     assert got["xsuccess-public/default"] == {
         "identical": False,
         "differences": ["present in only one staging folder"],
@@ -1050,7 +1107,7 @@ def test_compare_staging_refuses_two_run_keys_on_one_side(tmp_path):
     old = _compare_staging_dir(tmp_path / "old", _CA)
     (old / f"cycle1-{'c' * 7}-xsuccess-public" / "default").mkdir(parents=True)
     with pytest.raises(A.AdoptionRefusedError, match="xsuccess-public"):
-        A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+        A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
 
 
 @pytest.mark.parametrize("fault", ["no_verify_json", "another_commit", "not_ok"])
@@ -1062,8 +1119,73 @@ def test_compare_staging_census_is_not_ok(tmp_path, fault):
     elif fault == "another_commit":
         doc = json.loads((new / "verify.json").read_text())
         (new / "verify.json").write_text(json.dumps({**doc, "commit": "d" * 40}))
-    got = A.compare_staging(_compare_campaign(), staging=new, baseline=old)
+    got = A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
     assert got["build_territory_ranking_census-public/default"]["census_ok"] is False
+
+
+def test_compare_staging_finds_a_baseline_of_another_campaign(tmp_path):
+    """D2 (HFU launch top-up spec §14.2): an artifact is named by its job, tier and variant; the campaign that
+    trained it does not matter on the baseline side."""
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    refit = _compare_staging_dir(tmp_path / "refit", _CA, campaign="tf46_refit")
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[refit])["xsuccess-public/default"]
+    assert row == {
+        "identical": True,
+        "differences": [],
+        "baseline": "retrieved",
+        "baseline_run_key": f"tf46_refit-{_CA[:7]}-xsuccess-public",
+    }
+
+
+def test_compare_staging_reads_an_instance_from_the_last_baseline_that_holds_it(tmp_path):
+    """D3: two baselines both hold xsuccess (the second wins); only the first holds match_outcome."""
+    import shutil
+
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    first = _compare_staging_dir(tmp_path / "first", _CA)
+    second = _compare_staging_dir(tmp_path / "second", _CA, campaign="tf46_refit")
+    shutil.rmtree(second / f"tf46_refit-{_CA[:7]}-match_outcome_dependence-public")
+    got = A.compare_staging(_compare_campaign(), staging=new, baselines=[first, second])
+    assert got["xsuccess-public/default"]["baseline_run_key"] == f"tf46_refit-{_CA[:7]}-xsuccess-public"
+    assert got["match_outcome_dependence-public/default"]["baseline_run_key"] == (
+        f"cycle1-{_CA[:7]}-match_outcome_dependence-public"
+    )
+    assert got["xsuccess-public/default"]["identical"] is True
+
+
+def test_compare_staging_with_no_baseline_that_holds_the_instance(tmp_path):
+    """D4: a difference with no form and no run key."""
+    import shutil
+
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    a = _compare_staging_dir(tmp_path / "a", _CA)
+    b = _compare_staging_dir(tmp_path / "b", _CA, campaign="tf46_refit")
+    shutil.rmtree(a / f"cycle1-{_CA[:7]}-xsuccess-public")
+    shutil.rmtree(b / f"tf46_refit-{_CA[:7]}-xsuccess-public")
+    row = A.compare_staging(_compare_campaign(), staging=new, baselines=[a, b])["xsuccess-public/default"]
+    assert row == {"identical": False, "differences": ["present in only one staging folder"]}
+
+
+def test_compare_staging_refuses_two_campaigns_of_one_artifact_in_one_baseline(tmp_path):
+    """D5: two run keys of one job and tier in one baseline folder are ambiguous."""
+    import shutil
+
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    old = _compare_staging_dir(tmp_path / "old", _CA)
+    shutil.copytree(old / f"cycle1-{_CA[:7]}-xsuccess-public", old / f"tf46_refit-{_CA[:7]}-xsuccess-public")
+    with pytest.raises(A.AdoptionRefusedError, match="xsuccess-public"):
+        A.compare_staging(_compare_campaign(), staging=new, baselines=[old])
+
+
+def test_compare_staging_census_reads_only_the_new_launch(tmp_path):
+    """Review Focus 5: several baselines change nothing in the census row (it reads `<new>/verify.json`)."""
+    new = _compare_staging_dir(tmp_path / "new", _CB)
+    a = _compare_staging_dir(tmp_path / "a", _CA, census_ok=False)
+    b = _compare_staging_dir(tmp_path / "b", _CA, campaign="tf46_refit", census_ok=False)
+    one = A.compare_staging(_compare_campaign(), staging=new, baselines=[a])
+    two = A.compare_staging(_compare_campaign(), staging=new, baselines=[a, b])
+    key = "build_territory_ranking_census-public/default"
+    assert one[key] == two[key] and two[key]["census_ok"] is True
 
 
 # ---- one read bound for the whole retrieve (HFU fit-units spec C1) ------------------------------------
@@ -1167,6 +1289,170 @@ def test_retrieve_never_reads_more_than_eight_at_once(tmp_path):
     A.retrieve(c, C, staging=tmp_path / "s1", plan_fn=plan_fn, store_fn=lambda _uri: serial, read_workers=1)
     assert serial.peak == 1
     assert _records(tmp_path / "s8") == _records(tmp_path / "s1") and len(_records(tmp_path / "s8")) == 21
+
+
+# ---- F2: retrieve waits out a rate limit (HFU launch top-up spec §22.2) -----------------------------------------
+
+#: The error of run 9b's crashed retrieves (`retrieve_crash429_2.log`): raised by `download_bucket_files`.
+_XET_429 = (
+    "Previous task error: Rate limited: Request error: HTTP status client error (429 Too Many Requests), "
+    "domain: https://huggingface.co/api/buckets/silly-kicks/hf-refit-scratch/xet-read-token"
+)
+
+
+class _FlakyStore:
+    """``inner`` whose first ``fails`` calls of ``method`` on ``rel`` raise ``RuntimeError(error)``."""
+
+    def __init__(self, inner, method: str, rel: str, fails: int, error: str = _XET_429) -> None:
+        import threading
+
+        self.inner, self.method, self.rel, self.left, self.error = inner, method, rel, fails, error
+        self.lock = threading.Lock()
+
+    def _call(self, method: str, rel: str, fn):
+        with self.lock:
+            fail = method == self.method and rel == self.rel and self.left > 0
+            self.left -= fail
+        if fail:
+            raise RuntimeError(self.error)
+        return fn(rel)
+
+    def read_bytes(self, rel):
+        return self._call("read_bytes", rel, self.inner.read_bytes)
+
+    def names(self, rel):
+        return self._call("names", rel, self.inner.names)
+
+    def write_bytes(self, rel, data):
+        self.inner.write_bytes(rel, data)
+
+
+def _flaky_retrieve(tmp_path, method, rel, fails, error=_XET_429, **kw):
+    """One instance at a time (``workers=1``), so a failing call's waits are its own: the waits it slept."""
+    c, store, plan_fn = _bound_world(tmp_path)
+    slept: list[float] = []
+    flaky = _FlakyStore(store, method, rel, fails, error)
+    A.retrieve(
+        c, C, staging=tmp_path / "s", plan_fn=plan_fn, store_fn=lambda _uri: flaky, workers=1, sleep=slept.append, **kw
+    )
+    return slept, _records(tmp_path / "s")
+
+
+def test_retrieve_retries_a_rate_limited_read(tmp_path, capsys):
+    """A read that is not a counters batch (`_inputs.json` of a stage): `_BoundedReads.read_bytes` retries it."""
+    slept, records = _flaky_retrieve(tmp_path, "read_bytes", "extract/g0/_inputs.json", 2)
+    assert slept == [30.0, 60.0]
+    assert len(records) == 21 and all(r["totals"] == {"n_events": sum(range(1, 41))} for r in records.values())
+    assert "[retrieve] rate-limited (read extract/g0/_inputs.json); retry 1/4 in 30 s" in capsys.readouterr().err
+
+
+def test_retrieve_retries_a_rate_limited_listing(tmp_path):
+    slept, records = _flaky_retrieve(tmp_path, "names", "extract/g0", 1)
+    assert slept == [30.0] and len(records) == 21
+
+
+def test_retrieve_retries_a_rate_limited_plan(tmp_path):
+    c, store, plan_fn = _bound_world(tmp_path)
+    left, slept = [1], []
+
+    def flaky_plan(inst, *, bucket):
+        if left[0]:
+            left[0] -= 1
+            raise RuntimeError(
+                f"{inst.id}: --plan failed (rc=1): huggingface_hub.errors.HfHubHTTPError: 429 Too Many Requests"
+            )
+        return plan_fn(inst, bucket=bucket)
+
+    A.retrieve(
+        c, C, staging=tmp_path / "s", plan_fn=flaky_plan, store_fn=lambda _uri: store, workers=1, sleep=slept.append
+    )
+    assert slept == [30.0] and len(_records(tmp_path / "s")) == 21
+
+
+def test_retrieve_raises_when_the_rate_limit_outlasts_the_waits(tmp_path):
+    c, store, plan_fn = _bound_world(tmp_path)
+    slept: list[float] = []
+    flaky = _FlakyStore(store, "read_bytes", "extract/g0/u00.counters.json", 5)  # the first call and 4 retries
+    with pytest.raises(RuntimeError, match="429 Too Many Requests"):
+        A.retrieve(
+            c, C, staging=tmp_path / "s", plan_fn=plan_fn, store_fn=lambda _uri: flaky, workers=1, sleep=slept.append
+        )
+    assert slept == [30.0, 60.0, 120.0, 240.0]
+
+
+def test_retrieve_does_not_retry_another_error(tmp_path):
+    """A bare "429" is no rate limit: a match id can hold those digits (`test_a_failing_plan`)."""
+    error = "KeyError: 'statsbomb__3869429'"
+    c, store, plan_fn = _bound_world(tmp_path)
+    slept: list[float] = []
+    flaky = _FlakyStore(store, "read_bytes", "extract/g0/u00.counters.json", 1, error)
+    with pytest.raises(RuntimeError, match="3869429"):
+        A.retrieve(
+            c, C, staging=tmp_path / "s", plan_fn=plan_fn, store_fn=lambda _uri: flaky, workers=1, sleep=slept.append
+        )
+    assert slept == []
+
+
+class _FlakyBatchStore(_FlakyStore):
+    """A `_FlakyStore` with `read_many` whose first ``fails`` batches raise the rate-limit error."""
+
+    def read_many(self, rels):
+        with self.lock:
+            fail = self.method == "read_many" and self.left > 0
+            self.left -= fail
+        if fail:
+            raise RuntimeError(self.error)
+        return {r: self.inner.read_bytes(r) for r in rels}
+
+
+def test_retrieve_retries_a_rate_limited_batch(tmp_path, capsys):
+    """HFU launch top-up spec §22.2a: a batch waits out a rate limit as one call."""
+    c, store, plan_fn = _bound_world(tmp_path)
+    slept: list[float] = []
+    flaky = _FlakyBatchStore(store, "read_many", "", 2)
+    A.retrieve(
+        c, C, staging=tmp_path / "s", plan_fn=plan_fn, store_fn=lambda _uri: flaky, workers=1, sleep=slept.append
+    )
+    assert slept == [30.0, 60.0]
+    records = _records(tmp_path / "s")
+    assert len(records) == 21 and all(r["totals"] == {"n_events": sum(range(1, 41))} for r in records.values())
+    assert "[retrieve] rate-limited (read_many 40 files); retry 1/4 in 30 s" in capsys.readouterr().err
+
+
+def test_a_waiting_read_frees_its_slot(tmp_path, monkeypatch):
+    """With one slot (``read_workers=1``), a read that waits out a rate limit holds no slot during the wait."""
+    import threading
+
+    made: list = []
+    real = threading.BoundedSemaphore
+
+    def recording(value=1):
+        sem = real(value)
+        made.append(sem)
+        return sem
+
+    monkeypatch.setattr(threading, "BoundedSemaphore", recording)  # `retrieve` imports threading in its body
+    free: list[bool] = []
+
+    def sleep(_s):
+        got = made[0].acquire(blocking=False)
+        free.append(got)
+        if got:
+            made[0].release()
+
+    c, store, plan_fn = _bound_world(tmp_path)
+    flaky = _FlakyStore(store, "read_bytes", "extract/g0/u00.counters.json", 1)
+    A.retrieve(
+        c,
+        C,
+        staging=tmp_path / "s",
+        plan_fn=plan_fn,
+        store_fn=lambda _uri: flaky,
+        workers=1,
+        read_workers=1,
+        sleep=sleep,
+    )
+    assert free == [True]
 
 
 # ---- ADR-130: verify in refit mode ------------------------------------------------------------------------------

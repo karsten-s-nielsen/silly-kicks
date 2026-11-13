@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.141.0: the stoppage gate for xShot/xCross training.** Dead-ball frames of SkillCorner and Gradient Sports (whose `ball_state` is always `"alive"`) get `stoppage_state` and leave xShot/xCross training; Gradient Sports leaves the observed dead-ball set; `Campaign.mode = "refit"` and `tf46_refit.toml` (ADR-130). The bundled weights do not change; their refit is the Part Deux cycle's launch 9. Detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.142.1: HF campaign tooling (scripts only).** A stage gets more jobs while its jobs run, every keyed job has a tag, `compare` takes several baselines, no launch from a tree that the jobs do not run, one decision per shared generation, and a `retrieve` that waits out a rate limit and reads the counters in batches (ADR-128 items 50 to 57). Run 9b reproduced the 12 trainer artifacts outside xShot/xCross; the wheel does not change. Detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -117,15 +117,6 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   enhancement — new TF-number — vs a lakehouse pipeline step); no spec/plan yet. Its candidate-touch
   stage **SHIPPED as TF-79** (ball-contact primitive, 4.136.0 / ADR-124); this item keeps the
   Needleman–Wunsch alignment, the inserted touch events, and that scoping question.
-- **Find the cause of four launch-8 timings before the next HF launch (owner 2026-11-11; the HFU fit-units
-  spec §17.1).** Launch 8 (`abcfda86`, the parity launch of 4.140.1) passed its parity proof, but four times
-  missed their expected value, and no cause is known. (1) One xsuccess `fit` unit took 655 to 995 s where the
-  spec expected about 430 s; three units run at once in one job. This one comes first: `units_per_job_by_stage`
-  in `cycle1.toml` (12 jobs of 3) rests on the 430 s estimate. (2) The `fit` stage took 19 min 36 s, not about
-  12 min. (3) `refs` + `extract` took 40 min 28 s against 25 min at launch 7, with unchanged code. (4) The `hpo`
-  unit took 160.9 min against 141.2 min at launch 7, with unchanged code (early trials about 285 s, late trials
-  367 to 670 s). **Do:** read the unit ledgers and the job logs of the launch-8 run keys in the scratch bucket.
-  Read them before a `prune --delete` of `abcfda8` removes them.
 - **Re-confirm `test_xshot_gradientsports_e2e` under xgboost 3.x at the next xS re-fit.** The 4.51.0
   pass ran under local xgboost 2.1.4 vs the shipped 3.2.0 artifact; the `base_score` 2.x/3.x guard
   handles the skew but the pass hasn't been reproduced under 3.x (owner-run, real GS data, never in CI).

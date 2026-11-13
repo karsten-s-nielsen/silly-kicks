@@ -14,9 +14,11 @@ The `hf` CLI stays a human tool; nothing here shells out to it.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
 import re
 import shlex
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from scripts._dataset_reads import READ_CAP_ENV
@@ -98,12 +100,33 @@ class JobSpec:
     shard_keys_path: str | None = None
     extra_env: Mapping[str, str] | None = None
     escalate: bool = False
+    #: The tag of a keyed job (`keys_tag` of its keys): in its keys file name, its job name, the `tag` label and
+    #: the in-job label, so two jobs of one stage that run at once never share them (HFU launch top-up spec §3.4).
+    #: Empty for an unkeyed (`download`) job.
+    tag: str = ""
+
+
+def keys_file_bytes(keys: Sequence[str]) -> bytes:
+    """The bytes of a keyed job's keys file (`--shard-keys`): its sorted keys as JSON."""
+    return json.dumps(sorted(keys)).encode("utf-8")
+
+
+def keys_tag(keys: Sequence[str]) -> str:
+    """The tag of a keyed job: the first 12 hex characters of the sha256 of its keys file. Two jobs of one stage
+    that can run at once hold different keys, so their tags differ (HFU launch top-up spec §3.4)."""
+    return hashlib.sha256(keys_file_bytes(keys)).hexdigest()[:12]
+
+
+def shard_text(labels: Mapping[str, str]) -> str:
+    """``<index>of<count>``, plus ``-<tag>`` for a tagged job (a job of a driver before the tag has none)."""
+    tag = labels.get("tag")
+    return f"{labels['shard']}-{tag}" if tag else labels["shard"]
 
 
 def label_of(labels: Mapping[str, str]) -> str:
     """The in-job label (`SILLY_KICKS_JOB_LABEL`, stamped on every unit ledger record) rebuilt from a job's
     HF labels; the ledger joins unit records to their job by it."""
-    return f"{labels['job']}.{labels['variant']}.{labels['stage']}.{labels['shard']}"
+    return f"{labels['job']}.{labels['variant']}.{labels['stage']}.{shard_text(labels)}"
 
 
 def _label(spec: JobSpec) -> str:
@@ -121,6 +144,8 @@ def labels_for(spec: JobSpec) -> dict[str, str]:
         "shard": f"{spec.shard[0]}of{spec.shard[1]}",
         "commit": spec.commit,
     }
+    if spec.tag:
+        labels["tag"] = spec.tag
     _check_label_values(labels)
     return labels
 
@@ -139,9 +164,8 @@ def job_name(spec: JobSpec) -> str:
     launcher's bash command is far over the 100-character limit. The parts join with `--` (HF allows only
     `[a-zA-Z0-9_-]`). Readable when it fits; otherwise a readable prefix plus a digest of the full name, so
     two jobs never share a truncated name."""
-    import hashlib
-
-    full = "--".join((spec.run_key, spec.variant, "-".join(spec.stages), f"{spec.shard[0]}of{spec.shard[1]}"))
+    shard = f"{spec.shard[0]}of{spec.shard[1]}" + (f"-{spec.tag}" if spec.tag else "")
+    full = "--".join((spec.run_key, spec.variant, "-".join(spec.stages), shard))
     if len(full) > LABEL_MAX:
         digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:16]
         full = f"{full[: LABEL_MAX - len(digest) - 1]}-{digest}"

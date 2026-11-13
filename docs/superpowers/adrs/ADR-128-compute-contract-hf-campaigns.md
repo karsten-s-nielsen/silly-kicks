@@ -850,6 +850,70 @@ The second commit also holds one test-only fix: `tests/scripts/conftest.py` empt
 journal around every test (the cycle spec, §17.5).
 The wheel changes (library code); no bundled artifact changes.
 
+## Amendment (2026-11-11): the launch top-up, the job tag, `compare` with several baselines
+
+**Context.** The `TODO.md` row "Find the cause of four launch-8 timings before the next HF launch" asked why
+launch 8 (`abcfda86`) missed four expected times. The answers (a read-only investigation and one measurement job,
+spec `docs/superpowers/specs/2026-11-11-hfu-launch-topup-design.md` §1):
+
+- xsuccess `refs` + `extract`, 40 min 28 s against 25 min: the driver's launch rule. `decide` split all the units
+  of a stage into `max_shards` jobs, `step` launched only the free slots, and a stage with a job in flight got no
+  more jobs, so the other units waited for the whole wave (7 waves, 36.7 min for about 6 min of work; launch 7 had
+  6 waves). About 30 min on the long pole of each launch.
+- xsuccess `hpo`, 160.9 min against 141.2 min: host speed (the same 30 trials; the fleet ratio is 1.04). The late
+  trials are slower in both launches; it is the trial profile.
+- One xsuccess `fit` unit, 655 to 995 s against about 430 s: each fit ran at about half speed while 12 `fit` jobs
+  ran at once. The same unit took 336.5 s alone and 354 to 371 s three at once in one measurement job
+  (`6af4d4e79737d9a9e093649c`); that our own jobs caused the slow-down is not proven.
+- The `fit` stage, 19 min 36 s against about 12 min: it follows from the unit time.
+
+The investigation also found a collision in the code: in one step, an escalation launch and a run launch of one
+stage can have the same `(index, count)`, so the same keys file (the second write wins) and the same job name.
+
+**Decision.**
+
+50. **The top-up rule.** A stage whose jobs still run gets jobs for the units that no job of its flight holds, in
+    at most `max_shards - len(flight)` jobs: the escalation launches first, then the run launches in the room
+    left. A stage waits for its flight when the instance is not keyed (a `download` dataset), when a job of the
+    flight has no known unit list, or when a reduce trigger runs. A stage with a flight makes no STUCK report, as
+    before; the report comes when the flight has ended.
+51. **The tag.** Every keyed job has a tag, the first 12 hex characters of the sha256 of its keys file. It is in the
+    keys file name, the job name, a `tag` label and the in-job label. The jobs of one stage that can run at once
+    hold different units, so their tags differ. This closes the collision.
+52. **The record of launched jobs** (`scripts/hf_jobs/launched.py`). One driver run keeps the jobs that it
+    launched, with their units, before the manifest write. A launched job that the listing of a step leaves out
+    and that no listing has shown ended is held as a scheduling job (its units, the budget, the stall rule), for
+    at most 5 listings. Limits: a dropped job can still exist; a `resume` inside a listing lag starts without the
+    record. The store's answer for an in-flight job of an earlier run is read once in a run.
+53. **The box limit.** `driver._BOX_RAM` is 32,000,000,000 bytes, the measured cgroup `memory.max` of a
+    `cpu-upgrade` job; the escalation cap had been above it.
+54. **CPU time in the unit ledger.** `cpu_user_s`, `cpu_sys_s` and `cpu_scope` (`process`).
+55. **`compare` with several baselines.** `--baseline` can be given more than once; the baseline of an instance
+    is the last folder that holds a run key of its job and tier under any campaign name; each row names the run
+    key that was read (`baseline_run_key`).
+56. **No launch from a tree that the jobs do not run.** Preflight check 1 fails when the controller's code
+    identity (`code_identity(git_provenance())`, the value each `--plan` digests) is not the campaign commit:
+    tracked edits give `dirty-<tree hash>`, and the jobs clone the commit. The driver refuses the same in every
+    step, before any launch (`FATAL code_identity`; a plan without the value counts as another identity). The
+    first run 9b (spec §17.1) ran from such a tree: the driver read none of the jobs' records.
+57. **One decision per shared generation; a `retrieve` that waits out a rate limit and reads in batches** (spec
+    §22, after run 9b). Instances of one run key whose stage has one `generation` are peers at that stage (the 5
+    ghost_gk variants at `validate`; `default` and `full` at `extract` to `importance`). The first instance of a
+    pass that reaches the generation decides it, with the flight, coverage, timeouts and reduce errors of every
+    peer; later peers wait. An instance without a readable plan holds every same-named stage of its run key while
+    its jobs run (fail closed). Run 9b ran one `validate` unit in 5 concurrent jobs, and launches `a1a3b52`,
+    `abcfda8` and `c40ec7b` did the same; the output did not change. `retrieve` retries a rate-limited read,
+    listing or plan call after 30, 60, 120 and 240 s, with no read slot held in a wait (the rule is
+    `campaign.rate_limited`, which a bare "429" does not meet); run 9b's `retrieve` crashed twice on a 429 that
+    `huggingface_hub` does not retry. `retrieve` reads the counters files in batches of 200 with one
+    `download_bucket_files` call each (`BucketStore.read_many`): 13 calls for run 9b's 1,436 files, not 1,436.
+
+**Consequences.** The xsuccess `extract` stage is expected to take about 7 to 9 min (not measured; launch 9 is
+the proof, spec §14.3). The names, the keys file names and the in-job labels of every keyed job change form.
+
+**Scope.** `scripts/hf_jobs/{driver,launch,launched,adopt,preflight,campaign,store}.py`, `scripts/_stages.py`
+(`_run_unit`). Scripts only.
+
 ## Related
 
 - **Specs:** `docs/superpowers/specs/2026-10-18-compute-contract-hf-campaigns-design.md`

@@ -666,6 +666,9 @@ Launch 8 ran at `abcfda86` (owner go 2026-11-10). This section is the record of 
 
 ### 17.1 The launch record
 
+> 2026-11-11: the causes of the four timings that this record leaves open are in §1 of
+> `docs/superpowers/specs/2026-11-11-hfu-launch-topup-design.md`.
+
 | Item | Measured |
 |---|---|
 | Preflight | 7 of 7 checks ok. Storage before the launch: 49.93 GB used (the scratch bucket 27.74 GB, the private datasets 22.06 GB, the canary bucket 0.12 GB). |

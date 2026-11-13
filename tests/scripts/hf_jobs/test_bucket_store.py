@@ -113,6 +113,27 @@ def test_an_upload_is_visible_to_the_next_names_and_read():
     assert len(api.lists) == 1 and api.downloads == 1
 
 
+def test_bucket_store_read_many_makes_one_call_for_a_batch():
+    """HFU launch top-up spec §22.2a (F3): one `download_bucket_files` call for every file of a batch."""
+    api = _CountingApi(dict(_TREE))
+    s = BucketStore("b/x", "rk", api=api)
+    got = s.read_many(["p/u/a.json", "p/s/t/k.json", "p/u/missing.json"])
+    assert got == {"p/u/a.json": b"1", "p/s/t/k.json": b"{}\n", "p/u/missing.json": None}
+    assert api.downloads == 1
+
+
+def test_bucket_store_read_many_memoizes():
+    api = _CountingApi(dict(_TREE))
+    s = BucketStore("b/x", "rk", api=api)
+    s.read_many(["p/u/a.json", "p/u/missing.json"])
+    assert s.read_many(["p/u/a.json", "p/u/missing.json"]) == {"p/u/a.json": b"1", "p/u/missing.json": None}
+    assert s.read_bytes("p/u/a.json") == b"1" and s.read_bytes("p/u/missing.json") is None
+    assert s.read_many([]) == {}
+    assert api.downloads == 1  # the second batch, the two reads and the empty batch made no call
+    assert s.read_many(["p/u/a.json", "p/s/t/k.json"]) == {"p/u/a.json": b"1", "p/s/t/k.json": b"{}\n"}
+    assert api.downloads == 2  # one call, for the one rel that is not memoized
+
+
 def test_an_empty_prefix_store_never_lists_the_whole_bucket():
     api = _CountingApi(dict(_TREE))
     s = BucketStore("b/x", "", api=api)

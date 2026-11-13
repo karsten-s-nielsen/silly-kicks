@@ -296,6 +296,27 @@ def test_a_unit_killed_for_memory_keeps_its_attempt_count(tmp_path):
     assert led["attempt"] == 3 and s.plan(ctx)["stages"][0]["memory_units"] == []
 
 
+def test_a_unit_ledger_names_the_cpu_time_of_its_process(tmp_path):
+    """HFU launch top-up spec §5: with the CPU time beside the wall time, "a full core at half the speed" (launch
+    8's `fit` units) shows in the ledgers of a launch. The work is user-mode arithmetic with no system call in its
+    loop (a loop that asked the clock spent much of its time in the kernel, and on Windows `os.times` counts in
+    15.6 ms ticks), and the assertion reads the total CPU time that the work drives (review B, HFU2-IMPL-13)."""
+
+    def burn(key, ctx):
+        return sum(i * i for i in range(3_000_000)) % 7
+
+    st = s.Stage(name="a", units=lambda c: [s.int_key(0)], work=burn)
+    ctx = _ctx(tmp_path, _p(stages=(st,)))
+    s.run_unit(ctx, st, "0000", worker="t")
+    raw = ctx.store.read_bytes(f"{ctx.generation('a')}/0000.ledger.json")
+    assert raw is not None
+    rec = json.loads(raw)
+    assert rec["cpu_scope"] == "process"
+    assert isinstance(rec["cpu_user_s"], float) and isinstance(rec["cpu_sys_s"], float)
+    assert rec["cpu_user_s"] >= 0 and rec["cpu_sys_s"] >= 0
+    assert rec["cpu_user_s"] + rec["cpu_sys_s"] > 0.05  # about 0.3 s of arithmetic on this PC
+
+
 def test_a_mixed_id_column_becomes_the_legacy_strings_and_a_uniform_one_is_untouched():
     """Parquet cannot store a column mixing int and str ids (gradientsports/skillcorner ints with idsse
     `J03WMX`): real HF, ghost_outfield's extract reduce. The legacy combined in memory and grouped on
