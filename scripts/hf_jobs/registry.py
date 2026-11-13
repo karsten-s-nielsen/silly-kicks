@@ -56,8 +56,8 @@ class TrainerSpec:
     #: dataset-agnostic, never in-job pining). ADR-128: the campaign names it (`probe_dataset`) and the job
     #: mounts it; the trainer's `probe` stage reads it via --probe-dataset. Only xcross.
     probe: bool = False
-    #: This trainer ships a VISIBILITY-GATED candidate (public / sc_extended / full). The public/owner
-    #: policy is computed OFF-HF by the controller (``arm_policy.compute_arms`` over ``PUBLIC_CORPUS``) and
+    #: This trainer ships a VISIBILITY-GATED candidate (public / sc_extended; ADR-132). The public/owner
+    #: policy is computed OFF-HF by the controller (``arm_policy.compute_arms`` over the ``_corpus`` registries) and
     #: passed as the neutral ``--arms-json`` job parameter; the in-job trainer has NO public/private concept
     #: (ADR-123 Amendment B). Only xshot_occurrence + xcross_attempt.
     visibility_gated: bool = False

@@ -239,6 +239,17 @@ def gate_fold_params(ctx, arm: str, k: int) -> dict:
     return ctx.upstream("study")[f"{arm}{GATE_FOLD_SEP}{k}"]["params"]
 
 
+#: The per-model size gate ``artifact_size_lt_5mb`` on the xShot/xCross bundles (ADR-132; corpus widening spec 5.6;
+#: the value TF-16 pre-registered for these boosters). A bundle of this many bytes or more fails closed.
+ARTIFACT_SIZE_LIMIT_BYTES = 5_000_000
+
+
+def artifact_size_gate(files) -> tuple[int, bool]:
+    """``(total bytes, artifact_size_lt_5mb)`` of a bundle FileSet's files (the ``artifact_size_bytes`` total)."""
+    n = sum(len(b) for b in files.values())
+    return n, n < ARTIFACT_SIZE_LIMIT_BYTES
+
+
 def _npy(arr: np.ndarray) -> bytes:
     import io
 
@@ -253,23 +264,31 @@ def _from_npy(data: bytes) -> np.ndarray:
     return np.load(io.BytesIO(data), allow_pickle=False)
 
 
-def cv_unit(out, positive_rate: float, te, y, groups) -> dict:
+def cv_unit(out, positive_rate: float, tr, te, y, groups, providers) -> dict:
     """One cv fold unit's payload. ``out`` is the fold function's ``return_oof=True`` result ``(metrics_tuple, p,
-    train_rate)``, or None for a skipped fold (no rows). ``te`` are the held-out positions within the arm's rows;
-    ``y`` and ``groups`` are the arm's labels and match labels."""
+    train_rate)``, or None for a skipped fold (no rows). ``tr`` / ``te`` are the training / held-out positions within
+    the arm's rows; ``y``, ``groups`` and ``providers`` are the arm's labels, match labels and row-aligned providers.
+
+    ADR-132 (corpus widening spec 5.7): the unit also carries the held-out rows' provider IDENTITIES (``sportec`` ->
+    ``idsse``) and each provider's training-fold true rate from ``tr`` (the rows behind ``train_rate``; NaN for a
+    held-out provider with no training rows). An empty provider refuses the unit. ``providers=None`` (an in-process
+    composition without providers) records none, so ``cv_skill`` emits no ``by_provider`` and the per-provider gates
+    fail closed."""
     if out is None:
         return {
             "fold": None,
             "positive_rate": positive_rate,
             "train_rate": None,
+            "train_rate_by_provider": {},
             "te": np.zeros(0, dtype=np.int64),
             "p": np.zeros(0, dtype=np.float64),
             "y": np.zeros(0, dtype=np.int8),
             "groups": np.zeros(0, dtype="<U1"),
+            "providers": np.zeros(0, dtype="<U1"),
         }
     res, p, train_rate = out
     te = np.asarray(te, dtype=np.int64)
-    return {
+    unit = {
         "fold": list(res),
         "positive_rate": positive_rate,
         "train_rate": train_rate,
@@ -278,6 +297,19 @@ def cv_unit(out, positive_rate: float, te, y, groups) -> dict:
         "y": np.asarray(y)[te].astype(np.int8),
         "groups": np.asarray(groups)[te].astype(str),
     }
+    if providers is not None:
+        from scripts._corpus_identity import provider_identity
+
+        ident = np.array([provider_identity(v) for v in np.asarray(providers).tolist()], dtype=str)
+        tr = np.asarray(tr, dtype=np.int64)
+        y_tr, id_tr = np.asarray(y)[tr], ident[tr]
+        rates = {}
+        for prov in sorted(set(id_tr.tolist()) | set(ident[te].tolist())):
+            sel = id_tr == prov
+            rates[prov] = float(y_tr[sel].mean()) if sel.any() else float("nan")
+        unit["train_rate_by_provider"] = rates
+        unit["providers"] = ident[te]
+    return unit
 
 
 def cv_unit_fileset(unit: dict):
@@ -285,24 +317,27 @@ def cv_unit_fileset(unit: dict):
     arrays ``te.npy``, ``p.npy``, ``y.npy``, ``groups.npy`` (pickle-free)."""
     from scripts._stages import FileSet
 
-    head = {k: unit[k] for k in ("fold", "positive_rate", "train_rate")}
+    head = {k: unit[k] for k in ("fold", "positive_rate", "train_rate", "train_rate_by_provider") if k in unit}
     files = {"fold.json": json.dumps(head, allow_nan=True).encode("utf-8")}
-    files.update({f"{k}.npy": _npy(unit[k]) for k in ("te", "p", "y", "groups")})
+    files.update({f"{k}.npy": _npy(unit[k]) for k in ("te", "p", "y", "groups", "providers") if k in unit})
     return FileSet(files)
 
 
 def read_cv_unit(fs) -> dict:
     """The inverse of `cv_unit_fileset`."""
     unit = json.loads(fs.files["fold.json"])
-    unit.update({k: _from_npy(fs.files[f"{k}.npy"]) for k in ("te", "p", "y", "groups")})
+    arrays = ("te", "p", "y", "groups", "providers")
+    unit.update({k: _from_npy(fs.files[f"{k}.npy"]) for k in arrays if f"{k}.npy" in fs.files})
     return unit
 
 
 def cv_skill(units: list[dict], *, nested: bool) -> dict | None:
     """The ADR-131 ``skill`` dict of one arm from its cv units in FOLD order (the list position is the gate fold).
     The usable folds' held-out rows are pooled in ascending arm-row order, so the result does not depend on the order
-    the units completed in. None when no fold was usable (the skill gates then fail closed)."""
-    from silly_kicks.tracking._artifact_integrity import forecast_skill
+    the units completed in. None when no fold was usable (the skill gates then fail closed). ADR-132: plus
+    ``skill["by_provider"]`` (``provider_skill`` against each row's own provider training-fold rate) when every
+    usable unit carries its providers."""
+    from silly_kicks.tracking._artifact_integrity import forecast_skill, provider_skill
 
     usable = [(k, u) for k, u in enumerate(units) if u["fold"] is not None]
     if not usable:
@@ -314,4 +349,11 @@ def cv_skill(units: list[dict], *, nested: bool) -> dict | None:
     r = np.concatenate([np.full(len(u["te"]), u["train_rate"], dtype=np.float64) for _, u in usable])[order]
     fold = np.concatenate([np.full(len(u["te"]), k) for k, u in usable])[order]
     groups = np.concatenate([u["groups"] for _, u in usable])[order]
-    return forecast_skill(y, p, r, fold, groups, nested=nested)
+    skill = forecast_skill(y, p, r, fold, groups, nested=nested)
+    if all("providers" in u for _, u in usable):
+        prov = np.concatenate([u["providers"] for _, u in usable])[order]
+        r_prov = np.concatenate(
+            [np.array([u["train_rate_by_provider"][v] for v in u["providers"].tolist()]) for _, u in usable]
+        ).astype(np.float64)[order]
+        skill["by_provider"] = provider_skill(y, p, r_prov, prov, groups, fold)
+    return skill

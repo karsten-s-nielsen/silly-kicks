@@ -35,6 +35,10 @@ class CampaignJob:
     probe_dataset: str | None = None
     #: A second staged dataset the trainer pools in (``--pool-dataset``); mounted and capped like the probe.
     pool_dataset: str | None = None
+    #: The arms a VISIBILITY-GATED job trains (ADR-132, spec 5.5): a non-empty subset of ``public`` /
+    #: ``sc_extended``. Required on a gated job, refused on any other; ``instances`` restricts the dataset's
+    #: ``compute_arms`` payload to it.
+    arms: tuple[str, ...] | None = None
 
     @property
     def datasets(self) -> tuple[str, ...]:
@@ -105,6 +109,23 @@ class Instance:
 # ---- model ---------------------------------------------------------------------------------------
 
 
+def _job_arms(path: pathlib.Path, j: Mapping[str, Any]) -> tuple[str, ...] | None:
+    """A job's declared ``arms`` (spec 5.5): known names only, and only on a visibility-gated trainer."""
+    from scripts.hf_jobs.arm_policy import ARM_ORDER
+    from scripts.hf_jobs.registry import DriverSpec, spec_for
+
+    if "arms" not in j:
+        return None
+    arms = tuple(str(a) for a in j["arms"])
+    unknown = sorted(set(arms) - set(ARM_ORDER))
+    if unknown:
+        raise ValueError(f"{path}: job {j['job']!r} declares unknown arm(s) {unknown} (known: {list(ARM_ORDER)})")
+    spec = spec_for(j["job"])
+    if isinstance(spec, DriverSpec) or not spec.visibility_gated:
+        raise ValueError(f"{path}: job {j['job']!r} declares `arms` but is not visibility-gated")
+    return arms
+
+
 def load_campaign(path: str | pathlib.Path) -> Campaign:
     from scripts._toml import load_toml
 
@@ -113,7 +134,13 @@ def load_campaign(path: str | pathlib.Path) -> Campaign:
     c = raw["campaign"]
     jobs = tuple(
         CampaignJob(
-            j["job"], j["tier"], j["dataset"], tuple(j["variants"]), j.get("probe_dataset"), j.get("pool_dataset")
+            j["job"],
+            j["tier"],
+            j["dataset"],
+            tuple(j["variants"]),
+            j.get("probe_dataset"),
+            j.get("pool_dataset"),
+            _job_arms(path, j),
         )
         for j in raw.get("jobs", [])
     )
@@ -175,6 +202,12 @@ def _mounts(names: Iterable[str | None]) -> tuple[Any, ...]:
     return tuple(out)
 
 
+def corpus_visibility_arg(d: Any) -> str:
+    """``--corpus-visibility`` for ``receiver_model`` (its CLI vocabulary, ADR-132 spec 6.2): ``public`` iff the
+    dataset's provenance is public, else ``restricted``."""
+    return "public" if d.provenance == "public" else "restricted"
+
+
 def instances(c: Campaign, commit: str, *, replica: int | None = None) -> list[Instance]:
     """Every (job, tier, variant) of the campaign with its module, args and datasets (spec 5.5)."""
     from scripts.hf_jobs import arm_policy
@@ -200,11 +233,17 @@ def instances(c: Campaign, commit: str, *, replica: int | None = None) -> list[I
             if j.pool_dataset is not None:
                 args += ("--pool-dataset", j.pool_dataset)
             if spec.visibility_gated:
-                args += ("--arms-json", json.dumps(arm_policy.compute_arms(staged_units(j.dataset)), sort_keys=True))
+                if j.arms is None:
+                    raise ValueError(
+                        f"job {j.job!r} ({j.tier}) is visibility-gated and declares no `arms` (spec 5.5: no default)"
+                    )
+                units = staged_units(j.dataset)
+                payload = arm_policy.restrict_arms(arm_policy.compute_arms(units), j.arms, units)
+                args += ("--arms-json", json.dumps(payload, sort_keys=True))
             if j.job == "receiver_model":  # decision P5: visibility is a parameter, never read in-job
                 args += (
                     "--corpus-visibility",
-                    declared()[j.dataset].visibility,
+                    corpus_visibility_arg(declared()[j.dataset]),
                     "--corpus-n-matches",
                     str(locked(j.dataset)["n_units"]),
                 )

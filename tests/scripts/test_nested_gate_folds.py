@@ -35,13 +35,13 @@ def _inputs(n_matches: int = 12, rows: int = 30, *, paired: bool) -> SimpleNames
     is_public = match < n_matches // 2
     arms = {}
     if paired:
-        arms = {"public": is_public, "sc_extended": ~is_public | (match % 2 == 0), "full": np.ones(len(y), bool)}
+        arms = {"public": is_public, "sc_extended": np.ones(len(y), bool)}  # ADR-132: two arms
     return SimpleNamespace(X=X, y=y, groups=groups, is_public=is_public, arms=arms)
 
 
 def test_study_tags_appends_gate_fold_tags():
-    arms = ["public", "sc_extended", "full"]
-    cv_arms = {"full": 5, "public": 3, "sc_extended": 5}
+    arms = ["public", "sc_extended"]
+    cv_arms = {"public": 3, "sc_extended": 5}
     old = [f"{a}_f{f}" for f in range(3) for a in sorted(arms)] + sorted(arms)
     gf = [f"{a}_gf{k}" for a in sorted(cv_arms) for k in range(cv_arms[a])]
     assert study_tags(arms, 3, cv_arms, run_paired=True) == old + gf
@@ -56,7 +56,7 @@ def test_prep_builds_its_tags_with_study_tags(module):
 
 
 @pytest.mark.parametrize("module", TRAINERS)
-@pytest.mark.parametrize("arm", ["single", "public", "full"])
+@pytest.mark.parametrize("arm", ["single", "public", "sc_extended"])
 def test_gf_rows_exclude_their_fold(module, arm):
     mod = importlib.import_module(module)
     inp = _inputs(paired=arm != "single")
@@ -76,13 +76,13 @@ def test_gf_tag_never_parsed_as_public_fold_tag(module):
     mod = importlib.import_module(module)
     inp = _inputs(paired=True)
     _, _, folds = mod._public_folds(inp.X, inp.y, inp.groups, inp.is_public)
-    for name in ("public", "full"):  # today's rule, unchanged
+    for name in ("public", "sc_extended"):  # today's rule, unchanged
         assert np.array_equal(mod._study_rows(inp, f"{name}_f1"), np.flatnonzero(inp.arms[name] & folds[1][1]))
-    # On the full arm, the public fold (drops fold-1 PUBLIC games) and the gate fold (drops gate fold 1 of the full
-    # arm's own plan) are different row sets, so each tag must resolve through its own branch. (On the public arm both
-    # plans are the same splitter on the same rows, so there the two sets coincide by construction.)
-    assert not np.array_equal(mod._study_rows(inp, "full_gf1"), mod._study_rows(inp, "full_f1"))
-    assert not np.array_equal(mod._study_rows(inp, "full_gf0"), mod._study_rows(inp, "full_gf1"))
+    # On the sc_extended arm, the public fold (drops fold-1 PUBLIC games) and the gate fold (drops gate fold 1 of
+    # that arm's own plan) are different row sets, so each tag must resolve through its own branch. (On the public arm
+    # both plans are the same splitter on the same rows, so there the two sets coincide by construction.)
+    assert not np.array_equal(mod._study_rows(inp, "sc_extended_gf1"), mod._study_rows(inp, "sc_extended_f1"))
+    assert not np.array_equal(mod._study_rows(inp, "sc_extended_gf0"), mod._study_rows(inp, "sc_extended_gf1"))
 
 
 # --- Task 4: the cv units fit at their own fold's nested params; the reduce adds `skill` --------------------------
@@ -100,6 +100,8 @@ def _cv_world(module, monkeypatch, fold_params=None):
         X=X,
         y=y,
         groups=groups,
+        # ADR-132: the row-aligned converter provider (bare game-id groups; IDSSE rows carry `sportec`)
+        providers=np.where(np.arange(len(groups)) // 40 % 2 == 0, "sportec", "skillcorner"),
         arms={},
         is_public=np.ones(len(y), bool),
         config={"negative_subsample": None, "seed": 42},
@@ -154,7 +156,9 @@ def test_reduce_order_independent_and_equals_cv_metrics(module, monkeypatch):
     assert mod._cv_reduce(shuffled, ctx)["single"] == out
     assert out["skill"]["nested"] is True
     assert out["fold_params"] == fold_params
-    assert out == mod._cv_metrics(inp.X, inp.y, inp.groups, fold_params)  # staged == composition
+    assert out == mod._cv_metrics(
+        inp.X, inp.y, inp.groups, fold_params, providers=inp.providers
+    )  # staged == composition
 
 
 @pytest.mark.parametrize("module", TRAINERS)
@@ -164,7 +168,9 @@ def test_reduce_with_a_skipped_fold(module, monkeypatch):
     mod, inp, ctx, keys, fold_params = _cv_world(module, monkeypatch)
     results = {k: mod._cv_work(k, ctx) for k in keys}
     full = mod._cv_reduce(results, ctx)["single"]
-    results[keys[0]] = cv_unit_fileset(cv_unit(None, float(inp.y.mean()), None, None, None))  # a skipped fold
+    results[keys[0]] = cv_unit_fileset(
+        cv_unit(None, float(inp.y.mean()), None, None, None, None, None)
+    )  # a skipped fold
     out = mod._cv_reduce(results, ctx)["single"]
     plan = _gate_plan(mod)(inp.y, inp.groups)
     assert out["n_usable_folds"] == full["n_usable_folds"] - 1
@@ -208,6 +214,8 @@ def test_failed_payload_carries_skill(module, monkeypatch):
         "brier_gain_lb95_gt_0",
         "log_loss_gain_lb95_gt_0",
         "pr_auc_lift_lb95_gt_0",
+        "provider_brier_skill_gt_0",
+        "provider_log_loss_skill_gt_0",
     ]
     assert payload["acceptance"]["brier_gain_lb95_gt_0"] is False
     assert payload["candidates"]["public"]["metrics"]["skill"] == skill
@@ -251,7 +259,7 @@ def test_a_real_one_class_training_fold_is_skipped(module, monkeypatch):
 def test_reduce_skill_equals_an_independent_reference(module, monkeypatch):
     """FSG-IMPL-02/04: the cv `skill` uses each row's TRAINING-FOLD TRUE rate as the reference and pools the rows in
     ascending order. Built here independently of cv_skill (own rates, own ordering) and compared exactly."""
-    from silly_kicks.tracking._artifact_integrity import forecast_skill
+    from silly_kicks.tracking._artifact_integrity import forecast_skill, provider_skill
 
     mod, inp, ctx, keys, fold_params = _cv_world(module, monkeypatch)
     out = mod._cv_reduce({k: mod._cv_work(k, ctx) for k in keys}, ctx)["single"]
@@ -263,7 +271,16 @@ def test_reduce_skill_equals_an_independent_reference(module, monkeypatch):
         r[te] = inp.y[tr].mean()  # the reference: the training folds' TRUE rate (never the arm's pooled rate)
         fold[te] = k
     want = forecast_skill(inp.y, p, r, fold, inp.groups.astype(str), nested=True)
+    # ADR-132: each row's OWN provider's training-fold rate, keyed by identity (sportec -> idsse)
+    ident = np.where(inp.providers == "sportec", "idsse", inp.providers)
+    r_prov = np.full(n, np.nan)
+    for _i, tr, te in plan:
+        for prov in ("idsse", "skillcorner"):
+            sel = te[ident[te] == prov]
+            r_prov[sel] = inp.y[tr][ident[tr] == prov].mean()
+    want["by_provider"] = provider_skill(inp.y, p, r_prov, ident, inp.groups.astype(str), fold)
     assert out["skill"] == want
+    assert set(want["by_provider"]) == {"idsse", "skillcorner"}
     assert (
         out["skill"]["brier_ref"]
         != forecast_skill(  # non-vacuity: the pooled-rate reference differs
@@ -308,20 +325,20 @@ def test_a_per_fold_params_list_of_the_wrong_length_is_refused(module, monkeypat
 
 @pytest.mark.parametrize("module", TRAINERS)
 def test_paired_shipped_fit_uses_the_shipped_arms_full_rows_study(module, monkeypatch):
-    """FSG-IMPL-01 (paired branch): when the fixed-sequence rule ships an arm, the shipped params are that arm's
+    """FSG-IMPL-01 (paired branch): when the two-arm rule (ADR-132) ships an arm, the shipped params are that arm's
     FULL-ROWS study, never one of its gate-fold studies `{arm}_gf{k}`. The paired deltas and the ship verdict are
     stubbed; what is pinned is where the shipped params come from."""
     import scripts._paired as paired_mod
 
     mod = importlib.import_module(module)
-    arms = ["full", "public", "sc_extended"]
+    arms = ["public", "sc_extended"]
     full_rows = {a: {"n_estimators": 100 + i, "max_depth": 3} for i, a in enumerate(arms)}
     gf = {"n_estimators": 7, "max_depth": 2}
     studies = {a: {"params": full_rows[a]} for a in arms}
     studies.update({f"{a}_gf{k}": {"params": gf} for a in arms for k in range(5)})
     cv = {a: {"n_usable_folds": 5, "fold_params": [gf] * 5} for a in arms}
     n = 8
-    masks = {"public": np.array([True] * 4 + [False] * 4), "sc_extended": np.ones(n, bool), "full": np.ones(n, bool)}
+    masks = {"public": np.array([True] * 4 + [False] * 4), "sc_extended": np.ones(n, bool)}
     inp = SimpleNamespace(
         X=None,
         y=np.zeros(n),
@@ -339,14 +356,14 @@ def test_paired_shipped_fit_uses_the_shipped_arms_full_rows_study(module, monkey
             "seed": 42,
             "ship_variant": None,
             "expect_variant": None,
-            "ship_order": ["public", "sc_extended", "full"],
+            "ship_order": ["public", "sc_extended"],
         },
     )
     monkeypatch.setattr(mod, "_inputs", lambda ctx: (None, inp))
     monkeypatch.setattr(
         mod, "_paired_data_effect", lambda *a, **k: {x: {"nested": [0.0], "shared_params": [0.0]} for x in arms}
     )
-    monkeypatch.setattr(paired_mod, "fixed_sequence_ship", lambda **k: ("sc_extended", "stubbed verdict"))
+    monkeypatch.setattr(paired_mod, "two_arm_ship", lambda deltas: ("sc_extended", "stubbed verdict"))
     up = {"study": studies, "cv": cv}
     sel = mod._select_work("only", SimpleNamespace(upstream=lambda name: up[name]))
     assert sel["shipped"] == "sc_extended"

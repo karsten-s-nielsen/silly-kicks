@@ -1,6 +1,6 @@
 """The registered decision rules (spec 4.1, 4.3). Pure functions; no I/O."""
 
-from _paired import clears_rule, fixed_sequence_ship, ghost_admission, ghost_admission_report
+from _paired import clears_rule, ghost_admission, ghost_admission_report, two_arm_ship
 
 
 def test_clears_rule_needs_k_minus_1_positive_folds_AND_a_positive_mean():
@@ -9,30 +9,13 @@ def test_clears_rule_needs_k_minus_1_positive_folds_AND_a_positive_mean():
     assert clears_rule([0.001, 0.001, 0.001, 0.001, -0.02]) is False  # 4/5 but mean < 0
 
 
-def test_fixed_sequence_stops_when_sc_extended_fails():
-    """Registered cost: `full` cannot ship if sc_extended fails, even if its own deltas clear."""
-    ship, why = fixed_sequence_ship(
-        sc_extended=[-0.01] * 5,  # fails
-        full=[0.02] * 5,  # would have cleared
-        full_vs_sc=[0.02] * 5,
-    )
-    assert ship == "public"
-    assert "sc_extended failed" in why
-
-
-def test_full_displaces_sc_extended_only_by_sign_consistency_not_a_mean():
-    """The rev-1 bare-mean tie-break is GONE (spec 4.1). A higher mean is not enough."""
-    ship, _ = fixed_sequence_ship(
-        sc_extended=[0.02] * 5,
-        full=[0.03] * 5,
-        full_vs_sc=[0.05, -0.01, -0.01, -0.01, -0.01],  # higher MEAN, but 1/5 folds -> fails
-    )
-    assert ship == "sc_extended", "ties go to less data, not to noise"
-
-
-def test_full_ships_when_it_dominates_fold_by_fold():
-    ship, _ = fixed_sequence_ship(sc_extended=[0.02] * 5, full=[0.03] * 5, full_vs_sc=[0.01] * 5)
-    assert ship == "full"
+def test_two_arm_rule_ships_sc_extended_only_when_it_clears():
+    """ADR-132 (corpus widening spec 5.2): public vs sc_extended, clears_rule unchanged; ties go to less data."""
+    assert two_arm_ship([0.02] * 5)[0] == "sc_extended"
+    assert two_arm_ship([0.02, 0.02, 0.02, 0.02, -0.001])[0] == "sc_extended"  # 4/5 positive, mean > 0
+    assert two_arm_ship([0.02, 0.02, 0.02, -0.01, -0.01])[0] == "public"  # only 3/5
+    assert two_arm_ship([0.001, 0.001, 0.001, 0.001, -0.02])[0] == "public"  # 4/5 but mean < 0
+    assert two_arm_ship([0.5])[0] == "public"  # K < 2 never clears
 
 
 def test_ghost_admission_requires_demonstrated_improvement_not_a_wash():

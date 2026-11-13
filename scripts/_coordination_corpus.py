@@ -253,19 +253,20 @@ def table_pairs(*tables: pd.DataFrame) -> set[tuple[str, str]]:
 
 
 def corpus_visibility_label(pairs, *, token: str | None) -> str:
-    """ADR-038 (spec 8.3): an artifact's corpus-visibility label, from the pining manifest's per-match ``visibility``
-    -- never the provider name. Fail-closed: a match the manifest does not list is private, and a match may claim
-    ``public`` only if it is one of the registered public set (``assert_public_corpus`` refuses otherwise)."""
+    """ADR-038 / ADR-132 (spec 8.3): an artifact's corpus-visibility (provenance) label: ``public`` iff every used
+    match is publicly obtainable (``PUBLICLY_OBTAINABLE``, fail-closed: an unregistered match is not), never from the
+    provider name. The pining manifest's per-match ``visibility`` stays the licensing check: a match may claim
+    ``public`` there only if it is raw-redistributable (``assert_public_corpus`` refuses otherwise)."""
     from scripts import _loader_pining
-    from scripts._corpus import artifact_label, assert_public_corpus
+    from scripts._corpus import PUBLICLY_OBTAINABLE, artifact_label, assert_public_corpus, in_registry
 
     used = {(str(p), str(m)) for p, m in pairs}
     providers = sorted({p for p, _m in used})
     manifest = _loader_pining.match_visibility(providers, token=token) if providers else {}
     visibility = {key: manifest.get(key, "private") for key in used}
     assert_public_corpus(visibility)
-    all_public = bool(visibility) and all(v == "public" for v in visibility.values())
-    return artifact_label(providers=set(providers), all_public=all_public)
+    all_obtainable = bool(used) and all(in_registry(PUBLICLY_OBTAINABLE, p, m) for p, m in used)
+    return artifact_label(all_obtainable=all_obtainable)
 
 
 def visibility_preflight(refs, load, *, attempts: int = 3) -> None:

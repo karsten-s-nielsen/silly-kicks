@@ -33,15 +33,18 @@ Three owner gates, every time:
 
 ## Staged datasets
 
-Every dataset a campaign reads is declared ONCE in `scripts/hf_jobs/datasets.toml` (name, repo, kind,
-visibility, access). Kinds: `flat_tc3` (`shards/<gen>/<provider>__<game>.parquet` frames +
+Every dataset a campaign reads is declared ONCE in `scripts/hf_jobs/datasets.toml` (name, repo, kind, `raw`
+(`redistributable` / `restricted`: may the raw data be redistributed?), `provenance` (`public` / `extended`: can
+anyone reproduce an artifact from obtainable data?), access; ADR-132). Every repo this repo stages is a private Hub
+repo; `datasets record` and preflight check 5 refuse one that is not (fail-closed). Kinds: `flat_tc3` (`shards/<gen>/<provider>__<game>.parquet` frames +
 `_actions/<stem>.parquet` + `home_teams.json`), `pergame` (`<game>/frames.parquet` + `actions.parquet`), and
 StatsBomb open data (fetched per unit at the pinned revision, decision P6). In-job code reads only these
 neutral shapes (INV-5); how a dataset was built stays off HF.
 
 After a dataset is staged, record it: `python -m scripts.hf_jobs datasets record <name>`. It MEASURES the
 staged dataset and writes the pinned revision, the unit list and the expected corpus identity (digest + n;
-for a public dataset the canonical id list) into `scripts/hf_jobs/datasets.lock.json`. `datasets show
+`public_ids`: the units of the `public` arm) into `scripts/hf_jobs/datasets.lock.json`. For tracking data it checks
+the declared `provenance` against the `_corpus` registries (ADR-132). `datasets show
 <name>` prints the record. `adopt` checks every artifact against it (INV-9).
 
 The open data (`sb_open`) is pinned to a GitHub commit and read in a job from a staged, read-only snapshot of
@@ -63,7 +66,9 @@ comparison with the committed model; ADR-130), the resource-sharing knobs
 concurrent mounts of a dataset; `mount_fault_budget`; `launch_batch` + `backoff_max_s` pace launches; a
 `peak_rss_by_stage` hint sizes memory-heavy stages — ADR-128 amendment 2026-11-03), and per job the trainer or
 driver, its tier, its dataset (plus
-`probe_dataset` for xcross and `pool_dataset` for the receiver's Gradient Sports pool) and its variants. The
+`probe_dataset` for xcross and `pool_dataset` for the receiver's Gradient Sports pool) and its variants. A
+visibility-gated job (xShot/xCross) declares `arms` (ADR-132): `["public", "sc_extended"]` runs the two-arm rule (the
+wheel jobs), one arm runs the non-paired branch and must cover every staged unit (the Hub jobs: `["sc_extended"]`). The
 registry pins each instance's corpus-scope and search-size args (`base_args`). Run keys are derived: `{campaign}-{commit7}-{job}-{tier}`;
 `--replica N` adds `-rN`, a FRESH store for the same-commit re-run (INV-1 gate, decision P18).
 
@@ -165,7 +170,7 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    no read slot while it waits; after the fourth wait the error stops `retrieve`.
 7. `verify --staging DIR` -- loads every artifact in `.venv-hfjobs`, checks the five expectations (training
    commit = campaign commit; recorded dataset revision = the pin; corpus digest + n = the record; shipped
-   tier = the expected tier), certifies per the registry (`public`: the head-to-head as in-sample parity AND two-sided CV parity on
+   variant = the entry's `shipped_arm`, else its tier; ADR-132), certifies per the registry (`public`: the head-to-head as in-sample parity AND two-sided CV parity on
    `cv_metric` within 5 %, from the committed `metrics.json` or its manifest `cv_reference`; `owner`: CV
    parity on `cv_metric`; `rebaseline`: identity comparison, decision P15, where a code delta is an AST change
    of an input module) and runs the ADR-126 integrity gate for xShot/xCross. A build with `in_sample_gate=False`

@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-07-14 |
-| **Status** | Accepted |
+| **Status** | Accepted; amended by ADR-132 (the visibility flag split into raw redistribution and provenance; the `full` label retired) |
 | **Deciders** | Karsten S. Nielsen; TF-19 GKDV cycle (silly-kicks session) |
 | **Supersedes / amends** | amends ADR-024 (SkillCorner keeper-origin), ADR-034 (native SkillCorner builder); ADR-011 paired-test lifecycle re-registered, not overturned |
 | **Source spec** | `docs/superpowers/specs/2026-07-14-skillcorner-corpus-and-visibility-design.md` (rev 5; five review rounds) |

@@ -5,6 +5,43 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.143.0] — 2026-11-13 — corpus widening: provenance split from raw redistributability, a two-arm ship rule, per-provider skill gates, size gates (ADR-132) (PR-S208)
+
+> **Why a minor release:** the wheel changes (`silly_kicks/tracking/_artifact_integrity.py` gains the two
+> per-provider skill gates), and the xShot/xCross trainers' arms and ship rule change. The bundled weights do not
+> change in this release. The order after it: restage `xshot187`, one refit (`mode = "refit"`), then the adoption
+> release.
+
+### Changed
+
+- **Corpus visibility is split in two (ADR-132; supersedes the ADR-038 public test for new artifacts).**
+  `scripts/_corpus.py`: `PUBLIC_CORPUS` is renamed `RAW_REDISTRIBUTABLE` (SkillCorner 20 + IDSSE 7: the raw data can
+  be redistributed). The new `PUBLICLY_OBTAINABLE` adds the Gradient Sports World Cup 2022 games (3812-3859 and
+  10502-10517, 64 games): anyone can get them, but nobody may redistribute them. `HELD_OUT_PROBE` (GS 10502, 10503)
+  stays out of every arm. `artifact_label(all_obtainable=)` returns `public` or `sc_extended`; `full` is retired for
+  new artifacts.
+- **Two arms, one ship rule.** `arm_policy.compute_arms` builds `public` (obtainable minus the probe) and
+  `sc_extended` (`public` + licensed SkillCorner); a unit in no arm is refused. A campaign job declares its `arms`
+  (`CampaignJob.arms`); one declared arm must cover every staged unit, probe included. `_paired.two_arm_ship` replaces
+  `fixed_sequence_ship`; `refuse_retired_arms` refuses a payload with `full`. `xcross --ship-variant` takes
+  `public` or `sc_extended`.
+- **Per-provider skill gates.** `skill_gates` gains `provider_brier_skill_gt_0` and `provider_log_loss_skill_gt_0`
+  (`provider_skill`): every provider's Brier and log-loss skill must be above 0 against that provider's OWN
+  training-fold rate, so 64 GS games cannot hide a provider without skill. `cv_unit` records the providers and the
+  per-provider training rates; `cv_skill` reports `skill["by_provider"]`. A metrics dict without it fails closed.
+  `validate_trained_artifact_integrity` folds the two gates into `calibration_ok`.
+- **Size gates.** A trainer refuses an artifact of 5,000,000 bytes or more (`artifact_size_lt_5mb`; the FAILED
+  payload is written). `publish.yml` runs `scripts/check_dist_sizes.py` after the build: a wheel or sdist of
+  80,000,000 bytes or more stops the upload (PyPI limit).
+- **Datasets declare `raw` and `provenance`, not `visibility`.** `datasets.toml` per spec 6.2. `datasets record`
+  (now `python -m scripts.hf_jobs datasets record <name>`, which injects `arm_policy`) checks the declared
+  `provenance` against the staged units, writes the locked `public_ids`, and refuses a staged repo that is not
+  private. `preflight` check 5 runs the private check first. An unregistered provider refuses the check.
+- **Adoption reads the shipped arm.** `manifest.Artifact.shipped_arm` / `effective_shipped_arm`; `adopt` expects the
+  shipped arm and rehydrates a public bundle's `corpus_match_ids` from the dataset's locked `public_ids`
+  (`rehydrate_public_corpus_ids(pairs=)`).
+- The committed campaigns declare `arms = ["public"]` on the xshot17 jobs and `["sc_extended"]` on the xshot115 jobs.
+
 ## [4.142.1] — 2026-11-12 — HF campaigns: top-up launches, one decision per shared generation, a retrieve that waits out a rate limit (PR-S207)
 
 The wheel does not change: every entry is scripts only (the HF campaign tooling). Run 9b (`cycle1.toml` whole)

@@ -11,10 +11,10 @@ actions; ``home_teams.json`` signs score_differential) -> ``probe[match]`` (the 
 the staged per-game probe dataset) -> ``probe_comparison`` -> ``prep`` -> ``study[tag]`` -> ``cv[arm, fold]``
 -> ``select`` -> ``fit`` -> ``assemble`` (the bundle + the GK validations).
 
-On a public/owner mix with Gradient Sports it runs the common-public-held-out PAIRED data-effect comparison
-over THREE candidates (public / sc_extended / full) with NESTED HPO -- each candidate re-tuned per outer
-fold with that fold's public games excluded (spec 4.1, reviewer M4) -- then selects the shipped corpus via
-the registered fixed sequence (scripts/_paired.py). Computes FAIL-CLOSED acceptance gates, and writes a
+Given both arms (public + sc_extended; ADR-132) it runs the common-public-held-out PAIRED data-effect comparison
+over the TWO candidates with NESTED HPO -- each candidate re-tuned per outer fold with that fold's public games
+excluded (spec 4.1, reviewer M4) -- then selects the shipped corpus via the registered two-arm rule
+(scripts/_paired.py). Computes FAIL-CLOSED acceptance gates, and writes a
 pickle-free artifact ONLY if the gates pass. Quality numbers in metrics.json are CV/protocol estimates, not
 the shipped all-data fit.
 
@@ -35,6 +35,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `from scripts._X` resolves
 
 from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, join_key, main
+from scripts._study_shared import artifact_size_gate
 from silly_kicks.tracking._artifact_integrity import skill_gates
 
 sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
@@ -192,14 +193,15 @@ def _hpo_once(
     return params
 
 
-def _cv_metrics(X, y, groups, params, *, negative_subsample=None, seed=42) -> dict:
+def _cv_metrics(X, y, groups, params, *, negative_subsample=None, seed=42, providers=None) -> dict:
     """Label-stratified, match-grouped CV -> gate metrics on the TRUE balance.
 
     M4: the folds are `_xcross_eval`'s plan / fold / combine, the SAME pieces `_cv_score` composes for the GK-block
     ablation (identical folds for any seed/negative_subsample -- no drift). ``params`` is one params dict for every
     fold, or a sequence of per-fold dicts (ADR-131 nested CV: fold k at the params of its study ``{arm}_gf{k}``).
     Adds the two gate-specific keys (positive_rate, base_rate_brier) and the ADR-131 ``skill`` and ``fold_params``
-    keys -- the same result as the staged `cv` reduce.
+    keys -- the same result as the staged `cv` reduce. ``providers`` (row-aligned) adds the ADR-132
+    ``skill["by_provider"]``; without it the per-provider gates fail closed.
     """
     from collections.abc import Mapping
 
@@ -218,9 +220,11 @@ def _cv_metrics(X, y, groups, params, *, negative_subsample=None, seed=42) -> di
                 X, y, i, tr, te, fold_params[i], seed=seed, negative_subsample=negative_subsample, return_oof=True
             ),
             base,
+            tr,
             te,
             y,
             groups,
+            providers,
         )
         for i, tr, te in plan
     ]
@@ -244,6 +248,14 @@ def _fit_score(X_tr, y_tr, X_te, y_te, params, *, negative_subsample=None, seed=
     twin exactly EXCEPT ``_pinned_params`` comes from ``_xcross_attempt`` (``subsample_negatives`` is
     single-sourced from ``_xshot_occurrence`` -- xCross has none of its own, as the old closure did).
     """
+
+    return _fit_scores(X_tr, y_tr, X_te, y_te, params, negative_subsample=negative_subsample, seed=seed)[0]
+
+
+def _fit_scores(X_tr, y_tr, X_te, y_te, params, *, slices=None, negative_subsample=None, seed=42):
+    """`_fit_score` from ONE fit, plus the PR-AUC on each named row slice of the held-out fold (ADR-132: the
+    per-provider deltas). Returns ``(pooled, {name: slice_pr_auc})``; a degenerate fit, held-out fold or slice
+    (one class) gives NaN."""
     import numpy as np
     import xgboost as xgb
     from sklearn.metrics import average_precision_score
@@ -251,17 +263,25 @@ def _fit_score(X_tr, y_tr, X_te, y_te, params, *, negative_subsample=None, seed=
     from silly_kicks.tracking._xcross_attempt import _pinned_params
     from silly_kicks.tracking._xshot_occurrence import subsample_negatives
 
+    slices = dict(slices or {})
+    nan = float("nan")
     if len(np.unique(y_tr)) < 2 or len(np.unique(y_te)) < 2:
-        return float("nan")
+        return nan, {name: nan for name in slices}
     if negative_subsample:  # TRAIN only; the held-out fold (X_te, y_te) is never subsampled
         X_tr, y_tr, _ = subsample_negatives(X_tr, y_tr, y_tr, fraction=negative_subsample, seed=seed)
         if len(np.unique(y_tr)) < 2:
-            return float("nan")
+            return nan, {name: nan for name in slices}
     p_ = dict(_pinned_params(params))
     p_["base_score"] = float(y_tr.mean())  # XGBoost's default base_score is wrong for this balance
     clf = xgb.XGBClassifier(**p_)
     clf.fit(X_tr.to_numpy(float), y_tr)
-    return float(average_precision_score(y_te, clf.predict_proba(X_te.to_numpy(float))[:, 1]))
+    proba = clf.predict_proba(X_te.to_numpy(float))[:, 1]
+    y_te = np.asarray(y_te)
+    by = {
+        name: float(average_precision_score(y_te[sel], proba[sel])) if len(np.unique(y_te[sel])) == 2 else nan
+        for name, sel in slices.items()
+    }
+    return float(average_precision_score(y_te, proba)), by
 
 
 def _public_folds(X, y, groups, is_public):
@@ -297,6 +317,7 @@ def _paired_data_effect(
     seed=42,
     study_shard_dir=None,
     params_for=None,
+    providers=None,
 ) -> dict:
     """Nested-HPO paired comparison on the common public held-out folds (spec 4.1, reviewer M4).
 
@@ -311,12 +332,22 @@ def _paired_data_effect(
     `public` under both protocols:
       * "nested"        -- PRIMARY, decides the ship (each candidate at ITS OWN tuned params)
       * "shared_params" -- REPORTED for comparability with 4.9.0/4.18.0 (candidate at PUBLIC params)
+      * "by_provider"   -- with ``providers`` (row-aligned identities; ADR-132): per provider P, the nested
+                           per-fold delta on P's public held-out rows, one entry per fold (NaN allowed). REPORTED,
+                           never deciding.
     """
     Xp, yp, folds = _public_folds(X, y, groups, is_public)
-    out = {name: {"nested": [], "shared_params": []} for name in candidates}
+    out: dict[str, dict] = {name: {"nested": [], "shared_params": []} for name in candidates}
+    prov_p = None if providers is None else np.asarray(providers).astype(str)[is_public]
+    prov_names = [] if prov_p is None else sorted(set(prov_p.tolist()))
+    if prov_p is not None:
+        for name in candidates:
+            if name != "public":
+                out[name]["by_provider"] = {pv: [] for pv in prov_names}
 
     for fold, (te, trainable) in enumerate(folds):
         X_te, y_te = Xp.iloc[te], yp[te]  # the PUBLIC held-out fold (positional)
+        slices = {} if prov_p is None else {pv: prov_p[te] == pv for pv in prov_names}
 
         fold_params = {
             name: params_for(f"{name}_f{fold}")
@@ -336,12 +367,13 @@ def _paired_data_effect(
             )
             for name, mask in candidates.items()
         }
-        d_pub = _fit_score(
+        d_pub, s_pub = _fit_scores(
             X[candidates["public"] & trainable],
             y[candidates["public"] & trainable],
             X_te,
             y_te,
             fold_params["public"],
+            slices=slices,
             negative_subsample=negative_subsample,
             seed=seed,
         )
@@ -349,9 +381,18 @@ def _paired_data_effect(
             if name == "public":
                 continue
             m = mask & trainable
-            d_nested = _fit_score(
-                X[m], y[m], X_te, y_te, fold_params[name], negative_subsample=negative_subsample, seed=seed
+            d_nested, s_nested = _fit_scores(
+                X[m],
+                y[m],
+                X_te,
+                y_te,
+                fold_params[name],
+                slices=slices,
+                negative_subsample=negative_subsample,
+                seed=seed,
             )
+            for pv in slices:
+                out[name]["by_provider"][pv].append(float(s_nested[pv] - s_pub[pv]))
             d_shared = _fit_score(
                 X[m], y[m], X_te, y_te, fold_params["public"], negative_subsample=negative_subsample, seed=seed
             )
@@ -483,8 +524,8 @@ _PARAMS = (
         "ship_variant",
         str,
         None,
-        choices=("public", "sc_extended", "full"),
-        help="Operator override: force-ship THIS variant regardless of the fixed-sequence bundle-selection "
+        choices=("public", "sc_extended"),  # ADR-132: no `full` arm exists
+        help="Operator override: force-ship THIS variant regardless of the two-arm bundle-selection "
         "verdict (the paired test still runs and its verdict + deltas are recorded). Requires the "
         "multi-candidate (run_paired) corpus. Default None = normal gate-selected ship.",
     ),
@@ -754,10 +795,13 @@ def _prep_work(key, ctx):
     ``run_paired``, the D21 objective inputs and the B6 range probe -- persisted ONCE as a FileSet."""
     import tempfile
 
+    from scripts._paired import is_paired, refuse_retired_arms
     from scripts._study_shared import persist_study_inputs, stoppage_block, study_tags
     from scripts.hf_jobs.arms import match_key, parse_arms
 
     p = ctx.params
+    armspec = parse_arms(p["arms_json"])
+    refuse_retired_arms(armspec.arms)  # ADR-132: `full` is retired
     if set(_csv(p["probe_providers"])) & set(_csv(p["probe_comparison_providers"])):
         raise ValueError("--probe-providers and --probe-comparison-providers must be disjoint.")
     combined = ctx.upstream("extract")
@@ -767,15 +811,14 @@ def _prep_work(key, ctx):
     providers = combined["_provider"].to_numpy()
     match_ids = combined["_match_id"].to_numpy()
     sd_probe = _sd_range_probe(X)
-    armspec = parse_arms(p["arms_json"])
     match_keys = np.array([match_key(str(pv), str(m)) for pv, m in zip(providers, match_ids, strict=True)])
     arms = _build_candidate_masks(match_keys, armspec)
     is_public = arms.get("public", np.zeros(len(match_keys), dtype=bool))
-    run_paired = ("sc_extended" in arms) and ("full" in arms)
+    run_paired = is_paired(arms)  # ADR-132: public + sc_extended
     if p["ship_variant"] is not None and not run_paired:
         raise ValueError(
-            "--ship-variant requires the multi-candidate (run_paired) corpus (public + owner "
-            "SkillCorner + gradientsports) so the variant masks and the TF-19 probe cohort exist."
+            "--ship-variant requires the two-arm (run_paired) corpus (public + sc_extended; ADR-132) "
+            "so the variant masks and the TF-19 probe cohort exist."
         )
     objective_inputs = {
         "driver": "train_xcross_attempt",
@@ -967,7 +1010,7 @@ def _cv_work(key, ctx):
     _root, inp = _inputs(ctx)
     arm, _, fold_s = key.rpartition("__")
     rows = _arm_rows(inp, arm)
-    X, y, groups = inp.X.iloc[rows], inp.y[rows], inp.groups[rows]
+    X, y, groups, providers = inp.X.iloc[rows], inp.y[rows], inp.groups[rows], inp.providers[rows]
     fold_i = int(fold_s)
     _i, tr, te = ev._cv_score_plan(y, groups)[fold_i]
     cfg = inp.config
@@ -982,7 +1025,7 @@ def _cv_work(key, ctx):
         negative_subsample=cfg["negative_subsample"],
         return_oof=True,
     )
-    return cv_unit_fileset(cv_unit(out, float(np.asarray(y, dtype=int).mean()), te, y, groups))
+    return cv_unit_fileset(cv_unit(out, float(np.asarray(y, dtype=int).mean()), tr, te, y, groups, providers))
 
 
 def _cv_reduce(results, ctx) -> dict:
@@ -1011,8 +1054,8 @@ def _cv_reduce(results, ctx) -> dict:
 def _select_work(key, ctx) -> dict:
     """The ship decision: the paired nested deltas at the cached study params (`params_for`), the operator
     ``--ship-variant`` override, or the BROADEST arm of a non-paired corpus (``ship_order[-1]``)."""
-    from scripts._corpus_identity import canonical_providers, check_shipped_variant
-    from scripts._paired import fixed_sequence_ship
+    from scripts._corpus_identity import canonical_providers, check_shipped_variant, provider_identity
+    from scripts._paired import two_arm_ship
 
     _root, inp = _inputs(ctx)
     cfg = inp.config
@@ -1035,15 +1078,13 @@ def _select_work(key, ctx) -> dict:
             negative_subsample=cfg["negative_subsample"],
             seed=cfg["seed"],
             params_for=lambda tag: studies[tag]["params"],
+            providers=np.array([provider_identity(v) for v in inp.providers.tolist()]),
         )
-        full_vs_sc = [f - s for f, s in zip(paired["full"]["nested"], paired["sc_extended"]["nested"], strict=True)]
-        shipped, why = fixed_sequence_ship(
-            sc_extended=paired["sc_extended"]["nested"], full=paired["full"]["nested"], full_vs_sc=full_vs_sc
-        )
-        print(f"Fixed-sequence verdict: ship {shipped} -- {why}")
+        shipped, why = two_arm_ship(paired["sc_extended"]["nested"])
+        print(f"Two-arm verdict: ship {shipped} -- {why}")
         ship_variant = cfg.get("ship_variant")
         if ship_variant is not None:
-            why = f"operator --ship-variant override (fixed-sequence gate verdict was: {shipped} -- {why})"
+            why = f"operator --ship-variant override (two-arm rule verdict was: {shipped} -- {why})"
             shipped = ship_variant
             print(f"Ship-variant override: forcing ship {shipped}. {why}")
         check_shipped_variant(cfg.get("expect_variant"), shipped)
@@ -1056,7 +1097,7 @@ def _select_work(key, ctx) -> dict:
         candidates["paired"] = {
             "nested": {n: paired[n]["nested"] for n in cand_masks},
             "shared_params": {n: paired[n]["shared_params"] for n in cand_masks},
-            "full_vs_sc": full_vs_sc,
+            "by_provider": paired["sc_extended"].get("by_provider", {}),  # ADR-132: reported, not deciding
             "shipped": shipped,
             "why": why,
         }
@@ -1118,6 +1159,19 @@ def _fit_work(key, ctx):
             model.predict_proba(X[ship_mask].head(50)), reloaded.predict_proba(X[ship_mask].head(50)), rtol=0, atol=0
         )
         files = {q.name: q.read_bytes() for q in sorted(art.iterdir()) if q.is_file()}
+    size, size_ok = artifact_size_gate(files)  # ADR-132 (spec 5.6): artifact_size_lt_5mb, fail-closed
+    if not size_ok:
+        failed = {
+            "candidates": candidates,
+            "acceptance": {**acceptance, "artifact_size_lt_5mb": False},
+            "shipped_variant": shipped,
+            "artifact_size_bytes": size,
+        }
+        ctx.store.write_bytes(
+            f"{ctx.generation('fit')}/only.metrics_FAILED.json", json.dumps(failed, indent=2).encode("utf-8")
+        )
+        print(f"ARTIFACT SIZE GATE FAILED ({size} bytes) -- refusing to write the bundled artifact.", file=sys.stderr)
+        raise AcceptanceGatesFailedError(shipped)
     return FileSet(files)
 
 
@@ -1226,7 +1280,10 @@ def _assemble_work(key, ctx):
         # ADR-067 M4 caveat, emitted here -- never hand-added at bundling (spec 0.11).
         **reproducibility(shipped, candidates[shipped]["providers"], training_commit=run_prov["commit"]),
         "candidates": candidates,
-        "acceptance": skill_gates(candidates[shipped]["metrics"]),
+        "acceptance": {
+            **skill_gates(candidates[shipped]["metrics"]),
+            "artifact_size_lt_5mb": artifact_size_gate(fit.files)[1],  # ADR-132 (spec 5.6)
+        },
         "stoppage": cfg.get("stoppage"),  # ADR-130
         "estimates_are_cv_not_shipped_fit": True,
         "artifact_size_bytes": sum(len(b) for b in fit.files.values()),

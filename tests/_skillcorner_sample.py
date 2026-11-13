@@ -15,7 +15,7 @@ from pathlib import Path
 
 SAMPLE_DIR = Path(os.environ.get("SKILLCORNER_SAMPLE_DIR", r"C:\Users\Karsten\AppData\Local\Temp\skillcorner_sample"))
 
-# The redistributable public SkillCorner set (must equal PUBLIC_CORPUS["skillcorner"] -- guarded by
+# The redistributable public SkillCorner set (must equal RAW_REDISTRIBUTABLE["skillcorner"] -- guarded by
 # tests/scripts/test_corpus_taxonomy.py). Grew 10 -> 20 on 2026-09-09 (a second public drop).
 MATCH_IDS = [
     "1874553",

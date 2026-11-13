@@ -51,6 +51,10 @@ jobs:
               )
           print(f"tag {tag} matches built version {built}")
           PY
+      # ADR-132 (owner ruling r4): PyPI caps each file at 100 MB. Fail before the upload when the wheel or the
+      # sdist is 80 MB or larger (20 MB headroom); the step prints every dist/ file's size.
+      - name: Release files must stay under the size limit
+        run: python scripts/check_dist_sizes.py dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist

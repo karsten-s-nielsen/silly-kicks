@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.142.1: HF campaign tooling (scripts only).** A stage gets more jobs while its jobs run, every keyed job has a tag, `compare` takes several baselines, no launch from a tree that the jobs do not run, one decision per shared generation, and a `retrieve` that waits out a rate limit and reads the counters in batches (ADR-128 items 50 to 57). Run 9b reproduced the 12 trainer artifacts outside xShot/xCross; the wheel does not change. Detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.143.0: corpus widening (ADR-132).** Corpus provenance is split from raw redistributability (`RAW_REDISTRIBUTABLE` / `PUBLICLY_OBTAINABLE`: the 64 Gradient Sports World Cup 2022 games are publicly obtainable; 62 join the public arm and GS 10502/10503 stay a held-out probe). xShot/xCross have two arms (`public`, `sc_extended`) and one ship rule (`two_arm_ship`); `full` is retired for new artifacts. Two per-provider skill gates, a 5 MB artifact gate and an 80 MB dist gate. Datasets declare `raw` and `provenance`, and `datasets record` checks them. The bundled weights do not change: next are the `xshot187` restage, one refit and the adoption release. Detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

@@ -3,7 +3,16 @@ import ast
 
 def test_corpus_identity_has_no_visibility_symbols():
     src = open("scripts/_corpus_identity.py", encoding="utf-8").read()
-    for banned in ("PUBLIC_CORPUS", "is_public_row", "assert_public_corpus", "artifact_label", "match_visibility"):
+    for banned in (
+        "RAW_REDISTRIBUTABLE",
+        "PUBLICLY_OBTAINABLE",
+        "HELD_OUT_PROBE",
+        "is_public_row",
+        "is_obtainable_row",
+        "assert_public_corpus",
+        "artifact_label",
+        "match_visibility",
+    ):
         assert banned not in src, banned
 
 

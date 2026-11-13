@@ -92,6 +92,17 @@ def test_the_version_guard_runs_in_build_BEFORE_the_artifact_upload() -> None:
     )
 
 
+def test_the_size_check_runs_in_build_BEFORE_the_artifact_upload() -> None:
+    """ADR-132 (corpus widening spec 5.6, owner ruling r4): PyPI caps each file at 100 MB; the build job checks the
+    wheel AND the sdist against 80 MB after `python -m build` and before the upload."""
+    steps = _build_steps()
+    size = _index_of(steps, lambda s: "python scripts/check_dist_sizes.py dist" in str(s.get("run", "")))
+    build = _index_of(steps, lambda s: "python -m build" in str(s.get("run", "")))
+    upload = _index_of(steps, lambda s: "upload-artifact" in str(s.get("uses", "")))
+    assert size >= 0, "no release size check in the `build` job (scripts/check_dist_sizes.py) -- restore it"
+    assert build < size < upload, f"build={build} size={size} upload={upload}"
+
+
 def test_the_guard_compares_the_BUILT_artifact_not_pyproject() -> None:
     """Reading pyproject would re-assert the input; the wheel is what actually uploads.
 

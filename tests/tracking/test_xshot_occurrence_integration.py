@@ -459,20 +459,26 @@ def _bundled_params():
 
 @pytest.mark.e2e
 def test_xshot_gradientsports_e2e():
-    """On real multi-provider data, the bundled-hyperparameter model passes all seven ADR-131 forecast-skill gates:
-    Brier, log-loss and within-fold PR-AUC skill over the training-fold rate, each with its match-bootstrap bound."""
+    """On real multi-provider data, the bundled-hyperparameter model passes all nine forecast-skill gates: the seven
+    ADR-131 gates (Brier, log-loss and within-fold PR-AUC skill over the training-fold rate, each with its
+    match-bootstrap bound, plus enough usable folds) and the two ADR-132 per-provider gates (each provider's Brier and
+    log-loss skill over its OWN training-fold rate)."""
     import sys
 
     sys.path.insert(0, "scripts")
     from train_xshot_occurrence import _cv_metrics
 
+    from scripts._corpus_identity import provider_identity
     from silly_kicks.tracking._artifact_integrity import skill_gates
 
     # 6 per provider (about 18 matches, the public arm's scale): 9 matches cannot show the Brier gain's match-bootstrap
     # bound at 95% (owner ruling 2026-11-12: enlarge the corpus, keep the all-seven assertion).
-    X, y, groups, _prov = _e2e_load_real(["skillcorner", "idsse", "gradientsports"], max_per_provider=6)  # type: ignore[misc]
-    m = _cv_metrics(X, y, groups, _bundled_params())
+    X, y, groups, prov = _e2e_load_real(["skillcorner", "idsse", "gradientsports"], max_per_provider=6)  # type: ignore[misc]
+    # ADR-132: the row-aligned providers give skill["by_provider"]; without them the per-provider gates fail closed.
+    m = _cv_metrics(X, y, groups, _bundled_params(), providers=prov)
     g = skill_gates(m)
+    want = {provider_identity(v) for v in np.unique(prov).tolist()}
+    assert set(m["skill"]["by_provider"]) == want == {"gradientsports", "idsse", "skillcorner"}, m["skill"]
     assert all(g.values()), (g, m["skill"])
 
 
@@ -498,8 +504,8 @@ def test_xshot_cross_provider():
 
 def _arms(data_root, *, two_tier=False) -> str:
     """The launcher's neutral ``--arms-json`` for the staged toy (ADR-123 Amendment B). Default: every game
-    ``public`` (the single-arm trainer ships ``public``). ``two_tier``: half the games ``public``, ALL in
-    ``sc_extended``, NO ``full`` -> not paired, so the BROADEST arm (sc_extended) must ship."""
+    ``public`` (the single-arm trainer ships ``public``). ``two_tier``: the Hub-job shape (ADR-132, spec 5.5): ONE
+    ``sc_extended`` arm over every game -> not paired, so sc_extended must ship."""
     import json
 
     from scripts._toy_corpora import xshot_arms
@@ -507,12 +513,7 @@ def _arms(data_root, *, two_tier=False) -> str:
     if not two_tier:
         return xshot_arms(data_root / "syn", paired=False)
     keys = json.loads(xshot_arms(data_root / "syn", paired=False))["arms"]["public"]
-    return json.dumps(
-        {
-            "arms": {"public": keys[: max(1, len(keys) // 2)], "sc_extended": keys},
-            "ship_order": ["public", "sc_extended"],
-        }
-    )
+    return json.dumps({"arms": {"sc_extended": keys}, "ship_order": ["sc_extended"]})
 
 
 def _train(tmp_path, data_root, arms_json, *extra, check=True):
@@ -575,9 +576,9 @@ def test_train_script_smoke_position_only(tmp_path):
 
 @pytest.mark.slow
 def test_train_script_ships_broadest_arm_when_not_paired(tmp_path):
-    """ADR-126 / ADR-038: a 2-tier (public + sc_extended, no full) corpus ships ``sc_extended``, NEVER
-    ``public`` -- an owner-tier-trained model must not carry a public label. Regression for the
-    ``ship_order[-1]`` fix (the sc_extended re-fit previously mis-shipped the narrow ``public`` arm)."""
+    """ADR-126 / ADR-038: a non-paired owner-tier run (the ADR-132 Hub-job shape: one ``sc_extended`` arm) ships
+    ``sc_extended``, NEVER ``public`` -- an owner-tier-trained model must not carry a public label. Regression
+    for the ``ship_order[-1]`` fix (the sc_extended re-fit previously mis-shipped the narrow ``public`` arm)."""
     import json
     from pathlib import Path
 

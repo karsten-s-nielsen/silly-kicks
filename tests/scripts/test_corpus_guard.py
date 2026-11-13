@@ -7,7 +7,7 @@ import pytest
 
 from scripts._corpus import (
     BUNDLED_PUBLIC_ARM,
-    PUBLIC_CORPUS,
+    RAW_REDISTRIBUTABLE,
     bundled_public_arm_pairs,
     rehydrate_public_corpus_ids,
     requested_is_all_public,
@@ -25,11 +25,11 @@ def test_bundled_public_arm_is_the_original_17_inside_the_registered_public_corp
     assert len(BUNDLED_PUBLIC_ARM["skillcorner"]) == 10
     assert len(BUNDLED_PUBLIC_ARM["idsse"]) == 7
     for prov, ids in BUNDLED_PUBLIC_ARM.items():
-        assert set(ids) <= PUBLIC_CORPUS[prov]
+        assert set(ids) <= RAW_REDISTRIBUTABLE[prov]
     # 1874553 is one of the ten SkillCorner ids added on 2026-09-10 (ce0401a) -- not in the bundled arm
-    assert "1874553" in PUBLIC_CORPUS["skillcorner"]
+    assert "1874553" in RAW_REDISTRIBUTABLE["skillcorner"]
     assert "1874553" not in BUNDLED_PUBLIC_ARM["skillcorner"]
-    assert set(BUNDLED_PUBLIC_ARM["idsse"]) == PUBLIC_CORPUS["idsse"]
+    assert set(BUNDLED_PUBLIC_ARM["idsse"]) == RAW_REDISTRIBUTABLE["idsse"]
 
 
 def test_bundled_public_arm_pairs_shape():
@@ -110,7 +110,7 @@ def test_rehydrate_public_corpus_ids_replaces_the_digest_with_canonical_pairs():
 
 
 def test_rehydrate_public_corpus_ids_refuses_a_non_pinned_corpus():
-    # A different count (e.g. the widened current PUBLIC_CORPUS, D4) or different providers is refused,
+    # A different count (e.g. the widened ADR-132 public arm) or different providers is refused,
     # never silently relabelled as the pinned public arm.
     with pytest.raises(ValueError, match="pinned public arm"):
         rehydrate_public_corpus_ids({"corpus_n_matches": 25, "providers": ["idsse", "skillcorner"]})

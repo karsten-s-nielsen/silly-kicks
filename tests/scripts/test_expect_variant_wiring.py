@@ -79,11 +79,11 @@ def test_public_run_records_a_digest_and_public_reproducibility(trainer, tmp_pat
 
 @pytest.mark.slow
 def test_restricted_run_records_a_digest_never_ids(tmp_path):
-    """A 2-tier payload (half the games public, all in sc_extended, no full): not paired, so the BROADEST arm
-    ships -- sc_extended, restricted -- and metrics.json carries a digest, never a match id."""
+    """The Hub-job payload (ADR-132, spec 5.5: one sc_extended arm over every game): not paired, so sc_extended
+    ships -- restricted -- and metrics.json carries a digest, never a match id."""
     data, base = _toy(tmp_path, xs)
     keys = [f"{prov}__{mid}" for prov, mid in sorted(_keys(data))]
-    arms = {"arms": {"public": keys[:4], "sc_extended": keys}, "ship_order": ["public", "sc_extended"]}
+    arms = {"arms": {"sc_extended": keys}, "ship_order": ["sc_extended"]}
     metrics = _metrics(tmp_path, xs, data, base, json.dumps(arms))
     assert metrics["shipped_variant"] == "sc_extended"
     assert "corpus_match_ids" not in metrics and metrics["corpus_n_matches"] == 8
@@ -94,7 +94,8 @@ def test_restricted_run_records_a_digest_never_ids(tmp_path):
 @TRAINERS
 def test_prep_persists_the_inputs_and_enumerates_the_studies(trainer, tmp_path):
     """The ``prep`` stage (the old ``--prep-only``): the --arms policy + persistence + the study enumeration
-    are real; only extract and prep run. A paired payload yields the 3 x k nested tags + the 3 arm studies, then
+    are real; only extract and prep run. A paired payload (ADR-132: two arms) yields the 2 x k nested tags + the 2 arm
+    studies, then
     one ADR-131 gate-fold study per cv arm and gate fold (``{arm}_gf{k}``, k < cv_arms[arm])."""
     from scripts._stages import ItemStage, LocalStore, make_context, reduce_stage, run_unit, sorted_units
     from scripts._study_shared import load_study_inputs
@@ -114,11 +115,11 @@ def test_prep_persists_the_inputs_and_enumerates_the_studies(trainer, tmp_path):
     cfg = ctx.upstream("prep")
     assert cfg["run_paired"] is True
     k = 4  # 4 public games -> StratifiedGroupKFold(4) public folds
-    want = [f"{n}_f{f}" for f in range(k) for n in ("full", "public", "sc_extended")]
+    want = [f"{n}_f{f}" for f in range(k) for n in ("public", "sc_extended")]
     gf = [f"{n}_gf{g}" for n in sorted(cfg["cv_arms"]) for g in range(cfg["cv_arms"][n])]
-    assert sorted(cfg["cv_arms"]) == ["full", "public", "sc_extended"]
-    assert cfg["study_tags"] == [*want, "full", "public", "sc_extended", *gf]
+    assert sorted(cfg["cv_arms"]) == ["public", "sc_extended"]
+    assert cfg["study_tags"] == [*want, "public", "sc_extended", *gf]
     assert sorted_units(ctx, trainer.PIPELINE.stage("study")) == sorted(cfg["study_tags"])
     root, inp = trainer._inputs(ctx)
     assert list(load_study_inputs(root).X.columns) == trainer._feature_names("faithful")
-    assert set(inp.arms) == {"full", "public", "sc_extended"}
+    assert set(inp.arms) == {"public", "sc_extended"}

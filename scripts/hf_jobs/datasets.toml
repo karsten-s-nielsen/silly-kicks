@@ -8,7 +8,8 @@
 [datasets.tc3]
 repo = "silly-kicks/hf-refit-tc3"
 kind = "flat_tc3"
-visibility = "restricted"
+raw = "restricted"
+provenance = "extended"
 access = "mount"
 # The job-wide whole-file read cap (the dataset read gate, scripts/_dataset_reads.py). Measured on real HF
 # (2026-10-20, this mount, 360 files / 15.7 GB, one job): clean at 1, 2 and 4 concurrent readers, ~183 s
@@ -20,7 +21,8 @@ description = "179-match TC3 flat corpus (gradientsports + skillcorner + sportec
 [datasets.xshot17]
 repo = "silly-kicks/hf-refit-xshot17"
 kind = "flat_tc3"
-visibility = "public"
+raw = "redistributable"
+provenance = "public"
 access = "mount"
 read_concurrency = 4  # the tc3 measurement (same mount type)
 description = "the 17-match public arm (7 idsse + 10 skillcorner): the wheel xShot and xCross bundles"
@@ -28,7 +30,8 @@ description = "the 17-match public arm (7 idsse + 10 skillcorner): the wheel xSh
 [datasets.xshot115]
 repo = "silly-kicks/hf-refit-xshot115"
 kind = "flat_tc3"
-visibility = "restricted"
+raw = "restricted"
+provenance = "extended"
 access = "mount"
 read_concurrency = 4  # the tc3 measurement (same mount type)
 description = "115-match idsse + SkillCorner corpus: the Hub sc_extended xShot and xCross artifacts"
@@ -36,7 +39,8 @@ description = "115-match idsse + SkillCorner corpus: the Hub sc_extended xShot a
 [datasets.xcross_probe]
 repo = "silly-kicks/hf-refit-xcross-probe"
 kind = "pergame"
-visibility = "restricted"
+raw = "restricted"
+provenance = "public"
 access = "mount"
 read_concurrency = 4  # the tc3 measurement (same mount type)
 description = "the held-out Gradient Sports TF-19 probe matches for xcross_attempt"
@@ -44,7 +48,8 @@ description = "the held-out Gradient Sports TF-19 probe matches for xcross_attem
 [datasets.sb360]
 repo = "silly-kicks/hf-refit-sb360"
 kind = "flat_tc3"
-visibility = "restricted"
+raw = "restricted"
+provenance = "extended"
 access = "mount"
 read_concurrency = 4  # the tc3 measurement (same mount type)
 home_teams = false
@@ -57,7 +62,8 @@ snapshot_repo = "silly-kicks/hf-refit-sb-open"
 read_concurrency = 4
 repo = "statsbomb/open-data"
 kind = "statsbomb_open"
-visibility = "public"
+raw = "redistributable"
+provenance = "public"
 access = "open"
 revision = "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb"
 description = "StatsBomb open data pinned to a commit (decision P6): the public trainers and the census"

@@ -92,7 +92,7 @@ def main() -> None:
 
     df = pd.read_parquet(args.pass_scores)
     metrics = compute_pass_risk_metrics(df)
-    corpus_label = artifact_label(providers={"gradientsports"}, all_public=False)  # ship-mask (F5)
+    corpus_label = artifact_label(all_obtainable=True)  # ship-mask (F5): the GS WC2022 corpus (ADR-132)
     metrics["corpus_visibility"] = corpus_label
     metrics["run_commit"] = prov["commit"]
     metrics["run_tree_dirty"] = prov["dirty"]

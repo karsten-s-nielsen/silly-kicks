@@ -1,13 +1,13 @@
-"""The licensing-taxonomy helpers (spec 3.2): the corpus pin (`PUBLIC_CORPUS`), the per-row
-`is_public_row` mask, and the `artifact_label` fold. A model trained on restricted data must NEVER
-be labelled `public`; that end-to-end control now lives launcher-side and is tested in
+"""The licensing-taxonomy helpers (spec 3.2, ADR-132): the raw-redistributable pin (`RAW_REDISTRIBUTABLE`),
+the per-row `is_public_row` mask, and the `artifact_label` provenance fold. A model trained on licensed data
+must NEVER be labelled `public`; that end-to-end control now lives launcher-side and is tested in
 `tests/scripts/hf_jobs/test_arm_policy.py` (see the ADR-123 Amendment B note below).
 
 `scripts/` is on sys.path via tests/scripts/conftest.py, so `_corpus` imports by bare name.
 """
 
 import numpy as np
-from _corpus import PUBLIC_CORPUS, artifact_label, is_public_row
+from _corpus import RAW_REDISTRIBUTABLE, artifact_label, is_public_row
 
 
 def test_absent_visibility_is_restricted():
@@ -28,16 +28,17 @@ def test_a_restricted_skillcorner_match_is_not_public():
 
 
 def test_label_is_never_public_when_the_ship_mask_contains_restricted_rows():
-    """The bug that shipped: providers={skillcorner, idsse}, no GS -> old code said "public"."""
-    assert artifact_label(providers={"skillcorner", "idsse"}, all_public=False) == "sc_extended"
-    assert artifact_label(providers={"skillcorner", "idsse"}, all_public=True) == "public"
-    assert artifact_label(providers={"skillcorner", "gradientsports"}, all_public=False) == "full"
+    """The bug that shipped: providers={skillcorner, idsse}, no GS -> old code said "public". ADR-132: the
+    label is provenance only; a ship mask with a licensed row is `sc_extended` whatever its providers (`full`
+    is retired)."""
+    assert artifact_label(all_obtainable=False) == "sc_extended"
+    assert artifact_label(all_obtainable=True) == "public"
 
 
 def test_public_corpus_is_the_known_27():
     # SkillCorner grew 10 -> 20 on 2026-09-09 (a second public drop); IDSSE unchanged at 7 -> 27 total.
-    assert len(PUBLIC_CORPUS["skillcorner"]) == 20
-    assert len(PUBLIC_CORPUS["idsse"]) == 7
+    assert len(RAW_REDISTRIBUTABLE["skillcorner"]) == 20
+    assert len(RAW_REDISTRIBUTABLE["idsse"]) == 7
 
 
 def test_public_corpus_skillcorner_matches_the_sample_loader():
@@ -46,7 +47,7 @@ def test_public_corpus_skillcorner_matches_the_sample_loader():
     # a divergence could load-as-sample a match not registered-as-public, or the reverse.
     from tests._skillcorner_sample import MATCH_IDS
 
-    assert PUBLIC_CORPUS["skillcorner"] == frozenset(MATCH_IDS)
+    assert RAW_REDISTRIBUTABLE["skillcorner"] == frozenset(MATCH_IDS)
 
 
 # NOTE (ADR-123 Amendment B): the obsolete in-job `--providers` taxonomy test
