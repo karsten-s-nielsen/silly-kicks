@@ -1,22 +1,30 @@
-"""The registered corpus taxonomy (spec 3.2).
+"""The registered corpus taxonomy (spec 3.2; ADR-038, split by ADR-132).
 
-Public-vs-owner is keyed on the manifest's `visibility` field, NEVER on the provider name. The
-98 owner-tier SkillCorner matches added in 2026-07 carry provider `skillcorner`; the old rule
-(the deleted provider-name allowlist `{"skillcorner", "idsse"}`) would absorb them into the PUBLIC
-arm and ship a model trained on non-redistributable data under a `public` label. That rule is gone.
+Two questions, two registries (ADR-132):
+
+1. May the RAW data be redistributed? ``RAW_REDISTRIBUTABLE`` + pining's per-match ``visibility`` (the live
+   licensing check, ``assert_public_corpus``). Keyed on the manifest's `visibility` field, NEVER on the provider
+   name: the 98 owner-tier SkillCorner matches carry provider `skillcorner`, and a provider-name allowlist would
+   absorb them into the public arm.
+2. Can anyone reproduce an artifact from data they can obtain themselves? ``PUBLICLY_OBTAINABLE`` (fail-closed,
+   not read from pining). It sets the `public` arm and the provenance label (``artifact_label``).
+
+``HELD_OUT_PROBE`` (the xCross TF-19 probe matches) is in no training arm.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 
-from scripts._corpus_identity import match_id_pairs
+from scripts._corpus_identity import _CONVERTER_TO_IDENTITY, canonical_match_id, match_id_pairs
 
-# The 27 matches we may redistribute. Drift here fails the run loudly (spec 3.2). SkillCorner grew
-# 10 -> 20 on 2026-09-09 (a second public drop, uploaded to pining-for-the-data); the pre-existing
-# bundled xshot/xcross/ghost models were trained on the ORIGINAL public 17 (10 SkillCorner + 7 IDSSE)
-# and are NOT retrained by this change -- their model cards' "17 matches" is a correct historical fact.
-PUBLIC_CORPUS: dict[str, frozenset[str]] = {
+# The 27 matches whose RAW data we may redistribute. Drift here fails the run loudly (spec 3.2). SkillCorner
+# grew 10 -> 20 on 2026-09-09 (a second public drop, uploaded to pining-for-the-data); the bundled
+# xshot/xcross/ghost models were trained on the ORIGINAL public 17 (10 SkillCorner + 7 IDSSE) -- their model
+# cards' "17 matches" is a correct historical fact.
+RAW_REDISTRIBUTABLE: dict[str, frozenset[str]] = {
     "skillcorner": frozenset(
         {
             "1874553",
@@ -55,6 +63,46 @@ PUBLIC_CORPUS: dict[str, frozenset[str]] = {
 }
 
 
+# The FIFA Men's World Cup 2022 matches (Gradient Sports): public data anyone can download, whose RAW files we do
+# not redistribute (pining keeps them `private`: the redistribution rights are unclear). Derived, non-reversible
+# artifacts are publishable (ADR-116). Equals the GS units of the committed `tc3` lock (test_corpus_registries).
+_GS_WC2022: frozenset[str] = frozenset(str(g) for g in (*range(3812, 3860), *range(10502, 10518)))
+
+# Provenance (question 2): every match anyone can obtain. Fail-closed: an unregistered match is not obtainable.
+PUBLICLY_OBTAINABLE: dict[str, frozenset[str]] = {
+    **RAW_REDISTRIBUTABLE,
+    "gradientsports": _GS_WC2022,
+}
+
+# The held-out xCross TF-19 probe (ruling D5 (c); corpus-widening ruling r2): in no training arm.
+# Equals the committed `xcross_probe` lock units (test_corpus_registries).
+HELD_OUT_PROBE: dict[str, frozenset[str]] = {"gradientsports": frozenset({"10502", "10503"})}
+
+
+def _identity(provider: str, match_id: str) -> tuple[str, str]:
+    prov = str(provider)
+    return _CONVERTER_TO_IDENTITY.get(prov, prov), canonical_match_id(prov, str(match_id))
+
+
+def unit_identity(unit: Mapping[str, str]) -> tuple[str, str]:
+    """A staged dataset unit as ``(identity provider, game)``: the converter name normalised (``sportec`` ->
+    ``idsse``) and a pergame ``<provider>-`` prefix stripped (``gradientsports-10502`` -> ``10502``)."""
+    return _identity(unit["source_provider"], unit["game"])
+
+
+def in_registry(registry: Mapping[str, frozenset[str]], provider: str, match_id: str) -> bool:
+    """True iff ``(provider, match_id)`` is in ``registry`` (provider normalised to its identity). Fail-closed."""
+    prov, mid = _identity(provider, match_id)
+    return mid in registry.get(prov, frozenset())
+
+
+def is_obtainable_row(*, providers: np.ndarray, match_ids: np.ndarray) -> np.ndarray:
+    """Per-row provenance mask: True iff the row's match is in ``PUBLICLY_OBTAINABLE``. FAIL-CLOSED."""
+    return np.array(
+        [in_registry(PUBLICLY_OBTAINABLE, p, m) for p, m in zip(providers, match_ids, strict=True)], dtype=bool
+    )
+
+
 def is_public_row(
     *, providers: np.ndarray, match_ids: np.ndarray, visibility: dict[tuple[str, str], str]
 ) -> np.ndarray:
@@ -65,13 +113,13 @@ def is_public_row(
     )
 
 
-def artifact_label(*, providers: set[str], all_public: bool) -> str:
-    """The shipped artifact's label, derived from the SHIP MASK's composition -- not from names."""
-    if all_public:
-        return "public"
-    if "gradientsports" in providers:
-        return "full"
-    return "sc_extended"
+def artifact_label(*, all_obtainable: bool) -> str:
+    """The shipped artifact's PROVENANCE label (ADR-132), from the ship mask's composition -- not from names.
+
+    ``public``: every training row is publicly obtainable (``PUBLICLY_OBTAINABLE``). ``sc_extended``: the rows
+    include licensed matches. ``full`` is retired for new artifacts (it equalled ``sc_extended`` once GS became
+    obtainable); committed records keep it and their readers accept it."""
+    return "public" if all_obtainable else "sc_extended"
 
 
 def assert_public_corpus(visibility: dict[tuple[str, str], str], *, expect_full_public_arm: bool = False) -> None:
@@ -83,24 +131,25 @@ def assert_public_corpus(visibility: dict[tuple[str, str], str], *, expect_full_
     SystemExit on every legitimate partial run (a two-match test corpus, a GS-only run, a smoke).
     """
     seen = {(p, m) for (p, m), v in visibility.items() if v == "public"}
-    registered = {(prov, mid) for prov, ids in PUBLIC_CORPUS.items() for mid in ids}
+    registered = {(prov, mid) for prov, ids in RAW_REDISTRIBUTABLE.items() for mid in ids}
     unregistered = seen - registered
     if unregistered:
         raise SystemExit(
             f"UNREGISTERED public match(es): {sorted(unregistered)}. A match claiming `public` that "
-            "is not in PUBLIC_CORPUS would enter the redistributable training arm. Refusing to run."
+            "is not in RAW_REDISTRIBUTABLE would enter the redistributable training arm. Refusing to run."
         )
     if expect_full_public_arm and seen != registered:
         raise SystemExit(
-            f"PUBLIC_CORPUS drift: missing {sorted(registered - seen)}. The registered public set "
+            f"RAW_REDISTRIBUTABLE drift: missing {sorted(registered - seen)}. The registered public set "
             "must be fully present in a maintainer run -- a change here alters what 'public' means."
         )
 
 
 # The 17 matches the wheel-bundled PUBLIC-arm models were trained on: xshot / xcross `default` and
 # `position_only` (all 17) and gk_completion `skillcorner` (the 10 SkillCorner ids). This is
-# PUBLIC_CORPUS as it stood before the 2026-09-10 SkillCorner growth (ce0401a^). Re-fits pin THIS set;
-# widening to the current PUBLIC_CORPUS is a separate, gated decision (combined-cycle-completion D4).
+# RAW_REDISTRIBUTABLE as it stood before the 2026-09-10 SkillCorner growth (ce0401a^). The committed bundles pin
+# THIS set until the adoption release of the corpus-widening refit (ADR-132 supersedes D4; the widened arms are
+# built from the staged `xshot187` units, never from this pin).
 BUNDLED_PUBLIC_ARM: dict[str, tuple[str, ...]] = {
     "skillcorner": (
         "1886347",
@@ -133,7 +182,9 @@ def bundled_public_arm_pairs(providers: tuple[str, ...] = ("idsse", "skillcorner
     return match_id_pairs(provs, mids)
 
 
-def rehydrate_public_corpus_ids(metrics: dict, *, providers: tuple[str, ...] = ("idsse", "skillcorner")) -> dict:
+def rehydrate_public_corpus_ids(
+    metrics: dict, *, providers: tuple[str, ...] = ("idsse", "skillcorner"), pairs: list | None = None
+) -> dict:
     """Off-HF finalize: give a PUBLIC wheel bundle its explicit, canonical ``corpus_match_ids``.
 
     The in-job trainer is visibility-blind (ADR-123 Amendment B / the I1 import-closure rule): it cannot
@@ -147,14 +198,21 @@ def rehydrate_public_corpus_ids(metrics: dict, *, providers: tuple[str, ...] = (
     source of a bundle's ids.
 
     Guard: the recorded ``corpus_n_matches`` and ``providers`` MUST equal the pinned public arm, else the
-    run used some OTHER corpus (e.g. the widened current ``PUBLIC_CORPUS`` -- a separate, gated decision,
-    D4) and this REFUSES rather than silently relabel it. The digest itself cannot be equality-checked
+    run used some OTHER corpus (e.g. the widened ADR-132 public arm, which carries its own locked
+    ``public_ids``) and this REFUSES rather than silently relabel it. The digest itself cannot be equality-checked
     against the canonical set, because the trainer hashes the RAW per-row provider names (``sportec``, not
     the normalised ``idsse``); the authoritative physical-corpus check is the staged-dataset identity at
     staging time. Idempotent: a bundle already carrying the canonical ``corpus_match_ids`` is returned
     unchanged. Returns a NEW dict; the input is not mutated.
+
+    ``pairs`` (ADR-132; corpus widening spec 7.1): the dataset's LOCKED ``public_ids`` (the admitted public arm);
+    the guards then compare with it and its providers instead of the pinned 17.
     """
-    pairs = bundled_public_arm_pairs(providers)
+    if pairs is None:
+        pairs = bundled_public_arm_pairs(providers)
+    else:
+        pairs = [list(map(str, pr)) for pr in pairs]
+        providers = tuple(sorted({pr[0] for pr in pairs}))
     if metrics.get("corpus_match_ids") == pairs:
         return dict(metrics)
     recorded_n = metrics.get("corpus_n_matches")
@@ -162,7 +220,7 @@ def rehydrate_public_corpus_ids(metrics: dict, *, providers: tuple[str, ...] = (
         raise ValueError(
             f"refusing to rehydrate corpus_match_ids: corpus_n_matches={recorded_n!r} != the pinned "
             f"public arm ({len(pairs)}). The run used a corpus that is not the bundled public arm "
-            "(widening to the current PUBLIC_CORPUS is a separate, gated decision -- D4)."
+            "(a widened public arm is checked against its own locked public_ids -- ADR-132)."
         )
     recorded_providers = metrics.get("providers")
     if recorded_providers is not None and sorted(map(str, recorded_providers)) != sorted(providers):

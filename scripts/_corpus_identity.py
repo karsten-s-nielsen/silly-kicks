@@ -22,11 +22,20 @@ import json
 _CONVERTER_TO_IDENTITY = {"sportec": "idsse"}
 
 
+def provider_identity(provider: str) -> str:
+    """One row's provider IDENTITY (``sportec`` -> ``idsse``; others unchanged). An empty provider is refused (the
+    per-provider gate keys on it; ADR-132)."""
+    prov = str(provider)
+    if not prov:
+        raise ValueError("empty provider: every training row must name its provider (ADR-132 per-provider gate)")
+    return _CONVERTER_TO_IDENTITY.get(prov, prov)
+
+
 def canonical_providers(providers) -> list[str]:
     """Sorted unique provider IDENTITIES for an artifact's ``provider_list`` (converter names normalised,
     e.g. ``sportec`` -> ``idsse``) -- the stable vocabulary the metadata test, model cards and consumers
     expect. The raw ``source_provider`` is unchanged elsewhere (arm masking still keys on it)."""
-    return sorted({_CONVERTER_TO_IDENTITY.get(str(p), str(p)) for p in providers})
+    return sorted({provider_identity(p) for p in providers})
 
 
 def match_id_pairs(providers, match_ids) -> list[list[str]]:

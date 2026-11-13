@@ -7,13 +7,15 @@ import json
 import pytest
 
 from scripts import _corpus, _corpus_identity
+from scripts.hf_jobs import arm_policy
 from scripts.hf_jobs import datasets as D
 from scripts.hf_jobs.repackage import flat_to_pergame
 
 
-def test_declared_kinds_access_and_visibility_are_valid():
+def test_declared_kinds_access_raw_and_provenance_are_valid():
     for name, d in D.declared().items():
-        assert d.kind in D.KINDS and d.access in D.ACCESS and d.visibility in ("public", "restricted"), name
+        assert d.kind in D.KINDS and d.access in D.ACCESS, name
+        assert d.raw in D.RAW and d.provenance in D.PROVENANCE, name  # ADR-132: `visibility` split in two
         assert (d.revision is not None) == (d.kind == "statsbomb_open"), name
 
 
@@ -39,7 +41,7 @@ def test_every_mount_declares_its_read_concurrency_and_no_other_access_does():
     ],
 )
 def test_a_bad_read_concurrency_declaration_refuses(entry, match):
-    raw = {"repo": "r/x", "kind": "flat_tc3", "visibility": "restricted", **entry}
+    raw = {"repo": "r/x", "kind": "flat_tc3", "raw": "restricted", "provenance": "extended", **entry}
     with pytest.raises(ValueError, match=match):
         D._declared_entry("x", raw)
 
@@ -62,7 +64,7 @@ def test_every_campaign_dataset_is_locked():
 
 
 def test_public_dataset_ids_agree_with_the_in_repo_registry():
-    """Two independent sources (INV-9): the staging measurement and the PUBLIC_CORPUS registry."""
+    """Two independent sources (INV-9): the staging measurement and the RAW_REDISTRIBUTABLE registry."""
     assert D.locked("xshot17")["public_ids"] == _corpus.bundled_public_arm_pairs()
 
 
@@ -85,7 +87,7 @@ def test_record_refuses_a_kind_mismatch(tmp_path):
             return ["foo/frames.parquet"]  # pergame layout, declared flat_tc3
 
     with pytest.raises(ValueError, match="declared kind"):
-        D.record("tc3", api=_Api(), fs=None, lock_path=tmp_path / "lock.json")
+        D.record("tc3", policy=arm_policy, api=_Api(), fs=None, lock_path=tmp_path / "lock.json")
 
 
 # ---- the fixture-fidelity guard (ADR-128): toy ids must mirror the staged data's ids --------------------

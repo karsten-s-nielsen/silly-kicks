@@ -105,6 +105,9 @@ def verdict(
             and g["log_loss_skill_gt_0"]
             and g["brier_gain_lb95_gt_0"]
             and g["log_loss_gain_lb95_gt_0"]
+            # ADR-132 (corpus widening spec 5.7): Brier and log-loss skill on EVERY provider's held-out rows
+            and g["provider_brier_skill_gt_0"]
+            and g["provider_log_loss_skill_gt_0"]
         ),
         "enough_folds": bool(m.get("n_usable_folds", 0) >= _MIN_USABLE_FOLDS),
         "positive_rate": base,

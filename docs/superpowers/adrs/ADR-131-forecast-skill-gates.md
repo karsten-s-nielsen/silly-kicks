@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-11-12 |
-| **Status** | Accepted |
+| **Status** | Accepted; amended by ADR-132 (two per-provider acceptance gates) |
 | **Deciders** | Karsten Nielsen (owner rulings 2026-11-12); reviewers A and B (spec r1 to r5, plan r1 to r4) |
 
 ## Context

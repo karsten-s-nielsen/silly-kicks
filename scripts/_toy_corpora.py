@@ -514,8 +514,7 @@ def xshot_arms(root: str | pathlib.Path, *, paired: bool) -> str:
     """The launcher's neutral ``--arms-json`` for a toy xShot dataset, keyed by the IN-JOB match key
     ``<source_provider>__<provider>-<game>`` (``arm_policy._injob_key``; not imported here, so the
     launcher-only policy module stays out of every import closure but the launcher's). ``paired``: games 0-3
-    ``public``, + the other SkillCorner games ``sc_extended``, + everything ``full`` (the three-arm paired
-    path); else ONE all-``public`` arm."""
+    ``public`` and every game ``sc_extended`` (the two-arm paired path, ADR-132); else ONE all-``public`` arm."""
     stems = sorted(p.stem for p in (pathlib.Path(root) / "shards" / TOY_GENERATION).glob("*.parquet"))
     stems.sort(key=lambda s: int(s.partition("__")[2]))
     return _xshot_arms_payload([s.partition("__")[0] for s in stems], paired=paired)
@@ -526,11 +525,9 @@ def _xshot_arms_payload(providers: Sequence[str], *, paired: bool) -> str:
     keys = [f"{prov}__{prov}-{100 + g}" for g, prov in enumerate(providers)]
     if not paired:
         return json.dumps({"arms": {"public": keys}, "ship_order": ["public"]}, sort_keys=True)
-    public = keys[:4]
-    extended = public + [k for k in keys[4:] if k.startswith("skillcorner__")]
     payload = {
-        "arms": {"public": public, "sc_extended": extended, "full": keys},
-        "ship_order": ["public", "sc_extended", "full"],
+        "arms": {"public": keys[:4], "sc_extended": keys},
+        "ship_order": ["public", "sc_extended"],
     }
     return json.dumps(payload, sort_keys=True)
 

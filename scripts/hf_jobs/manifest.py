@@ -66,6 +66,10 @@ class Artifact:
     #: ``metrics.json`` (HFU spec 14.4): ``"<repo path>"`` (the whole JSON file) or
     #: ``"<repo path>:<dotted key>"`` (an object inside it). Read only by public CV parity.
     cv_reference: str | None = None
+    #: The arm the run's rule SHIPPED (ADR-132; corpus widening spec 7.1): ``public`` / ``sc_extended``, written by
+    #: the adoption PR from the run's recorded ``shipped_variant``. ``tier`` stays the CHANNEL (store key, matching).
+    #: Absent -> the entry reads as its ``tier`` (today's meaning; `effective_shipped_arm`).
+    shipped_arm: str | None = None
 
     @property
     def kind(self) -> str:
@@ -94,6 +98,11 @@ class Manifest:
 
 
 _FIELDS = {f.name for f in dataclasses.fields(Artifact)}
+
+
+def effective_shipped_arm(a: Artifact) -> str:
+    """The arm an entry expects its run to have shipped: ``shipped_arm``, else its ``tier`` (ADR-132)."""
+    return a.shipped_arm or a.tier
 
 
 def load(path: str | Path = MANIFEST) -> Manifest:

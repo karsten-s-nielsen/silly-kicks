@@ -194,16 +194,67 @@ def forecast_skill(
     }
 
 
+def _point_skill(model_loss: np.ndarray, ref_loss: np.ndarray) -> float:
+    """``1 - mean(model) / mean(reference)``; NaN when the reference loss is zero or not finite (fail-closed)."""
+    ref = float(ref_loss.mean())
+    if not np.isfinite(ref) or ref == 0.0:
+        return float("nan")
+    return float(1 - model_loss.mean() / ref)
+
+
+def provider_skill(
+    y: np.ndarray, p: np.ndarray, r: np.ndarray, providers: np.ndarray, groups: np.ndarray, fold: np.ndarray
+) -> dict[str, dict[str, Any]]:
+    """The per-provider skill of one candidate (ADR-132; corpus widening spec 5.7), keyed by provider identity.
+
+    The same pooled out-of-fold rows as :func:`forecast_skill`. ``r`` is each row's OWN provider's training-fold true
+    positive rate (stricter than the pooled reference: recognising the provider alone earns no skill); ``providers``
+    are the row-aligned licensing identities; ``groups`` the bare match ids. Per provider: ``n_matches`` (distinct
+    ``(provider, group)``), ``n_oof_rows``, ``n_positive``, ``row_share``, the point ``brier_skill`` and
+    ``log_loss_skill`` (``SKILL_LOG_CLIP``; NaN on a NaN reference or a zero reference loss) and the within-fold
+    ``pr_auc_lift`` over the provider's rows (NaN allowed). No bootstrap: a 7-match provider's cluster bound is too
+    wide to be useful (spec 5.7).
+    """
+    y = np.asarray(y).astype(np.int64)
+    p = np.asarray(p, dtype=np.float64)
+    r = np.asarray(r, dtype=np.float64)
+    providers = np.asarray(providers).astype(str)
+    groups = np.asarray(groups).astype(str)
+    fold = np.asarray(fold)
+    out: dict[str, dict[str, Any]] = {}
+    for prov in sorted(set(providers.tolist())):
+        sel = providers == prov
+        ys, ps, rs = y[sel], p[sel], r[sel]
+        pc = np.clip(ps, SKILL_LOG_CLIP, 1 - SKILL_LOG_CLIP)
+        rc = np.clip(rs, SKILL_LOG_CLIP, 1 - SKILL_LOG_CLIP)
+        lm = -(ys * np.log(pc) + (1 - ys) * np.log(1 - pc))
+        lref = -(ys * np.log(rc) + (1 - ys) * np.log(1 - rc))
+        folds = [_PresortedFold(np.flatnonzero(fold[sel] == k), ys, ps) for k in np.unique(fold[sel])]
+        lift, _, _ = _within_fold_lift(folds, np.ones(len(ys)))
+        out[prov] = {
+            "n_matches": len(set(groups[sel].tolist())),
+            "n_oof_rows": int(sel.sum()),
+            "n_positive": int(ys.sum()),
+            "row_share": float(sel.sum() / len(y)),
+            "brier_skill": _point_skill((ys - ps) ** 2, (ys - rs) ** 2),
+            "log_loss_skill": _point_skill(lm, lref),
+            "pr_auc_lift": float(lift),
+        }
+    return out
+
+
 def _gt0(v: Any) -> bool:
     """Strict ``> 0`` that fails a missing or NaN value."""
     return bool(v is not None and v == v and v > 0)
 
 
 def skill_gates(metrics: Mapping[str, Any]) -> dict[str, bool]:
-    """The ADR-131 acceptance block (spec 4.4) from one candidate's metrics: ``n_usable_folds`` and ``skill``.
-    A missing ``skill`` fails the six skill gates (fail-closed)."""
+    """The ADR-131 acceptance block (spec 4.4) from one candidate's metrics: ``n_usable_folds`` and ``skill``, plus the
+    ADR-132 per-provider pair from ``skill["by_provider"]`` (True iff at least one provider has held-out rows and EVERY
+    provider's skill is strictly above 0). A missing ``skill`` or ``by_provider`` fails its gates (fail-closed)."""
     s = metrics.get("skill") or {}
     b = s.get("bootstrap") or {}
+    by = s.get("by_provider") or {}
     return {
         "enough_usable_folds": metrics.get("n_usable_folds", 0) >= 2,
         "brier_skill_gt_0": _gt0(s.get("brier_skill")),
@@ -212,4 +263,6 @@ def skill_gates(metrics: Mapping[str, Any]) -> dict[str, bool]:
         "brier_gain_lb95_gt_0": _gt0(b.get("brier_gain_lb")),
         "log_loss_gain_lb95_gt_0": _gt0(b.get("log_loss_gain_lb")),
         "pr_auc_lift_lb95_gt_0": _gt0(b.get("pr_auc_lift_lb")),
+        "provider_brier_skill_gt_0": bool(by) and all(_gt0(v.get("brier_skill")) for v in by.values()),
+        "provider_log_loss_skill_gt_0": bool(by) and all(_gt0(v.get("log_loss_skill")) for v in by.values()),
     }

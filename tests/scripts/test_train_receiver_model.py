@@ -406,7 +406,9 @@ def test_campaign_passes_the_declared_visibility_not_the_provider_name():
     insts = C.instances(C.load_campaign(pathlib.Path("scripts/hf_jobs/campaigns/cycle1.toml")), "0" * 40)
     recv = next(i for i in insts if i.job == "receiver_model")
     args = list(recv.args)
-    assert args[args.index("--corpus-visibility") + 1] == declared()["sb360"].visibility == "restricted"
+    # ADR-132: the CLI value maps from the dataset provenance (extended -> restricted)
+    assert declared()["sb360"].provenance == "extended"
+    assert args[args.index("--corpus-visibility") + 1] == C.corpus_visibility_arg(declared()["sb360"]) == "restricted"
     assert args[args.index("--corpus-n-matches") + 1] == str(locked("sb360")["n_units"])
 
 

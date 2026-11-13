@@ -14,10 +14,22 @@ from typing import Any
 from scripts import validate_trained_artifact_integrity as V
 
 
-def _skill(**bootstrap_overrides):
-    """A passing ADR-131 ``skill`` dict (all six skill gates True), with optional bootstrap overrides."""
+def _skill(by_provider=None, **bootstrap_overrides):
+    """A passing ADR-131 ``skill`` dict (all skill gates True, incl. the ADR-132 per-provider pair), with optional
+    bootstrap and ``by_provider`` overrides."""
     bootstrap = {"brier_gain_lb": 0.0004, "log_loss_gain_lb": 0.01, "pr_auc_lift_lb": 0.05, **bootstrap_overrides}
-    return {"brier_skill": 0.04, "log_loss_skill": 0.16, "pr_auc_lift": 0.07, "bootstrap": bootstrap}
+    if by_provider is None:
+        by_provider = {
+            "idsse": {"brier_skill": 0.03, "log_loss_skill": 0.12},
+            "skillcorner": {"brier_skill": 0.05, "log_loss_skill": 0.18},
+        }
+    return {
+        "brier_skill": 0.04,
+        "log_loss_skill": 0.16,
+        "pr_auc_lift": 0.07,
+        "bootstrap": bootstrap,
+        "by_provider": by_provider,
+    }
 
 
 def _shipped():
@@ -56,6 +68,24 @@ def test_verdict_maps_skill_gates():
     assert v["lift_ok"] and not v["calibration_ok"]
     v = V.verdict("xshot_occurrence", _shipped(), _fresh_with(_skill(pr_auc_lift_lb=-1e-6)), rel_tol=0.05)
     assert not v["lift_ok"] and v["calibration_ok"]
+
+
+def test_validator_calibration_fails_on_provider_gate():
+    """ADR-132 (spec 5.7): the per-provider gates fold into calibration_ok, so a provider without skill makes the
+    verdict NO-GO; a missing ``by_provider`` fails the same way (every run before ADR-132)."""
+    unskilled = {
+        "idsse": {"brier_skill": -0.01, "log_loss_skill": 0.12},
+        "skillcorner": {"brier_skill": 0.05, "log_loss_skill": 0.18},
+    }
+    v = V.verdict("xshot_occurrence", _shipped(), _fresh_with(_skill(by_provider=unskilled)), rel_tol=0.05)
+    assert v["lift_ok"] and not v["calibration_ok"] and V.is_go(v) is False
+    no_ll = {"idsse": {"brier_skill": 0.03, "log_loss_skill": 0.0}}
+    v = V.verdict("xshot_occurrence", _shipped(), _fresh_with(_skill(by_provider=no_ll)), rel_tol=0.05)
+    assert not v["calibration_ok"]
+    v = V.verdict("xshot_occurrence", _shipped(), _fresh_with(_skill(by_provider={})), rel_tol=0.05)
+    assert not v["calibration_ok"] and V.is_go(v) is False
+    v = V.verdict("xshot_occurrence", _shipped(), _fresh_with(_skill()), rel_tol=0.05)
+    assert v["calibration_ok"]
 
 
 def test_verdict_fails_closed_without_skill():

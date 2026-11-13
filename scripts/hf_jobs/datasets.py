@@ -1,6 +1,7 @@
 """Declared datasets and staging records (ADR-128, spec 5.5 / 5.7, decision P2).
 
-`datasets.toml` is human-written: repo, kind, visibility, access, and (for open data) the pinned commit.
+`datasets.toml` is human-written: repo, kind, raw + provenance (ADR-132), access, and (for open data) the pinned
+commit.
 `datasets.lock.json` is written ONLY by `record`, which measures the staged dataset: its revision, its
 unit list, and the expected corpus identity computed with the SAME `_corpus_identity.corpus_identity` the
 in-job trainer uses, over the SAME raw names (INV-9: the expectation exists before any job runs).
@@ -25,6 +26,10 @@ DECLARED = HERE / "datasets.toml"
 LOCK = HERE / "datasets.lock.json"
 KINDS = ("flat_tc3", "pergame", "statsbomb_open")
 ACCESS = ("mount", "download", "open")
+#: ADR-132 (corpus widening spec 6.2): question 1 -- may the RAW data be redistributed?
+RAW = ("redistributable", "restricted")
+#: Question 2 -- can anyone reproduce an artifact from data they can obtain? CHECKED at `record` for tracking data.
+PROVENANCE = ("public", "extended")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -32,7 +37,8 @@ class Declared:
     name: str
     repo: str
     kind: str
-    visibility: str
+    raw: str
+    provenance: str
     access: str
     revision: str | None
     description: str
@@ -47,6 +53,14 @@ class Declared:
 
 
 def _declared_entry(name: str, d: dict) -> Declared:
+    if "visibility" in d:
+        raise ValueError(f"{name}: `visibility` is retired (ADR-132); declare `raw` and `provenance`")
+    if "raw" not in d or "provenance" not in d:
+        raise ValueError(f"{name}: every dataset declares both `raw` and `provenance` (ADR-132)")
+    if d["raw"] not in RAW:
+        raise ValueError(f"{name}: raw = {d['raw']!r} is not one of {RAW}")
+    if d["provenance"] not in PROVENANCE:
+        raise ValueError(f"{name}: provenance = {d['provenance']!r} is not one of {PROVENANCE}")
     cap, snapshot = d.get("read_concurrency"), d.get("snapshot_repo")
     if snapshot is not None and d["access"] != "open":
         raise ValueError(f'{name}: snapshot_repo applies to access = "open" only (access={d["access"]!r})')
@@ -62,7 +76,8 @@ def _declared_entry(name: str, d: dict) -> Declared:
         name,
         d["repo"],
         d["kind"],
-        d["visibility"],
+        d["raw"],
+        d["provenance"],
         d["access"],
         d.get("revision"),
         d.get("description", ""),
@@ -196,20 +211,37 @@ def _identities(units: list[dict]) -> dict:
     }
 
 
-def _public_ids(units: list[dict]) -> list[list[str]]:
-    from scripts._corpus_identity import _CONVERTER_TO_IDENTITY
+def staged_repos(d: Declared) -> list[str]:
+    """The Hub repos this repo STAGES for dataset ``d`` (corpus widening spec 6.1): its ``repo`` unless it is an
+    upstream open source we do not own (``access = "open"``), and its ``snapshot_repo``. Each must be private."""
+    return [r for r in ((d.repo if d.access != "open" else None), d.snapshot_repo) if r]
 
-    out = []
-    for u in units:
-        provider = u["stem"].split("__", 1)[0]
-        out.append([_CONVERTER_TO_IDENTITY.get(provider, provider), u["game"]])
-    return sorted(out)
+
+def require_private(repo: str, *, api: Any) -> None:
+    """Refuse unless the Hub reports ``repo`` private (ADR-132: staging GS frames in a private repo is not
+    redistribution). Fail-closed: an API error, or an unknown visibility, refuses too."""
+    try:
+        private = api.dataset_info(repo).private
+    except Exception as exc:  # fail-closed: no answer is not "private"
+        raise ValueError(f"{repo}: cannot confirm a private repo ({exc}); refusing (fail-closed)") from exc
+    if private is not True:
+        raise ValueError(f"{repo}: not a private Hub repo (private={private!r}); a staged repo must be private")
 
 
 def record(
-    name: str, *, api: Any = None, fs: Any = None, now: str | None = None, lock_path: pathlib.Path = LOCK
+    name: str,
+    *,
+    policy: Any,
+    api: Any = None,
+    fs: Any = None,
+    now: str | None = None,
+    lock_path: pathlib.Path = LOCK,
 ) -> dict:
-    """Measure the staged dataset ``name`` and write its lock entry. Off-HF, read-only on the Hub."""
+    """Measure the staged dataset ``name`` and write its lock entry. Off-HF, read-only on the Hub.
+
+    ``policy`` (ADR-132) supplies ``check_provenance(name, declared, units)`` and ``public_ids(units)``: the
+    launcher-only ``arm_policy`` module. It is INJECTED, never imported here, because the in-job trainers import
+    this module and must stay blind to the corpus taxonomy (the I1 gate, ADR-123 Amendment B)."""
     d = declared()[name]
     stamp = now or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     if d.kind == "statsbomb_open":
@@ -278,14 +310,23 @@ def record(
             "units": units,
             "n_units": len(units),
             "identity": _identities(units),
-            "public_ids": _public_ids(units) if d.visibility == "public" else None,
+            "public_ids": policy.public_ids(units),
             "recorded_at": stamp,
         }
         entry["provider_id_kinds"] = measure_id_kinds(name, entry, repo=d.repo, revision=rev, fs=fs)
+        policy.check_provenance(name, d, units)
+    for repo in staged_repos(d):  # ADR-132 (spec 6.1)
+        require_private(repo, api=api if api is not None else _hf_api())
     lock = _read_lock(lock_path)
     lock[name] = entry
     lock_path.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return entry
+
+
+def _hf_api() -> Any:
+    from huggingface_hub import HfApi
+
+    return HfApi()
 
 
 def _snapshot_record(d: Declared, api: Any) -> dict:
@@ -409,8 +450,6 @@ def main(argv: list[str] | None = None) -> int:
     start_job_watch("fetch")  # in an HF job only (the download pre-step, HFU spec §11.1)
     ap = argparse.ArgumentParser(prog="python -m scripts.hf_jobs datasets")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("record")
-    r.add_argument("name")
     s = sub.add_parser("show")
     s.add_argument("name")
     k = sub.add_parser("id-kinds", help="measure each provider's id kind at the LOCKED revision into the lock")
@@ -422,9 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--profile", type=int, default=None)
     f.add_argument("rest", nargs=argparse.REMAINDER)
     a = ap.parse_args(argv)
-    if a.cmd == "record":
-        print(json.dumps({k: v for k, v in record(a.name).items() if k != "units"}, indent=2))
-    elif a.cmd == "show":
+    if a.cmd == "show":
         print(json.dumps(locked(a.name), indent=2))
     elif a.cmd == "id-kinds":
         lock = _read_lock()

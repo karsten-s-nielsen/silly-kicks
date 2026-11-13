@@ -18,6 +18,8 @@ def test_candidate_masks_from_arms_not_providers():
 def test_xcross_source_has_no_visibility_imports():
     src = open("scripts/train_xcross_attempt.py", encoding="utf-8").read()
     names = {a.name for n in ast.walk(ast.parse(src)) if isinstance(n, ast.ImportFrom) for a in n.names}
-    assert not (names & {"match_visibility", "is_public_row", "assert_public_corpus", "artifact_label"})
-    assert "PUBLIC_CORPUS" not in src
+    banned = {"match_visibility", "is_public_row", "is_obtainable_row", "assert_public_corpus", "artifact_label"}
+    assert not (names & banned)
+    for registry in ("RAW_REDISTRIBUTABLE", "PUBLICLY_OBTAINABLE", "HELD_OUT_PROBE"):
+        assert registry not in src, registry
     assert "match_visibility" not in src

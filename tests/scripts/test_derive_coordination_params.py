@@ -496,7 +496,7 @@ def test_reduce_writes_derivation_and_codegen_reproduces(tmp_path, monkeypatch):
     assert set(derivation["stage_seconds"]) == {"a", "b", "occlusion-cal", "occlusion"}  # m8: occlusion-cal included
     assert derivation["occlusion"]["width_source"] == "calibrated"  # B m6: a non-empty histogram calibrated the width
     assert derivation["population"]["a"]["n_workers"] == 1
-    assert derivation["corpus_visibility"] == "full"  # ADR-038: GS in the population, nothing public
+    assert derivation["corpus_visibility"] == "sc_extended"  # ADR-132: the planted ids are unregistered
 
 
 def test_d1_reduce_hands_its_artifact_to_d2(tmp_path, monkeypatch):

@@ -1,4 +1,4 @@
-"""The registered decision rules (spec 4.1 and 4.3). Pure; table-tested; no I/O.
+"""The registered decision rules (spec 4.1 and 4.3; the two-arm rule, ADR-132). Pure; table-tested; no I/O.
 
 These live in one place BECAUSE they decide what ships. A rule re-derived inside a training loop
 is a rule nobody can review.
@@ -18,23 +18,33 @@ def clears_rule(deltas: Sequence[float]) -> bool:
     return n_pos >= k - 1 and (sum(deltas) / k) > 0.0
 
 
-def fixed_sequence_ship(
-    *, sc_extended: Sequence[float], full: Sequence[float], full_vs_sc: Sequence[float]
-) -> tuple[str, str]:
-    """Fixed-sequence selection (spec 4.1). Order is pre-registered; stop at the first failure.
+#: The two arms of the paired path (ADR-132; corpus widening spec 5.2). `full` is retired for new artifacts.
+PAIRED_ARMS = ("public", "sc_extended")
 
-    Testing two shipping candidates independently would roughly double the noise-win rate (a
-    single candidate clears the sign rule ~19% of the time under a symmetric null). A fixed
-    sequence holds the error rate at the single-test level with no alpha correction.
 
-    Registered cost: if `sc_extended` fails, `full` CANNOT ship on this registration, even if its
-    own deltas clear. That outcome is recorded as a finding that triggers a NEW registration.
-    """
-    if not clears_rule(sc_extended):
-        return "public", "sc_extended failed the rule; the sequence stops (full cannot ship here)"
-    if clears_rule(full) and clears_rule(full_vs_sc):
-        return "full", "full clears vs public AND dominates sc_extended fold-by-fold"
-    return "sc_extended", "sc_extended clears; full does not dominate it -- ties go to less data"
+def is_paired(arm_names) -> bool:
+    """True iff a run gets both paired arms, so the two-arm rule decides what ships (spec 5.2)."""
+    names = set(arm_names)
+    return all(a in names for a in PAIRED_ARMS)
+
+
+def refuse_retired_arms(arm_names) -> None:
+    """Fail loud on a `full` arm (ADR-132 retired it; `compute_arms` never emits it). A hand-written legacy
+    ``--arms-json`` must not train a third arm."""
+    if "full" in set(arm_names):
+        raise ValueError(
+            "the --arms-json payload carries a `full` arm; ADR-132 retired it (public vs sc_extended only). "
+            "Rebuild the payload with arm_policy.compute_arms."
+        )
+
+
+def two_arm_ship(sc_extended_deltas: Sequence[float]) -> tuple[str, str]:
+    """The two-arm rule (ADR-132; corpus widening spec 5.2, owner ruling Q-B): ship ``sc_extended`` iff its per-fold
+    nested PR-AUC deltas over ``public`` (on the common public held-out folds) clear :func:`clears_rule`; else ship
+    ``public`` -- ties go to less data. One test, one candidate: no sequence, no alpha correction."""
+    if clears_rule(sc_extended_deltas):
+        return "sc_extended", "sc_extended clears the rule vs public"
+    return "public", "sc_extended does not clear the rule vs public -- ties go to less data"
 
 
 def ghost_admission(detected_only_deltas: Sequence[float]) -> bool:

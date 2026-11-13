@@ -67,12 +67,16 @@ job = "xshot_occurrence"
 tier = "public"
 dataset = "xshot17"
 variants = ["default", "position_only"]
+# ADR-132 / spec 5.5: the arms this job trains (the only arm xshot17 produces)
+arms = ["public"]
 
 [[jobs]]
 job = "xshot_occurrence"
 tier = "sc_extended"
 dataset = "xshot115"
 variants = ["default", "position_only"]
+# ADR-132 / spec 5.5: the arms this job trains (today's ship_order[-1])
+arms = ["sc_extended"]
 
 [[jobs]]
 job = "xcross_attempt"
@@ -80,6 +84,8 @@ tier = "public"
 dataset = "xshot17"
 probe_dataset = "xcross_probe"
 variants = ["default", "position_only"]
+# ADR-132 / spec 5.5: the arms this job trains (the only arm xshot17 produces)
+arms = ["public"]
 
 [[jobs]]
 job = "xcross_attempt"
@@ -87,6 +93,8 @@ tier = "sc_extended"
 dataset = "xshot115"
 probe_dataset = "xcross_probe"
 variants = ["default", "position_only"]
+# ADR-132 / spec 5.5: the arms this job trains (today's ship_order[-1])
+arms = ["sc_extended"]
 
 [[jobs]]
 job = "receiver_model"

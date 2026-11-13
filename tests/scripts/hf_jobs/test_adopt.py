@@ -85,7 +85,7 @@ def test_refuses_a_shipped_tier_other_than_the_expected_tier(tmp_path):
     bad = A.expectation_violations(
         MAN.artifacts["xshot_default"], _public_xshot(tmp_path / "f", tier="sc_extended"), _record("xshot17"), C
     )
-    assert any("expected tier" in v for v in bad)
+    assert any("expected shipped arm" in v for v in bad)  # ADR-132: an entry without shipped_arm reads its tier
 
 
 def test_an_owner_artifact_is_checked_on_the_digest(tmp_path):
@@ -122,6 +122,28 @@ def test_a_public_bundle_gets_the_locked_public_ids(tmp_path):
     assert "corpus_match_ids" not in json.loads(
         (tmp_path / "repo" / owner.path / "metrics.json").read_text(encoding="utf-8")
     )
+
+
+def test_a_widened_public_bundle_gets_its_dataset_locked_public_ids(tmp_path, monkeypatch):
+    # Review B CW-IB-02 (spec 7.1, test 14): `_bundle` rehydrates from the dataset's LOCKED public_ids, not the
+    # pinned 17. A widened public arm (here 3 units, GS included) differs from the pin; the default would refuse it.
+    from scripts.hf_jobs import datasets as D
+
+    a = MAN.artifacts["xshot_default"]
+    widened = [["gradientsports", "3812"], ["idsse", "J03WMX"], ["skillcorner", "1886347"]]
+    real_locked = D.locked
+
+    def fake_locked(name):
+        return {**real_locked(name), "public_ids": widened} if name == a.dataset else real_locked(name)
+
+    monkeypatch.setattr(D, "locked", fake_locked)
+    digest = {"corpus_match_ids_sha256": "d" * 64, "corpus_n_matches": 3}
+    fresh = _public_xshot(tmp_path / "f", digest=digest)
+    (fresh / "model.json").write_bytes(b"{}")
+    A._bundle(a, fresh, tmp_path / "repo")
+    m = json.loads((tmp_path / "repo" / a.path / "metrics.json").read_text(encoding="utf-8"))
+    assert m["corpus_match_ids"] == widened
+    assert "corpus_match_ids_sha256" not in m and "corpus_n_matches" not in m
 
 
 # ---- guards + the allowlisted diff + idempotence (a temp git repo) ----------------------------------

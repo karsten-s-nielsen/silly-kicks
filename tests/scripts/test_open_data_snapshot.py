@@ -143,7 +143,13 @@ def test_a_snapshot_mount_needs_its_read_cap():
 
 
 def test_sb_open_read_concurrency_allowed_with_snapshot():
-    base = {"repo": "statsbomb/open-data", "kind": "statsbomb_open", "visibility": "public", "access": "open"}
+    base = {
+        "repo": "statsbomb/open-data",
+        "kind": "statsbomb_open",
+        "raw": "redistributable",  # ADR-132: `visibility` split into raw + provenance
+        "provenance": "public",
+        "access": "open",
+    }
     d = D._declared_entry("sb_open", {**base, "snapshot_repo": "silly-kicks/hf-refit-sb-open", "read_concurrency": 4})
     assert d.snapshot_repo == "silly-kicks/hf-refit-sb-open" and d.read_concurrency == 4
     with pytest.raises(ValueError, match="read_concurrency"):
@@ -153,17 +159,19 @@ def test_sb_open_read_concurrency_allowed_with_snapshot():
 
 
 class _Api:
-    def __init__(self, sha):
-        self.sha = sha
+    def __init__(self, sha, private=True):
+        self.sha, self.private = sha, private
 
     def dataset_info(self, repo, revision=None):
         import types
 
-        return types.SimpleNamespace(sha=self.sha)
+        return types.SimpleNamespace(sha=self.sha, private=self.private)
 
 
-def _record_sb_open(tmp_path, monkeypatch, source_revision: str):
+def _record_sb_open(tmp_path, monkeypatch, source_revision: str, *, private=True):
     import huggingface_hub
+
+    from scripts.hf_jobs import arm_policy
 
     monkeypatch.setattr(O, "pin_open_data_revision", lambda rev=None: rev)
     monkeypatch.setattr(O, "all_open_competitions", lambda: [(43, 106)])
@@ -177,12 +185,20 @@ def _record_sb_open(tmp_path, monkeypatch, source_revision: str):
 
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
     lock = tmp_path / "lock.json"
-    return D.record("sb_open", api=_Api(SNAP), now="2026-11-07T00:00:00+00:00", lock_path=lock)
+    return D.record(
+        "sb_open", policy=arm_policy, api=_Api(SNAP, private), now="2026-11-07T00:00:00+00:00", lock_path=lock
+    )
 
 
 def test_record_writes_the_snapshot(tmp_path, monkeypatch):
     rec = _record_sb_open(tmp_path, monkeypatch, REV)
     assert rec["snapshot"] == {"revision": SNAP, "source_revision": REV, "n_files": 5, "bytes": 123, "unreadable": []}
+
+
+def test_record_refuses_a_public_snapshot_repo(tmp_path, monkeypatch):
+    # ADR-132 (spec 6.1): the staged snapshot_repo must be private; the upstream statsbomb/open-data is exempt.
+    with pytest.raises(ValueError, match="not a private"):
+        _record_sb_open(tmp_path, monkeypatch, REV, private=False)
 
 
 def test_record_refuses_foreign_snapshot(tmp_path, monkeypatch):

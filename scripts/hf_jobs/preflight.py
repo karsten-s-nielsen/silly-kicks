@@ -195,12 +195,22 @@ def check_api(api: Any) -> Check:
 
 
 def check_datasets(names: list[str], *, api: Any) -> Check:
-    """Check 5: every staged dataset exists at its pinned revision and matches its lock record."""
-    from scripts.hf_jobs.datasets import declared, locked
+    """Check 5: every staged dataset is a private repo (ADR-132, fail-closed), exists at its pinned revision and
+    matches its lock record."""
+    from scripts.hf_jobs.datasets import declared, locked, require_private, staged_repos
 
     bad = []
     for name in sorted(set(names)):
         d = declared()[name]
+        private_bad = []
+        for repo in staged_repos(d):
+            try:
+                require_private(repo, api=api)
+            except ValueError as exc:
+                private_bad.append(f"{name}: {exc}")
+        if private_bad:
+            bad.extend(private_bad)
+            continue
         try:
             rec = locked(name)
         except KeyError as exc:

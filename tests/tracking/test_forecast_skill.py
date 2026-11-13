@@ -19,6 +19,7 @@ from silly_kicks.tracking._artifact_integrity import (
     SKILL_LOG_CLIP,
     SKILL_LOWER_PERCENTILE,
     forecast_skill,
+    provider_skill,
     skill_gates,
     weighted_average_precision,
 )
@@ -31,6 +32,8 @@ GATE_KEYS = [
     "brier_gain_lb95_gt_0",
     "log_loss_gain_lb95_gt_0",
     "pr_auc_lift_lb95_gt_0",
+    "provider_brier_skill_gt_0",  # ADR-132 (corpus widening spec 5.7)
+    "provider_log_loss_skill_gt_0",
 ]
 
 
@@ -69,14 +72,16 @@ def test_constant_train_rate_forecast_fails_old_bar_and_is_neutral():
     assert not g["pr_auc_lift_gt_0"]
 
 
-def test_informative_forecast_passes_all_seven():
+def test_informative_forecast_passes_every_gate():
     rng = np.random.default_rng(2)
     groups = np.repeat([f"m{i}" for i in range(60)], 200)
     x = rng.normal(size=len(groups))
     p_true = 1.0 / (1.0 + np.exp(-(-3.0 + 1.5 * x)))
     y = (rng.random(len(groups)) < p_true).astype(int)
     fold, r = _gate_folds(y, groups)
-    g = skill_gates(_metrics(forecast_skill(y, p_true, r, fold, groups, nested=True)))
+    s = forecast_skill(y, p_true, r, fold, groups, nested=True)
+    s["by_provider"] = provider_skill(y, p_true, r, np.full(len(y), "skillcorner"), groups, fold)  # ADR-132
+    g = skill_gates(_metrics(s))
     assert list(g) == GATE_KEYS
     assert all(g.values()), g
 
@@ -231,7 +236,7 @@ def test_nan_and_dropped_folds():
     assert skill_gates(_metrics(s, n_usable_folds=2))["enough_usable_folds"]
 
 
-def test_missing_skill_fails_the_six_skill_gates():
+def test_missing_skill_fails_every_skill_gate():
     g = skill_gates({"n_usable_folds": 5})
     assert g["enough_usable_folds"]
     assert not any(v for k, v in g.items() if k != "enough_usable_folds")

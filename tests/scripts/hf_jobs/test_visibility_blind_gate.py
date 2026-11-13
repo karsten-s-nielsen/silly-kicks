@@ -10,7 +10,16 @@ from pathlib import Path
 
 import pytest
 
-BANNED = {"match_visibility", "is_public_row", "assert_public_corpus", "artifact_label", "PUBLIC_CORPUS"}
+BANNED = {
+    "match_visibility",
+    "is_public_row",
+    "is_obtainable_row",
+    "assert_public_corpus",
+    "artifact_label",
+    "RAW_REDISTRIBUTABLE",
+    "PUBLICLY_OBTAINABLE",
+    "HELD_OUT_PROBE",
+}
 SCRIPTS = Path("scripts")
 REPO = Path(".")
 

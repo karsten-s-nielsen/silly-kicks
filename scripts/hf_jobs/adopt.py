@@ -119,15 +119,16 @@ def _dataset_kind_of(inst: Instance) -> str | None:
     return _declared()[inst.datasets[0].name].kind if inst.datasets else None
 
 
-def _public_staged(inst: Instance) -> bool:
+def _public_staged(inst: Instance, arm: str | None = None) -> bool:
     """A public-certified instance on a staged ``flat_tc3`` corpus: its head-to-head scores its own extract
-    rows (HFU spec 14.4), which retrieve saves."""
+    rows (HFU spec 14.4), which retrieve saves. ``arm`` is the entry's shipped arm (ADR-132,
+    `manifest.effective_shipped_arm`); None reads the instance tier (retrieve, before any entry is chosen)."""
     from scripts.hf_jobs.registry import TrainerSpec, spec_for
 
     spec = spec_for(inst.job)
     return (
         isinstance(spec, TrainerSpec)
-        and spec.certification_for(inst.tier) == "public"
+        and spec.certification_for(arm or inst.tier) == "public"
         and (_dataset_kind_of(inst) == "flat_tc3")
     )
 
@@ -406,8 +407,9 @@ def expectation_violations(a: mf.Artifact, fresh: pathlib.Path, record: Mapping[
         p = fresh / fname
         if p.is_file():
             sv = _read_json(p).get("shipped_variant")
-            if sv is not None and sv != a.tier:
-                bad.append(f"{a.id}: {fname} ships {sv!r}, the expected tier is {a.tier!r}")
+            want = mf.effective_shipped_arm(a)  # ADR-132: the shipped arm, not the channel
+            if sv is not None and sv != want:
+                bad.append(f"{a.id}: {fname} ships {sv!r}, the expected shipped arm is {want!r}")
     return bad
 
 
@@ -702,7 +704,8 @@ def _certify(
     committed wheel bundle; ``owner`` -> CV parity on the registry ``cv_metric``. Missing inputs FAIL."""
     from scripts.hf_jobs import floor
 
-    if spec.certification_for(inst.tier) == "public":
+    arm = mf.effective_shipped_arm(ref)  # ADR-132 (spec 7.1): certify what the entry expects to have shipped
+    if spec.certification_for(arm) == "public":
         if ref.kind != "wheel":
             return {"ok": False, "reason": f"{ref.id}: a public head-to-head needs a committed wheel bundle"}
         h2h = fresh.parent / f"{inst.variant}.headtohead.json"
@@ -714,7 +717,7 @@ def _certify(
         ]  # fmt: skip
         env = None
         rows = fresh.with_name(f"{fresh.name}.eval_rows.parquet")
-        if _public_staged(inst):  # the run's own extract rows (HFU spec 14.4)
+        if _public_staged(inst, arm):  # the run's own extract rows (HFU spec 14.4)
             argv += ["--eval-rows", str(rows)]
         elif ref.dataset is not None and _dataset_kind(ref) == "statsbomb_open":
             from scripts._sb_open_data import OPEN_DATA_REVISION_ENV
@@ -738,7 +741,7 @@ def _certify(
             gate = next((b.in_sample_gate for b in getattr(spec, "builds", ()) if b.variant == inst.variant), True)
             ok, detail = floor.certify(
                 spec,
-                inst.tier,
+                arm,
                 fresh_metrics=fresh_metrics,
                 committed_metrics=committed,
                 headtohead=_read_json(h2h),
@@ -751,7 +754,7 @@ def _certify(
         return {"ok": ok, **detail}
     try:
         ok, detail = floor.certify(
-            spec, inst.tier, fresh_metrics=fresh_metrics, committed_metrics=_committed_metrics(ref, observed)
+            spec, arm, fresh_metrics=fresh_metrics, committed_metrics=_committed_metrics(ref, observed)
         )
     except KeyError as exc:
         return {"ok": False, "reason": f"missing cv metric {exc}"}
@@ -975,7 +978,11 @@ def _bundle(a: mf.Artifact, fresh: pathlib.Path, root: pathlib.Path) -> list[str
         if src.is_file():
             data = src.read_bytes()
             if name == "metrics.json" and a.corpus == "public_ids":
-                data = (json.dumps(rehydrate_public_corpus_ids(json.loads(data)), indent=2) + "\n").encode("utf-8")
+                from scripts.hf_jobs.datasets import locked
+
+                pairs = locked(a.dataset or "")["public_ids"]  # ADR-132: the dataset's LOCKED public arm
+                fin = rehydrate_public_corpus_ids(json.loads(data), pairs=pairs)
+                data = (json.dumps(fin, indent=2) + "\n").encode("utf-8")
             if not dst.is_file() or dst.read_bytes() != data:
                 dst.write_bytes(data)
                 written.append(dst.relative_to(root).as_posix())
@@ -1030,7 +1037,10 @@ def _changelog_draft(man: mf.Manifest, adopted: Sequence[str], c_name: str, comm
     lines = [f"### Re-fit weights (campaign {c_name}, commit {commit[:7]}) -- DRAFT for a human edit", ""]
     for aid in adopted:
         a = man.artifacts[aid]
-        lines.append(f"- `{aid}` ({a.destination}): job `{a.job}`, variant `{a.variant}`, tier `{a.tier}`.")
+        lines.append(
+            f"- `{aid}` ({a.destination}): job `{a.job}`, variant `{a.variant}`, tier `{a.tier}`, "
+            f"shipped arm `{mf.effective_shipped_arm(a)}`."
+        )
     return "\n".join(lines) + "\n"
 
 
