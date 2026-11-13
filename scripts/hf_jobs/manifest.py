@@ -106,9 +106,16 @@ def effective_shipped_arm(a: Artifact) -> str:
 
 
 def load(path: str | Path = MANIFEST) -> Manifest:
-    from scripts._toml import load_toml
+    path = Path(path)
+    return loads(path.read_text(encoding="utf-8"), base=path.resolve().parents[2])
 
-    raw = load_toml(Path(path))
+
+def loads(text: str, *, base: Path) -> Manifest:
+    """:func:`load` from the manifest's TEXT (ADR-132 item 10: `adopt` reads HEAD's copy through ``git show``).
+    ``base`` is the repo root the artifact paths resolve against."""
+    from scripts._toml import loads_toml
+
+    raw = loads_toml(text)
     events = {k: RefitEvent(id=k, **v) for k, v in raw.get("events", {}).items()}
     artifacts: dict[str, Artifact] = {}
     for a in raw.get("artifacts", []):
@@ -120,7 +127,6 @@ def load(path: str | Path = MANIFEST) -> Manifest:
         if a["destination"].partition(":")[0] not in ("wheel", "hub"):
             raise ValueError(f"manifest artifact {a['id']!r}: destination must be wheel:<dir> or hub:<repo>")
         artifacts[a["id"]] = Artifact(**a)
-    base = Path(path).resolve().parents[2]
     return Manifest(events=events, artifacts=artifacts, roots=dict(raw.get("roots", {})), base=base)
 
 

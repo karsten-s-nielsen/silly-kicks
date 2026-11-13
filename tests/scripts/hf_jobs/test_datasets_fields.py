@@ -86,6 +86,7 @@ def test_committed_declarations_carry_the_spec_values():
         "tc3": ("restricted", "extended"),
         "xshot17": ("redistributable", "public"),
         "xshot115": ("restricted", "extended"),
+        "xshot187": ("restricted", "extended"),
         "xcross_probe": ("restricted", "public"),
         "sb360": ("restricted", "extended"),
         "sb_open": ("redistributable", "public"),

@@ -8,7 +8,8 @@ rebaseline driver) and runs the ADR-126 integrity gate for xShot/xCross. ``adopt
 staging dir into a commit-ready diff -- wheel bundles, the manifest training commits (of the artifacts with a
 ``commit_field``), ``observed.json``,
 re-rendered card regions, verdict JSONs, a CHANGELOG draft -- under the ADR-037 guards (clean tree at the
-campaign commit; a diff limited to the allowlist), runs the full local gate and STOPS: it never commits.
+campaign commit, except the spec 7.1 expectation edit of the manifest, ADR-132 item 10; the manifest that
+``verify`` checked; a diff limited to the allowlist), runs the full local gate and STOPS: it never commits.
 ``publish`` (an owner go every time) pushes Hub artifacts through the unchanged ADR-088 seam and verifies
 what the Hub then holds; ``--sandbox`` targets private ``silly-kicks/sandbox-<name>`` repos.
 """
@@ -772,11 +773,13 @@ def verify(
 ) -> dict:
     """Steps 2-4 for every retrieved instance; writes ``<staging>/verify.json``. ``ok`` per instance. Up to
     ``workers`` instances at once (HFU spec 17.5): each ``[verify]`` line prints when its instance ends; the report
-    is in instance order."""
+    is in instance order. The report holds ``manifest_sha256`` (:func:`_manifest_sha256`) of the working-tree
+    manifest it checked, read once; :func:`adopt` refuses another manifest (ADR-132 item 10)."""
     import concurrent.futures
 
     staging = _outside_repo(staging)
-    man = mf.load()
+    text = mf.MANIFEST.read_text(encoding="utf-8")  # read ONCE: the checked manifest and its digest agree
+    man = mf.loads(text, base=mf.MANIFEST.resolve().parents[2])
     observed = _read_json(mf.OBSERVED) if mf.OBSERVED.is_file() else {}
     insts = instances(c, commit, replica=replica)
 
@@ -791,6 +794,7 @@ def verify(
     report: dict[str, Any] = {
         "commit": commit,
         "campaign": c.name,
+        "manifest_sha256": _manifest_sha256(text),  # ADR-132 item 10: adopt refuses another manifest
         "instances": {inst.id: row for inst, row in zip(insts, rows, strict=True) if row is not None},
     }
     (staging / "verify.json").write_text(
@@ -907,10 +911,107 @@ def _set_manifest_commit(text: str, artifact_id: str, commit: str) -> str:
     return text[:start] + "\n".join(lines) + text[end:]
 
 
-def _rollback(run: Callable[..., Any], root: pathlib.Path) -> list[str]:
+def _manifest_sha256(text: str) -> str:
+    """ADR-132 item 10, rule 11: the digest of the manifest a ``verify`` checked. The sha256 of the canonical JSON
+    of the parsed TOML with every artifact's ``training_commit`` removed: that is the one field ``adopt`` writes
+    (INV-9), so a committed adoption keeps the digest its ``verify`` recorded. A comment or a line ending does
+    not move it; every value does."""
+    from scripts._toml import loads_toml
+
+    raw = loads_toml(text)
+    raw["artifacts"] = [{k: v for k, v in a.items() if k != "training_commit"} for a in raw.get("artifacts", [])]
+    return hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+#: ADR-132 item 10 (corpus widening spec 7.1): the manifest fields that the operator's edit after a run may change
+#: (spec 7.1's table). ``tier`` is the channel and never changes; ``training_commit`` is the one field a tool
+#: writes (INV-9).
+_EXPECTATION_FIELDS: frozenset[str] = frozenset({"dataset", "shipped_arm", "certification", "corpus", "expect"})
+#: The values spec 7.1 sets. ``dataset`` must be a declared, locked dataset (checked apart).
+_EXPECTATION_DOMAINS: dict[str, frozenset[str]] = {
+    "shipped_arm": frozenset({"public", "sc_extended"}),
+    "corpus": frozenset({"public_ids", "digest"}),
+    "certification": frozenset({"public", "owner"}),
+}
+_MANIFEST_REL = "docs/artifacts/manifest.toml"
+
+
+def _expectation_edit(c: Campaign, commit: str, *, run: Callable[..., Any], root: pathlib.Path) -> bytes | None:
+    """ADR-132 item 10: the pre-adopt manifest bytes when the ONLY uncommitted change of ``root`` is an edit of
+    the expectation fields of this campaign's entries (spec 7.1 step 2, made after the run and before ``verify``);
+    ``None`` when the root has no change or more than the manifest changed, so that today's checks answer it with
+    today's messages. Raises :class:`AdoptionRefusedError` for any other manifest edit. Reads only; the HEAD check
+    and the ``verify`` binding stay in :func:`adopt`."""
+    from scripts._toml import loads_toml
+    from scripts.hf_jobs.datasets import locked
+
+    if _git_status(run, root) != {_MANIFEST_REL}:  # rules 1 and 2: before any campaign or HEAD read
+        return None
+    if not (root / _MANIFEST_REL).is_file():
+        raise AdoptionRefusedError("manifest edit: the manifest is deleted; restore it")
+    pre = (root / _MANIFEST_REL).read_bytes()
+    work = pre.decode("utf-8")
+    head = run(["git", "show", f"HEAD:{_MANIFEST_REL}"], capture_output=True, text=True, check=True, cwd=root).stdout
+    try:  # rule 4: both sides are valid manifests
+        head_man = mf.loads(head, base=root)
+        mf.loads(work, base=root)
+    except Exception as exc:
+        raise AdoptionRefusedError(f"manifest edit: the manifest does not load ({exc})") from exc
+    h, w = loads_toml(head), loads_toml(work)
+    for key in sorted((set(h) | set(w)) - {"artifacts"}):  # rule 5
+        if h.get(key) != w.get(key):
+            raise AdoptionRefusedError(f"manifest edit: the top-level table {key!r} changed; only artifacts may")
+    ha, wa = h.get("artifacts", []), w.get("artifacts", [])
+    if [a["id"] for a in ha] != [a["id"] for a in wa]:  # rule 6
+        raise AdoptionRefusedError("manifest edit: the artifact list changed (an entry added, removed or moved)")
+    ours = {a.id for inst in instances(c, commit) for a in artifacts_for(inst, head_man)}  # rule 7, from HEAD
+    for old, new in zip(ha, wa, strict=True):
+        aid = old["id"]
+        if aid not in ours:
+            if old != new:
+                raise AdoptionRefusedError(f"manifest edit: {aid} changed; it is not an entry of this campaign")
+            continue
+        for key in sorted((set(old) | set(new)) - _EXPECTATION_FIELDS):  # rule 8
+            if old.get(key) != new.get(key):
+                raise AdoptionRefusedError(
+                    f"manifest edit: {aid}.{key} changed; only {sorted(_EXPECTATION_FIELDS)} may change"
+                )
+        gone = [k for k in sorted(_EXPECTATION_FIELDS) if k in old and k not in new]  # rule 9
+        gone += [f"expect key {k!r}" for k in sorted(old.get("expect", {})) if k not in new.get("expect", {})]
+        if gone:
+            raise AdoptionRefusedError(
+                f"manifest edit: {aid} removes {', '.join(gone)}; the edit may set an expectation, never remove one"
+            )
+        if "dataset" in new:  # rule 10: every present value of a campaign entry
+            ds = new["dataset"]
+            try:
+                usable = ds in _declared() and bool(locked(ds))
+            except KeyError:  # declared but never recorded
+                usable = False
+            if not usable:
+                raise AdoptionRefusedError(f"manifest edit: {aid}.dataset {ds!r} is not a declared, locked dataset")
+        for key, domain in _EXPECTATION_DOMAINS.items():
+            if key in new and new[key] not in domain:
+                raise AdoptionRefusedError(f"manifest edit: {aid}.{key} = {new[key]!r} is not one of {sorted(domain)}")
+    return pre
+
+
+def _rollback(run: Callable[..., Any], root: pathlib.Path, *, keep: Mapping[str, bytes] | None = None) -> list[str]:
     """HFU spec 18.3: restore every path ``git status`` of ``root`` reports -- the root was clean at entry, so each
     is adopt's own: a tracked path is checked out from HEAD (a deleted file comes back), a new file is removed.
-    Returns the paths it could not restore."""
+    ``keep`` (ADR-132 item 10): the paths that were already changed at entry (the operator's manifest edit) and
+    their bytes then; each is written back after the restore. Returns the paths it could not restore."""
+    unrestored = _restore_to_head(run, root)
+    for rel, data in (keep or {}).items():
+        try:
+            (root / rel).write_bytes(data)
+        except Exception:  # named with the other failures
+            unrestored.append(rel)
+    return unrestored
+
+
+def _restore_to_head(run: Callable[..., Any], root: pathlib.Path) -> list[str]:
+    """Check out every changed tracked path of ``root`` from HEAD and remove every untracked one."""
     try:
         p = run(
             ["git", "status", "--porcelain", "--untracked-files=all"],
@@ -1074,27 +1175,38 @@ def adopt(
 ) -> dict:
     """Spec 5.7 steps 5-10 over a verified staging dir; never commits. Refuses (writing nothing) on a dirty
     tree (the provenance check, then the root's own ``git status``), a HEAD other than the campaign commit, a
-    ``verify.json`` of another commit, or any instance that did not verify. A failure in the write phase restores
-    the tree (HFU spec 18.3); the local gate runs after it, outside the rollback. Idempotent: a second run over the
-    same staging dir writes nothing -- over an uncommitted adoption it refuses at the root status, over a committed
-    one at the campaign commit (the adoption commit moved HEAD), and the write phase itself is a fixed point."""
+    ``verify.json`` of another commit or of another manifest (``manifest_sha256``, ADR-132 item 10), or any
+    instance that did not verify. The ONE dirty tree it accepts is the spec 7.1 expectation edit: only the
+    manifest changed, and only in the expectation fields of this campaign's entries (:func:`_expectation_edit`).
+    A failure in the write phase restores the tree (HFU spec 18.3) and keeps the expectation edit; the local gate
+    runs after it, outside the rollback. Idempotent: a second run over the same staging dir writes nothing --
+    over an uncommitted adoption it refuses at the root status, over a committed one at the campaign commit (the
+    adoption commit moved HEAD), and the write phase itself is a fixed point."""
     from scripts._provenance import git_provenance, require_clean_tree
 
     root = pathlib.Path(root).resolve()
     staging = _outside_repo(staging, root)
     prov = dict((git or git_provenance)())
-    try:
-        require_clean_tree(prov, allow_dirty=False)
-    except SystemExit as exc:
-        raise AdoptionRefusedError(f"adopt needs a clean tree (ADR-037): {exc}") from exc
+    pre = _expectation_edit(c, commit, run=run, root=root)  # ADR-132 item 10: None = today's checks, unchanged
+    if pre is None:
+        try:
+            require_clean_tree(prov, allow_dirty=False)
+        except SystemExit as exc:
+            raise AdoptionRefusedError(f"adopt needs a clean tree (ADR-037): {exc}") from exc
     if prov.get("commit") != commit:
         raise AdoptionRefusedError(f"HEAD {prov.get('commit')} is not the campaign commit {commit} (ADR-037)")
-    changed = _git_status(run, root)  # the provenance reads the cwd; the root is where adopt writes (HFU spec 18.3)
-    if changed:
-        raise AdoptionRefusedError(f"the root tree is not clean (ADR-037): {sorted(changed)[:10]}")
+    if pre is None:
+        changed = _git_status(run, root)  # the provenance reads the cwd; the root is where adopt writes (HFU 18.3)
+        if changed:
+            raise AdoptionRefusedError(f"the root tree is not clean (ADR-037): {sorted(changed)[:10]}")
     rep = _read_json(staging / "verify.json")
     if rep.get("commit") != commit:
         raise AdoptionRefusedError(f"verify.json is for commit {rep.get('commit')}, not {commit}")
+    checked = rep.get("manifest_sha256")  # ADR-132 item 10, rule 11: the manifest that verify checked
+    if not checked:
+        raise AdoptionRefusedError("verify.json has no manifest_sha256 (it predates ADR-132 item 10); run verify again")
+    if checked != _manifest_sha256((root / _MANIFEST_REL).read_text(encoding="utf-8")):
+        raise AdoptionRefusedError("the manifest changed after verify; run verify again")
     bad = sorted(k for k, v in rep["instances"].items() if not v.get("ok"))
     if bad:
         raise AdoptionRefusedError(f"instances that did not verify: {bad}")
@@ -1102,7 +1214,7 @@ def adopt(
     try:
         adopted, written, draft = _write_phase(c, commit, rep, staging=staging, now=now, run=run, root=root)
     except BaseException as exc:  # HFU spec 18.3: a KeyboardInterrupt too
-        unrestored = _rollback(run, root)
+        unrestored = _rollback(run, root, keep=None if pre is None else {_MANIFEST_REL: pre})
         if unrestored:
             raise AdoptionRollbackError(f"adopt failed and could not restore {unrestored}") from exc
         raise

@@ -156,7 +156,8 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    the driver stops before any launch with `FATAL code_identity: <instance> planned under <identity>, the jobs
    run <commit7>` when a `--plan` reports another identity. Then restore the tree and `resume`. `retrieve` has
    no guard of its own: keep the tree clean until `verify` and `compare` end, and draft the run record outside
-   the repo.
+   the repo. One exception, after `retrieve` only: the spec 7.1 expectation edit of `docs/artifacts/manifest.toml`
+   (step 8; ADR-132 item 10).
 4. `status` -- per instance, stage progress and the running jobs. A failed instance: read its job logs and
    the unit `*.failed.json`; a code defect is a new owner-approved commit, then `resume`.
 5. `cancel` -- cancels every non-terminal job of the campaign commit.
@@ -180,7 +181,9 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    (`"within_tolerance": true`). An `sb_open` artifact's corpus check is the lock digest (`identity.open`); each
    `sb_open` head-to-head caches its open data in `DIR/_open_data/<instance>`. 4 instances run at once. Prints
    `[verify] <i>/<n> <instance> ok|FAIL (<checks>) in <s> s` when each instance ends (an `sb_open` line ends with its
-   coverage note) and writes `DIR/verify.json` (instances in campaign order in the returned report).
+   coverage note) and writes `DIR/verify.json` (instances in campaign order in the returned report). `verify.json`
+   holds `manifest_sha256`, the digest of the manifest that `verify` checked (its values; not `training_commit`,
+   comments or line endings). `adopt` refuses another manifest: after any manifest edit, run `verify` again.
 8. `adopt --staging DIR` -- on a clean tree at the campaign commit (the provenance check and the root's own
    `git status`): bundles the verified files into the
    wheel dirs (a public bundle is rehydrated with the canonical public ids), writes
@@ -189,6 +192,15 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    regions, writes the verdict JSONs and a CHANGELOG draft, runs the full local gate, and STOPS at the
    commit gate. Its diff touches only the allowlisted paths. A failure while it writes restores the tree (a
    restore that fails raises `AdoptionRollbackError` naming the paths); the local gate runs after the writes.
+   **The expectation edit** (ADR-132 item 10). A run can decide what its manifest entries must expect (the
+   two-arm rule picks `shipped_arm`; a refit on a new dataset changes `dataset`), so the operator writes those
+   values after `retrieve` and before `verify` (corpus widening spec 7.1), and does not commit them. `adopt`
+   accepts that one uncommitted change: only `docs/artifacts/manifest.toml` changed, only in the fields
+   `dataset`, `shipped_arm`, `certification`, `corpus` and `expect` of this campaign's entries, with no field
+   or `expect` key removed, `dataset` declared and locked, and `shipped_arm` / `corpus` / `certification` in
+   `public`, `sc_extended` / `public_ids`, `digest` / `public`, `owner`. Any other change is refused with its
+   reason; a tree with more than the manifest changed gets today's clean-tree refusal. A failure while `adopt`
+   writes restores the tree and keeps the edit. The edit and the adoption go into the same adoption commit.
    Commit the adoption as a NEW commit on top of the campaign commit, never an amend: every adopted
    `training_commit` names that commit. adopt reads each instance from `DIR/_final/<instance>/`, the staging files
    with `metrics.json` finalized off HF (canonical xCross probe ids); `publish` uploads the same copy. A bundle's
