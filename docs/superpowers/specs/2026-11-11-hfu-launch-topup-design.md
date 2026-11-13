@@ -1,6 +1,8 @@
 # HFU launch top-up: a stage gets more jobs while its jobs run (design)
 
-**Status:** revision 5a (2026-11-12): §19 adds Part E, no launch from a tree that the jobs do not run. Revision 4a (approved): the
+**Status:** revision 6d (2026-11-12): §22.2a adds F3, batched counter reads in `retrieve` (owner: "3: fold it
+in"), with the review round 11 and 12 answers (§23) and the field check of §22.4a. Revision 6a (approved, "1: approved"): §22 adds Part F, after run 9b: one decision per shared generation,
+and a `retrieve` that waits out a rate limit (in C2); §23 answers review round 9. Revision 5a (approved): §19 adds Part E, no launch from a tree that the jobs do not run. Revision 4a (approved): the
 refit leaves this cycle, and run 9b is a parity run only (§18: the review round 5 answers). §17 replaces
 the parts of §14 that it names, and it is the current text where the two differ. The text below this line is
 revision 3b (2026-11-11), after spec review rounds 1 to 4 (§12, §13, §15, §16; A and B approve
@@ -970,3 +972,382 @@ REQUEST CHANGES; B: APPROVE. `/final-review` ran before this round (owner, 2026-
 | A TOPUP-IMPL-02 (A), B HFU2-IMPL-15 (should fix): no test pins the default identity of check 1 | `test_check_ref_without_identity_uses_the_driver_identity`; it catches both reviewers' mutants. |
 | A TOPUP-IMPL-02 (C) (should fix): every E2 test has one plan | `test_step_stops_when_a_later_plan_has_another_identity` and `test_dry_run_reports_a_later_foreign_identity`; they catch the mutant "the guard stops at the first plan at the commit". |
 | B HFU2-IMPL-16 (consider): plan Task 13 step 2 says "the tree test first" | The plan says "after the HEAD test". |
+
+## 22. Part F: one decision per shared generation, and a retrieve that waits out a rate limit (revision 6, 2026-11-12)
+
+**Why.** Run 9b (§17.3) missed acceptance item 4, and its `retrieve` crashed twice.
+
+- **The miss.** One `validate` unit of `ghost_gk-owner` (generation `ghost_gk/validate/85b04edb4327ce3e`, unit
+  `only`) ran in 5 jobs at the same time, one job per variant (`default`, `position_only`, `sweeper`,
+  `sweeper_position_only`, `full`), from 20:59:15Z to 21:01:06Z. All 5 ended COMPLETED.
+- **The cause.** The token of `validate` does not depend on the variant, so the 5 variant instances plan the same
+  generation: the same directory under the same run key (`_stages.RunContext.generation` is
+  `<pipeline>/<stage>/<token>`). `driver.decide` walks each instance on its own. `_stage_flight` sees only the jobs
+  of its own `(run_key, variant, stage)`, and `coverage`, `timeouts` and `reduce_errors` are keyed by the instance
+  id. So each of the 5 instances saw the unit pending and launched a job for it in the same step.
+- **The scope of the fault.** `ghost_gk-owner` has two groups of shared generations. The set of peers changes from
+  stage to stage:
+  - `validate`: all 5 variants share one generation;
+  - `extract`, `cache`, `cv`, `fit` and `importance`: `default` and `full` share each generation (evidence E11:
+    `scripts/train_ghost_gk.py:250-252`, `scripts/hf_jobs/registry.py:183`; `variant` is a param of `assemble`
+    only). `position_only`, `sweeper` and `sweeper_position_only` each have their own;
+  - `assemble`: no stage is shared.
+
+  In run 9b, only `validate` ran in jobs of more than one variant (scratch script
+  `D:\Temp\hfu-topup\run9b2\accept\shared.py` over the 325 job manifests). The second group did not overlap
+  because of the instance order and the mount cap, not because of the token. `full` is the last of the 5 instances,
+  and in each pass the instances before it used up the headroom of the `tc3` mount cap (6). By the time `full` had
+  headroom, the stage was reduced. In `driver.log`, `full` launched only `validate` and `assemble`. A campaign with
+  another order or a higher cap would also run the units of the second group twice. The launches of `a1a3b52`,
+  `abcfda8` and `c40ec7b` show the same 5 concurrent `validate` jobs: the fault is older than this cycle.
+- **The effect.** No output changed: `compare` gives the 12 trainer artifacts `IDENTICAL`. The cost in run 9b is 4
+  extra jobs of about 2 min each. Without the cap, `full` would repeat the `extract`, `cache`, `cv`, `fit` and
+  `importance` jobs of `default`: more than half of the ghost_gk-owner work of that variant pair. The risk is jobs
+  that write the same files at the same time. That is safe today only because the units are deterministic.
+- **The retrieve crash.** The first two `retrieve` attempts of run 9b crashed on HTTP 429 at
+  `api/buckets/silly-kicks/hf-refit-scratch/xet-read-token`. The account limit is 2500 requests in 5 min.
+  `huggingface_hub` retries a 429 on `paths-info`, but not the one raised by `download_bucket_files` through the
+  xet token (`RuntimeError: Previous task error: Rate limited: ... (429 Too Many Requests)`). One counters read in
+  `adopt._counters` raised it, and the whole `retrieve` stopped. The third attempt used the unchanged `retrieve`
+  with `workers=1, read_workers=2` (a scratch wrapper) and finished in 12.5 min without a 429.
+
+**Owner rulings, 2026-11-12.** "1+2: approved": fix both in this cycle, in C2, with tests first and an A and B
+implementation review.
+
+### 22.1 F1: a shared generation is decided once in a pass
+
+The **generation key** of a stage of an instance is `(inst.run_key, stage["generation"])`. Two instances whose
+stages have the same generation key are **peers** for that stage. A plan stage without a `generation` key has no
+peers. (Every real `plan()` record has the key; the test-built records that lack it keep their meaning.)
+
+In `decide`, for each instance in instance order, at its first un-reduced ready stage:
+
+1. If an earlier instance of this pass reached a stage with the same generation key, this instance launches
+   nothing for the stage, makes no report for it, and stops its walk (`break`), as a stage that waits does. The
+   first instance that reaches a generation in the pass decides it for all peers. When that instance has no
+   readable plan, the next peer is the first one.
+2. Else the instance decides the stage as today, with four changes. Each one reads the peers of the stage:
+   - the **flight** is the in-flight jobs of every peer (the labels `(run_key, variant, stage)` of any peer);
+   - the **coverage** of a unit is the sum of `coverage[(p, stage, unit)]` over the peers `p`;
+   - the **timeouts** of a unit are the jobs of `timeouts[(p, stage, unit)]` over the peers, in instance order;
+   - the **reduce errors** of the stage are the sum of `reduce_errors[(p, stage)]` over the peers.
+
+3. **A peer without a plan (fail closed).** An instance of the same run key whose plan is not readable in this
+   step has an unknown generation, so it can be a peer. Its in-flight jobs of a stage with the same name count in
+   the flight. Their units are not known (`_flight_units` reads only indexed instances), so `_top_up` returns no
+   launch and the stage waits until the plan is readable again or those jobs end. Its coverage, timeouts and
+   reduce errors are not added, because they can belong to another generation. The cost of that is at most more
+   attempts of a unit, never two jobs that run one unit at the same time.
+
+A stage without peers, and with no in-flight job of an instance without a plan, gives the same values as today.
+So every such decision is unchanged.
+`_attribute`, `_fatal_block`, the mount cap and `step` do not change: a launch of the first peer is an ordinary
+launch of that instance, with its labels and its manifest. `_dry_run` calls `_decide`, so it shows the same.
+
+The attempts of a shared unit are counted once over all peers. Before F1, each peer had its own `attempts`, so a
+shared unit could run up to `attempts` times the number of peers.
+
+### 22.2 F2: `retrieve` waits out a rate limit
+
+`retrieve` (`scripts/hf_jobs/adopt.py`) retries a rate-limited call after each wait of
+`_READ_BACKOFF_S = (30.0, 60.0, 120.0, 240.0)` seconds (450 s in total: more than the 5-min window of the
+account limit). When the waits are spent, it raises the last error. Each wait prints one line:
+`[retrieve] rate-limited (<what>); retry <i>/4 in <w> s`, where `<what>` is `read <rel>`, `names <rel>` or
+`plan <instance>`.
+
+- **The calls:** `read_bytes` and `names` of `_BoundedReads`, and the `--plan` call of `bounded_plan`.
+- **The rule for a rate limit:** the rule that `step` already uses for a `--plan` failure
+  (`driver._plan_rate_limited`): the text holds "too many requests" or "rate limit", and the error is not a
+  `PlanTimeoutError`. A bare "429" is not a rate limit, because a path or a match id can hold those digits (the
+  `statsbomb__3869429` case of `test_a_failing_plan`). The xet error and the `HfHubHTTPError` of `paths-info` both
+  hold "too many requests". The rule moves to `scripts/hf_jobs/campaign.py` as the public
+  `rate_limited(exc) -> bool`, next to `read_plan` and `PlanTimeoutError`. `driver._plan_rate_limited` returns
+  `campaign.rate_limited(exc)` (its test in `test_hub_client.py` stays), and `adopt` calls `campaign.rate_limited`,
+  which it already imports from. So there is one rule and no import between `adopt` and `driver`.
+- **The read bound:** a call that waits holds no slot of the `read_workers` semaphore, so the other reads go on.
+- **Any other error** raises at once, as today.
+- `retrieve` gets a keyword `sleep: Callable[[float], object] = time.sleep` (a test seam), passed to
+  `_BoundedReads` and `bounded_plan`. The defaults `workers=4, read_workers=8` do not change.
+
+The driver does not change: `step` already backs off on a 429 (`_is_contention`, `_plan_rate_limited`).
+
+### 22.2a F3: `retrieve` reads the counters in batches (revision 6b; owner ruling "3: fold it in")
+
+`adopt._counters` reads one `<key>.counters.json` file for each present unit of the `extract` stage, with one
+`read_bytes` call each. Each call is one `download_bucket_files` call for one file. In run 9b (`retrieve.log`): 13
+instances read 1,436 counters files in all (ghost_gk 5 × 179; xshot 17, 17, 115, 115; xcross 17, 115, 115;
+receiver_model 30), out of 17,638 `extract` units; 6 instances have `extract` units but no counters files
+(xsuccess, win_probability, pass_completion, match_outcome_dependence: 0 of 3,961 each; ghost_outfield 2 × 0 of
+179). F3 reads the same files in batches: one `download_bucket_files` call for up to `_READ_BATCH = 200` files. For
+run 9b that is 13 calls instead of 1,436. (Revision 6b gave 21,734, the units of every stage of the run; that
+number was wrong. Reviewer A, TOPUP-SPEC-22.)
+
+- `BucketStore.read_many(rels: Sequence[str]) -> dict[str, bytes | None]`: one `download_bucket_files` call for
+  the rels that are not memoized, each to its own file in one temporary directory, with
+  `raise_on_missing_files=False`. A rel whose file is absent after the call is `None`. Every result goes into the
+  memo of `read_bytes`, so a later `read_bytes` of the same rel makes no call. An empty list makes no call.
+- `adopt._read_many(store, rels) -> dict[str, bytes | None]`: the one place that chooses the read. It calls
+  `store.read_many(rels)` when the store has `read_many`; otherwise it calls `store.read_bytes` once for each rel.
+  The test fakes (`_CountingStore`, `_SlowStore`) and a `LocalStore` have no `read_many`, and `_counters` must work
+  with any store that has `read_bytes` and `names`.
+- `_BoundedReads.read_many(rels)`: one slot of the read bound for the whole batch, and the retry of §22.2 for the
+  whole batch (`<what>` is `read_many <n> files`), around `_read_many(<wrapped store>, rels)`.
+- `_counters`: the present keys, in sorted order, in batches of `_READ_BATCH`, over its `workers` threads, one
+  `_read_many(store, batch)` call for each batch. The merge stays in sorted key order, so the totals do not change.
+  The progress line counts the files read, as today. The existing `_counters` tests
+  (`test_parallel_counters_equal_serial`, `test_counters_read_count`) do not change.
+- 200 is the batch size of the read-only scratch script of this cycle (`accept.py`). It downloaded the 21,734
+  ledgers and 325 manifests of run 9b (22,059 files) in 200-file calls, and its log holds no rate-limit line. Its
+  first run was stopped by hand to free the quota for `retrieve`, so the files came in more than one run; this is
+  evidence for the batch size, not a measured request rate.
+- No other read changes: the `_inputs.json` reads, the output FileSet and the extract output of `retrieve` stay one
+  call each (a few files for each instance).
+
+### 22.3 Tests (each seen to fail first)
+
+In `tests/scripts/hf_jobs/test_hf_driver.py` (F1). The plans are real `plan()` records (`_realplan`). Two
+instances of one run key are peers at a stage only when that stage has the same `generation` in both plans. A
+param that the stage's token does not read does not matter. Two instances that read one plan are peers at every
+stage.
+
+- `test_a_shared_generation_is_decided_once_in_a_pass`: two peers, one pending unit: 1 launch, for the first
+  instance;
+- `test_a_peer_does_not_launch_units_that_another_peer_runs`: the second peer has a job in flight that holds
+  every unit; the first peer makes no launch;
+- `test_a_shared_generation_tops_up_only_the_units_no_peer_holds`: two pending units, a job of the second peer
+  in flight with one of them: 1 launch with the other unit;
+- `test_the_coverage_of_a_shared_unit_counts_every_peer`: coverage 2 for one peer and 1 for the other, 3
+  attempts: no launch of that unit;
+- `test_the_timeouts_of_a_shared_unit_count_every_peer`: one timed-out job for each peer: the unit is STUCK,
+  with one report;
+- `test_the_reduce_errors_of_a_shared_stage_count_every_peer`: the reduce triggers of the two peers together
+  reach the limit: a report and no reduce trigger;
+- `test_the_next_peer_decides_when_the_first_has_no_plan`: the first peer's plan is `None`: 1 launch, for the
+  second (it passes before F1 too; the mutant "a `None` plan owns the generation" fails it);
+- `test_instances_with_their_own_generations_each_launch` (a positive control: it passes before F1 too; the
+  mutant "every instance of a run key is a peer" fails it);
+- `test_the_peers_of_a_stage_follow_that_stage_s_generation`: a two-stage pipeline whose first stage's token
+  does not read a param and whose second stage's token reads it, the way `validate` and `extract` differ in
+  ghost_gk. Two instances with different values of that param: at the first stage, 1 launch; after its reduce, at
+  the second stage, 2 launches. The mutant "the peers are grouped once for all stages" fails it;
+- `test_a_peer_without_a_plan_still_holds_its_units_in_flight`: the first peer's plan is `None` and it has a
+  job in flight on the stage; the second peer makes no launch for that stage (§22.1 item 3);
+- `test_dry_run_shows_one_launch_for_a_shared_generation`.
+
+In `tests/scripts/hf_jobs/test_adopt.py` (F2), with an injected `sleep` that records its waits:
+
+- `test_retrieve_retries_a_rate_limited_read` (the xet error text, twice, then the bytes: waits `[30.0, 60.0]`,
+  the artifact and the record are complete);
+- `test_retrieve_retries_a_rate_limited_listing`;
+- `test_retrieve_retries_a_rate_limited_plan`;
+- `test_retrieve_raises_when_the_rate_limit_outlasts_the_waits` (waits `[30.0, 60.0, 120.0, 240.0]`, then the
+  error);
+- `test_retrieve_does_not_retry_another_error` (an error that holds "3869429" and no rate-limit words: raised at
+  once, no wait);
+- `test_a_waiting_read_frees_its_slot` (`read_workers=1`: while one read waits, the fake `sleep` takes the
+  semaphore without a block).
+
+For F3, in `tests/scripts/hf_jobs/test_adopt.py` and `tests/scripts/hf_jobs/test_bucket_store.py` (a fake `api` that
+records each `download_bucket_files` call and writes the files it is given):
+
+- `test_counters_reads_in_batches_of_200` (450 present keys: 3 `read_many` calls of 200, 200 and 50 rels in sorted
+  key order; the totals equal those of one `read_bytes` for each file);
+- `test_bucket_store_read_many_makes_one_call_for_a_batch` (one call with every rel; an absent file is `None`);
+- `test_bucket_store_read_many_memoizes` (a second `read_many` or `read_bytes` of the same rels makes no call;
+  an empty list makes no call);
+- `test_retrieve_retries_a_rate_limited_batch` (the xet error text twice: waits `[30.0, 60.0]`, then the totals);
+- `test_read_many_without_a_batch_read_uses_read_bytes` (`_read_many` over a store without `read_many`: one
+  `read_bytes` for each rel, the same dict).
+
+Thread order is not fixed: `_counters` runs its batches on several threads, so the batch test asserts the set of
+batches, not their order.
+
+The existing tests that give one plan to several variants of one run key (`test_a_failing_plan`,
+`test_step_prints_one_timed_progress_line`, `test_step_line_instances_done` and any others) now describe peers.
+The implementer reads each one and records in plan Task 14 whether its meaning changed. A test whose assertion
+changes is a finding for the owner, not a silent edit.
+
+### 22.4 Evidence on HF plans
+
+A dry run cannot run before the commit: E2 (§19.2) stops a plan of a dirty tree. So, after the C2 push and its
+green CI, on the owner's go: `campaign cycle1.toml launch --dry-run` at C2, from a clean tree. It launches nothing
+and only reads the bucket. Expected: `ghost_gk-owner` `validate` has 1 launch, not 5. The dry run shows the first
+pass only; the second group of §22 (`default` and `full` from `extract` to `importance`) is not reached in it. The result is reported to the
+owner and in the PR text. It is not in C2, because C2 is pushed before the dry run. The next real launch (the
+widening cycle) is the first field run of F1 and F2.
+
+### 22.4a A read-only field check of F3 before the commit
+
+`retrieve` reads only the run keys of HEAD (the run key holds the commit), so no `retrieve` at C2 can read run 9b. A
+scratch script can: `D:\Temp\hfu-topup\f3check\counters_check.py`, with the C2 code in the tree, before the commit.
+For each of the 13 instances of run 9b that read counters files (§22.2a), it finds the `extract` generation under
+the run key `cycle1-70915ce-<job>-<tier>` (the token of `token_inputs["extract"]` in the instance's record in
+`D:\Development\_staging\cycle1-70915ce`, through `_stages._token`). The records hold no unit list, so the units of
+the check are the keys of the `<key>.counters.json` files in that generation's listing. It then calls
+`adopt._counters` over a `BucketStore` wrapped in `_BoundedReads` with the default bound: one new `BucketStore` for
+each instance, as `retrieve`'s `open_store` does. (`default` and `full` of ghost_gk share one `extract`
+generation; one store for each run key would serve `full` from the memo and make 12 calls, not 13.) It reads only.
+
+- Expected: for each of the 13 instances, `totals` and `n_read` equal the `counters` of its run 9b record, and no
+  rate-limit line. (`n_counters_unrecorded` is not compared: it needs the full unit list.) The 6 instances that
+  read no counters files are left out: their check would be empty.
+- The check makes 13 `download_bucket_files` calls for 1,436 files. No instance has more than 179 files, so no
+  instance splits into two batches: the split is proved by `test_counters_reads_in_batches_of_200` only.
+- The record states the number of calls, the time, and any `[retrieve] rate-limited` line.
+
+This check is evidence for F3 on the real bucket. It does not run the CLI and launches nothing.
+
+### 22.5 Docs, commit and order
+
+- **Docs (in C2):** `docs/howto/hf-jobs-training.md` (`retrieve` waits out a rate limit; the driver decides a
+  shared generation once; `retrieve` reads the counters in batches); ADR-128 amendment of 2026-11-11, item 57;
+  `CHANGELOG.md` `[Unreleased]`, three lines under "Changed (scripts only)".
+- **Commit.** F1, F2, F3, their tests and docs, this revision 6d of the spec, revision 5d of the plan, and the record of
+  runs 9a and 9b go into C2. §17.4 is read with this change: the C2 row also holds Part F. The version stays a
+  scripts-only patch (§17.6 item 16): the wheel does not change.
+- **Order.** This revision: A and B review, the owner's approval. Then TDD (plan Task 14); the field check of
+  §22.4a; the record (plan Task 12 step 1); `/final-review`; the A and B implementation review of C2; the owner's yes for commit and push; green CI;
+  the dry run of §22.4 on the owner's go; then plan Task 12 step 4.
+
+### 22.6 Decisions for the owner to check
+
+Owner rulings, 2026-11-12: item 21 "dry run" (no HF launch for F1); item 22 "fold it in" (F3, §22.2a).
+
+21. **The field proof of F1.** This revision proves F1 with tests on real `plan()` records and the dry run of
+    §22.4. It adds no HF launch. The dry run shows the first pass only (the `validate` group). The second group
+    (`default` and `full` at `extract` to `importance`) is shown by the tests only, until a real launch reaches it. The other path: a real launch at C2 before the merge, for example `cycle1.toml`
+    whole again (about 3 h and 325 jobs, like run 9b).
+22. **Fewer reads in `retrieve`.** F2 waits out the limit; it does not lower the number of requests. `_counters`
+    reads one file for each counters file (1,436 in run 9b; revision 6 gave 21,734, which was wrong). One
+    `download_bucket_files` call can take many files, so a batched read sends far fewer requests (13 calls for
+    run 9b). The owner added it: F3 (§22.2a).
+
+### 22.7 Not verified
+
+- Which other campaigns or trainers have shared generations. Run 9b showed one group with an overlap and one
+  group that the mount cap hid; a trainer without a mount cap can show more.
+- The request count of the xet path for one `read_bytes` and for one batch of `read_many`. The xet token request
+  is made outside the `httpx` client, so `hub_client.request_counts` does not see it. The 450 s of waits cover one
+  5-min window; a retrieve that hits the limit again after the waits stops with the error, as today.
+- The field run of the whole `retrieve` with F2 and F3. `retrieve` reads the run keys of HEAD only, so a retrieve
+  at C2 cannot read run 9b again. §22.4a checks the batched counter reads on the real bucket; the next real
+  `retrieve` (the widening cycle) is the first whole one, and its time and rate-limit lines go into that cycle's
+  record.
+
+**A limit of F1.** When the `--plan` of a peer fails in a step, its coverage, timeouts and reduce errors are not
+added in that step (§22.1 item 3). A unit can then get more attempts than `attempts`. Its jobs in flight still
+hold the stage, so no unit runs in two jobs at the same time. The failed plan is reported (a STUCK line), and the
+next step, with a readable plan, counts the peer again.
+
+## 23. Review round 9 answers (revision 6a)
+
+Reports: `D:\Development\_reviews\2026-11-12-hfu-launch-topup-spec-r9-{A,B}.md` and `…-plan-r8-{A,B}.md`
+(revision 6, sha256 `93790d81…`; plan `209be713…`). Spec: A REQUEST CHANGES, B APPROVE. Plan: A REQUEST CHANGES
+(it carries the spec findings), B APPROVE.
+
+| Finding | Answer |
+|---|---|
+| A TOPUP-SPEC-19, B HFU2-SPEC-18 (should fix): the scope of the fault is wrong; `default` and `full` share `extract` to `importance` | §22 "The scope of the fault" names both groups and how the instance order and the `tc3` cap hid the second; "The effect", §22.4, decision 21 and §22.7 follow it; §22.3 defines a peer by the stage's generation; the draft record is corrected for plan Task 12 Step 1. |
+| A TOPUP-SPEC-20 (a) (consider): no test has a peer set that changes from stage to stage | §22.3 `test_the_peers_of_a_stage_follow_that_stage_s_generation`; plan Task 14 Step 5 has its mutant. |
+| B HFU2-SPEC-17 (should fix), A TOPUP-SPEC-20 (b) (consider): a peer whose `--plan` fails drops out, and the next peer can run its held units at the same time | §22.1 item 3: fail closed. The in-flight jobs of an instance without a plan hold every same-named stage of its run key. §22.3 `test_a_peer_without_a_plan_still_holds_its_units_in_flight`; §22.7 states what stays open (more attempts, never a concurrent run). |
+| B HFU2-SPEC-19 (consider): `adopt` would call the private `driver._plan_rate_limited`, and the two modules would import each other | §22.2: the rule moves to the public `campaign.rate_limited`; `driver._plan_rate_limited` and `adopt` call it. |
+| Round 10 (spec r10, plan r9: A and B APPROVE; spec 0 findings). A TOPUP-PLAN-13, B HFU2-PLAN-32 (consider): Task 14 Step 6 runs no pyright on `campaign.py`; Files names `test_campaign.py`, which no step changes | Plan Task 14: pyright on `campaign.py`; `test_campaign.py` leaves Files. Editorial notes: §22.7 "A limit of F1" follows the bullets; the E11 cite is `:250-252`. |
+| Round 11 (spec r11, plan r10 of revision 6b / 5b; B APPROVE, A REQUEST CHANGES). A TOPUP-SPEC-21 (should fix): `_counters` would call `read_many` on stores without it (`_CountingStore` in the existing `_counters` tests) | §22.2a: `adopt._read_many` is the one helper that chooses `read_many` or `read_bytes`; `_counters` and `_BoundedReads.read_many` call it; the two existing tests do not change. |
+| B HFU2-SPEC-20 (consider): a read-only field check of F3 against run 9b is possible before the merge | §22.4a: `counters_check.py` with `adopt._counters` over the real bucket; its totals must equal the run 9b records. |
+| B note: the batches run on several threads | §22.3: the batch test asserts the set of batches, not their order. |
+| Round 12 (spec r12, plan r11 of revision 6c / 5c; B APPROVE, A REQUEST CHANGES). A TOPUP-SPEC-22 (should fix): the counter-read count is wrong (21,734 is all units of every stage); §22.4a has vacuous rows and no unit source | §22.2a, §22.4a and decision 22: 1,436 files, 13 instances, 17,638 `extract` units, 13 calls; §22.4a names the 13 instances, leaves out the 6 empty ones, says no instance passes one batch, and takes the units from the listing. B note: the run key holds the commit (§22.4a wording). |
+| Round 13 (spec r13, plan r12 of revision 6d / 5d: A and B APPROVE; A 0 findings). B HFU2-SPEC-21 (consider), A note: "13 calls" needs one store for each instance | §22.4a and plan Step 4c: one new `BucketStore` for each instance (12 calls with one store for each run key). |
+
+The owner approved revision 6d and plan revision 5d on 2026-11-12 ("approved").
+
+## 24. The record of runs 9a and 9b, and of Part F (C2)
+
+Evidence (outside the repo): `D:\Temp\hfu-topup\run9a\` and `D:\Temp\hfu-topup\run9b2\` (`driver.log`,
+`accept\*.log`, `accept\shared_9b.log`, `accept\verify_xsx.txt`), `D:\Temp\hfu-topup\f3check\counters_check.log`,
+`D:\Temp\hfu-topup\mut\mutants.log`, `D:\Temp\hfu-topup\record\task14_ledger.md`.
+
+### 24.1 Run 9a
+
+As §17.1 and §17.2 state: `tf46_refit.toml` at `aadd4cf7`, 85 launches in 80 steps, 64.4 min from the first job
+to the last; 7 of 8 arms passed. Item 4 (§17.3): 619 units in 85 job manifests, one unit in more than one job (the
+failed `xcross_attempt-public` `fit` unit: 3 retries in 3 steps), no overlap.
+
+### 24.2 Run 9b (`cycle1.toml` whole, C1 `70915ce6`, 2026-11-12)
+
+- **The run.** Preflight: 7 checks ok. The driver ran from 20:58:43Z to 23:57:51Z (2 h 59 min) in 199 steps, with
+  325 launches and no rate-limited step (the largest step sent 304 Hub requests). It ended with exit 1: one
+  STUCK instance, `xcross_attempt-public` / `position_only`, as §17.3 item 6 expects. Jobs: 324 COMPLETED and 1
+  ERROR, a `mount_auth_flake` job that never started (its retry ran). From the first job created (20:59:09Z) to
+  the last job finished (23:57:00Z): 177.8 min.
+- **`retrieve` and `verify` (§17.3 item 1).** 20 of 21 instances were retrieved (`xcross_attempt-public` /
+  `position_only` is not reduced). The first two `retrieve` attempts crashed on HTTP 429 at the xet token (§22).
+  The third attempt used the unchanged `adopt.retrieve` with `workers=1, read_workers=2` (a scratch wrapper) and
+  took 12.5 min. `verify`: the 13 instances outside xShot and xCross pass. The 7 retrieved xShot/xCross instances
+  fail the integrity gate (`reproduced` false), as §17.3 item 6 expects in `rematerialize` mode; `xshot_occurrence
+  public` `default` and `position_only` also fail CV parity (pr_auc 0.0819 to 0.0889, 0.0754 to 0.0849).
+- **`compare` (item 2): passes.** Against `cycle1-a1a3b52`: the 12 trainer artifacts outside xShot and xCross are
+  `IDENTICAL`, and the census verdict is ok. The 8 xShot/xCross rows differ or are missing, as expected.
+- **Item 3: passes.** The xsuccess `extract` stage took 10.8 min from its first job (created 21:01:54Z) to its
+  inline reduce (21:12:39Z), against 36.7 min at launch 8. Its 18 jobs ran 71 to 367 s each and waited at most 5 s
+  to start. In that window 47 other jobs ran (xshot `extract` 14, xcross `extract` 14, xshot `prep` 4, xshot
+  `study` 4, xcross `probe` 2, `probe_comparison` 2, ghost_gk `extract` 6, xsuccess `hpo` 1), with at most 25 jobs
+  running at once.
+- **Item 4: a miss.** 325 job manifests, 21,734 units, a ledger for each unit, and every ledger unit in a manifest.
+  17 units ran in more than one job: 15 `receiver_model` `extract` units (the ERROR job that never started, then
+  its retry), the failed `xcross_attempt-public` `fit` unit (3 retries in turn), and one overlap: the ghost_gk-owner
+  `validate` unit `only` in 5 jobs at once (§22). The owner ruled to fix it in this cycle: Part F.
+- **Item 5.** Wall time: above, and 64.4 min for run 9a. The `fit` unit times of run 9b (wall, with CPU time about
+  equal to it where not stated): ghost_gk 92.6 to 109.2 s (5.3 GB peak RSS); ghost_outfield 548 and 623 s;
+  win_probability 1,252.4 s (CPU 1,247.9 s; 6.5 GB); xsuccess 36 units, 296.6 to 630.9 s (6.2 to 7.4 GB), against
+  655 to 995 s at launch 8 (§1.3); pass_completion 23.4 s; match_outcome_dependence 8.9 s; receiver_model 15.9 s
+  (CPU 4.1 s); xShot/xCross 1.5 to 31.7 s.
+- **Item 6: the xShot/xCross gates** (the metrics of the candidate each arm shipped; reported to the owner; the
+  report to the TF-46 session waits for the merge, on the owner's word):
+
+| arm | gates | pr_auc | brier | base-rate brier | log loss | folds |
+|---|---|---|---|---|---|---|
+| xshot public default | pass | 0.08896 | 0.01715 | 0.01763 | 0.07647 | 5 |
+| xshot public position_only | pass | 0.08498 | 0.01719 | 0.01763 | 0.07690 | 5 |
+| xshot sc_extended default | pass | 0.14227 | 0.01505 | 0.01625 | 0.06529 | 5 |
+| xshot sc_extended position_only | pass | 0.13554 | 0.01514 | 0.01625 | 0.06651 | 5 |
+| xcross public default | pass | 0.08638 | 0.03681 | 0.03690 | 0.15508 | 5 |
+| xcross public position_only | fails `brier_gain_lb95_gt_0` | 0.06172 | 0.03729 | 0.03690 | 0.16015 | 5 |
+| xcross sc_extended default | pass | 0.20693 | 0.05982 | 0.06477 | 0.22025 | 5 |
+| xcross sc_extended position_only | pass | 0.14778 | 0.06234 | 0.06477 | 0.23468 | 5 |
+
+### 24.3 Part F (plan Task 14)
+
+- **F1.** 11 tests; 9 failed first, the 2 positive controls passed by design; then `test_hf_driver.py` 149 passed.
+  Round 5 (§25) added 2 tests against the finished code; each was proved by a mutant that makes it fail.
+  The existing tests that now describe peers keep their meaning (plan Task 14 Step 2).
+- **F2.** 6 tests, all failed first; then `test_adopt.py`, `test_hub_client.py` and `test_hf_driver.py` passed.
+- **F3.** 5 tests, all failed first; then `test_bucket_store.py` 11 and `test_adopt.py` 73 passed; the existing
+  `_counters` tests did not change.
+- **Mutations.** 19 mutants, each caught by its named test, and 3 more from implementation review round 5 (§25),
+  also caught: 22 in all. One ruling: the plan's mutant "the owner of a
+  generation is the first instance with any plan entry, a `None` plan included" cannot be built (a `None` plan
+  names no generation), so the mutant "a `None` plan stops the walk" stands in for it; the same test catches it.
+- **The field check of §22.4a.** 13 instances, 0 mismatches: `totals` and `n_read` equal the run 9b records. 13
+  `download_bucket_files` calls for 1,436 files in 51.0 s, with one new `BucketStore` for each instance, and no
+  rate-limit line.
+- **The dry run of §22.4** comes after the push, on the owner's go; its result goes into the PR text.
+
+### 24.4 The version
+
+Owner, 2026-11-12: "patch release is good" (§17.6 item 16): 4.142.1 in `silly_kicks/_version.py`, the
+`CHANGELOG.md` heading and the `TODO.md` "Current" line. `uv.lock` does not change: the version is dynamic
+(ADR-079), so the lock holds no version of the package. The `TODO.md` row of this cycle left with C1.
+
+## 25. Implementation review round 5 answers (C2)
+
+Reports: `D:\Development\_reviews\2026-11-12-hfu-launch-topup-impl-r5-{A,B}.md` (delta sha256 `c923bb0b…`).
+`/final-review` ran before this round. A: REQUEST CHANGES; B: APPROVE. Both re-ran the GREEN and RED runs and
+matched the ledger; both accept the mutation ruling of §24.3.
+
+| Finding | Answer |
+|---|---|
+| A TOPUP-IMPL-03, B HFU2-IMPL-18 (should fix): the ADR-128 edit deleted the "**Consequences.**" label of the 2026-11-11 amendment | Restored: item 57 ends at its own text; the paragraph is byte-equal to C1. |
+| A TOPUP-IMPL-04 (should fix): after F3 the counters reads go through `read_many`, so no test fails when `_BoundedReads.read_bytes` loses its retry; the read test matched the prefix "(read" | `test_retrieve_retries_a_rate_limited_read` rate-limits `extract/g0/_inputs.json` (a `read_bytes` of `retrieve`) and asserts the whole line `(read extract/g0/_inputs.json); retry 1/4 in 30 s`. A's mutant A is caught. |
+| B HFU2-IMPL-17 (should fix): no test pins "of the same run key" in §22.1 item 3 | `test_a_planless_instance_of_another_run_key_does_not_hold_the_stage`; the mutant "the planless instances of every run key hold the stage" is caught. |
+| B HFU2-IMPL-19 (consider): a later peer that `continue`s could start its next ready stage in the same pass | `test_a_waiting_peer_starts_no_later_stage_in_the_pass`; the mutant `break` to `continue` is caught. |
+| Round 6 (`…-impl-r6-{A,B}.md`, delta sha256 `3787397c…`): A and B APPROVE, 0 findings | Each reviewer ran its own mutants of round 5 again; all are caught. No product file changed in round 6. |

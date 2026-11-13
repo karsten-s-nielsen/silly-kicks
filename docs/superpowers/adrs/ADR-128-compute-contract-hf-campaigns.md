@@ -896,12 +896,23 @@ stage can have the same `(index, count)`, so the same keys file (the second writ
     tracked edits give `dirty-<tree hash>`, and the jobs clone the commit. The driver refuses the same in every
     step, before any launch (`FATAL code_identity`; a plan without the value counts as another identity). The
     first run 9b (spec §17.1) ran from such a tree: the driver read none of the jobs' records.
+57. **One decision per shared generation; a `retrieve` that waits out a rate limit and reads in batches** (spec
+    §22, after run 9b). Instances of one run key whose stage has one `generation` are peers at that stage (the 5
+    ghost_gk variants at `validate`; `default` and `full` at `extract` to `importance`). The first instance of a
+    pass that reaches the generation decides it, with the flight, coverage, timeouts and reduce errors of every
+    peer; later peers wait. An instance without a readable plan holds every same-named stage of its run key while
+    its jobs run (fail closed). Run 9b ran one `validate` unit in 5 concurrent jobs, and launches `a1a3b52`,
+    `abcfda8` and `c40ec7b` did the same; the output did not change. `retrieve` retries a rate-limited read,
+    listing or plan call after 30, 60, 120 and 240 s, with no read slot held in a wait (the rule is
+    `campaign.rate_limited`, which a bare "429" does not meet); run 9b's `retrieve` crashed twice on a 429 that
+    `huggingface_hub` does not retry. `retrieve` reads the counters files in batches of 200 with one
+    `download_bucket_files` call each (`BucketStore.read_many`): 13 calls for run 9b's 1,436 files, not 1,436.
 
 **Consequences.** The xsuccess `extract` stage is expected to take about 7 to 9 min (not measured; launch 9 is
 the proof, spec §14.3). The names, the keys file names and the in-job labels of every keyed job change form.
 
-**Scope.** `scripts/hf_jobs/{driver,launch,launched,adopt,preflight}.py`, `scripts/_stages.py` (`_run_unit`).
-Scripts only.
+**Scope.** `scripts/hf_jobs/{driver,launch,launched,adopt,preflight,campaign,store}.py`, `scripts/_stages.py`
+(`_run_unit`). Scripts only.
 
 ## Related
 

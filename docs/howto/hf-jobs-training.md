@@ -92,7 +92,11 @@ ADR-128 amendment 2026-11-02).
    running job of the stage holds, up to `max_shards` jobs of one stage at once. The driver knows the units of a
    running job from its own record of the jobs it launched, or else from the job's manifest in the store. A stage
    waits for its running jobs when a running job's units are not known, when a reduce trigger runs, or when the
-   instance has a `download` dataset. A job that the driver launched and that the HF listing does not show yet
+   instance has a `download` dataset. Instances of one run key whose stage has one generation (the 5 ghost_gk
+   variants at `validate`; `default` and `full` at `extract` to `importance`) are peers at that stage: the first
+   one in a step decides the stage for all of them, with all their running jobs, attempts and timeouts, and the
+   others wait (ADR-128 item 57). An instance whose `--plan` failed holds every same-named stage of its run key
+   while its jobs run. A job that the driver launched and that the HF listing does not show yet
    counts as in flight and holds its units; after 5 listings that do not show it, the driver prints `[driver]
    job <id> <label> was launched but is not in the listing after 5 steps; its units are free again` (HFU launch
    top-up spec §3). Every keyed job has a tag: the first 12 hex characters of the sha256 of its keys file. The
@@ -154,7 +158,11 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    the extract counters) into DIR, OUTSIDE the repo; an xShot/xCross `public` instance also gets its extract
    rows (`<instance>.eval_rows.parquet`, beside the artifact). It prints `[retrieve] <i>/<n> <instance>:
    <files> files, <MB> MB, counters <k>/<units> in <s> s` per instance; the counters are read from one listing,
-   in parallel. 4 instances run at once; a line prints when its instance ends, so `<i>` is not in order.
+   in batches of 200 files, one `download_bucket_files` call each (run 9b: 13 calls for 1,436 files). 4
+   instances run at once; a line prints when its instance ends, so `<i>` is not in order. At most 8 reads run at
+   once. A read, listing or `--plan` call that hits the HF rate limit (2,500 requests in 5 min for the account) is
+   retried after 30, 60, 120 and 240 s, with `[retrieve] rate-limited (<what>); retry <i>/4 in <w> s`, and holds
+   no read slot while it waits; after the fourth wait the error stops `retrieve`.
 7. `verify --staging DIR` -- loads every artifact in `.venv-hfjobs`, checks the five expectations (training
    commit = campaign commit; recorded dataset revision = the pin; corpus digest + n = the record; shipped
    tier = the expected tier), certifies per the registry (`public`: the head-to-head as in-sample parity AND two-sided CV parity on

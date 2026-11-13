@@ -225,6 +225,16 @@ class PlanTimeoutError(RuntimeError):
     """A ``--plan`` read passed its deadline; the message holds the child's dumped stack."""
 
 
+def rate_limited(exc: BaseException) -> bool:
+    """An HF rate limit: the reason phrase or "rate limit", never a bare "429" (a path or a match id can hold those
+    digits; the text can be subprocess stderr). A plan timeout is never one, so a permanent failure stays a STUCK
+    report. The one rule for the driver's `--plan` failures and `adopt.retrieve` (HFU launch top-up spec §22.2)."""
+    if isinstance(exc, PlanTimeoutError):
+        return False
+    text = str(exc).lower()
+    return "too many requests" in text or "rate limit" in text
+
+
 #: How much of the child's stack dump a plan-timeout report keeps (from the dump's start).
 PLAN_DUMP_KEEP_CHARS = 3000
 

@@ -442,6 +442,141 @@ def test_a_top_up_never_passes_the_mount_cap(tmp_path) -> None:
     assert len(d.launches) == 2  # 6 - 4 in flight
 
 
+# --- shared generations: one decision in a pass (HFU launch top-up spec §22.1) -------------------------
+
+
+def _decide_all(insts, plans, live=(), **kw):
+    """``decide`` over several instances at the test campaign's limits (3 attempts, 20 units per job, 12 shards)."""
+    return decide(
+        instances=list(insts), plans=plans, live_jobs=list(live), attempts=3, units_per_job=20, max_shards=12, **kw
+    )
+
+
+def _peer_pair(tmp_path, units: Sequence[str] = ("a",)):
+    """Two instances of one run key (variants ``p0`` and ``p1``) that read one real plan: peers at every stage,
+    as the 5 ghost_gk variants are at ``validate``."""
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: list(units), work=_work()),))
+    return _inst(variant="p0"), _inst(variant="p1"), _realplan(ctx)
+
+
+def test_a_shared_generation_is_decided_once_in_a_pass(tmp_path) -> None:
+    a, b, plan = _peer_pair(tmp_path)
+    d = _decide_all([a, b], {a.id: plan, b.id: plan})
+    assert [(lx.instance_id, lx.keys) for lx in d.launches] == [(a.id, ("a",))]
+
+
+def test_a_peer_does_not_launch_units_that_another_peer_runs(tmp_path) -> None:
+    a, b, plan = _peer_pair(tmp_path, ("a", "b"))
+    live, units = _fly(b, "extract", {"j1": ["a", "b"]})
+    d = _decide_all([a, b], {a.id: plan, b.id: plan}, live, flight_units=units)
+    assert d.launches == () and d.reports == ()
+
+
+def test_a_shared_generation_tops_up_only_the_units_no_peer_holds(tmp_path) -> None:
+    a, b, plan = _peer_pair(tmp_path, ("a", "b"))
+    live, units = _fly(b, "extract", {"j1": ["a"]})
+    d = _decide_all([a, b], {a.id: plan, b.id: plan}, live, flight_units=units)
+    assert [(lx.instance_id, lx.keys) for lx in d.launches] == [(a.id, ("b",))]
+
+
+def test_the_coverage_of_a_shared_unit_counts_every_peer(tmp_path) -> None:
+    a, b, plan = _peer_pair(tmp_path, ("a", "b"))
+    cover = {(a.id, "extract", "a"): 2, (b.id, "extract", "a"): 1}  # 3 attempts in all: `a` is spent
+    d = _decide_all([a, b], {a.id: plan, b.id: plan}, coverage=cover)
+    assert _keys(d) == ["b"]
+
+
+def test_the_timeouts_of_a_shared_unit_count_every_peer(tmp_path) -> None:
+    a, b, plan = _peer_pair(tmp_path, ("a", "b"))
+    timed_out = {(a.id, "extract", "a"): ("t0",), (b.id, "extract", "a"): ("t1",)}
+    d = _decide_all([a, b], {a.id: plan, b.id: plan}, timeouts=timed_out)
+    assert _keys(d) == ["b"]
+    assert d.reports == ((a.id, "extract/a timed out 2x (jobs t0, t1)"),)
+
+
+def test_the_reduce_errors_of_a_shared_stage_count_every_peer(tmp_path) -> None:
+    ctx = _ctx(tmp_path, (s.Stage(name="extract", units=lambda c: ["a", "b"], work=_work()),))
+    _run(ctx, "extract", "a", "b")  # all done: the stage would reduce
+    plan, a, b = _realplan(ctx), _inst(variant="p0"), _inst(variant="p1")
+    errors = {(a.id, "extract"): 2, (b.id, "extract"): 1}  # 3 reduce triggers in all: the limit
+    d = _decide_all([a, b], {a.id: plan, b.id: plan}, reduce_errors=errors)
+    assert d.launches == ()
+    assert len(d.reports) == 1 and d.reports[0][0] == a.id and "reduce" in d.reports[0][1]
+
+
+def test_the_next_peer_decides_when_the_first_has_no_plan(tmp_path) -> None:
+    a, b, plan = _peer_pair(tmp_path)
+    d = _decide_all([a, b], {a.id: None, b.id: plan})
+    assert [lx.instance_id for lx in d.launches] == [b.id]
+
+
+def test_instances_with_their_own_generations_each_launch(tmp_path) -> None:
+    def stages():
+        return (s.Stage(name="extract", units=lambda c: ["a"], work=_work(), params=("x",)),)
+
+    p1, p2 = _realplan(_ctx(tmp_path, stages(), {"x": 1})), _realplan(_ctx(tmp_path, stages(), {"x": 2}))
+    assert p1["stages"][0]["generation"] != p2["stages"][0]["generation"]  # precondition: not peers
+    a, b = _inst(variant="p0"), _inst(variant="p1")
+    d = _decide_all([a, b], {a.id: p1, b.id: p2})
+    assert [lx.instance_id for lx in d.launches] == [a.id, b.id]
+
+
+def test_the_peers_of_a_stage_follow_that_stage_s_generation(tmp_path) -> None:
+    """`validate` does not read `x`, `extract` does: the two instances are peers at the first stage only."""
+
+    def stages():
+        return (
+            s.Stage(name="validate", units=lambda c: ["only"], work=_work()),
+            s.Stage(name="extract", units=lambda c: ["a"], work=_work(), needs=("validate",), params=("x",)),
+        )
+
+    c1, c2 = _ctx(tmp_path, stages(), {"x": 1}), _ctx(tmp_path, stages(), {"x": 2})
+    a, b = _inst(variant="p0"), _inst(variant="p1")
+    p1, p2 = _realplan(c1), _realplan(c2)
+    assert p1["stages"][0]["generation"] == p2["stages"][0]["generation"]  # precondition: validate is shared
+    first = _decide_all([a, b], {a.id: p1, b.id: p2})
+    assert [(lx.instance_id, lx.stages) for lx in first.launches] == [(a.id, ("validate",))]
+    _run(c1, "validate", "only")
+    s.reduce_stage(c1, "validate")
+    p1, p2 = _realplan(c1), _realplan(c2)  # one store: both plans see the reduce
+    assert p1["stages"][1]["generation"] != p2["stages"][1]["generation"]  # precondition: extract is not
+    second = _decide_all([a, b], {a.id: p1, b.id: p2})
+    assert [(lx.instance_id, lx.stages) for lx in second.launches] == [(a.id, ("extract",)), (b.id, ("extract",))]
+
+
+def test_a_peer_without_a_plan_still_holds_its_units_in_flight(tmp_path) -> None:
+    """Spec §22.1 item 3: an instance whose plan is not readable can be a peer; its job in flight holds the
+    stage of the same name, so the other peer waits instead of running the held units a second time."""
+    a, b, plan = _peer_pair(tmp_path, ("a", "b"))
+    live = [{**_running(a, "extract"), "id": "j1"}]
+    d = _decide_all([a, b], {a.id: None, b.id: plan}, live, flight_units={})
+    assert d.launches == ()
+
+
+def test_a_planless_instance_of_another_run_key_does_not_hold_the_stage(tmp_path) -> None:
+    """Spec §22.1 item 3 holds the stages of the SAME run key only: a failed `--plan` elsewhere stops nothing here."""
+    a, b, plan = _peer_pair(tmp_path, ("a", "b"))
+    other = _inst(run_key="rk2", variant="p0")
+    live = [{**_running(other, "extract"), "id": "j1"}]
+    d = _decide_all([other, a, b], {other.id: None, a.id: plan, b.id: plan}, live, flight_units={})
+    assert [(lx.instance_id, lx.keys) for lx in d.launches] == [(a.id, ("a", "b"))]
+
+
+def test_a_waiting_peer_starts_no_later_stage_in_the_pass(tmp_path) -> None:
+    """A peer that waits for a shared generation stops its walk (one stage per instance per step): it does not
+    move on to a later ready stage in the same pass (ghost_gk `cv` and `fit` both need only `cache`)."""
+    ctx = _ctx(
+        tmp_path,
+        (
+            s.Stage(name="cv", units=lambda c: ["f0"], work=_work()),
+            s.Stage(name="fit", units=lambda c: ["only"], work=_work()),
+        ),
+    )
+    plan, a, b = _realplan(ctx), _inst(variant="p0"), _inst(variant="p1")
+    d = _decide_all([a, b], {a.id: plan, b.id: plan})
+    assert [(lx.instance_id, lx.stages) for lx in d.launches] == [(a.id, ("cv",))]
+
+
 def test_stage_barrier_one_stage_at_a_time(tmp_path) -> None:
     ctx = _ctx(
         tmp_path,
@@ -1845,6 +1980,17 @@ def test_dry_run_shows_the_top_up(tmp_path, capsys) -> None:
              baseline_error_ids=frozenset())  # fmt: skip
     out = json.loads(capsys.readouterr().out)
     assert [(lx["keys"], len(lx["tag"])) for lx in out["launches"]] == [(4, 12)]
+
+
+def test_dry_run_shows_one_launch_for_a_shared_generation(tmp_path, capsys) -> None:
+    """Spec §22.4: the dry run decides with `_decide`, so two peers show one launch."""
+    from scripts.hf_jobs.driver import _dry_run
+
+    a, b, plan = _peer_pair(tmp_path)
+    _dry_run(_campaign(), _COMMIT, api=_BucketApi("", {}), instances=[a, b], read_plan=lambda _i: plan,
+             live_records=lambda: [], baseline_error_ids=frozenset())  # fmt: skip
+    out = json.loads(capsys.readouterr().out)
+    assert [lx["instance"] for lx in out["launches"]] == [a.id]
 
 
 def test_dry_run_reports_a_foreign_identity_as_fatal_and_no_launch(tmp_path, capsys) -> None:

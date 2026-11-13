@@ -24,6 +24,11 @@ the TF-46 session, ADR-131, "Widen before refit", the decoupling). Tasks 1 to 9 
 `57a17a42`, then amended on the owner's word to hold this plan and spec revision 4a; spec §17.1). Task 10 is a record of run 9a; Task 11 is run 9b as a parity run; Task 12 is C2, the record and the
 release. The goal line above still names the refit; spec §17 is the current scope. Revision 3a: the answers to
 plan review round 4 (spec §18). Revision 4a: Task 13, Part E (spec §19: E1 in preflight check 1, E2 in the driver), before Task 11.
+Revision 5 (2026-11-12): Task 14, Part F (spec §22: F1 in `decide`, F2 in `retrieve`), after Task 11 and in C2;
+Task 12 holds the order of spec §22.5. Revision 5a: the answers to plan review round 8 (spec §23). Revision 5b:
+F3, batched counter reads (spec §22.2a; owner "3: fold it in"), in Task 14 Steps 4a and 4b. Revision 5c: the
+round 11 answers (spec §23: `adopt._read_many`; the field check of spec §22.4a in Step 4c); the Step 2 record.
+Revision 5d: the round 12 answer (spec §23: the counter-read count, 1,436 files in 13 calls; Step 4c).
 
 ## Global Constraints
 
@@ -60,6 +65,10 @@ plan review round 4 (spec §18). Revision 4a: Task 13, Part E (spec §19: E1 in 
 4. A launch whose manifest write got a 429, then a driver restart: the job is unknown, so its stage waits
    (Task 6 test).
 5. `compare` with several baselines: the census row still reads only `<NEW>/verify.json` (Task 7 test).
+6. (Revision 5) A pass where the first peer of a shared generation has no readable plan: the next peer decides
+   (Task 14 test `test_the_next_peer_decides_when_the_first_has_no_plan`).
+7. (Revision 5) An error whose text holds "429" only as digits of a path or an id: `retrieve` raises it at once
+   (Task 14 test `test_retrieve_does_not_retry_another_error`).
 
 ---
 
@@ -440,7 +449,11 @@ Each step on the owner's go.
 
 ### Task 12: C2, the record
 
-- [ ] **Step 1:** The record of runs 9a and 9b (a new section of the spec, the ADR-128 amendment). Ask the owner
+Revision 5: C2 also holds Part F (Task 14, spec §22.5). The order: Task 14, then Step 1, then the gate of Step 3,
+then the dry run of spec §22.4 on the owner's go, then Step 4.
+
+- [ ] **Step 1:** The record of runs 9a and 9b (a new section of the spec, the ADR-128 amendment), from the draft
+  `D:\Temp\hfu-topup\record\run9b_acceptance.md`, with the item 4 miss and Part F (spec §22). Ask the owner
   to confirm the version (spec §17.6 item 16: 4.142.1).
   - With a version: set it in `silly_kicks/_version.py`, the `CHANGELOG.md` heading (the `[Unreleased]` section
     becomes that version), `uv.lock`, the `TODO.md` "Current" line.
@@ -449,7 +462,14 @@ Each step on the owner's go.
 - [ ] **Step 2: The local checks of C2,** one file per process: `tests/test_version_single_source.py`,
   `tests/test_todo_md_format.py`, `tests/test_howto_links_wired.py`, `tests/test_agents_md_budget.py`; `uv lock
   --check` (with a version); ruff and format. Expected: all pass.
-- [ ] **Step 3:** The C2 gate: A and B review, `/final-review`, the owner's yes, commit, push, CI green on the PR.
+- [ ] **Step 3:** The C2 gate: `/final-review`, then the A and B implementation review of C2 (reports
+  `D:\Development\_reviews\2026-11-12-hfu-launch-topup-impl-r5-{A,B}.md`), the answers, the owner's yes, commit,
+  push, CI green on the PR.
+- [ ] **Step 3a (spec §22.4):** on the owner's go, from a clean tree at C2: `python -m scripts.hf_jobs campaign
+  scripts/hf_jobs/campaigns/cycle1.toml launch --dry-run`, the output under `D:\Temp\hfu-topup\dryrun-c2\`.
+  Expected: `ghost_gk-owner` `validate` has 1 launch, not 5; no launch is made. The dry run shows the first pass
+  only, so the `default`/`full` group from `extract` to `importance` is not in it (spec §22.4). Report the result
+  to the owner and in the PR text.
 - [ ] **Step 4:** Each on the owner's yes: the PR ready, the merge (a merge commit), the tag after green CI on
   `main` (it publishes to PyPI; only with a version), and each `prune --delete`.
 
@@ -498,3 +518,95 @@ text changes (owner ruling 1: the rule is inside check 1).
   `D:\Development\_reviews\2026-11-12-hfu-launch-topup-impl-r3-{A,B}.md`); `/final-review`; the owner's yes for
   the amend of `d79311d2` (it takes Part E, spec revision 5a and plan revision 4a) and for the force-push; green CI
   on the amended C1. Then Task 11.
+
+### Task 14: Part F, one decision per shared generation, a retrieve that waits out a rate limit (spec §22; in C2)
+
+**Files:** `scripts/hf_jobs/driver.py` (`decide`, `_stage_flight`, `_plan_rate_limited`),
+`scripts/hf_jobs/campaign.py` (`rate_limited`), `scripts/hf_jobs/adopt.py` (`_BoundedReads`, `retrieve`,
+`_counters`), `scripts/hf_jobs/store.py` (`BucketStore.read_many`), `tests/scripts/hf_jobs/test_hf_driver.py`,
+`tests/scripts/hf_jobs/test_adopt.py`, `tests/scripts/hf_jobs/test_bucket_store.py`,
+`docs/howto/hf-jobs-training.md`, the ADR-128 amendment (item 57), `CHANGELOG.md`.
+
+**Interfaces:**
+- `driver._generation_key(inst, stage: Mapping) -> tuple[str, str] | None` returns `(inst.run_key,
+  stage["generation"])`, or `None` when the record has no `generation`.
+- `driver._peers(instances, plans) -> dict[tuple[str, str], tuple[str, ...]]` maps `(inst.id, stage name)` to the
+  instance ids of its peers at that stage, in instance order, the instance itself included; only instances with a
+  readable plan, grouped by the generation key of each stage separately (spec §22.3).
+- `driver._planless(instances, plans) -> dict[str, tuple[str, ...]]`: `{run_key: ids of its instances without a
+  readable plan}` (spec §22.1 item 3).
+- `driver._stage_flight(live_jobs, insts: Sequence, stage: str) -> list[Mapping]`: the in-flight jobs of any of
+  `insts` for `stage` (today it takes one instance; `decide` passes the peers and the instances of the run key
+  without a plan).
+- `decide` signature unchanged. The first instance of a pass that reaches a generation key decides it; later
+  peers `break`.
+- `campaign.rate_limited(exc: BaseException) -> bool`: the body of today's `driver._plan_rate_limited`;
+  `driver._plan_rate_limited(exc)` returns `campaign.rate_limited(exc)`.
+- `adopt._READ_BACKOFF_S: tuple[float, ...] = (30.0, 60.0, 120.0, 240.0)`.
+- `adopt._rate_limited_call(what: str, fn: Callable[[], T], *, sleep: Callable[[float], object], bound=None) -> T`:
+  calls `fn`; on an error for which `campaign.rate_limited` is true it prints the spec §22.2 line, releases
+  `bound` (when given) during the wait, and retries; the last error raises.
+- `adopt._BoundedReads(store, bound, *, sleep=time.sleep)`; `adopt.retrieve(..., sleep=time.sleep)`.
+- (F3) `store.BucketStore.read_many(rels: Sequence[str]) -> dict[str, bytes | None]`;
+  `adopt._read_many(store, rels: Sequence[str]) -> dict[str, bytes | None]` (the store's `read_many`, else one
+  `read_bytes` for each rel); `adopt._BoundedReads.read_many(rels)` (slot and retry around `_read_many`);
+  `adopt._READ_BATCH = 200`; `_counters` signature unchanged, it calls `_read_many`.
+
+- [ ] **Step 1 (F1 RED):** the 11 F1 tests of spec §22.3 in `test_hf_driver.py`. Run the file. Expected: 9 FAIL
+  (two launches, or a launch of a held or spent unit); the positive control
+  `test_instances_with_their_own_generations_each_launch` and `test_the_next_peer_decides_when_the_first_has_no_plan`
+  pass (both hold at RED by design: before F1 every instance decides); every other test passes.
+- [ ] **Step 2 (F1 GREEN):** implement spec §22.1 in `decide`: the generation keys decided in this pass; the peers'
+  flight, coverage, timeouts and reduce errors; the flight of the instances without a plan (item 3). Run the file.
+  Expected: all pass. Then read every existing test
+  that gives one plan to several variants of one run key (spec §22.3) and record here, for each, whether its
+  meaning changed. Expected: no assertion changes; a change stops at the owner.
+  - Record (2026-11-12): RED 9 failed, 140 passed (each failure on its launch assertion, every precondition held);
+    GREEN 149 passed. The tests that now describe peers keep their meaning: `test_a_failing_plan`,
+    `test_step_prints_one_timed_progress_line` and the plan-timeout test (the second instance has no plan and no
+    job in flight); `test_step_reads_the_plans_in_parallel` (6 peers give 1 launch; it asserts the time only);
+    `test_step_line_instances_done` (the `done` stage is reduced, so `open` decides);
+    `test_a_reduced_instance_is_planned_once_per_driver_run` (it asserts plan reads only); `test_mount_cap`
+    (`rk{i}` differ: not peers). No assertion changed.
+- [ ] **Step 3 (F2 RED):** the 6 F2 tests of spec §22.3 in `test_adopt.py`, with a store fake and a `sleep` that
+  records its waits. Run the file. Expected: the 6 FAIL (`sleep` is not a parameter of `retrieve`), the others pass.
+- [ ] **Step 4 (F2 GREEN):** implement spec §22.2: move the rule to `campaign.rate_limited` (a refactor under
+  the green `test_hub_client.py::test_plan_timeout_is_not_rate_limited` and the driver tests), then the retry.
+  Run `test_adopt.py`, `test_hub_client.py`, `test_hf_driver.py`. Expected: all pass.
+- [ ] **Step 4a (F3 RED):** the 5 F3 tests of spec §22.3 in `test_adopt.py` and `test_bucket_store.py`. Run each
+  file. Expected: the 5 FAIL (`read_many` does not exist; `_counters` makes one call for each file); the others
+  pass.
+- [ ] **Step 4b (F3 GREEN):** implement spec §22.2a. Run `test_adopt.py` and `test_bucket_store.py`. Expected: all
+  pass, the existing `_counters` and retrieve tests included and unchanged (`_CountingStore` and `_SlowStore` have
+  no `read_many`; `_read_many` reads them one file at a time; the totals do not change).
+- [ ] **Step 4c (spec §22.4a, read-only):** write and run `D:\Temp\hfu-topup\f3check\counters_check.py` with the C2
+  code in the tree; the log in the same folder. One new `BucketStore` for each instance (as `retrieve` does). The
+  units are the keys of the counters files in each generation's listing. Expected: for each of the 13 instances that read counters files (spec §22.2a), `totals` and `n_read`
+  equal the `counters` of its record in `D:\Development\_staging\cycle1-70915ce`; 13 `download_bucket_files` calls
+  for 1,436 files; no rate-limit line. Record the calls, the time and any rate-limit line for the C2 record, with
+  these numbers (not 21,734).
+- [ ] **Step 5: mutations,** each caught by the named test:
+  - every instance of a run key is a peer: `test_instances_with_their_own_generations_each_launch`;
+  - the flight is the instance's own only: `test_a_peer_does_not_launch_units_that_another_peer_runs`;
+  - the top-up ignores a peer's held units: `test_a_shared_generation_tops_up_only_the_units_no_peer_holds`;
+  - the coverage is the instance's own only: `test_the_coverage_of_a_shared_unit_counts_every_peer`;
+  - the timeouts are the instance's own only: `test_the_timeouts_of_a_shared_unit_count_every_peer`;
+  - the reduce errors are the instance's own only: `test_the_reduce_errors_of_a_shared_stage_count_every_peer`;
+  - the owner of a generation is the first instance with any plan entry, a `None` plan included:
+    `test_the_next_peer_decides_when_the_first_has_no_plan`;
+  - the peers are grouped once for all stages: `test_the_peers_of_a_stage_follow_that_stage_s_generation`;
+  - the flight leaves out the instances without a plan: `test_a_peer_without_a_plan_still_holds_its_units_in_flight`;
+  - the retry rule is `driver._is_contention` (a bare "429"): `test_retrieve_does_not_retry_another_error`;
+  - the wait holds the bound: `test_a_waiting_read_frees_its_slot`;
+  - one wait fewer: `test_retrieve_raises_when_the_rate_limit_outlasts_the_waits`;
+  - `names` or the plan call without the retry: `test_retrieve_retries_a_rate_limited_listing`,
+    `test_retrieve_retries_a_rate_limited_plan`;
+  - `_counters` back to one read for each file, or a batch of 201: `test_counters_reads_in_batches_of_200`;
+  - `read_many` with one call for each rel: `test_bucket_store_read_many_makes_one_call_for_a_batch`;
+  - `read_many` without the memo: `test_bucket_store_read_many_memoizes`;
+  - `read_many` without the retry: `test_retrieve_retries_a_rate_limited_batch`.
+- [ ] **Step 6: docs and local checks.** The how-to, ADR-128 item 57, `CHANGELOG.md` `[Unreleased]` (spec §22.5).
+  Run `test_hf_driver.py`, `test_adopt.py`, `test_bucket_store.py`, `test_hub_client.py`, `test_campaign.py`,
+  `tests/test_howto_links_wired.py`, one process each; ruff check and format on the changed files; pyright on
+  `driver.py`, `adopt.py`, `campaign.py`, `store.py` and the three test files. Expected: all pass, 0 errors.
+- [ ] Then Task 12 Step 1.

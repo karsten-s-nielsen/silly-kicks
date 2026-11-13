@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.141.0: the stoppage gate for xShot/xCross training.** Dead-ball frames of SkillCorner and Gradient Sports (whose `ball_state` is always `"alive"`) get `stoppage_state` and leave xShot/xCross training; Gradient Sports leaves the observed dead-ball set; `Campaign.mode = "refit"` and `tf46_refit.toml` (ADR-130). The bundled weights do not change; their refit is the Part Deux cycle's launch 9. Detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.142.1: HF campaign tooling (scripts only).** A stage gets more jobs while its jobs run, every keyed job has a tag, `compare` takes several baselines, no launch from a tree that the jobs do not run, one decision per shared generation, and a `retrieve` that waits out a rate limit and reads the counters in batches (ADR-128 items 50 to 57). Run 9b reproduced the 12 trainer artifacts outside xShot/xCross; the wheel does not change. Detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

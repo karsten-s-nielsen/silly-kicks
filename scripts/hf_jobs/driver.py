@@ -512,14 +512,10 @@ def _is_contention(exc: BaseException) -> bool:
 
 
 def _plan_rate_limited(exc: BaseException) -> bool:
-    """A ``--plan`` failure that is an HF rate limit: the reason phrase or "rate limit", never a bare "429" (the
-    text is subprocess stderr). A plan timeout is never one, so a permanent failure stays a STUCK report."""
-    from scripts.hf_jobs.campaign import PlanTimeoutError
+    """A ``--plan`` failure that is an HF rate limit: `campaign.rate_limited`, the one rule (spec §22.2)."""
+    from scripts.hf_jobs.campaign import rate_limited
 
-    if isinstance(exc, PlanTimeoutError):
-        return False
-    text = str(exc).lower()
-    return "too many requests" in text or "rate limit" in text
+    return rate_limited(exc)
 
 
 def main(argv: Sequence[str] | None = None, *, load=None, make_api=None, head=None, runner=None) -> int:
@@ -802,7 +798,10 @@ def decide(
 ) -> Decision:
     """The launches, reports and FATAL of one step. A stage with jobs in flight gets jobs for the units that no
     job of its flight holds (HFU launch top-up spec §3.2); ``flight_units`` names the units of each in-flight job
-    id (``None``: not known). Without it, a stage with a flight waits, as before the top-up."""
+    id (``None``: not known). Without it, a stage with a flight waits, as before the top-up. Instances of one run
+    key whose stage has one ``generation`` are peers at that stage: the first one in the pass decides it, with the
+    flight, coverage, timeouts and reduce errors of every peer, and the others wait; the jobs of an instance
+    without a readable plan hold every stage of that name in its run key (spec §22.1)."""
     units_per_job_default = units_per_job
     cover = coverage or {}
     per_stage = units_per_job_by_stage or {}  # "<job>/<stage>" -> units per job (HFU fit-units spec 3.4)
@@ -819,6 +818,11 @@ def decide(
     chosen_mounts: dict[str, int] = {}
     launches: list[Launch] = []
     reports: list[tuple[str, str]] = []
+    # A shared generation is decided once in a pass, by the first instance that reaches it (spec §22.1).
+    peers = _peers(instances, plans)
+    planless = _planless(instances, plans)
+    by_id = {inst.id: inst for inst in instances}
+    decided: set[tuple[str, str]] = set()
     # Mount faults over the budget are a mount outage: one report per dataset, never a per-unit STUCK.
     for d, nfaults in sorted(mfaults.items()):
         if nfaults > mount_fault_budget:
@@ -838,24 +842,37 @@ def decide(
             if not stage.get("ready", True):
                 break  # upstream not reduced yet: wait
             name = stage["name"]
+            key = _generation_key(inst, stage)
+            if key is not None:
+                if key in decided:
+                    break  # an earlier peer decided this generation in this pass: this one waits (spec §22.1)
+                decided.add(key)
+            # The peers read one generation: their coverage, timeouts, reduce errors and flight count together.
+            group = peers.get((inst.id, name), (inst.id,))
+            flight_insts = [by_id[p] for p in group]
+            if key is not None:  # an instance without a plan can be a peer: its jobs hold the stage (item 3)
+                flight_insts += [by_id[p] for p in planless.get(inst.run_key, ())]
+
+            def covered(u: str, group=group, name=name) -> int:
+                return sum(cover.get((p, name, u), 0) for p in group)
+
+            def timed(u: str, group=group, name=name) -> tuple[str, ...]:
+                return tuple(j for p in group for j in timed_out.get((p, name, u), ()))
+
             # A stage's own job size (e.g. 36 memory-heavy fits in 12 jobs of 3), else the campaign's.
             units_per_job = int(per_stage.get(f"{inst.job}/{name}", units_per_job_default))
             # Candidates: pending or recorded-failed units, minus those spent (coverage >= attempts). Memory-
             # deferred units run only in an escalate job.
             pending = list(stage.get("pending_units") or [])
             candidates = list(dict.fromkeys(pending + list(stage.get("failed_units") or {})))
-            memory_units = [u for u in (stage.get("memory_units") or []) if cover.get((inst.id, name, u), 0) < attempts]
-            to_run = [u for u in candidates if u not in memory_units and cover.get((inst.id, name, u), 0) < attempts]
+            memory_units = [u for u in (stage.get("memory_units") or []) if covered(u) < attempts]
+            to_run = [u for u in candidates if u not in memory_units and covered(u) < attempts]
             # A unit charged by TIMEOUT_LIMIT timed-out jobs is STUCK: reported, never relaunched on any path.
-            stuck = [
-                u
-                for u in dict.fromkeys([*to_run, *memory_units])
-                if len(timed_out.get((inst.id, name, u), ())) >= TIMEOUT_LIMIT
-            ]
+            stuck = [u for u in dict.fromkeys([*to_run, *memory_units]) if len(timed(u)) >= TIMEOUT_LIMIT]
             to_run = [u for u in to_run if u not in stuck]
             memory_units = [u for u in memory_units if u not in stuck]
             stage_launches: list[Launch] = []
-            flight = _stage_flight(live_jobs, inst, name)
+            flight = _stage_flight(live_jobs, flight_insts, name)
             if flight:  # a stage with jobs in flight makes no report; it can only be topped up (spec §3.2)
                 stage_launches.extend(
                     _top_up(
@@ -864,7 +881,7 @@ def decide(
                 )
             else:
                 for u in stuck:
-                    jobs = ", ".join(timed_out[(inst.id, name, u)])
+                    jobs = ", ".join(timed(u))
                     reports.append((inst.id, f"{name}/{u} timed out {TIMEOUT_LIMIT}x (jobs {jobs})"))
                 if memory_units:
                     stage_launches.extend(
@@ -889,14 +906,14 @@ def decide(
                         )
                     )
                 elif not memory_units and not stuck:  # nothing can run: reduce or report
-                    spent_pending = [u for u in pending if cover.get((inst.id, name, u), 0) >= attempts]
+                    spent_pending = [u for u in pending if covered(u) >= attempts]
                     _reduce_or_report(
                         inst,
                         name,
                         len(candidates),
                         spent_pending,
                         stage.get("max_failures"),
-                        red_err.get((inst.id, name), 0),
+                        sum(red_err.get((p, name), 0) for p in group),
                         attempts,
                         workers,
                         stage_launches,
@@ -1251,17 +1268,52 @@ def _attribute(insts, plans, live_jobs, baseline_error_ids, store_for, *, attemp
     )
 
 
-def _stage_flight(live_jobs: Sequence[Mapping], inst, stage: str) -> list[Mapping]:
-    """The jobs of this (instance, stage) that are RUNNING or SCHEDULING: the flight of the stage."""
-    want = (inst.run_key, inst.variant, stage)
+def _stage_flight(live_jobs: Sequence[Mapping], insts: Sequence, stage: str) -> list[Mapping]:
+    """The jobs of ``stage`` of any of ``insts`` that are RUNNING or SCHEDULING: the flight of the stage. ``decide``
+    passes the peers of the stage and the instances of its run key without a plan (spec §22.1)."""
+    want = {(inst.run_key, inst.variant, stage) for inst in insts}
     flight = []
     for job in live_jobs:
         if classify(job).outcome is not JobOutcome.IN_FLIGHT:
             continue
         labels = job.get("labels") or {}
-        if (labels.get("run_key"), labels.get("variant"), labels.get("stage")) == want:
+        if (labels.get("run_key"), labels.get("variant"), labels.get("stage")) in want:
             flight.append(job)
     return flight
+
+
+def _generation_key(inst, stage: Mapping) -> tuple[str, str] | None:
+    """``(run_key, generation)`` of a plan stage: the directory its units write. ``None`` for a record without a
+    ``generation`` (such a stage has no peers)."""
+    gen = stage.get("generation")
+    return None if gen is None else (inst.run_key, str(gen))
+
+
+def _peers(instances: Sequence, plans: Mapping[str, Mapping | None]) -> dict[tuple[str, str], tuple[str, ...]]:
+    """``{(instance id, stage name): the ids of the instances with a readable plan whose stage of that name has the
+    same generation key}``, in instance order, the instance included. Each stage is grouped on its own: the
+    ghost_gk variants share `validate` (all 5) and `extract` (`default` and `full`) in different groups."""
+    groups: dict[tuple[str, str], list[str]] = {}
+    keyed: dict[tuple[str, str], tuple[str, str]] = {}
+    for inst in instances:
+        plan = plans.get(inst.id)
+        if plan is None:
+            continue
+        for stage in plan["stages"]:
+            key = _generation_key(inst, stage)
+            if key is not None:
+                groups.setdefault(key, []).append(inst.id)
+                keyed[(inst.id, stage["name"])] = key
+    return {k: tuple(groups[g]) for k, g in keyed.items()}
+
+
+def _planless(instances: Sequence, plans: Mapping[str, Mapping | None]) -> dict[str, tuple[str, ...]]:
+    """``{run_key: ids of its instances without a readable plan}``: their generations are not known this step."""
+    out: dict[str, list[str]] = {}
+    for inst in instances:
+        if plans.get(inst.id) is None:
+            out.setdefault(inst.run_key, []).append(inst.id)
+    return {k: tuple(v) for k, v in out.items()}
 
 
 def _top_up(

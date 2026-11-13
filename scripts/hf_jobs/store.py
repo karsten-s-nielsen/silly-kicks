@@ -14,6 +14,7 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 import tempfile
+from collections.abc import Sequence
 from typing import Any
 
 
@@ -72,6 +73,24 @@ class BucketStore:
                 )
                 self._reads[rel] = dest.read_bytes() if dest.is_file() else None
         return self._reads[rel]
+
+    def read_many(self, rels: Sequence[str]) -> dict[str, bytes | None]:
+        """``{rel: read_bytes(rel)}`` with ONE ``download_bucket_files`` call for the rels that are not memoized
+        (HFU launch top-up spec §22.2a): a call for one file each sent one request group per file. Absent files are
+        ``None``; every result enters the memo of `read_bytes`. An empty list, or a list of memoized rels, makes no
+        call."""
+        todo = list(dict.fromkeys(r for r in rels if r not in self._reads))
+        if todo:
+            with tempfile.TemporaryDirectory() as tmp:
+                dests = {rel: pathlib.Path(tmp) / str(i) for i, rel in enumerate(todo)}
+                self._api().download_bucket_files(
+                    self.bucket,
+                    [(self._full(rel), str(dest)) for rel, dest in dests.items()],
+                    raise_on_missing_files=False,
+                )
+                for rel, dest in dests.items():
+                    self._reads[rel] = dest.read_bytes() if dest.is_file() else None
+        return {rel: self._reads[rel] for rel in rels}
 
     def write_bytes(self, rel: str, data: bytes) -> None:
         raise PermissionError("BucketStore is read-only: jobs write through the bucket mount")
