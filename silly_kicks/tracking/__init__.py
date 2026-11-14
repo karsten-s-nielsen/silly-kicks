@@ -19,6 +19,7 @@ line_breaking_ward_xfns).
 
 __all__ = [
     "COLLECTIVE_VARIABLES",
+    "CROSS_HEIGHT_VALUES",
     "DAS_SOURCE_COMPUTED",
     "DAS_SOURCE_TEAM_UNRESOLVED",
     "DAS_SOURCE_UNLINKED",
@@ -58,6 +59,7 @@ __all__ = [
     "BallContactParams",
     "BekkersParams",
     "CoverShadowParams",
+    "CrossDeliveryParams",
     "DasCostWarning",
     "DasUnscoreableError",
     "DefensiveCreditParams",
@@ -126,6 +128,7 @@ __all__ = [
     "add_actor_pre_window",
     "add_ball_contacts",
     "add_cover_shadows",
+    "add_cross_deliveries",
     "add_das",
     "add_defensive_credit",
     "add_defensive_line",
@@ -350,6 +353,7 @@ from ._cover_shadows import (
     compute_threat_pc_batch,
     lane_control,
 )
+from ._cross_delivery import CROSS_HEIGHT_VALUES, CrossDeliveryParams, add_cross_deliveries
 from ._das import (
     DAS_SOURCE_COMPUTED,
     DAS_SOURCE_TEAM_UNRESOLVED,

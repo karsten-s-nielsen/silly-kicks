@@ -97,6 +97,14 @@ def test_aggregator_category_team_id_invariant(agg):
     )
 
 
+def test_cross_delivery_scene_is_non_vacuous():
+    """ADR-056 precondition: the add_cross_deliveries entry has teeth only if its scene separates an opponent
+    block (True) from a teammate deflection (False) on the numeric baseline."""
+    agg = next(a for a in AGGREGATORS if a.__name__ == "add_cross_deliveries")
+    out = agg(make_actions(), make_frames(), 5)
+    assert out["cross_attempt"].tolist() == [True, False]
+
+
 def test_enumerated_surface_equals_registered():  # B3 meta-assertion
     # `name[variant]` entries are ALTERNATE-METHOD sweeps of an aggregator already registered
     # under its bare name; strip the suffix so a variant can never stand in for its base.

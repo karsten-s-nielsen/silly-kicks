@@ -409,10 +409,17 @@ def test_shot_blocked_true_on_real_blocked_shot():
     assert (shots["shot_blocked"] == True).sum() == 12  # noqa: E712
     # every shot row is True/False (never NA on a provider that encodes it)
     assert shots["shot_blocked"].notna().all()
-    _crosses = actions[actions["type_name"] == "cross"]
+    # ADR-133: cross_blocked is keyed to StatsBomb's own open-play cross (cross_native), not the geometric type.
+    native = _native_open_play_crosses(actions)
+    _crosses = actions[native]
     assert _crosses["cross_blocked"].notna().all()  # open-play crosses carry True/False
     assert (_crosses["cross_blocked"] == False).all()  # 7298 has no blocked crosses  # noqa: E712
-    assert actions[actions["type_name"] != "cross"]["cross_blocked"].isna().all()
+    assert actions[~native]["cross_blocked"].isna().all()
+
+
+def _native_open_play_crosses(actions: pd.DataFrame) -> pd.Series:
+    """StatsBomb's own open-play crosses after ADR-133: a pass-class row whose cross_native is True."""
+    return actions["type_name"].isin(["pass", "cross"]) & actions["cross_native"].fillna(False).astype(bool)
 
 
 def test_open_play_cross_mask_equals_inline_predicate():
@@ -447,15 +454,19 @@ def test_cross_blocked_true_on_real_blocked_cross():
 
     actions, _ = load_statsbomb(7584)
     actions = add_names(actions)
-    crosses = actions[actions["type_name"] == "cross"]
+    native = _native_open_play_crosses(actions)
+    crosses = actions[native]
     # exactly one genuine blocked cross in 7584 (min 89)
     assert (crosses["cross_blocked"] == True).sum() == 1  # noqa: E712
     blocked = crosses[crosses["cross_blocked"] == True]  # noqa: E712
     assert blocked["original_event_id"].iloc[0] == "e8edd276-8490-456c-b221-240d128f61f1"
+    # The block ends the delivery outside the box, so the geometric rule types it `pass` (the event-only
+    # limit, ADR-133); the tracking layer counts it as an attempt.
+    assert blocked["type_name"].iloc[0] == "pass"
     # every open-play cross carries a real True/False, never NA
     assert crosses["cross_blocked"].notna().all()
     # non-open-play rows (regular passes, set-piece crosses, non-passes) stay NA
-    assert actions[actions["type_name"] != "cross"]["cross_blocked"].isna().all()
+    assert actions[~native]["cross_blocked"].isna().all()
 
 
 def test_cross_blocked_false_when_no_block_related():
@@ -465,7 +476,8 @@ def test_cross_blocked_false_when_no_block_related():
     for mid in (7298, 3754058):  # zero blocked crosses in these matches
         actions, _ = load_statsbomb(mid)
         actions = add_names(actions)
-        crosses = actions[actions["type_name"] == "cross"]
+        native = _native_open_play_crosses(actions)
+        crosses = actions[native]
         assert crosses["cross_blocked"].notna().all()
         assert (crosses["cross_blocked"] == False).all()  # noqa: E712
-        assert actions[actions["type_name"] != "cross"]["cross_blocked"].isna().all()
+        assert actions[~native]["cross_blocked"].isna().all()

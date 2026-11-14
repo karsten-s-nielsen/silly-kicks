@@ -169,64 +169,8 @@ class TestBodyPartDispatch:
         assert result[0] == spadlconfig.bodypart_id["head"]
 
 
-class TestCrossDetection:
-    """Spec section 3.2: native channel/third columns with spatial fallback."""
-
-    def test_attacking_third_wide_left_is_cross(self):
-        from silly_kicks.spadl.skillcorner import _is_cross
-
-        result = _is_cross(
-            third=pd.Series(["attacking_third"]),
-            channel=pd.Series(["wide_left"]),
-            start_x_spadl=pd.Series([80.0]),
-            start_y_spadl=pd.Series([10.0]),
-        )
-        assert result.iloc[0]
-
-    def test_attacking_third_center_is_not_cross(self):
-        from silly_kicks.spadl.skillcorner import _is_cross
-
-        result = _is_cross(
-            third=pd.Series(["attacking_third"]),
-            channel=pd.Series(["center"]),
-            start_x_spadl=pd.Series([80.0]),
-            start_y_spadl=pd.Series([34.0]),
-        )
-        assert not result.iloc[0]
-
-    def test_middle_third_wide_is_not_cross(self):
-        from silly_kicks.spadl.skillcorner import _is_cross
-
-        result = _is_cross(
-            third=pd.Series(["middle_third"]),
-            channel=pd.Series(["wide_right"]),
-            start_x_spadl=pd.Series([50.0]),
-            start_y_spadl=pd.Series([60.0]),
-        )
-        assert not result.iloc[0]
-
-    def test_nan_columns_fall_back_to_spatial(self):
-        """When native columns are NaN, use spatial heuristic."""
-        from silly_kicks.spadl.skillcorner import _is_cross
-
-        result = _is_cross(
-            third=pd.Series([None]),
-            channel=pd.Series([None]),
-            start_x_spadl=pd.Series([80.0]),
-            start_y_spadl=pd.Series([10.0]),
-        )
-        assert result.iloc[0]
-
-    def test_nan_columns_not_in_zone_is_not_cross(self):
-        from silly_kicks.spadl.skillcorner import _is_cross
-
-        result = _is_cross(
-            third=pd.Series([None]),
-            channel=pd.Series([None]),
-            start_x_spadl=pd.Series([50.0]),
-            start_y_spadl=pd.Series([34.0]),
-        )
-        assert not result.iloc[0]
+# Cross typing: SkillCorner's own zone rule (_is_cross) is gone (ADR-133). The one geometric delivery rule is
+# tested in tests/spadl/test_classify_deliveries.py and wired per converter in tests/spadl/test_delivery_wiring.py.
 
 
 # --- Fixture loaders ---
@@ -254,7 +198,8 @@ def test_block_columns_all_na_basic_and_derived():
 
     for events, meta in (_load_basic_fixture(), _load_derived_fixture()):
         actions, _ = convert_to_actions(events, meta)
-        for col in ("shot_blocked", "cross_blocked"):
+        # cross_native too: SkillCorner has no native cross label (ADR-133).
+        for col in ("shot_blocked", "cross_blocked", "cross_native"):
             assert str(actions[col].dtype) == "boolean"
             assert actions[col].isna().all()
 
@@ -369,13 +314,16 @@ class TestActionDispatch:
         named = actions.merge(spadlconfig.actiontypes_df(), how="left")
         assert "foul" in named["type_name"].values
 
-    def test_cross_dispatched(self):
+    def test_crosses_start_wide(self):
+        # ADR-133: crosses come from the one geometric rule, not the old zone rule. The full rule is checked by
+        # the oracle in tests/spadl/test_delivery_wiring.py; here, every SkillCorner cross starts wide.
         from silly_kicks.spadl.skillcorner import convert_to_actions
 
         events, meta = _load_basic_fixture()
         actions, _ = convert_to_actions(events, meta)
         named = actions.merge(spadlconfig.actiontypes_df(), how="left")
-        assert "cross" in named["type_name"].values
+        crosses = named[named["type_name"] == "cross"]
+        assert ((crosses["start_y"] < 13.84) | (crosses["start_y"] > 54.16)).all()
 
     def test_possession_loss_is_non_action(self):
         from silly_kicks.spadl.skillcorner import convert_to_actions

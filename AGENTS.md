@@ -8,7 +8,7 @@ Maintained fork of socceraction — SPADL event conversion + VAEP action valuati
 
 Hexagonal: all core functions are pure (pandas in, pandas out), zero I/O, zero global state mutation. One-line map per subsystem below — the WHY/history is in the linked `docs/context/` file.
 
-- **Converters** (`spadl/`): per provider; return `tuple[pd.DataFrame, ConversionReport]` with guaranteed columns/dtypes via `_finalize_output()`. Live contracts (`shotOutcomeType`/`owngoal`/`is_synthetic`/`nonEvent`, `_resolve_team_ids` null-actor NaN, `_derive_end_coordinates(extra_type_ids=)`, `ballCarryOutcome`, `_to_period_relative`, `result_source`/`pass_outcome`, `_transform_coords`/`_scale_to_spadl`, `_extract_play_eval`/`play_evaluation`, metrica `BALL LOST`) → `docs/context/providers.md`.
+- **Converters** (`spadl/`): per provider; return `tuple[pd.DataFrame, ConversionReport]` with guaranteed columns/dtypes via `_finalize_output()`. Live contracts (`shotOutcomeType`/`owngoal`/`is_synthetic`/`nonEvent`, `_resolve_team_ids` null-actor NaN, `_derive_end_coordinates(extra_type_ids=)`, `ballCarryOutcome`, `_to_period_relative`, `result_source`/`pass_outcome`, `_transform_coords`/`_scale_to_spadl`, `_extract_play_eval`/`play_evaluation`, metrica `BALL LOST`, ADR-133 cross rule) → `docs/context/providers.md`.
 - **Restart enrichment** (`spadl.add_restart_coordinates`, engine `resolve_restart_geometry`): additive `enriched_start_x`/… provenance columns, never mutates canonical (ADR-025; `docs/context/providers.md`).
 - **Tracking** (`tracking/`): 19-col `TRACKING_FRAMES_COLUMNS`; `link_actions_to_frames`/`slice_around_event` (ADR-004); `_frame_aware` xfns compose into VAEP (ADR-005); `validate_time_base`/`per_period_link_rate` period-relative (ADR-017); `is_goalkeeper_source`/`derive_goalkeepers` (ADR-007); metrica bronze y bottom-to-top; preprocess `smooth_frames`/`derive_velocities`/`PreprocessConfig`. Feature-family narrative → `docs/context/tracking-features.md`. TF public surface:
 
@@ -43,6 +43,7 @@ Hexagonal: all core functions are pure (pandas in, pandas out), zero I/O, zero g
 | TF-49 | `_packing.py` | `compute_packing_metrics`/`add_packing`/`packing_xfns` (no default list) |
 | TF-51 | `defensive_credit/` | `compute_defensive_credits`/`add_defensive_credit`/`compute_bravery`/`add_press_commitment` — no xfns |
 | TF-79 | `_ball_contact.py` | `detect_ball_contacts`/`add_ball_contacts`/`first_contact_in_window`/`BallContactParams` — no xfns (ADR-124/125) |
+| TF-86 | `_cross_delivery.py` | `add_cross_deliveries` — no xfns (ADR-133) |
 | -- | `_visibility.py` | `point_observed`/`region_observed_fraction`/`add_visible_area_coverage` — no xfns |
 | -- | orchestrator | `run_tracking_features` (provider-agnostic producer; not an aggregator) |
 
@@ -84,12 +85,13 @@ Procedural checklists in `docs/howto/` (class-2, sibling to `docs/context`) — 
 
 ## Key conventions
 
-- **Version single-sourced** in `silly_kicks/_version.py` (ADR-079); `pyproject` `dynamic`, `hatch.version` reads it. Bump that one file. (`docs/context/conventions-core.md`)
+- **Version single-sourced** in `silly_kicks/_version.py` (ADR-079); `pyproject` `dynamic`, `hatch.version` reads it. (`docs/context/conventions-core.md`)
 - **No pandera** — schemas are plain dicts (`SPADL_COLUMNS`, `ATOMIC_SPADL_COLUMNS`). Config dicts cached with `functools.cache` (`actiontypes_df`). Converters vectorize via `np.select`, never `apply(axis=1)`. All `warnings.warn(..., stacklevel=2)`. ML uppercase `X`/`Y`/`Pscores` allowed in `vaep/`+`xthreat/` (ruff `per-file-ignores`). (`docs/context/conventions-core.md`)
 - **Metric-family output contracts** single-sourced in `metric_contracts` (`METRIC_CONTRACTS`, `*_METRIC_COLUMNS` + grain keys); a new family registers or `tests/test_metric_contracts.py` fails (ADR-098; `docs/context/conventions-core.md`).
 - **No rescan-in-loop** — use `silly_kicks._frame_index.group_rows` (ADR-068); item-looping primitives carry a `assert_subquadratic_growth` guard with a scoped `call_counter`/`rows_scanned_counter` registered in `SCALE_GUARDED` (ADR-073; `docs/context/conventions-core.md`). Reduce combines are categorical + `observed=True` (ADR-112).
 - **Converter identifiers are sacred** — never override caller `team_id`/`player_id` from qualifiers; qualifier facts surface as dedicated columns (`tackle_winner`/`tackle_loser` on sportec). (ADR-001; `docs/context/providers.md`)
 - **Converters are order-insensitive; `action_id` chronological** — sort via `sort_actions_chronologically` before positional derivation; `_finalize_output` raise-guard `_assert_chronological_action_id`; GS gains a required `start_time` input column. `action_id` renumber = atomic cross-table migration. (ADR-065; `docs/context/corpus-drivers.md`)
+- **One cross definition for every provider** — `classify_deliveries` types `cross`/`*_crossed` by geometry (wide, at or beyond `CROSS_START_X`, next on-ball action in the box; a restart never delivers), after `to_spadl_ltr` and before `_add_dribbles` in every converter. The provider's own label is `cross_native` (`<NA>` where it has none); `cross_blocked` keys to it. TF-86 `add_cross_deliveries` decides `cross_attempt`/`cross_height` from the ball path; xCross label v2 reads it. (ADR-133; `docs/context/providers.md`)
 - **Block-detection columns** `shot_blocked`/`cross_blocked` (nullable `boolean`, shared `_blocked_flag`, 3-valued). (ADR-046; `docs/context/conventions-core.md`)
 - **`add_*` enrichers tolerate NaN ids** (`nan_safe_enrichment`/`_nan_safety`, ADR-003) and are **PURE** (input-mutation CI-gated via `PURITY_ENTRIES`; note `pitch_control_at_target` rename, ADR-033). (`docs/context/conventions-core.md`)
 - **Dtype-safe id comparisons repo-wide** — never raw `==`/`!=` on ids, never merge id keys unaligned, never `astype(str)` an id used as dict-key/join-token. Use `silly_kicks.id_compat` (`ids_equal`/`ids_differ`/`ids_match`/`same_id`/`align_join_keys`/`restore_id_dtype`/`canonical_id[_series]`); loud guard `validate_id_dtypes`; gated by `PUBLIC_ID_SCALAR_ENTRIES` + the add_* dtype-invariance gate. The AST lint is DELETED — do not reinstate. (ADR-019/043; `docs/context/id-compat.md`)
@@ -144,7 +146,7 @@ python -m pytest tests/ -m "not e2e" -v --tb=short
 ```
 
 - Lint at CI scope, never `.` — `python -m ruff check silly_kicks/ tests/ scripts/` + `--format --check`; `pyright` bare. → `docs/context/ci.md`.
-- CI duration-shards via `pytest-split` (`--splits`, `shard-reconcile`, committed `.test_durations`, `test_ci_shard_wiring`; ADR-074). Pandas-major span DECLARED (`test_ci_pandas_span_wired`; `.to_numpy()` needs `copy=True` under CoW; ADR-057). Lint pins (`test_ci_lint_pins_wired`, `pandas-stubs`). Build backend bounded + publisher pinned (`test_ci_publish_guard_wired`, `gh-action-pypi-publish`, `Metadata-Version`). Doctests on public surface (`--doctest-modules`, `test_ci_doctest_wired`). `@pytest.mark.slow` = expensive + invariant, run once in a dedicated `slow` job — not inline (`test_ci_slow_gating_wired` + conservation `test_ci_slow_reconcile_wired`; ADR-023). → `docs/context/ci.md`.
+- CI duration-shards via `pytest-split` (`--splits`, `shard-reconcile`, committed `.test_durations`, `test_ci_shard_wiring`; ADR-074). Pandas-major span DECLARED (`test_ci_pandas_span_wired`; `.to_numpy()` needs `copy=True` under CoW; ADR-057). Lint pins (`test_ci_lint_pins_wired`, `pandas-stubs`). Build backend bounded + publisher pinned (`test_ci_publish_guard_wired`, `gh-action-pypi-publish`, `Metadata-Version`). Doctests on public surface (`--doctest-modules`, `test_ci_doctest_wired`). `@pytest.mark.slow` = expensive + invariant, run once in the dedicated `slow` job (`test_ci_slow_gating_wired` + conservation `test_ci_slow_reconcile_wired`; ADR-023). → `docs/context/ci.md`.
 - **Every `add_*` carries an SB360 freeze-frame verdict** — observation locked, adjudication reviewable; `verdict_provenance`, `UNAUDITABLE_BOUNDARY` empty; regenerable via `_adjudicate` (ADR-053). Detection lands BEFORE the fix; every registry gate has an anti-rot meta-assertion (ADR-051). → `docs/context/ci.md`.
 - **Claims about a gate's behaviour quote the assertion body, not its registration** (measure at the scale you assert at). → `docs/context/ci.md`.
 
@@ -154,4 +156,4 @@ See [TODO.md](TODO.md).
 
 ## Dependencies
 
-Runtime: pandas, numpy, scipy, scikit-learn, numba (core, `_numba_dispatch.use_numba`; missing raises; ADR-076) (no pandera). DAS is native (ADR-107; no `accessible-space` runtime/CI dep — dev-only `das-reference` pins `accessible-space==2.0.15` for the golden parity oracle). Optional: kloppy (tracking parsers), xgboost, catboost, lightgbm, `ruthless-efficiency[optuna]>=0.7.0` + xgboost>=2.0,<4.0 (`[calibration]`/`[train]`), `statsbombpy` (importorskip-guarded e2e only). numpy>=2.0 compatible. → `docs/context/conventions-core.md`.
+Runtime: pandas, numpy, scipy, scikit-learn, numba (core, `_numba_dispatch.use_numba`; missing raises; ADR-076) (no pandera). Dev-only `das-reference` pins `accessible-space==2.0.15` (the DAS parity oracle; ADR-107). Optional: kloppy (tracking parsers), xgboost, catboost, lightgbm, `ruthless-efficiency[optuna]>=0.7.0` + xgboost>=2.0,<4.0 (`[calibration]`/`[train]`), `statsbombpy` (importorskip-guarded e2e only); numpy>=2.0. → `docs/context/conventions-core.md`.

@@ -327,7 +327,7 @@ def _require_columns(actions: pd.DataFrame, required, *, fn: str) -> None:
         raise ValueError(
             f"{fn} (atomic): required column(s) {missing} absent. Injected analytics are not "
             f"atom-derivable -- thread them through the conversion: "
-            f"convert_to_atomic(std_actions, preserve_native=['xg', 'shot_blocked', 'cross_blocked'])."
+            f"convert_to_atomic(std_actions, preserve_native=['xg', 'shot_blocked', 'cross_blocked', 'cross_native'])."
         )
 
 
@@ -455,27 +455,39 @@ def add_defensive_credit(
     return out
 
 
-def compute_bravery(actions, *, shot_blocked_column="shot_blocked", cross_blocked_column="cross_blocked"):
+def compute_bravery(
+    actions,
+    *,
+    shot_blocked_column="shot_blocked",
+    cross_blocked_column="cross_blocked",
+    cross_native_column="cross_native",
+):
     """Atomic-SPADL mirror of tracking.defensive_credit.compute_bravery (TF-51, event-only). See NOTICE.
 
-    ``shot`` and open-play ``cross`` survive atomic intact (shared standard ids), so their bravery is
-    exact. Atomic ``_simplify`` collapses ``corner_crossed``/``freekick_crossed`` into ``corner``/
-    ``freekick``, so set-piece crosses are UNOBSERVABLE -> ``bravery_set_piece_crosses`` = NaN and
-    ``n_set_piece_crosses_faced`` = <NA> (ADR-027; never a conflated crossed+short overcount). The
-    headline ``bravery_pct_known_domain`` (shots + open-play crosses only) is unaffected.
+    ``shot`` and the open-play ``pass``/``cross`` atoms keep their standard ids, and a cross faced is the
+    provider's own cross (``cross_native``, ADR-133), so open-play bravery is exact. Atomic ``_simplify``
+    collapses the set-piece types into ``corner``/``freekick``, so set-piece crosses are UNOBSERVABLE ->
+    ``bravery_set_piece_crosses`` = NaN and ``n_set_piece_crosses_faced`` = <NA> (ADR-027; never a
+    conflated crossed+short overcount). The headline ``bravery_pct_known_domain`` (shots + open-play
+    crosses only) is unaffected.
 
     Examples
     --------
     Event-only per-team bravery on atomic actions (no frames/xt; block columns threaded natively)::
 
-        atomic = convert_to_atomic(std_actions, preserve_native=["shot_blocked", "cross_blocked"])
+        atomic = convert_to_atomic(std_actions, preserve_native=["shot_blocked", "cross_blocked", "cross_native"])
         bravery = compute_bravery(atomic)
         bravery[["team_id", "bravery_pct_known_domain", "n_set_piece_crosses_faced"]]
     """
     from silly_kicks.tracking.defensive_credit import compute_bravery as _std
 
-    _require_columns(actions, [shot_blocked_column, cross_blocked_column], fn="compute_bravery")
-    out = _std(actions, shot_blocked_column=shot_blocked_column, cross_blocked_column=cross_blocked_column)
+    _require_columns(actions, [shot_blocked_column, cross_blocked_column, cross_native_column], fn="compute_bravery")
+    out = _std(
+        actions,
+        shot_blocked_column=shot_blocked_column,
+        cross_blocked_column=cross_blocked_column,
+        cross_native_column=cross_native_column,
+    )
     if not out.empty:
         out = out.copy()
         out["bravery_set_piece_crosses"] = np.nan

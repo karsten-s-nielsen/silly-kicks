@@ -26,7 +26,7 @@ import pandas as pd
 
 from . import config as spadlconfig
 from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves
-from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
+from .base import _add_dribbles, _derive_end_coordinates, classify_deliveries, sort_actions_chronologically
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr
 from .schema import SKILLCORNER_SPADL_COLUMNS, ConversionReport
 from .utils import _blocked_flag, _finalize_output
@@ -135,25 +135,6 @@ def _dispatch_bodypart(
     )
 
 
-def _is_cross(
-    third: pd.Series,
-    channel: pd.Series,
-    start_x_spadl: pd.Series,
-    start_y_spadl: pd.Series,
-) -> pd.Series:
-    """Detect crosses using native SC columns with spatial fallback.
-
-    A pass is a cross when it originates in the attacking third from a
-    wide channel. Uses ``player_targeted_third_pass`` /
-    ``player_targeted_channel_pass`` when available (~98%), falling back
-    to a coordinate heuristic for NaN rows.
-    """
-    has_native = third.notna() & channel.notna()
-    native_cross = (third == "attacking_third") & channel.isin({"wide_left", "wide_right"})
-    spatial_cross = (start_x_spadl > 70.0) & ((start_y_spadl < 15.0) | (start_y_spadl > 53.0))
-    return (has_native & native_cross) | (~has_native & spatial_cross)
-
-
 def _native_completion_result(
     pass_outcome: pd.Series,
     received: pd.Series,
@@ -233,6 +214,16 @@ def convert_to_actions(
     -------
     tuple[pd.DataFrame, ConversionReport]
         SPADL actions and conversion audit trail.
+
+    Notes
+    -----
+    Crosses and set-piece deliveries follow one geometric rule for every provider
+    (:func:`silly_kicks.spadl.base.classify_deliveries`, ADR-133). SkillCorner has no native cross
+    label, so ``cross_native`` is ``<NA>``. Event-only limits: a blocked cross and a delivery followed by
+    a restart are typed ``pass``, and a restart-ended set piece ``*_short``. SkillCorner events also miss
+    defenders' touches in the box, so many deliveries look short in events alone; the tracking layer
+    (``add_cross_deliveries``) decides all of them from the ball path. Measured recall of the event rule
+    against ``cross_attempt``: <recall: Task 10>.
 
     Examples
     --------
@@ -324,18 +315,8 @@ def convert_to_actions(
     )
     end_type = pp["end_type"].fillna("") if "end_type" in pp.columns else pd.Series("", index=pp.index)
 
-    # Cross detection
-    third_col = (
-        pp["player_targeted_third_pass"]
-        if "player_targeted_third_pass" in pp.columns
-        else pd.Series(dtype="object", index=pp.index)
-    )
-    channel_col = (
-        pp["player_targeted_channel_pass"]
-        if "player_targeted_channel_pass" in pp.columns
-        else pd.Series(dtype="object", index=pp.index)
-    )
-    cross_mask = _is_cross(third_col, channel_col, sx, sy)
+    # Crosses: no zone rule here. Every pass is typed `pass`, and the one geometric delivery rule
+    # (classify_deliveries, ADR-133) re-types it after LTR normalization below.
 
     # Next-possession lookups for result logic
     next_team = pp["team_id"].shift(-1)
@@ -357,8 +338,7 @@ def convert_to_actions(
 
     # Priority 2: end_type
     is_shot = end_type == "shot"
-    is_pass = (end_type == "pass") & ~cross_mask
-    is_cross_action = (end_type == "pass") & cross_mask
+    is_pass = end_type == "pass"
     is_clearance = end_type == "clearance"
     # NOTE: foul is attributed to the fouled player (possession holder), not the
     # fouler. Other providers (StatsBomb, Wyscout, Gradient Sports) attribute to the
@@ -380,7 +360,6 @@ def convert_to_actions(
             is_freekick & is_short,
             is_freekick & ~is_short,
             is_shot,
-            is_cross_action,
             is_pass,
             is_clearance,
             is_foul,
@@ -395,7 +374,6 @@ def convert_to_actions(
             spadlconfig.actiontype_id["freekick_short"],
             spadlconfig.actiontype_id["freekick_crossed"],
             spadlconfig.actiontype_id["shot"],
-            spadlconfig.actiontype_id["cross"],
             spadlconfig.actiontype_id["pass"],
             spadlconfig.actiontype_id["clearance"],
             spadlconfig.actiontype_id["foul"],
@@ -547,18 +525,24 @@ def convert_to_actions(
 
     # --- Post-processors ---
     actions = _derive_end_coordinates(actions)
-    actions = _add_dribbles(actions)
-
-    # Mark dribbles as derived
-    dribble_mask = actions["type_id"] == spadlconfig.actiontype_id["dribble"]
-    actions.loc[dribble_mask, "action_provenance"] = "derived"
 
     # --- LTR normalization (no-op for possession perspective) ---
+    # Runs BEFORE _add_dribbles (ADR-133): the delivery rule needs canonical LTR rows with no
+    # synthetic dribbles.
     actions = to_spadl_ltr(
         actions,
         input_convention=POSSESSION_PERSPECTIVE,
         home_team_id=home_team_id,
     )
+    # One delivery rule for every provider (ADR-133). SkillCorner has no native cross label, so cross_native
+    # stays <NA> (set below). Event-only limit: SkillCorner events miss defenders' in-box touches, so many
+    # deliveries look short here; the tracking layer (add_cross_deliveries) decides them from the ball path.
+    actions = classify_deliveries(actions)
+    actions = _add_dribbles(actions)
+
+    # Mark dribbles as derived
+    dribble_mask = actions["type_id"] == spadlconfig.actiontype_id["dribble"]
+    actions.loc[dribble_mask, "action_provenance"] = "derived"
 
     # --- ConversionReport ---
     # NOTE: on_ball_engagement rows are consumed for tackle enrichment but are not
@@ -592,6 +576,7 @@ def convert_to_actions(
     extra = ["original_event_id"] if preserve_native else None
     actions["shot_blocked"] = _blocked_flag(len(actions))
     actions["cross_blocked"] = _blocked_flag(len(actions))
+    actions["cross_native"] = _blocked_flag(len(actions))  # SkillCorner has no native cross label (ADR-133)
     actions = _finalize_output(actions, SKILLCORNER_SPADL_COLUMNS, extra_columns=extra)
 
     return actions, report

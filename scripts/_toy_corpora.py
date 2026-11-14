@@ -278,6 +278,7 @@ def _game_actions(game: str, *, n_frames: int, home: int, away: int) -> pd.DataF
                 "bodypart_id": 0,
                 "shot_blocked": pd.NA,
                 "cross_blocked": pd.NA,
+                "cross_native": pd.NA,  # ADR-133 SPADL column
             }
         )
     # The toy frames key games by string id; the actions keep the SAME key (game_id is not cast).
@@ -601,11 +602,19 @@ def xcross_game(game, *, episodes: int = 20, learnable: bool = True, provider: s
     actions = pd.DataFrame(
         {
             "game_id": [game] * len(cross_times),
+            "action_id": list(range(len(cross_times))),
             "period_id": [1] * len(cross_times),
             "team_id": [2] * len(cross_times),
             "time_seconds": cross_times,
             "type_id": [spadlconfig.actiontype_id["cross"]] * len(cross_times),
             "result_id": [spadlconfig.result_id["success"]] * len(cross_times),
+            # ADR-133 label v2: staged like a real corpus, with the tracking cross attempt precomputed (the toy
+            # frames are too sparse for add_cross_deliveries to judge a path). The carrier (player 21) crosses
+            # from the wide byline area, in SPADL LTR.
+            "player_id": [21] * len(cross_times),
+            "start_x": [97.0] * len(cross_times),
+            "start_y": [60.0] * len(cross_times),
+            "cross_attempt": pd.array([True] * len(cross_times), dtype="boolean"),
         }
     )
     return finalize_xcross_frames(rows, game, provider), actions
@@ -1135,6 +1144,7 @@ TOY_PARAMS: dict[str, tuple[str, ...]] = {
         "--fit-fraction",
         "0.4",
     ),
+    "scripts.build_cross_definition": ("--dataset", "toyxc"),
     # --- scaffold: toys above ---
 }
 
@@ -1150,6 +1160,7 @@ TOY_BUILDERS: dict[str, Callable[[pathlib.Path], pathlib.Path]] = {
     "scripts.train_xshot_occurrence": _xshot_toy,
     "scripts.train_xcross_attempt": _xcross_toy,
     "scripts.build_territory_ranking_census": _census_toy,
+    "scripts.build_cross_definition": _xcross_toy,
     # --- scaffold: toy builders above ---
 }
 

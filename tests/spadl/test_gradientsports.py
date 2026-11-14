@@ -580,8 +580,11 @@ class TestGradientsportsCrossDispatch:
             home_team_start_left=True,
             home_team_start_left_extratime=True,
         )
-        expected_id = spadlconfig.actiontype_id[expected_name]
-        assert actions.iloc[0]["type_id"] == expected_id
+        # ADR-133: GS's own crossed label is kept in cross_native. This one-event fixture has no delivery into
+        # the box, so the geometric SPADL type is the non-delivery sibling.
+        geometric = {"cross": "pass", "freekick_crossed": "freekick_short", "corner_crossed": "corner_short"}
+        assert actions.iloc[0]["cross_native"] == True  # noqa: E712
+        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id[geometric[expected_name]]
 
     def test_cross_outcome_uses_cross_outcome_type(self):
         df = _df_minimal_pass()
@@ -1449,20 +1452,27 @@ class TestGradientsportsSyntheticMatchE2E:
     def test_synthetic_match_dispatch_coverage(self):
         """Every documented dispatch row produces at least one action."""
         events = _load_synthetic_events()
-        _, report = gs_mod.convert_to_actions(
+        actions, report = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
             home_team_start_left_extratime=True,
         )
+        # ADR-133: the CR / set-piece-cross dispatch now lands in cross_native; the SPADL type is geometric.
+        # The synthetic match keeps a geometric corner delivery, and its native open-play and free-kick crosses
+        # are recorded in cross_native.
+        native = actions["cross_native"].fillna(False).astype(bool)
+        assert (native & (actions["type_id"].isin([spadlconfig.actiontype_id[t] for t in ("pass", "cross")]))).any()
+        assert (
+            native
+            & actions["type_id"].isin([spadlconfig.actiontype_id[t] for t in ("freekick_short", "freekick_crossed")])
+        ).any()
         expected_action_types = {
             "pass",
             "freekick_short",
             "corner_short",
             "throw_in",
             "goalkick",
-            "cross",
-            "freekick_crossed",
             "corner_crossed",
             "shot",
             "shot_freekick",
@@ -1756,7 +1766,10 @@ class TestGradientsportsCrossGoal:
             df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
         )
         assert len(actions) == 2
-        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["freekick_crossed"]
+        # ADR-133: the synthesized shot carries the parent's coordinates, so in event data the delivery has no
+        # end in the box (the event-only limit; tracking decides). GS's own label is kept in cross_native.
+        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["freekick_short"]
+        assert actions.iloc[0]["cross_native"] == True  # noqa: E712
         assert actions.iloc[0]["result_id"] == spadlconfig.result_id["fail"]
         assert actions.iloc[1]["type_id"] == spadlconfig.actiontype_id["shot_freekick"]
         assert actions.iloc[1]["result_id"] == spadlconfig.result_id["success"]
@@ -1779,10 +1792,13 @@ class TestGradientsportsCrossGoal:
             df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
         )
         assert [actions.iloc[i]["type_id"] for i in range(len(actions))] == [
-            spadlconfig.actiontype_id["cross"],
+            # ADR-133: the synthesized shot carries the parent's coordinates, so the event data shows no
+            # delivery into the box (the event-only limit); GS's own label is kept in cross_native.
+            spadlconfig.actiontype_id["pass"],
             spadlconfig.actiontype_id["shot"],
             spadlconfig.actiontype_id["foul"],
         ]
+        assert actions.iloc[0]["cross_native"] == True  # noqa: E712
         assert list(actions["action_id"]) == [0, 1, 2]
 
 
@@ -2010,10 +2026,10 @@ class TestGradientsportsSyntheticProvenance:
 
         # The other side: the fix must not have disabled derivation wholesale. The REAL cross
         # that fathered the synthesized shot is pass-class and MUST still carry a derived end.
-        cross_ids = {spadlconfig.actiontype_id[n] for n in ("cross", "freekick_crossed", "corner_crossed")}
+        # ADR-133: select the real cross by GS's own label (cross_native), not by the geometric type.
         parent = actions[
             (actions["original_event_id"].astype("string") == "53")
-            & actions["type_id"].isin(cross_ids)
+            & actions["cross_native"].fillna(False).astype(bool)
             & ~actions["is_synthetic"].fillna(False).astype(bool)
         ]
         assert len(parent) == 1, "expected exactly one real cross for event 53"
@@ -2215,7 +2231,10 @@ class TestGradientsportsBlockDetection:
         actions, _ = gs_mod.convert_to_actions(
             df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
         )
-        row = actions[actions["type_id"] == spadlconfig.actiontype_id["cross"]].iloc[0]
+        # ADR-133: cross_blocked is keyed to GS's own cross (cross_native); the blocked delivery never reaches
+        # the box, so its geometric SPADL type is `pass`.
+        row = actions[actions["cross_native"] == True].iloc[0]  # noqa: E712
+        assert row["type_id"] == spadlconfig.actiontype_id["pass"]
         assert row["cross_blocked"] == True  # noqa: E712
         assert pd.isna(row["shot_blocked"])  # a cross row -> shot_blocked NA
 
@@ -2230,5 +2249,8 @@ class TestGradientsportsBlockDetection:
         actions, _ = gs_mod.convert_to_actions(
             df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
         )
-        row = actions[actions["type_id"] == spadlconfig.actiontype_id["corner_crossed"]].iloc[0]
+        # ADR-133: the native crossed corner is kept in cross_native; geometrically it is `corner_short` (no
+        # delivery into the box in this one-event fixture). Either way it is a set piece -> cross_blocked NA.
+        row = actions[actions["type_id"] == spadlconfig.actiontype_id["corner_short"]].iloc[0]
+        assert row["cross_native"] == True  # noqa: E712
         assert pd.isna(row["cross_blocked"])

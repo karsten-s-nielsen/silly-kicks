@@ -34,6 +34,7 @@ def _make_valid_spadl_df(n: int = 3) -> pd.DataFrame:
             "bodypart_id": [spadlcfg.bodypart_id["foot"]] * n,
             "shot_blocked": pd.array([pd.NA] * n, dtype="boolean"),
             "cross_blocked": pd.array([pd.NA] * n, dtype="boolean"),
+            "cross_native": pd.array([pd.NA] * n, dtype="boolean"),
         }
     )
 

@@ -19,11 +19,15 @@ CORNER_KEYS = ["game_id", "corner_id"]
 CORNER_SIDE = "corner_side"
 CORNER_KIND = "corner_kind"
 CORNER_SOURCE = "corner_source"
+#: Which signal decided ``corner_kind`` (ADR-133 / ADR-054): the tracking cross attempt, the SPADL type, or the
+#: SkillCorner GI refinement (``unclear``).
+CORNER_KIND_SOURCE = "corner_kind_source"
 
 #: Closed vocabularies (validated by tests/corners/test_columns.py).
 CORNER_SIDE_VALUES = frozenset({"left", "right"})
 CORNER_KIND_VALUES = frozenset({"direct", "short", "unclear"})
 CORNER_SOURCE_VALUES = frozenset({"skillcorner_gi", "spadl_corner", "sb360_event"})
+CORNER_KIND_SOURCE_VALUES = frozenset({"tracking", "event", "gi"})
 
 #: Full identification-table column order + dtype.
 CORNER_IDENTIFY_COLUMNS: dict[str, str] = {
@@ -37,6 +41,7 @@ CORNER_IDENTIFY_COLUMNS: dict[str, str] = {
     "kick_y": "float64",
     CORNER_KIND: "category",
     CORNER_SOURCE: "category",
+    CORNER_KIND_SOURCE: "category",
 }
 
 # --- window columns (add_corner_windows, additive onto the identification table) -------------

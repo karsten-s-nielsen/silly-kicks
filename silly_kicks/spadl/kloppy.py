@@ -42,7 +42,13 @@ from ._kloppy_coordinates import (
     _SoccerActionCoordinateSystem,  # noqa: F401  # re-exported for backcompat (ADR-031)
     socceraction_coordinate_system,
 )
-from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
+from .base import (
+    _add_dribbles,
+    _derive_end_coordinates,
+    _native_cross_flag,
+    classify_deliveries,
+    sort_actions_chronologically,
+)
 from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output
@@ -127,6 +133,17 @@ def convert_to_actions(
         ``KLOPPY_SPADL_COLUMNS`` schema, or is missing from the first
         event's ``raw_event`` dict, or if ``raw_event`` is not a dict.
 
+    Notes
+    -----
+    Crosses and set-piece deliveries follow one geometric rule for every provider
+    (:func:`silly_kicks.spadl.base.classify_deliveries`, ADR-133). kloppy's own label
+    (``PassType.CROSS``) is kept in ``cross_native``; a dataset whose deserializer emits no ``PassType``
+    qualifier at all (e.g. Sportec) has no label, so ``cross_native`` is ``<NA>``. Event-only limits:
+    a blocked cross and a delivery followed by a restart are typed ``pass``, and a restart-ended set
+    piece ``*_short``; the tracking
+    layer (``add_cross_deliveries``) decides them from the ball path. Measured recall of the event rule
+    against ``cross_attempt``: <recall: Task 10>.
+
     Examples
     --------
     Convert a kloppy ``EventDataset`` (any provider supported by kloppy) to SPADL::
@@ -198,9 +215,14 @@ def convert_to_actions(
 
     # Convert the events to SPADL actions
     _event_type_counts: Counter[EventType] = Counter()
+    # kloppy carries the provider's cross label as PassType qualifiers. A deserializer that emits none at all
+    # (e.g. Sportec) gives no label, so cross_native must be <NA>, not False (ADR-133).
+    has_pass_type = False
     actions = []
     for event in new_dataset.events:  # type: ignore[reportAttributeAccessIssue]  # kloppy API varies by version
         _event_type_counts[event.event_type] += 1
+        if not has_pass_type and event.event_type == EventType.PASS:
+            has_pass_type = any(isinstance(q, PassType) for q in _qualifiers(event))
         action = dict(
             game_id=game_id,
             original_event_id=event.event_id,
@@ -228,19 +250,27 @@ def convert_to_actions(
     df_actions = _derive_end_coordinates(df_actions)  # type: ignore[reportArgumentType]  # kloppy API varies by version
 
     df_actions["action_id"] = range(len(df_actions))
-    df_actions = _add_dribbles(df_actions)
 
     # Direction-of-play normalisation. kloppy's transform above set
     # Orientation.HOME_AWAY (absolute-frame, home attacks right consistently
     # across all periods), so the canonical normalizer mirrors away-team rows
     # to produce SPADL "all teams attack LTR" output. PR-S22 / ADR-006 routed
-    # this through the explicit input-convention dispatcher.
+    # this through the explicit input-convention dispatcher. It runs BEFORE
+    # _add_dribbles (ADR-133): the delivery rule needs canonical LTR rows with no
+    # synthetic dribbles. _derive_end_coordinates stays above it, in the absolute
+    # frame, because it reads the next action of either team.
     home_team_id = dataset.metadata.teams[0].team_id  # Orientation.HOME_AWAY puts home first
     df_actions = to_spadl_ltr(
         df_actions,
         input_convention=ABSOLUTE_FRAME_HOME_RIGHT,
         home_team_id=home_team_id,
     )
+    # One delivery rule for every provider (ADR-133): PassType.CROSS moves to cross_native.
+    df_actions["cross_native"] = _native_cross_flag(df_actions["type_id"])
+    if not has_pass_type:
+        df_actions["cross_native"] = pd.array([pd.NA] * len(df_actions), dtype="boolean")
+    df_actions = classify_deliveries(df_actions)
+    df_actions = _add_dribbles(df_actions)
 
     # Clamp output coords to the SPADL pitch frame, matching the convention
     # established by the StatsBomb, Wyscout, and Opta converters. Source data
@@ -316,8 +346,8 @@ def _get_blocked_flags(event: Event) -> dict[str, object]:
     schema dtype.
     """
     if isinstance(event, ShotEvent):
-        return {"shot_blocked": event.result == ShotResult.BLOCKED, "cross_blocked": pd.NA}
-    return {"shot_blocked": pd.NA, "cross_blocked": pd.NA}
+        return {"shot_blocked": event.result == ShotResult.BLOCKED, "cross_blocked": pd.NA, "cross_native": pd.NA}
+    return {"shot_blocked": pd.NA, "cross_blocked": pd.NA, "cross_native": pd.NA}
 
 
 def _parse_event(event: Event) -> dict[str, int]:

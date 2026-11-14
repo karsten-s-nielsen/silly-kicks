@@ -958,7 +958,12 @@ def _tracking_model_entries() -> list[IdScalarEntry]:
         ),
         _e(
             "silly_kicks.tracking._xcross_attempt.prepare_xcross_training_data",
-            lambda s: T.prepare_xcross_training_data(frames_attacking_wide(), tracking_actions(), home_team_id=s),
+            # ADR-133 label v2: the actions carry a staged tracking cross attempt.
+            lambda s: T.prepare_xcross_training_data(
+                frames_attacking_wide(),
+                tracking_actions().assign(cross_attempt=lambda a: pd.array([True] * len(a), dtype="boolean")),
+                home_team_id=s,
+            ),
         ),
         _e(
             "silly_kicks.tracking._ghost_gk.prepare_ghost_gk_training_data",

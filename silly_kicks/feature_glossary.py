@@ -116,6 +116,7 @@ _M_SHAPE_GRAPH = "silly_kicks.tracking._shape_graph"
 _M_DEFENSIVE_LINE = "silly_kicks.tracking._defensive_line"
 _M_DAS = "silly_kicks.tracking._das"
 _M_BALL_CONTACT = "silly_kicks.tracking._ball_contact"
+_M_CROSS_DELIVERY = "silly_kicks.tracking._cross_delivery"
 _M_PRESSURE = "silly_kicks.tracking.pressure"
 _M_PITCH_CONTROL = "silly_kicks.tracking.pitch_control"
 _M_GK_INFLUENCE = "silly_kicks.tracking._gk_influence"
@@ -137,6 +138,7 @@ _M_COORDINATION = "silly_kicks.coordination._compute"  # TF-58 team-coordination
 _A_STRUCTURAL = "arXiv:2603.28916"  # Karakus & Arkadas 2026 (LBS/SGM/SDI; shared by packing's LBS inequality)
 _A_SPEARMAN_2018 = "Spearman, W. (2018)"  # Beyond Expected Goals (OBSO / pitch-control foundation)
 _A_PAUSA = "arXiv:2506.09349"  # Lee 2026 PAUSA
+_A_VIDAL_CODINA = "arXiv:2202.00804"  # Vidal-Codina et al. 2022, tracking-only event detection (TF-86 cross)
 _A_FERNANDEZ_BORNN = "Fernandez, J., & Bornn, L. (2018)"  # Wide Open Spaces (space creation)
 _A_SOTUDEH = "Sotudeh, H. (2026)"  # shape graph
 #: No published methodology -- the observed region is a PROVIDER-SUPPLIED polygon (StatsBomb 360
@@ -1063,6 +1065,30 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="dimensionless",
         emitting_module=_M_DAS,
         attribution=_A_DAS,
+    ),
+    # -- Cross delivery (TF-86, ADR-133) ---------------------------------------------------------
+    FeatureColumn(
+        name="cross_attempt",
+        definition=(
+            "Tracking cross attempt: True when a cross-zone open-play pass, corner or free kick sends the ball into "
+            "the penalty area, or is blocked by an opponent while heading into it; False when it does not, and for an "
+            "open-play pass known to start outside the cross zone; <NA> when the frames cannot answer (misaligned "
+            "release, unknown start, too little ball data) or the row is not a delivery. "
+            "Counts all heights. Reads the delivery's own outcome, so it is a label, not a pre-action feature."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_CROSS_DELIVERY,
+        attribution=_A_VIDAL_CODINA,
+    ),
+    FeatureColumn(
+        name="cross_height",
+        definition=(
+            "Height of a tracking cross attempt: 'aerial' when the ball peaks above 1.8 m (the ball-contact "
+            "detector's aerial threshold) on its path, 'ground' otherwise; <NA> when the ball height is not "
+            "measured (for example SkillCorner's broadcast estimate) or the row is not an attempt."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_CROSS_DELIVERY,
     ),
     # -- Ball contact (TF-79) -------------------------------------------------------------------
     FeatureColumn(

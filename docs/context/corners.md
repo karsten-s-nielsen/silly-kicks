@@ -47,6 +47,15 @@ corners flip `corner_short` → `corner_crossed`); SemVer minor; measured consum
 `type_corner_crossed`/`_short` one-hots, `defensive_credit` bravery) shifts toward correctness, no
 retrain.
 
+## Tracking decides the corner delivery (ADR-133)
+
+`identify_corners` reads `cross_attempt` when the actions carry it: `direct` where True, `short` where False; where
+it is `<NA>` (unanswerable) or absent, the SPADL type decides as before. The SkillCorner GI refinement still runs
+last and wins (`unclear`). The new column `corner_kind_source` (`tracking`/`event`/`gi`, closed vocabulary) records
+what decided. ADR-133 supersedes the ADR-127 discriminator in part: `play_height` now sets only `cross_native`.
+`build_corner_routines` / `validate_corners` select corners through `_direct_corners` (staged `cross_attempt`, else
+`add_cross_deliveries`). The bundled routine and run-zone weights are owed a retrain.
+
 ## Construct validity (§12)
 
 `docs/research/corner_routines/` (README + `metrics.json`): the per-routine chance-quality metric

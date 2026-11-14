@@ -86,6 +86,9 @@ class OpportunityConfig:
     emit_outcome_partition: bool = False  # Layer 2: Y_attempt / Y_close_attempt / Y_far_attempt
     treatment_covariate: str | None = None  # D5: None = action-occurrence treatment (legacy)
     treatment_threshold_m: float | None = None
+    # ADR-133: True for an xCross model trained on label v2 -- a treatment is a tracking cross ATTEMPT
+    # (cross_attempt True on the selected delivery kinds), not the SPADL type. False keeps the v1 type rule.
+    treatment_from_cross_attempt: bool = False
 
 
 def xcross_config(model_metadata: dict) -> OpportunityConfig:
@@ -102,6 +105,7 @@ def xcross_config(model_metadata: dict) -> OpportunityConfig:
     return OpportunityConfig(
         treatment_type_names=tuple(model_metadata.get("cross_types", ("cross",))),
         outcome_type_names=("shot", "shot_freekick", "shot_penalty"),
+        treatment_from_cross_attempt=int(model_metadata.get("xcross_label_version", 1)) >= 2,
     )
 
 
@@ -373,13 +377,19 @@ def _row(sp, actions, cfg, score_fn, home_team_id) -> dict:
     return row
 
 
-def _team_period_action_times(actions, gid, per, team, type_names) -> np.ndarray:
-    type_ids = {_spc.actiontype_id[n] for n in type_names}
+def _team_period_action_times(actions, gid, per, team, type_names, *, from_cross_attempt: bool = False) -> np.ndarray:
+    if from_cross_attempt:
+        # ADR-133 label v2: the tracking attempt on the selected delivery kinds, the same rule the model trained on.
+        from silly_kicks.tracking._xcross_attempt import _cross_kind_mask, _require_cross_attempt
+
+        _require_cross_attempt(actions, "causal opportunities")
+        kind = _cross_kind_mask(actions, type_names) & actions["cross_attempt"].astype("boolean").fillna(
+            False
+        ).to_numpy(dtype=bool)
+    else:
+        kind = actions["type_id"].isin({_spc.actiontype_id[n] for n in type_names}).to_numpy()
     sel = (  # ids_match: dtype-safe action<->frame team/game id seam (ADR-019)
-        ids_match(actions["game_id"], gid)
-        & (actions["period_id"] == per)
-        & ids_match(actions["team_id"], team)
-        & actions["type_id"].isin(type_ids)
+        ids_match(actions["game_id"], gid) & (actions["period_id"] == per) & ids_match(actions["team_id"], team) & kind
     )
     return np.sort(actions.loc[sel, "time_seconds"].to_numpy(dtype=float))
 
@@ -427,7 +437,9 @@ def _resolve_anchor(*, z: int, t_anchor: float | None, entry: float) -> float:
 
 def _label_treatment(actions, gid, per, team, cfg, entry, end_time) -> tuple[int, float | None]:
     hi = min(entry + cfg.exposure_window_seconds, end_time)  # R3-M1: clamp the Z-window to possession continuity
-    ts = _team_period_action_times(actions, gid, per, team, cfg.treatment_type_names)
+    ts = _team_period_action_times(
+        actions, gid, per, team, cfg.treatment_type_names, from_cross_attempt=cfg.treatment_from_cross_attempt
+    )
     win = ts[(ts > entry) & (ts <= hi)]
     return (1, float(win[0])) if len(win) else (0, None)
 

@@ -23,17 +23,27 @@ _SHARD_SCHEMA_VERSION = "corner-snapshots-1"
 _EMITTED_SHARD_COLUMNS = ("game_id", "corner_id", "player_id", "init_x", "init_y", "target_x", "target_y")
 
 
+def _direct_corners(actions: pd.DataFrame, frames: pd.DataFrame, provider: str) -> pd.DataFrame:
+    """The directly delivered corners of one match. ADR-133 decision 10: with frames, the tracking cross attempt
+    (``add_cross_deliveries``) decides the delivery; ``identify_corners`` falls back to the SPADL type where the
+    frames cannot answer, and the GI refinement still marks ``unclear``."""
+    from silly_kicks.corners import identify_corners
+    from silly_kicks.tracking._cross_delivery import _ensure_cross_attempts
+
+    corners = identify_corners(_ensure_cross_attempts(actions, frames), provider=provider)
+    return corners[corners["corner_kind"] == "direct"]
+
+
 def _snapshot_rows(item) -> pd.DataFrame:
     """Per-(corner, attacking player) reflected initial + target positions for one match."""
-    from silly_kicks.corners import add_corner_windows, identify_corners
+    from silly_kicks.corners import add_corner_windows
     from silly_kicks.corners._encode import _nearest_frame_xy, _reflect_y
     from silly_kicks.tracking._ball_contact import detect_ball_contacts
 
     actions, frames = item.actions, item.frames
     if frames is None or frames.empty:
         return pd.DataFrame(columns=list(_EMITTED_SHARD_COLUMNS))
-    corners = identify_corners(actions, provider=item.provider)
-    corners = corners[corners["corner_kind"] == "direct"]
+    corners = _direct_corners(actions, frames, item.provider)
     if corners.empty:
         return pd.DataFrame(columns=list(_EMITTED_SHARD_COLUMNS))
     contacts = detect_ball_contacts(frames)

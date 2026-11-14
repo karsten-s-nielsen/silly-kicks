@@ -238,6 +238,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/tracking/_ball_carrier.py",
     "silly_kicks/tracking/_ball_contact.py",
     "silly_kicks/tracking/_collective.py",
+    "silly_kicks/tracking/_cross_delivery.py",
     "silly_kicks/tracking/_defensive_line.py",
     "silly_kicks/tracking/_elastic_sync.py",
     "silly_kicks/tracking/_line_breaking.py",

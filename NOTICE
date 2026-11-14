@@ -610,9 +610,17 @@ implementations inspired by:
 
 - Vidal-Codina, F., Evans, N., El Fakir, B., & Billingham, J. (2022).
   "Automatic Event Detection in Football Using Tracking Data."
-  Sports Engineering, 25, 18.
+  Sports Engineering, 25, 18. arXiv:2202.00804.
   (Inertia/hysteresis recommendation for ball-possession algorithms;
   motivates the gamma hysteresis parameter in infer_ball_carrier.)
+  Also used by: silly_kicks/tracking/_cross_delivery.py (TF-86, ADR-133) and the
+  geometric delivery rule silly_kicks/spadl/base.py classify_deliveries. Their cross
+  rule (a release in a cross zone whose next controller is in the penalty area) informs
+  the event-layer rule (the next on-ball action starts in the penalty area) and the
+  tracking cross attempt (the ball path enters the penalty area). Implemented fresh from
+  the paper's description; no code is used. Differences: silly-kicks drops their
+  "attacker in the box" condition, adds a block-heading test and the ball height, and
+  checks the release alignment.
 
 The native DAS engine (silly_kicks/tracking/_das*.py -- _das_pack, _das_engine,
 _das_numba, _das) is a faithful reimplementation (ADR-107/108), NOT a wrapper, of

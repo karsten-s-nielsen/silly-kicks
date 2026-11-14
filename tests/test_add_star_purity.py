@@ -514,6 +514,18 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ),
     ],
     "tracking:add_cover_shadows": _one(_xtf_inputs, _xtf_map_invoke(F.add_cover_shadows)),
+    # Branches on precomputed ELASTIC columns (read them vs run align_events_to_frames), so a variant per branch.
+    "tracking:add_cross_deliveries": [
+        ("elastic_absent", _std_inputs, _std_invoke(F.add_cross_deliveries)),
+        (
+            "elastic_present",
+            lambda: [
+                make_actions().assign(elastic_frame_id=float("nan"), elastic_confidence=float("nan")),
+                make_frames(),
+            ],
+            _std_invoke(F.add_cross_deliveries),
+        ),
+    ],
     "tracking:add_visible_area_coverage": [
         ("polygon_present", _visible_area_inputs(True), _visible_area_invoke),
         ("polygon_absent", _visible_area_inputs(False), _visible_area_invoke),

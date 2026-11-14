@@ -183,6 +183,9 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "first_contact_confidence": "invariant",
     "first_contact_is_aerial": "invariant",
     "first_contact_source": "invariant",
+    # --- TF-86 cross delivery (add_cross_deliveries output on actions, ADR-133): labels, not geometry ---
+    "cross_attempt": "invariant",
+    "cross_height": "invariant",
     # --- canonical identity / typing (SPADL_COLUMNS) ---
     "game_id": "invariant",
     "original_event_id": "invariant",
@@ -197,6 +200,8 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     # --- block-detection columns (TF-51 prereq): boolean flags, not geometric -> invariant ---
     "shot_blocked": "invariant",
     "cross_blocked": "invariant",
+    # --- the provider's native "crossed" label (ADR-133): a boolean flag, not geometric -> invariant ---
+    "cross_native": "invariant",
     # --- add_names() output. add_names attaches these routinely, and a DECLARED column is
     #     the only one whose kind is guaranteed right, so they belong here. ---
     "type_name": "invariant",

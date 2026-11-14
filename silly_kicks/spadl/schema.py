@@ -27,6 +27,11 @@ SPADL_COLUMNS: dict[str, str] = {
     # cannot encode the signal (Opta, SkillCorner). See the block-detection spec.
     "shot_blocked": "boolean",
     "cross_blocked": "boolean",
+    # The provider's own "crossed" label (ADR-133). The SPADL type is set by one geometric rule for every
+    # provider (spadl.base.classify_deliveries); this keeps the native signal. True/False on open-play
+    # pass-class rows and on corner/free-kick rows where the provider labels deliveries, pd.NA elsewhere and
+    # on providers with no native label (SkillCorner).
+    "cross_native": "boolean",
 }
 
 SPADL_NAME_COLUMNS: dict[str, str] = {

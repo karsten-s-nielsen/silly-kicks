@@ -75,7 +75,7 @@ import pandas as pd
 from silly_kicks.tracking import direction
 
 from . import config as spadlconfig
-from .base import _derive_end_coordinates, sort_actions_chronologically
+from .base import _derive_end_coordinates, _native_cross_flag, classify_deliveries, sort_actions_chronologically
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import GRADIENTSPORTS_SPADL_COLUMNS, ConversionReport
 from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -452,6 +452,15 @@ def convert_to_actions(
         ``events``, or if ``period_id`` 3/4 rows exist but
         ``home_team_start_left_extratime`` is ``None``.
 
+    Notes
+    -----
+    Crosses and set-piece deliveries follow one geometric rule for every provider
+    (:func:`silly_kicks.spadl.base.classify_deliveries`, ADR-133). Gradient Sports' own label (``CR``)
+    is kept in ``cross_native``. Event-only limits: a blocked cross and a delivery followed by a restart
+    are typed ``pass``, and a restart-ended set piece ``*_short``; the tracking layer
+    (``add_cross_deliveries``) decides them from the ball path. Measured recall of the event rule
+    against ``cross_attempt``: <recall: Task 10>.
+
     Examples
     --------
     Convert a single match's events to SPADL::
@@ -692,6 +701,7 @@ def convert_to_actions(
             # after the synthesis concat below.
             "shot_blocked": _blocked_flag(_n_ev, applicable=(_pe == "SH"), blocked=(_shot_outcome == "B")),
             "cross_blocked": _blocked_flag(_n_ev, applicable=_open_play_cross, blocked=(_cross_outcome == "B")),
+            "cross_native": _blocked_flag(_n_ev),
         }
     )
 
@@ -844,7 +854,7 @@ def convert_to_actions(
     # Synthesized rows are .copy()'d from their parents, so they inherit the parent's
     # block flag — but they are converter-injected, NOT real block observations. Reset
     # to pd.NA. No-op when no synthesized rows are present.
-    actions.loc[actions["is_synthetic"], ["shot_blocked", "cross_blocked"]] = pd.NA
+    actions.loc[actions["is_synthetic"], ["shot_blocked", "cross_blocked", "cross_native"]] = pd.NA
 
     # ------------------------------------------------------------------
     # Per-period direction-of-play normalisation. Routed through the canonical
@@ -859,6 +869,15 @@ def convert_to_actions(
         home_team_id=home_team_id,
         home_attacks_right_per_period=home_attacks_right_per_period,
     )
+
+    # One delivery rule for every provider (ADR-133): the native CR typing moves to cross_native (synthesized
+    # rows keep <NA>); the SPADL type comes from the geometry. GS never calls _add_dribbles, so its carries are
+    # native next actions.
+    _real = ~actions["is_synthetic"].to_numpy(dtype=bool)
+    _flag = _native_cross_flag(actions["type_id"])
+    _flag[~_real] = pd.NA
+    actions["cross_native"] = _flag
+    actions = classify_deliveries(actions)
 
     # ------------------------------------------------------------------
     # Component 1 own-goal geometry tripwire (post-LTR). SPADL-LTR puts the acting team attacking
