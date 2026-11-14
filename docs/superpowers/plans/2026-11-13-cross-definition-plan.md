@@ -11,7 +11,9 @@
 
 **Tech Stack:** Python 3.10+, pandas 2/3 (CoW), numpy, pytest. DGX for tests and data runs.
 
-**Spec:** `docs/superpowers/specs/2026-11-13-cross-definition-design.md` (r6; approved by the owner and by reviewers A and B). Read it with this plan. Section numbers below (§) refer to it.
+**Spec:** `docs/superpowers/specs/2026-11-13-cross-definition-design.md` (r7; r6 was approved by the owner and by reviewers A and B; r7 is the §7.4 calibration amendment of 2026-11-14). Read it with this plan. Section numbers below (§) refer to it.
+
+**Plan r4 (2026-11-14), the calibration amendment.** The first DGX runs on commit 1 `4490016c` showed that the r3 calibration rules measure alignment and detection error (spec §7.4). The owner ruled: replace the rules (spec §7.4), add `block_window_s`, widen the start-line candidates to 80, and add one commit for provenance. r4 changes the Global Constraints order, Task 9 (candidates) and Task 10 Step 4 (rules and runs). The rest is unchanged.
 
 ## Global Constraints
 
@@ -21,10 +23,12 @@
   2. `/final-review`, then the A/B implementation reviews **on the uncommitted tree**. Both reports are answered.
   3. **Gate 1: commit 1 and push** (owner yes). Commit 1 holds the code, the tests and the drivers, with provisional constants: `CROSS_START_X = 52.5` (the most permissive candidate) and the `CrossDeliveryParams` defaults.
   4. The Task 9 and Task 10 DGX runs, on the clean commit 1 (`require_clean_tree`, ADR-037). Each driver computes every candidate value itself, so its numbers are exactly those of the final constants.
-  5. Commit 2's content, on the uncommitted tree: the constants, the memos (stamped with commit 1's sha), Task 11's number-dependent docs, and a test that pins the defaults to the memo values. The number-independent docs (C4, AGENTS, docs/context, ADR-133's decision) already went in commit 1. A/B re-review this delta, and both reports are answered.
-  6. **Gate 2: commit 2 and push** (owner yes).
-  7. **Gate 3: the draft PR** (owner yes). Watch CI until it is green.
-  8. The merge, the tag and the release each need their own yes later. Merge with `--merge`, never squash: the memos cite commit 1's sha, and a squash would orphan it.
+  5. **r4 (owner ruling 2026-11-14): three commits.** The first runs on commit 1 led to the §7.4 amendment. A run must use a committed driver (ADR-037), so the amended driver is its own commit:
+     - Commit 2: the spec r7 and plan r4 amendment, the `calibrate()` rules, `CANDIDATE_LINES` to 80, `CrossDeliveryParams.block_window_s` and the enricher's block window, with their tests. A/B review this delta, and both reports are answered. **Gate 2: commit 2 and push** (owner yes).
+     - The four §7.4 runs on the clean commit 2.
+     - Commit 3's content, on the uncommitted tree: the constants, the memos (stamped with commit 2's sha), Task 11's number-dependent docs, and a test that pins the defaults to the memo values. The number-independent docs (C4, AGENTS, docs/context, ADR-133's decision) already went in commit 1. A/B re-review this delta, and both reports are answered. **Gate 3: commit 3 and push** (owner yes).
+  6. The draft PR (#306) was opened after commit 1 with the owner's yes. Watch CI on each push until it is green.
+  7. The merge, the tag and the release each need their own yes later. Merge with `--merge`, never squash: the memos cite commit 2's sha, and a squash would orphan it.
 - **The `compute_bravery` loud break is accepted by the owner** (2026-11-13). The release notice names it, including the lakehouse `bravery_writer.py`.
 - **Tests run on the DGX checkout `~/sk-fsg`** (`karsten@192.168.68.73`). The AI-PC runs nothing heavy.
   - **Step 0, before Task 1:**
@@ -140,11 +144,9 @@
   - Prove the test can fail: perturb one `start_x` in one golden parquet by 0.5 m and run the test. Expected: FAIL. Then restore the golden.
   - Run the tests. Expected: PASS. For SkillCorner the move is a POSSESSION_PERSPECTIVE no-op (review B round 2).
 - [ ] **Step 2: Write the failing wiring tests** in `tests/spadl/test_delivery_wiring.py`. Parametrize over the 8 converters with the fixtures in `tests/spadl/_converter_cases.py`:
-  - `test_native_cross_short_delivery_becomes_pass[conv]` and `test_native_pass_into_box_from_wide_becomes_cross[conv]`. Use a synthetic event pair per provider; build it with the provider's own raw schema from the fixtures.
-  - `test_direction_invariance[conv]`: the same delivery mirrored (team attacking right-to-left) and in period 2 gets the same `type_id`.
+  - `test_scene_typing_and_direction_invariance[conv]`: a native cross delivered short → `pass`, a native pass delivered into the box from wide → `cross`, and a corner followed by a goal kick → `corner_short`. The same delivery mirrored (team attacking right-to-left) and in period 2 gets the same `type_id`. Build the scene per provider in its own raw schema (`tests/spadl/_delivery_scenes.py`).
   - `test_order_insensitive[conv]`: shuffle the raw input within equal-timestamp blocks; the output is the same (ADR-065).
   - `test_cross_native_values[conv]`: the provider's native open-play cross → `True`, native pass → `False`, native corner/free-kick crossed/short → `True` / `False`, other rows → `<NA>`. For SkillCorner, every row is `<NA>`.
-  - `test_restart_ended_set_piece_is_short[conv]`: a corner, then a goal kick → `corner_short`.
   - `test_cross_blocked_unchanged[conv]`, for every converter that emits a non-`<NA>` `cross_blocked` (StatsBomb, GS, Wyscout; confirm the set with `git grep -n cross_blocked silly_kicks/spadl`): `cross_blocked` equals the value on `0cc07e6c` for every row where `cross_native` is True.
 - [ ] **Step 3: Run the tests.** Expected: FAIL. The types follow the old native rules, and `cross_native` is all `<NA>`.
 - [ ] **Step 4: Implement each converter.** Per converter, three changes:
@@ -157,9 +159,8 @@
     - Sportec: move `play_height` / `play_flat_cross` and the ADR-127 corner discriminator into `cross_native`.
     - GS: call after `to_spadl_ltr` (856), before `_finalize_output`.
     - kloppy: `PassType.CROSS` feeds `cross_native`.
-  - **Docstrings (§6.4):** each converter's `convert_to_actions` docstring states the event-only limits:
-    - a blocked cross and a restart-ended delivery are `pass`;
-    - a restart-ended set piece is `_short`;
+  - **Docstrings (§6.4):** the `classify_deliveries` docstring states the event-only limits once (a blocked cross and a restart-ended delivery are `pass`; a restart-ended set piece is `_short`). Each converter's `convert_to_actions` docstring points to it (owner, 2026-11-14 size audit) and states:
+    - the provider's own label in `cross_native`;
     - for SkillCorner, the missing in-box defensive touches;
     - the provider's measured recall against `cross_attempt`, written as a placeholder `<recall: Task 10>` that Task 11 fills from the Task 10 numbers.
 - [ ] **Step 5: Run `tests/spadl/` and `tests/atomic/`.** Expected: PASS. Every changed existing assertion is ledgered with its reason.
@@ -225,8 +226,8 @@
     - outside-zone pass → False;
     - corner / free kick → True/False;
     - shot, `shot_freekick`, `shot_penalty`, throw-in, goal kick and dribble → `<NA>`.
-  - `test_path_enters_box_is_attempt` and `test_path_stays_wide_is_not`.
-  - `test_blocked_cross_heading_into_box`: the first contact is an opponent within `block_radius_m`, and the initial direction points into the box → True. With the direction pointing away → False. Just outside `block_radius_m` → decided by the path only.
+  - `test_path_stays_wide_is_not`. The row-class table covers a path that enters the box.
+  - `test_blocked_cross_by_direction_and_orientation`: the first contact is an opponent within `block_radius_m`, and the initial direction points into the box → True. With the direction pointing away → False. Both hold when the team attacks right-to-left. `test_block_radius_both_sides`: just outside `block_radius_m` → decided by the path only.
   - `test_passer_excluded`: the event time is 0.3 s before the kick, and the passer's touch must not end the path.
   - `test_path_capped_without_contact`.
   - `test_restart_ended_delivery_typed_from_path`: in the actions, a cross-zone `pass` (typed `pass` by the converter because the next action is a `goalkick`) and a `corner_short` (next action a `throw_in`). In the frames, both ball paths enter the box. Both rows → `cross_attempt` True.
@@ -236,7 +237,7 @@
   - `test_height_aerial_ground_and_estimated`: peak z 1.81 → `aerial`, 1.79 → `ground` (threshold from `BallContactParams.aerial_z_m`). `z_source == "estimated"` → `<NA>`.
   - `test_orientation_invariance`: a mirrored match gives identical columns.
   - `test_period_without_ball_frames_is_unknown`: Review Focus 5.
-  - `test_pure`: the inputs are unchanged.
+  - Purity: register `add_cross_deliveries` in `PURITY_ENTRIES` (`tests/test_add_star_purity.py`); the gate proves the inputs are unchanged.
 - [ ] **Step 2: Run the tests.** Expected: FAIL (`ModuleNotFoundError`).
 - [ ] **Step 3: Implement** `_cross_delivery.py`.
   - Release: §6.3 steps 1–3.
@@ -367,7 +368,7 @@
 - Test: `tests/scripts/test_measure_cross_start_line.py`. It covers the F1 and tie rule on a toy corpus, and passes `test_compute_contract`.
 
 **Interfaces:**
-- Consumes: `classify_deliveries` with `cross_start_x=` each of {52.5, 60, 65, 70}, and `cross_native`.
+- Consumes: `classify_deliveries` with `cross_start_x=` each of {52.5, 60, 65, 70, 75, 80} (r4; spec r7 §7.2), and `cross_native`.
 - Produces: `CROSS_START_X` = the candidate with the highest mean F1 over StatsBomb open data and the GS xshot187 matches (equal weight). On a tie within 0.005, the larger value. IDSSE is reported, not averaged.
 
 - [ ] **Step 1: Write the failing test** `test_selection_rule`: given per-vendor F1 tables, the rule returns the expected candidate, including the tie case.
@@ -378,10 +379,10 @@
   - It converts once with the committed `CROSS_START_X = 52.5`, then evaluates each candidate X by retyping open-play `cross` rows with `start_x < X` to `pass` (the monotonic filter of Task 1).
   - **First check pining coverage.** List the pining keys for StatsBomb open data and the 62 GS xshot187 matches. Any gap goes to the owner before the run.
   - Run the tests. Expected: PASS. This step belongs to commit 1.
-- [ ] **Step 4 (after Gate 1): the DGX run** on the clean commit 1, with the full corpus and parallel workers.
-  - Write the memo, stamped with commit 1's sha.
+- [ ] **Step 4 (r4; after Gate 2): the DGX run** on the clean commit 2, with the full corpus and parallel workers. It is run 1 of the four spec §7.4 runs.
+  - Write the memo, stamped with commit 2's sha.
   - Set `CROSS_START_X` to the chosen value. Add `test_cross_start_x_matches_memo`, which pins it to `metrics.json`.
-  - Re-run `tests/spadl/` with the final value. Expected: PASS. This step belongs to commit 2.
+  - Re-run `tests/spadl/` with the final value. Expected: PASS. This step belongs to commit 3.
 - [ ] **Step 5: Ledger the task**, with the chosen value and each vendor's F1.
 
 ### Task 10: Corpus evidence (§7.3, DGX) and the enricher constants
@@ -409,22 +410,22 @@
   - It declares `PIPELINE` (ADR-128).
   - It takes the chosen start line and every `CrossDeliveryParams` value as explicit overrides. The run then reports the numbers of the final constants, not of the committed provisional defaults.
   - Run the tests. Expected: PASS. This step belongs to commit 1.
-- [ ] **Step 4 (after Gate 1 and Task 9 Step 4): calibrate on the DGX run** on the clean commit 1. Pass the Task 9 start line as an override.
-  - Set each `CrossDeliveryParams` value from the run's distributions.
-  - Pre-declared rules, one per `CrossDeliveryParams` field:
-    - `release_match_m`: the 95th percentile of the ball-to-start distance among ELASTIC-confident rows, pooled over the three providers with equal weight per provider. Unweighted pooling would let SkillCorner's 16,479 rows decide.
-    - `block_radius_m`: the 95th percentile of the release-to-opponent-contact distance among `cross_native` crosses with `cross_blocked == True`. In the xshot187 corpus only GS carries a non-`<NA>` `cross_blocked`, so this is GS only, and the memo says so.
-    - `min_ball_coverage`: 0.8, unless more than 20 % of a provider's rows fail it. In that case, report it and the owner decides.
-    - `release_gap_s`: the 95th percentile of the time from the aligned release to the passer's own detected contact, among ELASTIC-confident rows, pooled with equal weight per provider. Floor: one frame at the highest provider frame rate (0.04 s at 25 Hz).
-    - `direction_window_s`: two frames at the lowest provider frame rate in the corpus. At SkillCorner's 10 Hz this is 0.2 s. A one-frame difference is too noisy for a direction.
-    - `path_cap_s`: 4.0, fixed by spec §6.3. It is not calibrated, and it is reported only.
-  - Re-run the driver with the final values.
-  - Expected: the ratio is ≤ 1.5. A failed bar stops the cycle, and the result goes to the owner.
-- [ ] **Step 5 (commit 2):** set the `CrossDeliveryParams` defaults to the memo values. Add `test_cross_delivery_defaults_match_memo`, which pins them to `metrics.json`. Re-run `tests/tracking/test_cross_delivery.py` and the new test. Expected: PASS. Ledger the task.
+- [ ] **Step 4 (r4; after Gate 2): calibrate on the DGX** on the clean commit 2, with the full corpus and parallel workers.
+  - The rules are spec §7.4 (r7), one per `CrossDeliveryParams` field. They replace the r3 rules, which pooled every ELASTIC-confident row (record: the ledger's run 1-3 lines and spec §7.4).
+  - Run the four §7.4 runs in order. Each run passes, as overrides, every value that an earlier run fixed:
+    1. provisional parameters → the start line;
+    2. `--cross-start-x` → `release_match_m`, `release_gap_s`;
+    3. plus `--release-match-m`, `--release-gap-s` → `block_radius_m`;
+    4. plus `--block-radius-m` → the §7.3 evidence.
+  - Pass each override exactly as the earlier `cross_definition.json` prints it (full float precision; `fixed_point` uses rtol 1e-9).
+  - After run 2: if `calibration.release_match_owner_decision_needed` is true (spec §7.4 owner triggers), stop and take the result to the owner before run 3.
+  - Expected: run 4's `fixed_point.all` is true (the four calibrated fields and `cross_start_x`), its `coverage_owner_decision_needed` is false, and the ratio is ≤ 1.5. A false fixed point or a failed bar stops the cycle, and the result goes to the owner.
+  - `min_ball_coverage` stays 0.8 unless more than 20 % of a provider's rows fail it; then the owner decides.
+- [ ] **Step 5 (commit 3, r4):** set the `CrossDeliveryParams` defaults to the memo values. Add `test_cross_delivery_defaults_match_memo`, which pins them to `metrics.json`. Re-run `tests/tracking/test_cross_delivery.py` and the new test. Expected: PASS. Ledger the task.
 
 ### Task 11: Docs, ADR, release prep and handoff
 
-**Files.** Docs travel with the code they describe. Only the number-dependent docs wait for commit 2.
+**Files.** Docs travel with the code they describe. Only the number-dependent docs wait for the numbers commit. **r4:** that is commit 3; commit 2 is the §7.4 amendment. Below, "commit 2 docs", "Step 2", "Step 3" and "Gate 2" mean the commit 3 content, its review and **Gate 3**. Step 4's draft PR exists already (#306).
 
 - **Commit 1 docs** (number-independent; required for a green commit 1). `tests/test_c4_aggregator_count.py` and `tests/test_c4_feature_column_count.py` derive their counts from `tracking.__all__` and `FEATURE_GLOSSARY`, so commit 1 fails without the C4 update.
   - Create: `docs/superpowers/adrs/ADR-133-one-cross-definition.md`, with the decision, the design and the event-only limits. Its "Evidence" section says that commit 2 adds the measured numbers.

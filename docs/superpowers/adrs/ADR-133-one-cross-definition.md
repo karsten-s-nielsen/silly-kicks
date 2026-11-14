@@ -36,7 +36,8 @@ next controller in the penalty area.
 3. **`cross_blocked` is keyed to `cross_native`** on open-play rows. Its meaning does not change; bravery reads
    `cross_native` so its rates keep their denominator.
 4. **The tracking layer decides the delivery** (TF-86 `add_cross_deliveries`): `cross_attempt` (the ball path enters
-   the penalty area, or an opponent blocks it within a radius of the release while it heads in) and `cross_height`
+   the penalty area, or an opponent blocks it within a radius of the release and within 1.0 s of it while it heads
+   in) and `cross_height`
    (aerial above the ADR-125 1.8 m threshold; honest `<NA>` unless the ball z is measured). The release is aligned
    through ELASTIC (TF-43), taken at the nearest ball frame, and checked against the action start; the path ends at
    the first ball contact by another player (ADR-124/125). An unanswerable path, or an unknown action start, is
@@ -52,9 +53,14 @@ next controller in the penalty area.
 
 ## Evidence
 
-The measured values come from `scripts/build_cross_definition.py` on the clean commit that introduces this ADR; the
-second commit of the cycle records them here and in `docs/research/cross-definition/`. The spec's audits (§5) used
-approximate path ends and are not cited as results.
+The measured values come from `scripts/build_cross_definition.py`, run on a clean committed tree. The cycle's last
+commit records them here and in `docs/research/cross-definition/`. The spec's audits (§5) used approximate path ends
+and are not cited as results.
+
+The first runs, on the commit that introduced this ADR, showed that the first calibration rules measured alignment
+and detection error: they gave a 15 m release match and a 20 m block radius. Spec r7 §7.4 replaced the rules (the
+release match from the IDSSE clean-sync reference, the block sample limited to contacts within the fixed 1.0 s
+block window) and widened the start-line candidates to 80 m. The recorded values come from the r7 rules.
 
 ## Consequences
 

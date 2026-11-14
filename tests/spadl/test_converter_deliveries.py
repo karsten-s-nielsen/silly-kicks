@@ -51,27 +51,11 @@ def test_scene_reaches_the_rule_in_the_acting_teams_frame(conv):
 
 
 @pytest.mark.parametrize("conv", _CONVERTERS)
-def test_native_cross_short_delivery_becomes_pass(conv):
-    assert _types(_run(conv))[1] == "pass"
-
-
-@pytest.mark.parametrize("conv", _CONVERTERS)
-def test_native_pass_into_box_from_wide_becomes_cross(conv):
-    assert _types(_run(conv))[3] == "cross"
-
-
-@pytest.mark.parametrize("conv", _CONVERTERS)
-def test_restart_ended_set_piece_is_short(conv):
-    types = _types(_run(conv))
-    assert types[5] == "corner_short"
-    assert types[6] == "goalkick"
-
-
-@pytest.mark.parametrize("conv", _CONVERTERS)
-def test_direction_invariance(conv):
-    """The away team (event 7) and the home team in period 2 (event 9) attack the other way in the native frame
-    of the absolute-frame providers; both crosses must survive. A per-period provider gives the same typing when
-    the home team starts on the right."""
+def test_scene_typing_and_direction_invariance(conv):
+    """Every scene event gets its EXPECTED_TYPE: a native cross delivered short is a ``pass`` (1), a native pass
+    delivered from wide is a ``cross`` (3), a restart-ended corner is ``corner_short`` (5). The away team (7) and
+    the home team in period 2 (9) attack the other way in the native frame of the absolute-frame providers; both
+    crosses must survive. A per-period provider gives the same typing when the home team starts on the right."""
     types = _types(_run(conv))
     assert types == EXPECTED_TYPE
     if DELIVERY_CASES[conv].per_period:

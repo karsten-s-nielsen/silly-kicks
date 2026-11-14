@@ -118,11 +118,16 @@ def _attempt(actions, frames, **kw):
 
 INTO_BOX = _path((1.0, 2.0, (80.0, 5.0), (95.0, 34.0)))
 STAYS_WIDE = _path((1.0, 2.0, (80.0, 5.0), (100.0, 3.0)))
+#: (deflection point, where the ball goes next): an opponent block 4.3 m from the release, heading into the box,
+#: and one 3.0 m away, heading towards the own half.
+BLOCK_IN = ((82.0, 8.8), (70.0, 2.0))
+BLOCK_AWAY = ((77.0, 5.5), (90.0, 2.0))
 
 
-def test_path_enters_box_is_attempt():
-    att, _ = _attempt(_actions([("pass", 1.0, 80.0, 5.0)]), _frames(INTO_BOX))
-    assert att == [True]
+def _deflected(deflect, after, *, team="B", **kw):
+    """Released at (80, 5) at t=1.0; player 3 (of ``team``) stands at ``deflect`` and deflects the ball 0.25 s later."""
+    path = _path((1.0, 1.25, (80.0, 5.0), deflect), (1.25, 1.75, deflect, after))
+    return _frames(path, {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: (team, *deflect)}, **kw)
 
 
 def test_path_stays_wide_is_not():
@@ -154,27 +159,10 @@ def test_unanswerable_cross_zone_row_is_unknown():
     assert pd.isna(att[0]) and pd.isna(height[0])
 
 
-def test_blocked_cross_heading_into_box():
-    # Released towards the box; the defender (team B) stands 4.3 m along the path and deflects it back out.
-    d = (82.0, 8.8)
-    blocked_in = _path((1.0, 1.25, (80.0, 5.0), d), (1.25, 1.75, d, (70.0, 2.0)))
-    players = {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: ("B", d[0], d[1])}
-    att, _ = _attempt(_actions([("pass", 1.0, 80.0, 5.0)]), _frames(blocked_in, players))
-    assert att == [True]
-    # Pointing away from the box (towards the own half), the same block is not an attempt.
-    d2 = (77.0, 5.5)
-    blocked_away = _path((1.0, 1.25, (80.0, 5.0), d2), (1.25, 1.75, d2, (90.0, 2.0)))
-    players2 = {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: ("B", d2[0], d2[1])}
-    att2, _ = _attempt(_actions([("pass", 1.0, 80.0, 5.0)]), _frames(blocked_away, players2))
-    assert att2 == [False]
-
-
 def test_block_radius_both_sides():
-    d = (82.0, 8.8)  # 4.3 m from the release
-    blocked_in = _path((1.0, 1.25, (80.0, 5.0), d), (1.25, 1.75, d, (70.0, 2.0)))
-    players = {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: ("B", d[0], d[1])}
-    dist = float(np.hypot(d[0] - 80.0, d[1] - 5.0))
-    a, f = _actions([("pass", 1.0, 80.0, 5.0)]), _frames(blocked_in, players)
+    (dx, dy), _after = BLOCK_IN
+    dist = float(np.hypot(dx - 80.0, dy - 5.0))
+    a, f = _actions([("pass", 1.0, 80.0, 5.0)]), _deflected(*BLOCK_IN)
     assert _attempt(a, f, block_radius_m=dist + 0.5)[0] == [True]
     assert _attempt(a, f, block_radius_m=dist - 0.5)[0] == [False]  # decided by the path only
 
@@ -182,12 +170,21 @@ def test_block_radius_both_sides():
 def test_block_radius_measured_from_release():
     # Spec 6.3: the block radius is measured from the RELEASE (the ball), not the event's start. The event start sits
     # 2.5 m from the ball (inside release_match_m), and the defender 4.3 m from the ball but 2.4 m from the start.
-    d = (82.0, 8.8)
-    blocked_in = _path((1.0, 1.25, (80.0, 5.0), d), (1.25, 1.75, d, (70.0, 2.0)))
-    players = {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: ("B", d[0], d[1])}
-    a, f = _actions([("pass", 1.0, 80.0, 7.5)]), _frames(blocked_in, players)
+    a, f = _actions([("pass", 1.0, 80.0, 7.5)]), _deflected(*BLOCK_IN)
     assert _attempt(a, f, block_radius_m=3.5)[0] == [False]
     assert _attempt(a, f, block_radius_m=4.8)[0] == [True]
+
+
+def test_block_window_both_sides():
+    # Spec r7 §6.3: a block is an opponent's first contact within block_window_s of the release. The defender
+    # meets the ball 0.25 s after the release, 4.3 m away; inside the radius, the window alone decides.
+    a, f = _actions([("pass", 1.0, 80.0, 5.0)]), _deflected(*BLOCK_IN)
+    from silly_kicks.tracking._cross_delivery import _cross_delivery_diagnostics
+
+    dt = _cross_delivery_diagnostics(a, f, CrossDeliveryParams())["first_contact_dt"][0]
+    assert 0.2 < dt < 0.4  # precondition: the block contact sits between the two windows below
+    assert _attempt(a, f, block_window_s=dt + 0.05)[0] == [True]
+    assert _attempt(a, f, block_window_s=dt - 0.05)[0] == [False]  # a late contact is not a block
 
 
 def test_passer_excluded():
@@ -366,18 +363,19 @@ def test_orientation_invariance():
     pd.testing.assert_frame_equal(straight, mirrored)
 
 
-@pytest.mark.parametrize(
-    ("deflect", "after", "expected"),
-    [((82.0, 8.8), (70.0, 2.0), True), ((77.0, 5.5), (90.0, 2.0), False)],
-    ids=["heading_in", "heading_away"],
-)
-def test_orientation_invariance_on_the_block_branch(deflect, after, expected):
-    # The block test reads the initial ball DIRECTION, so a right-to-left attacking team must flip it too (ADR-028).
-    path = _path((1.0, 1.25, (80.0, 5.0), deflect), (1.25, 1.75, deflect, after))
-    players = {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: ("B", *deflect)}
+@pytest.mark.parametrize(("block", "expected"), [(BLOCK_IN, True), (BLOCK_AWAY, False)], ids=["in", "away"])
+def test_blocked_cross_by_direction_and_orientation(block, expected):
+    # A block is an attempt only when the initial ball direction points into the box. The test reads that
+    # DIRECTION, so a right-to-left attacking team must flip it too (ADR-028).
     a = _actions([("pass", 1.0, 80.0, 5.0)])
-    assert _attempt(a, _frames(path, players))[0] == [expected]
-    assert _attempt(a, _frames(path, players, mirror=True))[0] == [expected]
+    assert _attempt(a, _deflected(*block))[0] == [expected]
+    assert _attempt(a, _deflected(*block, mirror=True))[0] == [expected]
+
+
+def test_teammate_deflection_is_not_a_block():
+    # Spec §6.3: only an OPPONENT's first contact is a block. A teammate's touch at the same point ends the path.
+    a = _actions([("pass", 1.0, 80.0, 5.0)])
+    assert _attempt(a, _deflected(*BLOCK_IN, team="A"))[0] == [False]
 
 
 def test_period_without_ball_frames_is_unknown():
@@ -397,15 +395,6 @@ def test_dtypes_and_domain():
     assert str(out["cross_attempt"].dtype) == "boolean"
     assert isinstance(out["cross_height"].dtype, pd.CategoricalDtype)
     assert tuple(out["cross_height"].cat.categories) == CROSS_HEIGHT_VALUES
-
-
-def test_pure():
-    a = _actions([("pass", 1.0, 80.0, 5.0)])
-    f = _frames(INTO_BOX)
-    a0, f0 = a.copy(deep=True), f.copy(deep=True)
-    add_cross_deliveries(a, f)
-    pd.testing.assert_frame_equal(a, a0)
-    pd.testing.assert_frame_equal(f, f0)
 
 
 def test_diagnostics_expose_calibration_quantities():

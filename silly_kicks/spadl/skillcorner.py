@@ -217,13 +217,10 @@ def convert_to_actions(
 
     Notes
     -----
-    Crosses and set-piece deliveries follow one geometric rule for every provider
-    (:func:`silly_kicks.spadl.base.classify_deliveries`, ADR-133). SkillCorner has no native cross
-    label, so ``cross_native`` is ``<NA>``. Event-only limits: a blocked cross and a delivery followed by
-    a restart are typed ``pass``, and a restart-ended set piece ``*_short``. SkillCorner events also miss
-    defenders' touches in the box, so many deliveries look short in events alone; the tracking layer
-    (``add_cross_deliveries``) decides all of them from the ball path. Measured recall of the event rule
-    against ``cross_attempt``: <recall: Task 10>.
+    Deliveries follow :func:`silly_kicks.spadl.base.classify_deliveries` and its event-only limits (ADR-133).
+    SkillCorner has no native cross label (``cross_native`` is ``<NA>``), and its events miss defenders'
+    touches in the box, so many deliveries look short in events alone. Event-rule recall against
+    ``cross_attempt``: <recall: Task 10>.
 
     Examples
     --------

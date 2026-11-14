@@ -10,10 +10,9 @@ A born-ready ADR-128 driver (scaffolded by `python -m scripts.hf_jobs scaffold`)
   dropping the synthetic dribbles (a ``dribble`` row without an ``original_event_id``) and re-typing gives the
   new output. The old type is the provider's native label (SkillCorner has none: ``<NA>``).
 
-The report applies the PRE-DECLARED rules: the start line (spec 7.2: the highest mean F1 over StatsBomb and Gradient
-Sports, equal weight, tie within 0.005 -> the larger line), the ``CrossDeliveryParams`` calibration (plan Task 10),
-and the spec 7.3 corpus evidence at the reporting line (``--cross-start-x``, else the selected line). Run it once with
-the provisional parameters to calibrate, then once more with the final values as overrides.
+The report applies the PRE-DECLARED rules: the start line (spec 7.2), the ``CrossDeliveryParams`` calibration and
+its four-run sequence (spec r7 section 7.4), and the spec 7.3 corpus evidence at the reporting line
+(``--cross-start-x``, else the selected line).
 """
 
 from __future__ import annotations
@@ -25,10 +24,13 @@ import pandas as pd
 
 from scripts._stages import FileSet, ItemStage, Param, Pipeline, Stage, main
 
-CANDIDATE_LINES: tuple[float, ...] = (52.5, 60.0, 65.0, 70.0)
+CANDIDATE_LINES: tuple[float, ...] = (52.5, 60.0, 65.0, 70.0, 75.0, 80.0)  # spec r7 section 7.2
 F1_VENDORS: tuple[str, ...] = ("statsbomb", "gradientsports")  # full native cross labels (spec decision 8)
 F1_TIE: float = 0.005
 RATIO_BAR: float = 1.5
+RELEASE_REFERENCE: str = "idsse"  # the clean-sync provider for release_match_m (spec r7 section 7.4)
+MIN_RELEASE_SAMPLES: int = 200  # owner trigger: fewer IDSSE ELASTIC-confident rows (spec r7 section 7.4)
+MAX_UNKNOWN_SHARE: float = 0.2  # owner trigger: the share a release match or a coverage floor may turn <NA>
 
 _TRACKING_PARAMS = ("block_radius_m", "direction_window_s", "release_gap_s", "min_ball_coverage", "release_match_m")
 _PARAMS = (
@@ -94,33 +96,78 @@ def weighted_quantile(values_by_group: dict[str, np.ndarray], q: float) -> float
     return float(v[order][min(int(np.searchsorted(cum, q, side="left")), len(v) - 1)])
 
 
-def calibrate(rows: pd.DataFrame) -> dict:
-    """Plan Task 10 Step 4: one pre-declared rule per ``CrossDeliveryParams`` field."""
+_CALIBRATED = ("release_match_m", "release_gap_s", "block_radius_m", "direction_window_s")
+
+
+def fixed_point(cal: dict, params: dict, *, selected_line: float | None) -> dict:
+    """Spec r7 section 7.4 run 4: does the calibration reproduce each parameter the run used? (``all`` = every one).
+
+    ``cross_start_x`` checks that the run's diagnostics used the selected start line (review A C9: an omitted
+    ``--cross-start-x`` leaves them at the provisional line). An unknown selection is not a fixed point.
+    """
+    out = {k: bool(np.isclose(cal[k], params[k], rtol=1e-9, atol=1e-12)) for k in _CALIBRATED}
+    out["cross_start_x"] = selected_line is not None and bool(np.isclose(selected_line, params["cross_start_x"]))
+    return {**out, "all": all(out.values())}
+
+
+def _p95(values: pd.Series) -> float:
+    v = values.to_numpy(dtype=float)
+    v = v[np.isfinite(v)]
+    return float(np.quantile(v, 0.95)) if len(v) else float("nan")
+
+
+def calibrate(rows: pd.DataFrame, *, block_window_s: float | None = None) -> dict:
+    """Spec r7 section 7.4: one pre-declared rule per ``CrossDeliveryParams`` field, on clean samples.
+
+    ``release_match_m`` from the IDSSE reference only; ``release_gap_s`` over the rows that pass it;
+    ``block_radius_m`` over GS native blocked crosses with an opponent first contact within ``block_window_s``
+    (default ``CrossDeliveryParams().block_window_s``). The section 7.4 table gives the reasons and the triggers.
+    """
+    if block_window_s is None:
+        from silly_kicks.tracking._cross_delivery import CrossDeliveryParams
+
+        block_window_s = CrossDeliveryParams().block_window_s
     applicable = rows[rows["applicable"]]
     el = applicable[applicable["release_source"] == "elastic"]
     by = lambda df, col: {p: g[col].to_numpy(dtype=float) for p, g in df.groupby("provider")}  # noqa: E731
+    release_match = _p95(el.loc[el["provider"] == RELEASE_REFERENCE, "release_dist_m"])
+    # The percentile's own sample: finite IDSSE distances (a NaN distance never enters ``_p95``).
+    n_release = int(el.loc[el["provider"] == RELEASE_REFERENCE, "release_dist_m"].notna().sum())
+    matched = el[el["release_dist_m"] <= release_match]
+    # Over finite distances only: a NaN distance (unknown start, no ball frame) is <NA> whatever the match is.
+    fail_share = {
+        str(p): float((d > release_match).mean()) if len(d := g["release_dist_m"].dropna()) else float("nan")
+        for p, g in el.groupby("provider")
+    }
+    fr = rows.groupby("provider")["frame_rate"].min()
+    gap = weighted_quantile(by(matched, "passer_contact_dt"), 0.95)
     gs_blocked = applicable[
         (applicable["provider"] == "gradientsports")
         & applicable["cross_native"].fillna(False).astype(bool)
         & applicable["cross_blocked"].fillna(False).astype(bool)
         & applicable["first_contact_is_opponent"].fillna(False).astype(bool)
+        & (applicable["first_contact_dt"] <= block_window_s)
     ]
-    fr = rows.groupby("provider")["frame_rate"].min()
     cov_fail = {
         p: float((g["coverage"].dropna() < 0.8).mean()) if g["coverage"].notna().any() else float("nan")
         for p, g in applicable.groupby("provider")
     }
     return {
-        "release_match_m": weighted_quantile(by(el, "release_dist_m"), 0.95),
-        "block_radius_m": float(np.nanquantile(gs_blocked["first_contact_dist_m"], 0.95))
-        if gs_blocked["first_contact_dist_m"].notna().any()
-        else float("nan"),
-        "release_gap_s": max(weighted_quantile(by(el, "passer_contact_dt"), 0.95), 1.0 / float(fr.max())),
+        "release_match_m": release_match,
+        "n_release_match_samples": n_release,
+        "release_dist_p95_by_provider": {str(p): _p95(g["release_dist_m"]) for p, g in el.groupby("provider")},
+        "release_match_fail_share": fail_share,
+        "release_match_owner_decision_needed": bool(
+            n_release < MIN_RELEASE_SAMPLES or any(v > MAX_UNKNOWN_SHARE for v in fail_share.values())
+        ),
+        "block_radius_m": _p95(gs_blocked["first_contact_dist_m"]),
+        "release_gap_s": max(gap, 1.0 / float(fr.max())) if np.isfinite(gap) else float("nan"),
         "direction_window_s": 2.0 / float(fr.min()),
         "min_ball_coverage": 0.8,
+        "block_window_s": block_window_s,
         "path_cap_s": 4.0,
         "coverage_below_0.8_share": cov_fail,
-        "coverage_owner_decision_needed": bool(any(v > 0.2 for v in cov_fail.values() if np.isfinite(v))),
+        "coverage_owner_decision_needed": bool(any(v > MAX_UNKNOWN_SHARE for v in cov_fail.values() if np.isfinite(v))),
         "n_block_samples_gs": len(gs_blocked),
     }
 
@@ -283,20 +330,14 @@ def evidence(flat: pd.DataFrame, line: float) -> dict:
         for p, g in zone.groupby("provider")
     }
     sp = flat[flat["type_native"].str.startswith(("corner", "freekick"))]
+
+    def _median_per_match(hit: pd.Series) -> dict:
+        return sp.assign(c=hit).groupby(["provider", "match"])["c"].sum().groupby("provider").median().to_dict()
+
     out["set_piece_medians"] = {
         kind: {
-            "before": sp.assign(c=sp["type_native"] == f"{kind}_crossed")
-            .groupby(["provider", "match"])["c"]
-            .sum()
-            .groupby("provider")
-            .median()
-            .to_dict(),
-            "after": sp.assign(c=sp["type_geo"] == f"{kind}_crossed")
-            .groupby(["provider", "match"])["c"]
-            .sum()
-            .groupby("provider")
-            .median()
-            .to_dict(),
+            "before": _median_per_match(sp["type_native"] == f"{kind}_crossed"),
+            "after": _median_per_match(sp["type_geo"] == f"{kind}_crossed"),
         }
         for kind in ("corner", "freekick")
     }
@@ -405,13 +446,16 @@ def _report_work(key, ctx) -> FileSet:
     selected = select_start_line(f1_table) if selectable else None
     line = ctx.params["cross_start_x"] if ctx.params["cross_start_x"] is not None else selected
     flat = flat.assign(release_match_cut=params.release_match_m)
+    used = {k: getattr(params, k) for k in (*_TRACKING_PARAMS, "block_window_s", "path_cap_s", "cross_start_x")}
+    cal = calibrate(flat, block_window_s=params.block_window_s)
     payload = {
         "candidate_lines": list(CANDIDATE_LINES),
         "f1_by_vendor": {v: {str(x): f for x, f in t.items()} for v, t in f1_table.items()},
         "selected_start_line": selected,
         "reporting_line": line,
-        "tracking_params": {k: getattr(params, k) for k in (*_TRACKING_PARAMS, "path_cap_s", "cross_start_x")},
-        "calibration": calibrate(flat),
+        "tracking_params": used,
+        "calibration": cal,
+        "fixed_point": fixed_point(cal, used, selected_line=selected),
         "evidence": evidence(flat, line) if line is not None and len(flat) else None,
         "n_matches": {str(p): int(n) for p, n in rows.groupby("provider")["match"].nunique().items()},
     }

@@ -30,6 +30,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import datetime as dt
+import importlib
 import json
 import pathlib
 from collections.abc import Callable
@@ -159,12 +160,6 @@ def _statsbomb(home_starts_left: bool = True) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _statsbomb_run(events: pd.DataFrame, home_starts_left: bool = True) -> pd.DataFrame:
-    from silly_kicks.spadl import statsbomb
-
-    return statsbomb.convert_to_actions(events, home_team_id=100)[0]
-
-
 # --------------------------------------------------------------------------------------------------------------- opta
 def _opta(home_starts_left: bool = True) -> pd.DataFrame:
     ends = _ends()
@@ -193,12 +188,6 @@ def _opta(home_starts_left: bool = True) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
-
-
-def _opta_run(events: pd.DataFrame, home_starts_left: bool = True) -> pd.DataFrame:
-    from silly_kicks.spadl import opta
-
-    return opta.convert_to_actions(events, home_team_id=10)[0]
 
 
 # ------------------------------------------------------------------------------------------------------------ wyscout
@@ -237,12 +226,6 @@ def _wyscout(home_starts_left: bool = True, *, blocked: bool = False) -> pd.Data
     return pd.DataFrame(rows)
 
 
-def _wyscout_run(events: pd.DataFrame, home_starts_left: bool = True) -> pd.DataFrame:
-    from silly_kicks.spadl import wyscout
-
-    return wyscout.convert_to_actions(events, home_team_id=100)[0]
-
-
 # ------------------------------------------------------------------------------------------------------------ metrica
 def _metrica(home_starts_left: bool = True) -> pd.DataFrame:
     ends = _ends()
@@ -278,12 +261,6 @@ def _metrica(home_starts_left: bool = True) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _metrica_run(events: pd.DataFrame, home_starts_left: bool = True) -> pd.DataFrame:
-    from silly_kicks.spadl import metrica
-
-    return metrica.convert_to_actions(events, home_team_id="Home", home_team_start_left=home_starts_left)[0]
-
-
 # ------------------------------------------------------------------------------------------------------------ sportec
 def _sportec(home_starts_left: bool = True) -> pd.DataFrame:
     kinds = {
@@ -312,12 +289,6 @@ def _sportec(home_starts_left: bool = True) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
-
-
-def _sportec_run(events: pd.DataFrame, home_starts_left: bool = True) -> pd.DataFrame:
-    from silly_kicks.spadl import sportec
-
-    return sportec.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=home_starts_left)[0]
 
 
 # ----------------------------------------------------------------------------------------------------- gradientsports
@@ -368,17 +339,6 @@ def _gradientsports(home_starts_left: bool = True, *, blocked: bool = False) -> 
     return df
 
 
-def _gradientsports_run(events: pd.DataFrame, home_starts_left: bool = True) -> pd.DataFrame:
-    from silly_kicks.spadl import gradientsports as gs
-
-    return gs.convert_to_actions(
-        events,
-        home_team_id=100,
-        home_team_start_left=home_starts_left,
-        home_team_start_left_extratime=home_starts_left,
-    )[0]
-
-
 # -------------------------------------------------------------------------------------------------------- skillcorner
 def _skillcorner(home_starts_left: bool = True) -> pd.DataFrame:
     ends = _ends()
@@ -412,13 +372,6 @@ def _skillcorner(home_starts_left: bool = True) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
-
-
-def _skillcorner_run(events: pd.DataFrame, home_starts_left: bool = True) -> pd.DataFrame:
-    from silly_kicks.spadl import skillcorner
-
-    meta = json.loads((_DATASETS / "skillcorner" / "match_metadata.json").read_text())
-    return skillcorner.convert_to_actions(events, meta)[0]
 
 
 # ------------------------------------------------------------------------------------------------------------- kloppy
@@ -478,10 +431,31 @@ def _kloppy(home_starts_left: bool = True) -> Any:
     return out
 
 
-def _kloppy_run(dataset: Any, home_starts_left: bool = True) -> pd.DataFrame:
-    from silly_kicks.spadl import kloppy as kloppy_mod
+def _spadl(name: str) -> Any:
+    return importlib.import_module(f"silly_kicks.spadl.{name}")
 
-    return kloppy_mod.convert_to_actions(dataset, game_id="scene")[0]
+
+def _skillcorner_meta() -> dict:
+    return json.loads((_DATASETS / "skillcorner" / "match_metadata.json").read_text())
+
+
+#: Per converter: (native scene, home_starts_left) -> SPADL actions, with the scene's fixed arguments.
+_RUNS: dict[str, Callable[..., pd.DataFrame]] = {
+    "statsbomb": lambda ev, hsl=True: _spadl("statsbomb").convert_to_actions(ev, home_team_id=100)[0],
+    "opta": lambda ev, hsl=True: _spadl("opta").convert_to_actions(ev, home_team_id=10)[0],
+    "wyscout": lambda ev, hsl=True: _spadl("wyscout").convert_to_actions(ev, home_team_id=100)[0],
+    "metrica": lambda ev, hsl=True: _spadl("metrica").convert_to_actions(
+        ev, home_team_id="Home", home_team_start_left=hsl
+    )[0],
+    "sportec": lambda ev, hsl=True: _spadl("sportec").convert_to_actions(
+        ev, home_team_id="T-HOME", home_team_start_left=hsl
+    )[0],
+    "gradientsports": lambda ev, hsl=True: _spadl("gradientsports").convert_to_actions(
+        ev, home_team_id=100, home_team_start_left=hsl, home_team_start_left_extratime=hsl
+    )[0],
+    "skillcorner": lambda ev, hsl=True: _spadl("skillcorner").convert_to_actions(ev, _skillcorner_meta())[0],
+    "kloppy": lambda ev, hsl=True: _spadl("kloppy").convert_to_actions(ev, game_id="scene")[0],
+}
 
 
 def _reverse_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -504,14 +478,14 @@ class DeliveryCase:
 
 
 DELIVERY_CASES: dict[str, DeliveryCase] = {
-    "statsbomb": DeliveryCase(_statsbomb, _statsbomb_run, _reverse_df, False),
-    "opta": DeliveryCase(_opta, _opta_run, _reverse_df, False),
-    "wyscout": DeliveryCase(_wyscout, _wyscout_run, _reverse_df, False),
-    "metrica": DeliveryCase(_metrica, _metrica_run, _reverse_df, True),
-    "sportec": DeliveryCase(_sportec, _sportec_run, _reverse_df, True),
-    "gradientsports": DeliveryCase(_gradientsports, _gradientsports_run, _reverse_df, True),
-    "skillcorner": DeliveryCase(_skillcorner, _skillcorner_run, _reverse_df, False),
-    "kloppy": DeliveryCase(_kloppy, _kloppy_run, _reverse_kloppy, False),
+    "statsbomb": DeliveryCase(_statsbomb, _RUNS["statsbomb"], _reverse_df, False),
+    "opta": DeliveryCase(_opta, _RUNS["opta"], _reverse_df, False),
+    "wyscout": DeliveryCase(_wyscout, _RUNS["wyscout"], _reverse_df, False),
+    "metrica": DeliveryCase(_metrica, _RUNS["metrica"], _reverse_df, True),
+    "sportec": DeliveryCase(_sportec, _RUNS["sportec"], _reverse_df, True),
+    "gradientsports": DeliveryCase(_gradientsports, _RUNS["gradientsports"], _reverse_df, True),
+    "skillcorner": DeliveryCase(_skillcorner, _RUNS["skillcorner"], _reverse_df, False),
+    "kloppy": DeliveryCase(_kloppy, _RUNS["kloppy"], _reverse_kloppy, False),
 }
 
 

@@ -10,8 +10,8 @@ This enricher decides the delivery from the ball itself:
 * **Path.** From the release to the first resolved ball contact (ADR-124/125 detector) by a player other than the
   passer, at or after ``release + release_gap_s``, capped at ``release + path_cap_s``.
 * **Attempt.** The path enters the penalty area, or the first contact is an opponent block within
-  ``block_radius_m`` of the ball at the release while the initial ball direction, from the release, points into
-  the penalty area.
+  ``block_radius_m`` of the ball at the release and within ``block_window_s`` of the release, while the initial
+  ball direction, from the release, points into the penalty area.
 * **Unknown, never guessed.** A row whose action start is unknown fails the release match (``<NA>``); an
   open-play pass is ``False`` only when its start is known to lie outside the cross zone.
 
@@ -67,6 +67,8 @@ class CrossDeliveryParams:
     release_gap_s: float = 0.12
     min_ball_coverage: float = 0.8
     release_match_m: float = 3.0
+    #: Fixed, not calibrated (spec r7 §6.3): a block is an opponent's first contact within this time of the release.
+    block_window_s: float = 1.0
     path_cap_s: float = 4.0
     cross_start_x: float = CROSS_START_X
     contact_params: BallContactParams = dataclasses.field(default_factory=BallContactParams)
@@ -213,18 +215,21 @@ def _cross_delivery_diagnostics(
             continue  # no ball frame within half a frame period of the release
         rx, ry = (_L - bx[k], _W - by[k]) if fl else (bx[k], by[k])
         diag["release_dist_m"][i] = float(np.hypot(rx - sx[i], ry - sy[i]))
-        own = _first_contact_by(contacts.get(period[i]), t0 - 0.5, t0 + 1.0, passer[i])
+        own = _first_contact(contacts.get(period[i]), t0 - 0.5, t0 + 1.0, passer[i], by_player=True)
         if own is not None:
-            diag["passer_contact_dt"][i] = own - t0
+            diag["passer_contact_dt"][i] = own[0] - t0
         if not diag["release_dist_m"][i] <= params.release_match_m:
             continue  # misaligned release, or an unknown action start (NaN distance fails closed)
         c = _first_contact(contacts.get(period[i]), t0 + params.release_gap_s, t0 + params.path_cap_s, passer[i])
         t_end = c[0] if c is not None else t0 + params.path_cap_s
+        opponent, c_dist = False, np.nan
         if c is not None:
             ccx, ccy = (_L - c[1], _W - c[2]) if fl else (c[1], c[2])
+            opponent = _is_opponent(team_of.get(canonical_id(c[3])), acting_team[i])
+            c_dist = float(np.hypot(ccx - rx, ccy - ry))
             diag["first_contact_dt"][i] = c[0] - t0
-            diag["first_contact_is_opponent"][i] = _is_opponent(team_of.get(canonical_id(c[3])), acting_team[i])
-            diag["first_contact_dist_m"][i] = float(np.hypot(ccx - rx, ccy - ry))
+            diag["first_contact_is_opponent"][i] = opponent
+            diag["first_contact_dist_m"][i] = c_dist
         hi = int(np.searchsorted(t, t_end + 1e-9, side="right"))
         seg = slice(k, hi)
         px, py = bx[seg], by[seg]
@@ -240,9 +245,8 @@ def _cross_delivery_diagnostics(
         enters = bool(np.any(finite & (px >= _BOX_X) & (py >= _BOX_Y_LO) & (py <= _BOX_Y_HI)))
         blocked_in = False
         if not enters and c is not None:
-            cx, cy = (_L - c[1], _W - c[2]) if fl else (c[1], c[2])
-            opponent = _is_opponent(team_of.get(canonical_id(c[3])), acting_team[i])
-            if opponent and np.hypot(cx - rx, cy - ry) <= params.block_radius_m:
+            in_window = c[0] - t0 <= params.block_window_s  # a later first contact is not the block (spec r7 §6.3)
+            if opponent and in_window and c_dist <= params.block_radius_m:
                 w = int(np.searchsorted(t, t0 + params.direction_window_s + 1e-9, side="right"))
                 wx, wy = bx[k:w], by[k:w]
                 ok = np.isfinite(wx) & np.isfinite(wy)
@@ -340,19 +344,6 @@ def _nearest_frame(t: np.ndarray, t0: float) -> int:
     return j - 1 if t0 - t[j - 1] <= t[j] - t0 else j
 
 
-def _first_contact_by(c, t_lo: float, t_hi: float, player) -> float | None:
-    """The time of the first resolved contact in [t_lo, t_hi) by ``player`` (the passer's own kick)."""
-    if c is None:
-        return None
-    ct, _cx, _cy, cp = c
-    j = int(np.searchsorted(ct, t_lo, side="left"))
-    while j < len(ct) and ct[j] < t_hi:
-        if same_id(cp[j], player):
-            return float(ct[j])
-        j += 1
-    return None
-
-
 def _ball_by_period(frames: pd.DataFrame) -> dict:
     ball = frames.loc[frames["is_ball"].to_numpy(dtype=bool)]
     out = {}
@@ -392,14 +383,15 @@ def _contacts_by_period(contacts: pd.DataFrame) -> dict:
     }
 
 
-def _first_contact(c, t_lo: float, t_hi: float, passer) -> tuple | None:
-    """The first resolved contact in [t_lo, t_hi) by a player other than the passer."""
+def _first_contact(c, t_lo: float, t_hi: float, player, *, by_player: bool = False) -> tuple | None:
+    """The first resolved contact in [t_lo, t_hi) by a player other than ``player`` (by ``player`` itself when
+    ``by_player``: the passer's own kick), as (time, x, y, player_id)."""
     if c is None:
         return None
     ct, cx, cy, cp = c
     j = int(np.searchsorted(ct, t_lo, side="left"))
     while j < len(ct) and ct[j] < t_hi:
-        if not same_id(cp[j], passer):
+        if same_id(cp[j], player) == by_player:
             return float(ct[j]), float(cx[j]), float(cy[j]), cp[j]
         j += 1
     return None

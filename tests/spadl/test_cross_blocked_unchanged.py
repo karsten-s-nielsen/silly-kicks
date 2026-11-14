@@ -33,15 +33,15 @@ def _statsbomb_real() -> pd.DataFrame:
 
 
 def _gradientsports_scene() -> pd.DataFrame:
-    from tests.spadl._delivery_scenes import _gradientsports, _gradientsports_run
+    from tests.spadl._delivery_scenes import _RUNS, _gradientsports
 
-    return _gradientsports_run(_gradientsports(blocked=True))
+    return _RUNS["gradientsports"](_gradientsports(blocked=True))
 
 
 def _wyscout_scene() -> pd.DataFrame:
-    from tests.spadl._delivery_scenes import _wyscout, _wyscout_run
+    from tests.spadl._delivery_scenes import _RUNS, _wyscout
 
-    return _wyscout_run(_wyscout(blocked=True))
+    return _RUNS["wyscout"](_wyscout(blocked=True))
 
 
 RUNS = {

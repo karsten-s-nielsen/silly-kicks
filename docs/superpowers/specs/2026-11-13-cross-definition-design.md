@@ -1,6 +1,6 @@
 # One cross definition for every provider — design
 
-- **Status:** r6 (2026-11-13). The owner approved r1 and decisions 7–10. r2 answered review B round 1; r3 answered review A round 1; r4 answered CD-SB-08, CD-SPEC-08 and CD-SPEC-09; r5 answered CD-SB-09 and CD-SB-10; r6 answers CD-SPEC-10.
+- **Status:** r7 (2026-11-14). The owner approved r1 and decisions 7–10. r2 answered review B round 1; r3 answered review A round 1; r4 answered CD-SB-08, CD-SPEC-08 and CD-SPEC-09; r5 answered CD-SB-09 and CD-SB-10; r6 answers CD-SPEC-10. r7 is the calibration amendment (Section 7.4, owner rulings of 2026-11-14), made after the first DGX runs on commit 1.
 - **Branch:** `feat/cross-definition`, off `main` `0cc07e6c` (owner decision).
 - **ADR:** ADR-133, written in this cycle.
 - **Origin:** handoff from the Part Deux session (xshot187 refit, PR #305).
@@ -99,7 +99,7 @@ One shared function in `silly_kicks/spadl/base.py` re-types the open-play pass-c
 
 1. **Open play.** Its type is `pass` or `cross` before re-typing. Corners and free kicks follow 6.1b; `throw_in` and `goalkick` do not change.
 2. **Wide start.** `start_y < W/2 − penalty_area_half_width` or `start_y > W/2 + penalty_area_half_width`. This uses `spadlconfig.penalty_area_half_width` (20.16 m) and `field_width`.
-3. **Advanced start.** `start_x >= CROSS_START_X`. The value is chosen once by the rule in Section 7.2, from {52.5, 60, 65, 70}.
+3. **Advanced start.** `start_x >= CROSS_START_X`. The value is chosen once by the rule in Section 7.2, from {52.5, 60, 65, 70, 75, 80} (r7).
 4. **Delivery into the box.** The start of the next on-ball action in the same period is inside the penalty area, in the passer's frame:
    - The next on-ball action is the next row in the converter's chronological order that is not `non_action` or `foul`. Rows that share a timestamp keep the converter's own tie order: `sort_actions_chronologically` (stable mergesort, ADR-065) in most converters, and the `sort_values` at `skillcorner.py:545` for SkillCorner.
    - **Restarts.** When the next on-ball action is a restart — a type in `_SET_PIECE_RESTART_TYPE_NAMES` (`spadl/utils.py:22`), `shot_penalty` or `shot_freekick` — the ball left play or the game stopped, and the event data has no delivery end. Condition 4 then fails, so the row is a `pass` (decision 7). The tracking layer decides the attempt from the ball path.
@@ -205,7 +205,8 @@ Set-piece rows have no zone condition: a corner starts wide by definition, and a
 
 The test is `True` when either holds:
 - the ball path enters the penalty area, or
-- the first contact is by an opponent (a block), within `BLOCK_RADIUS_M` of the release, and the initial ball direction points into the penalty area. The initial direction is the mean ball velocity over the first `DIRECTION_WINDOW_S` after the release.
+- the first contact is by an opponent (a block), within `BLOCK_RADIUS_M` of the release and within `BLOCK_WINDOW_S` (1.0 s) after the release, and the initial ball direction points into the penalty area. The initial direction is the mean ball velocity over the first `DIRECTION_WINDOW_S` after the release.
+- `BLOCK_WINDOW_S` (r7) is fixed, not calibrated, like the 4 s path cap. A block deflects the ball at once. At cross speeds of 15–25 m/s the ball travels 15–25 m in 1 s, so the window does not cap the radius. It excludes a first contact that comes after the ball has stopped or turned back, which is not the block. The author chose 1.0 s after seeing the run-3 contact times of the 49 GS blocked crosses (provisional parameters): 32 fall at 0.17–0.90 s, then nothing until 1.37 s (Section 7.4). The gap is not clean at the final parameters: on the run-2 rows within a 5.0 m release match (n = 59, review A CD-IMPL-09) there are contacts at 1.03, 1.10 and 1.17 s. The 95th percentile does not depend much on the window there: 7.89, 7.71, 7.43 and 7.34 m at 0.9, 1.0, 1.2 and 1.5 s.
 
 All geometry is in the action-LTR frame (ADR-028), with the direction from the GoalMap (ADR-055).
 
@@ -220,7 +221,7 @@ Without tracking, two kinds of delivery cannot be seen as a cross:
 - a blocked cross, because the block ends the delivery outside the box;
 - a restart-ended delivery, because the event data has no end (decision 7).
 
-6.1 types both as `pass`. A restart-ended set piece is `_short` (6.1b). SkillCorner's event data also misses defenders' touches in the box, so the event rule finds only 43 % of its corner deliveries (decision 10). ADR-133 and the converter docstrings state these limits with the measured recall for each provider. The tracking layer covers all of them.
+6.1 types both as `pass`. A restart-ended set piece is `_short` (6.1b). SkillCorner's event data also misses defenders' touches in the box, so the event rule finds only 43 % of its corner deliveries (decision 10). ADR-133 and the `classify_deliveries` docstring state these limits once. Each converter docstring points to `classify_deliveries`, names its provider's own label and states that provider's measured recall; the SkillCorner docstring also names the missing in-box touches (owner, 2026-11-14 size audit). The tracking layer covers all of them.
 
 **TF-46 corners.** `corners/_identify.py:95` sets `corner_kind` from the SPADL type, over the existing domain `CORNER_KIND_VALUES = {"direct", "short", "unclear"}` (`corners/_columns.py:25`). The domain does not change. The decision order is:
 1. **Delivery.** When the actions carry `cross_attempt`, a corner is `"direct"` where `cross_attempt` is True and `"short"` where it is False. Where it is `<NA>`, or the column is absent, the SPADL type decides, as today (`corner_short` → `"short"`, else `"direct"`).
@@ -260,16 +261,18 @@ A new column `corner_kind_source` records what decided: `"tracking"` (step 1 fro
 - **Bravery and causal:** each bravery output and the causal opportunity selection keep their meaning under the re-typing (6.2), atomic path included.
 - **`cross_blocked` consumer:** the bravery block rate is the same before and after on a fixture where native crosses are re-typed.
 - **Columns:** `cross_native` tests for each provider, and SkillCorner `<NA>`.
-- **Enricher:** `cross_attempt` / `cross_height` tests for every row class of the 6.3 table, a blocked cross, a path without a contact (cap), partial ball coverage on both sides of `MIN_BALL_COVERAGE`, the `z_source == "estimated"` honest NaN, and orientation invariance.
+- **Enricher:** `cross_attempt` / `cross_height` tests for every row class of the 6.3 table, a blocked cross, a block contact on both sides of `BLOCK_WINDOW_S` (r7), a path without a contact (cap), partial ball coverage on both sides of `MIN_BALL_COVERAGE`, the `z_source == "estimated"` honest NaN, and orientation invariance.
+- **Calibration (r7):** each Section 7.4 rule on a toy corpus, including that the release match ignores the GS and SkillCorner tails, that the release-gap sample is the matched rows, that a late block contact leaves the block sample, and the fixed-point check.
 
 ### 7.2 Choosing `CROSS_START_X` (pre-declared)
 
-- For each candidate in {52.5, 60, 65, 70}, compute the F1 between the rule and `cross_native` among open-play passes for each vendor with a full native cross label:
+- For each candidate in {52.5, 60, 65, 70, 75, 80}, compute the F1 between the rule and `cross_native` among open-play passes for each vendor with a full native cross label:
   - StatsBomb open data (`pass.cross`);
   - the GS matches of the xshot187 corpus.
 - Choose the candidate with the highest mean F1, equal weight per vendor (decision 8). On a tie within 0.005, choose the larger value.
 - IDSSE is left out of the mean: its native label covers about 4 crosses per match. Its F1 is reported.
 - Record every vendor's F1 table in `docs/research/cross-definition/`. A disagreement between vendors is reported, not tuned away.
+- **r7 (owner ruling 2026-11-14):** 75 and 80 join the candidates. The r6 grid ended at 70, and the first DGX run picked 70 with F1 still rising at every step (StatsBomb 0.596 → 0.627, GS 0.435 → 0.449). A maximum at the edge of the grid does not show that the grid holds the optimum. 80 is still 8.5 m short of the penalty area (88.5).
 
 ### 7.3 Corpus evidence (DGX, full xshot187 corpus)
 
@@ -280,6 +283,47 @@ A new column `corner_kind_source` records what decided: `"tracking"` (step 1 fro
 - Report, per provider and set-piece kind, the restart-ended set pieces, the event rule's recall against `cross_attempt`, and the `corner_kind_source` split (decision 10).
 - Report, per provider and row class (open play in the cross zone, corner, free kick), the shares that are aligned by ELASTIC, unaligned but matched, misaligned (`<NA>`), and unanswerable for coverage. An xCross label or a `corner_kind` decided by tracking is only as good as these shares.
 - The audits in Section 5 and decision 10 used approximate path ends (the next action, or 4 s). The 7.3 numbers use the implemented path (first non-passer contact). ADR-133 and the CHANGELOG cite the 7.3 numbers.
+
+### 7.4 Calibrating `CrossDeliveryParams` (pre-declared, r7)
+
+**Why r7 changes the rules.** The plan's r3 rules took 95th percentiles over every ELASTIC-confident row (`elastic_confidence >= 0.5`), pooled with equal weight per provider. Run 3 on commit 1 `4490016c` (line 70, provisional parameters) gave `release_match_m` 15.23 m and `block_radius_m` 20.43 m. Both measure alignment and detection error, not football:
+
+| Sample (run 3, line 70) | Median | 95th percentile |
+|---|---|---|
+| ELASTIC release-to-start distance, IDSSE | 1.6 m | 5.0 m |
+| the same, Gradient Sports | 2.0 m | 21.0 m |
+| the same, SkillCorner | 2.5 m | 15.9 m |
+| GS blocked crosses, opponent first contact (n = 49): distance from the release | 4.05 m | 20.43 m |
+| the same: time after the release | 0.63 s | 3.30 s |
+
+Of those 49 contacts, 32 come 0.17–0.90 s after the release; the next comes at 1.37 s.
+
+With the r3 values, a row whose ball is 15 m from the event start counts as matched, and an opponent touch 20 m away counts as a block. Run 2 used the r3 values of run 1 (14.60 m, 20.43 m, 0.2002 s) at line 70: there the IDSSE blocked share of attempts is 22 %, against 8 % in run 3 with the provisional parameters. xCross label v2 reads `cross_attempt`, so these values would flow into training labels. The owner ruled (2026-11-14) to replace the rules, not to adopt the values.
+
+**The rules.** Every sample is the open-play and set-piece rows to which `cross_attempt` applies, at the chosen start line.
+
+| Field | Rule |
+|---|---|
+| `release_match_m` | the 95th percentile of `release_dist_m` over the IDSSE ELASTIC-confident rows. IDSSE is the clean-sync reference by measurement: the three medians are close (1.6, 2.0 and 2.5 m), but only IDSSE has no long tail (95th percentile 5.0 m, against 21 m for GS and 16 m for SkillCorner). The GS and SkillCorner 95th percentiles are reported, not used. |
+| `release_gap_s` | the 95th percentile of `passer_contact_dt`, pooled with equal weight per provider, over the ELASTIC-confident rows whose `release_dist_m` is at most `release_match_m`. Floor: one frame at the highest provider frame rate. |
+| `block_radius_m` | the 95th percentile of `first_contact_dist_m` over the GS native crosses with `cross_blocked == True` whose first contact is an opponent within `BLOCK_WINDOW_S` of the release. Only GS carries a known `cross_blocked` in the corpus; the memo says so. |
+| `direction_window_s` | two frames at the lowest provider frame rate (unchanged). |
+| `min_ball_coverage` | 0.8, unless more than 20 % of a provider's rows fail it; then the owner decides (unchanged). |
+| `block_window_s`, `path_cap_s` | fixed at 1.0 s and 4.0 s, reported only. |
+
+**Owner triggers (r7, review B R7-B-02).** The report flags `release_match_owner_decision_needed`, and the owner decides before the runs go on, when either holds:
+- the IDSSE sample has fewer than 200 ELASTIC-confident rows with a finite release distance, which is the percentile's own sample (run 3: 766 rows, all 766 finite);
+- the release match turns more than 20 % of a provider's ELASTIC-confident rows with a finite release distance into `<NA>` (the same bar as `min_ball_coverage`). A row without a finite distance is `<NA>` whatever the match is, so it is not counted. The report gives this share per provider. On the run-3 rows, the IDSSE match (5.02 m) turns 25.3 % of GS and 29.5 % of SkillCorner finite-distance rows into `<NA>` (IDSSE 5.1 %), so the trigger is expected to fire in run 2 (review A C11).
+
+**The runs.** Each value depends only on what an earlier run fixed. All runs are on one clean commit, with the full corpus.
+1. Provisional parameters: the start line (Section 7.2).
+2. `--cross-start-x`: `release_match_m` and `release_gap_s`. No tracking parameter changes their samples.
+3. Plus those two: `block_radius_m`. Its sample exists only for rows that pass the final release match, and the contact search starts at the final release gap. The block window is measured from the release.
+4. Plus `--block-radius-m`: the 7.3 evidence. The report's `fixed_point` entry must be true for every calibrated field and for `cross_start_x` (the run used the selected start line; review A C9). If it is not, the run stops and the result goes to the owner. The `min_ball_coverage` owner trigger is read on this run, because the path end depends on the final release match and release gap.
+
+Each override is passed exactly as the earlier report prints it (full float precision). `fixed_point` compares with a relative tolerance of 1e-9, so a rounded override gives a false stop (review B R7-B-03).
+
+The ratio bar of Section 7.3 applies to run 4.
 
 ## 8. Non-goals and anti-goals
 
@@ -326,7 +370,8 @@ A new column `corner_kind_source` records what decided: `"tracking"` (step 1 fro
 - In the converters, the "next on-ball action" excludes `non_action` and `foul`. Synthetic dribbles do not exist at the run position.
 - `cross_native` is `<NA>` for SkillCorner, because its old rule was ours.
 - `cross_blocked` keeps its meaning and is keyed to `cross_native`.
-- `BLOCK_RADIUS_M`, `DIRECTION_WINDOW_S`, `RELEASE_GAP_S`, `MIN_BALL_COVERAGE`, `RELEASE_MATCH_M` and the 4 s path cap are set in the plan from the audit data.
+- `BLOCK_RADIUS_M`, `DIRECTION_WINDOW_S`, `RELEASE_GAP_S`, `MIN_BALL_COVERAGE` and `RELEASE_MATCH_M` are set by the Section 7.4 rules (r7). The 4 s path cap and the 1.0 s `BLOCK_WINDOW_S` are fixed.
+- r7: IDSSE alone calibrates the release match, because it is the one provider whose event-to-ball distance has no long tail (run 3). This is a measurement, not a claim about how each provider builds its events: SkillCorner's events are derived from its tracking, and they still show a 16 m tail. The IDSSE sample is smaller (7 matches; 766 rows).
 - The release is aligned through ELASTIC (TF-43), with a release-match check on every row.
 - The corpus agreement bar is a ratio of 1.5.
 - Causal opportunities select by `xcross_label_version`.

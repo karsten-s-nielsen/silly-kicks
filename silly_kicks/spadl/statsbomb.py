@@ -170,12 +170,9 @@ def convert_to_actions(
 
     Notes
     -----
-    Crosses and set-piece deliveries follow one geometric rule for every provider
-    (:func:`silly_kicks.spadl.base.classify_deliveries`, ADR-133). StatsBomb's own label
-    (``pass.cross``, ``pass.height`` on set pieces) is kept in ``cross_native``. Event-only limits:
-    a blocked cross and a delivery followed by a restart are typed ``pass``, and a restart-ended set
-    piece ``*_short``; the tracking layer (``add_cross_deliveries``) decides them from the ball path.
-    Measured recall of the event rule against ``cross_attempt``: <recall: Task 10>.
+    Deliveries follow :func:`silly_kicks.spadl.base.classify_deliveries` and its event-only limits (ADR-133).
+    StatsBomb's own label (``pass.cross``, ``pass.height`` on set pieces) is kept in ``cross_native``.
+    Event-rule recall against ``cross_attempt``: <recall: Task 10>.
 
     Examples
     --------
