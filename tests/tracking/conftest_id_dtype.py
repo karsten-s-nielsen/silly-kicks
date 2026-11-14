@@ -210,8 +210,45 @@ def _defensive_credit(a, f):
     return F.add_defensive_credit(a, f, xg_column="xg", xt=_xt())
 
 
+def _id_like(values: pd.Series, ref: pd.Series) -> pd.Series:
+    """``values`` (numeric ids, NA allowed) re-spelled in ``ref``'s id dtype: category, boxed string or numeric."""
+    s = pd.Series(values.to_numpy(), index=values.index).astype("Int64")
+    if isinstance(ref.dtype, pd.CategoricalDtype):
+        return s.astype("category")
+    if ref.dtype == object:
+        return s.astype("string").astype("object")
+    return s.astype(ref.dtype)
+
+
+def _cross_deliveries(a, f):
+    """add_cross_deliveries on its own cross scene, with every id column spelled in the SWEPT dtype.
+
+    The shared fixture has no wide delivery and no frames after the action, so a bare entry would compare all-<NA>
+    to all-<NA> (vacuous). The scene has two team-5 crosses from opposite wings, each deflected 4.3 m after the
+    release and pushed back out. Action 0 is deflected by an OPPONENT (player 20, team 6): a block heading into the
+    box, so ``cross_attempt`` is True. Action 1 is deflected by a TEAMMATE (player 12, team 5): the path ends
+    outside the box, so it is False. A team comparison that breaks across dtypes flips one of them; a passer
+    comparison that breaks makes the passer's own touch the first contact. The ids are re-spelled from the swept
+    ``a``/``f`` columns, so the scene stays on the gate's permutation axis.
+    """
+    from tests.tracking.test_cross_delivery import _actions, _frames, _path
+
+    d0, d1 = (82.0, 8.8), (82.0, 59.2)
+    ball = _path((1.0, 1.25, (80.0, 5.0), d0), (1.25, 1.75, d0, (70.0, 2.0))) + _path(
+        (11.0, 11.25, (80.0, 63.0), d1), (11.25, 11.75, d1, (70.0, 66.0))
+    )
+    players = {10: (5, 80.0, 5.0), 13: (5, 80.0, 63.0), 20: (6, *d0), 12: (5, *d1)}
+    scene_a = _actions([("pass", 1.0, 80.0, 5.0, 5, 10), ("pass", 11.0, 80.0, 63.0, 5, 13)])
+    scene_f = _frames(ball, players, ltr_team=5)
+    for col in ("team_id", "player_id"):
+        scene_a[col] = _id_like(scene_a[col], a[col])
+        scene_f[col] = _id_like(scene_f[col], f[col])
+    return F.add_cross_deliveries(scene_a, scene_f)
+
+
 AGGREGATORS = [
     _a(F.add_action_context, "add_action_context"),
+    _named(lambda a, f, home_team_id: _cross_deliveries(a, f), "add_cross_deliveries"),
     _a(F.add_actor_pre_window, "add_actor_pre_window"),
     _named(lambda a, f, home_team_id: _das(a, f), "add_das"),
     _named(lambda a, f, home_team_id: _defensive_credit(a, f), "add_defensive_credit"),

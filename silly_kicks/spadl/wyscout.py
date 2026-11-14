@@ -9,6 +9,8 @@ import pandas as pd
 from .base import (
     _add_dribbles,
     _derive_end_coordinates,
+    _native_cross_flag,
+    classify_deliveries,
     sort_actions_chronologically,
 )
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr, validate_input_convention
@@ -253,6 +255,15 @@ def convert_to_actions(
     report : ConversionReport
         Audit trail with event counts, mapped/excluded/unrecognized breakdowns.
 
+    Notes
+    -----
+    Crosses and set-piece deliveries follow one geometric rule for every provider
+    (:func:`silly_kicks.spadl.base.classify_deliveries`, ADR-133). Wyscout's own label (subtype 80,
+    the free-kick cross subtype) is kept in ``cross_native``. Event-only limits: a blocked cross and a
+    delivery followed by a restart are typed ``pass``, and a restart-ended set piece ``*_short``; the
+    tracking layer (``add_cross_deliveries``) decides them from the ball path. Measured recall of the
+    event rule against ``cross_attempt``: <recall: Task 10>.
+
     Examples
     --------
     Preserve a bronze-passthrough field (e.g. ``competition_name``) alongside
@@ -332,6 +343,10 @@ def convert_to_actions(
         input_convention=POSSESSION_PERSPECTIVE,
         home_team_id=home_team_id,
     )
+    # One delivery rule for every provider (ADR-133): the native subtype 80 / free-kick-cross typing moves to
+    # cross_native; the SPADL type comes from the geometry.
+    actions["cross_native"] = _native_cross_flag(actions["type_id"])
+    actions = classify_deliveries(actions)
     actions = _derive_end_coordinates(actions)
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)

@@ -670,6 +670,24 @@ def _run_ball_contacts():
     return actions, F.add_ball_contacts(actions, frames)
 
 
+def _cross_delivery_scene():
+    """TF-86 (ADR-133): three cross-zone passes -- into the box high, staying wide, into the box low -- so
+    ``cross_attempt`` takes True and False and ``cross_height`` takes aerial and ground."""
+    from tests.tracking.test_cross_delivery import _actions, _frames, _path
+
+    ball = (
+        _path((1.0, 2.0, (80.0, 5.0), (95.0, 34.0)), z=2.5)
+        + _path((6.0, 7.0, (80.0, 5.0), (100.0, 3.0)))
+        + _path((11.0, 12.0, (80.0, 5.0), (95.0, 34.0)), z=0.3)
+    )
+    return _actions([("pass", 1.0, 80.0, 5.0), ("pass", 6.0, 80.0, 5.0), ("pass", 11.0, 80.0, 5.0)]), _frames(ball)
+
+
+def _run_cross_deliveries():
+    actions, frames = _cross_delivery_scene()
+    return actions, F.add_cross_deliveries(actions, frames)
+
+
 # NOTE: ``add_defending_gk_player_id`` was wired here until the keeper-identity resolver was promoted
 # to the public ``silly_kicks.keeper_identity`` module (breaking move, no shim). It left
 # ``tracking.__all__``, so it is no longer part of this gate's surface (``test_meta_surface_complete``
@@ -680,6 +698,7 @@ ENTRIES: dict[str, object] = {
     "add_visible_area_coverage": _run_visible_area_coverage,
     "add_actor_pre_window": _std(F.add_actor_pre_window),
     "add_ball_contacts": _run_ball_contacts,
+    "add_cross_deliveries": _run_cross_deliveries,
     # detailed=True is REQUIRED here, not incidental: `max_single_defender_player_id` is gated to
     # the exact path (the cheap path's argmax measured 0.157 agreement, so it never names anyone),
     # and under the default `detailed=False` that column is 100% NA -- which this gate correctly
@@ -790,6 +809,14 @@ def test_ball_contact_fixture_has_resolvable_contacts():
     assert {bool(v) for v in aerials.unique()} == {True, False}, (
         "is_aerial must be exercised both-sided (one aerial contact, one ground)"
     )
+
+
+def test_cross_delivery_fixture_is_in_domain():
+    """ADR-056 precondition for the add_cross_deliveries liveness teeth: the scene must yield an attempt and a
+    non-attempt, and an aerial and a ground attempt (otherwise a dead column could pass as constant-free)."""
+    _a, out = _run_cross_deliveries()
+    assert out["cross_attempt"].tolist() == [True, False, True]
+    assert out["cross_height"].tolist()[0] == "aerial" and out["cross_height"].tolist()[2] == "ground"
 
 
 def test_meta_surface_complete():

@@ -9,7 +9,13 @@ import pandas as pd
 
 from . import _sb_coordinates as _sb_coords
 from . import config as spadlconfig
-from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
+from .base import (
+    _add_dribbles,
+    _derive_end_coordinates,
+    _native_cross_flag,
+    classify_deliveries,
+    sort_actions_chronologically,
+)
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
 from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -162,6 +168,15 @@ def convert_to_actions(
         or if any ``preserve_native`` field is missing from ``events`` or
         overlaps with the SPADL schema.
 
+    Notes
+    -----
+    Crosses and set-piece deliveries follow one geometric rule for every provider
+    (:func:`silly_kicks.spadl.base.classify_deliveries`, ADR-133). StatsBomb's own label
+    (``pass.cross``, ``pass.height`` on set pieces) is kept in ``cross_native``. Event-only limits:
+    a blocked cross and a delivery followed by a restart are typed ``pass``, and a restart-ended set
+    piece ``*_short``; the tracking layer (``add_cross_deliveries``) decides them from the ball path.
+    Measured recall of the event rule against ``cross_attempt``: <recall: Task 10>.
+
     Examples
     --------
     Preserve StatsBomb's native possession sequence number alongside the
@@ -295,6 +310,10 @@ def convert_to_actions(
         input_convention=POSSESSION_PERSPECTIVE,
         home_team_id=home_team_id,
     )
+    # One delivery rule for every provider (ADR-133): the native pass.cross / pass.height typing moves to
+    # cross_native, and the SPADL type comes from the geometry. Canonical LTR, before _add_dribbles.
+    actions["cross_native"] = _native_cross_flag(actions["type_id"])
+    actions = classify_deliveries(actions)
     actions = _derive_end_coordinates(actions)
 
     actions["action_id"] = range(len(actions))

@@ -145,3 +145,24 @@ def test_int64_id_frames_resolve_carrier_and_gk_features():
     ]
     for c in must_resolve:
         assert opp[c].notna().all(), f"{c} must resolve (not NaN) on Int64-id frames"
+
+
+def test_causal_selects_by_label_version():
+    # ADR-133: an xCross model trained on label v2 marks a treatment by the tracking attempt (cross_attempt),
+    # a v1 model (no key) by the SPADL type, exactly as it was trained.
+    assert O.xcross_config({"cross_types": ["cross"]}).treatment_from_cross_attempt is False
+    assert O.xcross_config({"cross_types": ["cross"], "xcross_label_version": 2}).treatment_from_cross_attempt is True
+    a = pd.DataFrame(
+        {
+            "game_id": [1, 1, 1],
+            "period_id": [1, 1, 1],
+            "team_id": [7, 7, 7],
+            "time_seconds": [1.0, 2.0, 3.0],
+            "type_id": [_c.actiontype_id["pass"], _c.actiontype_id["cross"], _c.actiontype_id["cross"]],
+            "cross_attempt": pd.array([True, False, pd.NA], dtype="boolean"),
+        }
+    )
+    v1 = O._team_period_action_times(a, 1, 1, 7, ("cross",))
+    v2 = O._team_period_action_times(a, 1, 1, 7, ("cross",), from_cross_attempt=True)
+    assert list(v1) == [2.0, 3.0]
+    assert list(v2) == [1.0]

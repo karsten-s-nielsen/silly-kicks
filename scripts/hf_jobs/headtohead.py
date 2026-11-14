@@ -669,9 +669,13 @@ def _owner_eval_xshot(shards, home, actions_dir, feature_set: str = "faithful") 
 
 
 def _owner_eval_xcross(shards, home, actions_dir, feature_set: str = "faithful") -> dict:
+    from silly_kicks.tracking._cross_delivery import _ensure_cross_attempts
     from silly_kicks.tracking._xcross_attempt import prepare_xcross_training_data
 
-    return _owner_eval_classifier(shards, home, actions_dir, prepare_xcross_training_data, feature_set)
+    def _prepare_v2(frames, actions, **kw):  # ADR-133 label v2: the actions carry the tracking cross attempt
+        return prepare_xcross_training_data(frames, _ensure_cross_attempts(actions, frames), **kw)
+
+    return _owner_eval_classifier(shards, home, actions_dir, _prepare_v2, feature_set)
 
 
 def _owner_eval_ghost_outfield(shards, home, actions_dir) -> dict:

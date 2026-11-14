@@ -304,7 +304,12 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: are continuous-only / GI-only -> both-NaN -> no_signal -> not_exercised on the SB360 freeze-frame
 #: fixture, across all four legs (velocity + three visibility rosters) = 4 columns x 4 = 16. The four
 #: window-timing columns are frame-blind -> `identical`/`works`, not counted.
-NOT_EXERCISED_BUDGET = 75
+#:
+#: 75 -> 79 (+4): TF-86 `add_cross_deliveries` (ADR-133). `cross_height` needs a cross attempt judged from a
+#: ball trajectory; a single SB360 freeze frame has none, so the attempt is unknown and `cross_height` is
+#: both-NaN -> no_signal -> not_exercised on all four legs = 1 column x 4. `cross_attempt` is partial_nan ->
+#: honest_nan (unknown on the freeze-frame leg where the continuous leg answers), not counted.
+NOT_EXERCISED_BUDGET = 79
 
 
 def _entry(

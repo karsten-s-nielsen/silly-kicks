@@ -245,6 +245,11 @@ ARTIFACT_DRIVERS = (
     # writes <--out>/numerics_noflip.json (commit 2 copies it in) -- the verdict that decides whether the
     # numerics ship, over external data, so provenance.
     "validate_coordination_numerics",
+    # ADR-133. The cross-definition measurement: walks the staged xshot187 flat dataset and the staged sb_open
+    # open data and writes docs/research/cross-definition/cross_definition.json (the selected start line, the
+    # CrossDeliveryParams calibration and the per-provider ratio bar) -- the numbers that fix the shipped defaults,
+    # over external data, so provenance.
+    "build_cross_definition",
 )
 
 

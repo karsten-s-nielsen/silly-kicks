@@ -135,3 +135,57 @@ def test_pure_does_not_mutate_input():
     before = acts.copy(deep=True)
     identify_corners(acts, provider="sportec")
     pd.testing.assert_frame_equal(acts, before)
+
+
+# --- ADR-133 decision 10: tracking decides the corner delivery when cross_attempt is present ---
+
+
+def _with_attempt(type_id, attempt):
+    acts = _actions([{"type_id": type_id, "start_x": 104.5, "start_y": 0.2, "time_seconds": 100.0}])
+    acts["cross_attempt"] = pd.array([attempt], dtype="boolean")
+    return acts
+
+
+def test_kind_from_tracking():
+    out = identify_corners(_with_attempt(_CORNER_SHORT, True), provider="sportec")
+    assert (out.iloc[0]["corner_kind"], out.iloc[0]["corner_kind_source"]) == ("direct", "tracking")
+    out = identify_corners(_with_attempt(_CORNER_CROSSED, False), provider="sportec")
+    assert (out.iloc[0]["corner_kind"], out.iloc[0]["corner_kind_source"]) == ("short", "tracking")
+
+
+def test_kind_fallback_to_type():
+    out = identify_corners(_with_attempt(_CORNER_SHORT, pd.NA), provider="sportec")
+    assert (out.iloc[0]["corner_kind"], out.iloc[0]["corner_kind_source"]) == ("short", "event")
+    out = identify_corners(_with_attempt(_CORNER_CROSSED, pd.NA), provider="sportec")
+    assert (out.iloc[0]["corner_kind"], out.iloc[0]["corner_kind_source"]) == ("direct", "event")
+
+
+def test_kind_without_column():
+    acts = _actions([{"type_id": _CORNER_CROSSED, "start_x": 104.5, "start_y": 0.2}])
+    out = identify_corners(acts, provider="sportec")
+    assert (out.iloc[0]["corner_kind"], out.iloc[0]["corner_kind_source"]) == ("direct", "event")
+
+
+def test_gi_wins_over_tracking():
+    acts = _with_attempt(_CORNER_SHORT, True)
+    gi = pd.DataFrame(
+        {
+            "game_id": ["g1"],
+            "period_id": [1],
+            "time_seconds": [100.0],
+            "game_interruption_before": ["corner_for"],
+            "start_type": ["pass_reception"],
+        }
+    )
+    out = identify_corners(acts, provider="skillcorner", gi=gi)
+    assert (out.iloc[0]["corner_kind"], out.iloc[0]["corner_kind_source"]) == ("unclear", "gi")
+
+
+def test_kind_source_vocabulary_closed():
+    from silly_kicks.corners._columns import CORNER_KIND_SOURCE_VALUES
+
+    acts = pd.concat([_with_attempt(_CORNER_SHORT, True), _with_attempt(_CORNER_SHORT, pd.NA)], ignore_index=True)
+    acts["time_seconds"] = [100.0, 200.0]
+    out = identify_corners(acts, provider="sportec")
+    assert set(out["corner_kind_source"].astype(str)) <= CORNER_KIND_SOURCE_VALUES
+    assert list(out["corner_kind_source"].cat.categories) == sorted(CORNER_KIND_SOURCE_VALUES)

@@ -20,7 +20,13 @@ from scripts._toy_corpora import TOY_GENERATION
 
 
 def _write_game(
-    root: Path, *, home_map: dict | None, game_id: str = "g7", stoppage: bool = True, provider: str = "skillcorner"
+    root: Path,
+    *,
+    home_map: dict | None,
+    game_id: str = "g7",
+    stoppage: bool = True,
+    provider: str = "skillcorner",
+    staged_attempt: bool = True,
 ) -> None:
     shards = root / "shards" / TOY_GENERATION
     shards.mkdir(parents=True, exist_ok=True)
@@ -29,6 +35,9 @@ def _write_game(
     frames = pd.DataFrame(
         {
             "game_id": [game_id, game_id, game_id],
+            "period_id": [1, 1, 1],
+            "frame_id": [1, 1, 1],
+            "time_seconds": [0.0, 0.0, 0.0],
             "is_ball": [True, False, False],
             "team_id": [pd.NA, "AWAY", "HOME"],
             "source_provider": [provider] * 3,
@@ -39,9 +48,10 @@ def _write_game(
     if stoppage:  # ADR-130: a dataset staged with the stoppage columns (tc3-frames-4)
         frames = frames.assign(stoppage_state="live", stoppage_source="events")
     frames.to_parquet(shards / f"{provider}__{game_id}.parquet")
-    pd.DataFrame({"game_id": [game_id], "type_name": ["cross"]}).to_parquet(
-        root / "_actions" / f"{provider}__{game_id}.parquet"
-    )
+    actions = pd.DataFrame({"game_id": [game_id], "type_name": ["cross"], "type_id": [1]})  # 1 == cross
+    if staged_attempt:  # ADR-133: a corpus staged with the tracking cross attempt
+        actions["cross_attempt"] = pd.array([pd.NA], dtype="boolean")
+    actions.to_parquet(root / "_actions" / f"{provider}__{game_id}.parquet")
     if home_map is not None:
         (root / "home_teams.json").write_text(json.dumps(home_map), encoding="utf-8")
 
@@ -112,3 +122,52 @@ def test_the_probe_dataset_skips_dot_directories(tmp_path):
     )
     refs = xc._probe_refs(ctx)
     assert [r.mid for r in refs] == ["gradientsports-200", "gradientsports-201"]
+
+
+def _label_scene() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Three open-play rows with a staged tracking verdict: a SPADL ``pass`` that IS an attempt (a blocked cross),
+    a SPADL ``cross`` that is NOT (the ball never reached the box), and one the frames could not judge."""
+    from silly_kicks.spadl import config as spc
+
+    actions = pd.DataFrame(
+        {
+            "game_id": "g",
+            "period_id": 1,
+            "team_id": "A",
+            "time_seconds": [1.0, 5.0, 9.0],
+            "type_id": [spc.actiontype_id["pass"], spc.actiontype_id["cross"], spc.actiontype_id["cross"]],
+            "cross_attempt": pd.array([True, False, pd.NA], dtype="boolean"),
+        }
+    )
+    frames = pd.DataFrame({"period_id": [1, 1], "frame_id": [1, 2], "time_seconds": [0.0, 10.0]})
+    return actions, frames
+
+
+def test_integrity_counters_count_the_label_v2_events():
+    # ADR-126 integrity band: n_events counts the label's own events. Under label v2 (ADR-133) those are the
+    # tracking cross attempts, not the SPADL cross type.
+    actions, frames = _label_scene()
+    assert xc._extract_counters(("skillcorner", "g", actions, frames, "A"), None)["n_events"] == 1
+
+
+def test_stoppage_label_times_are_the_label_v2_events():
+    actions, _frames = _label_scene()
+    assert xc._label_times(actions).to_dict("list") == {"period_id": [1], "time_seconds": [1.0]}
+
+
+def test_the_loader_enriches_once_per_match(tmp_path, monkeypatch):
+    # C8: on a corpus staged WITHOUT cross_attempt, the loader computes it once, and the work unit and the
+    # integrity counters both read that item instead of computing it again.
+    import silly_kicks.tracking._cross_delivery as cd
+
+    calls = []
+
+    def fake(actions, frames, **_kw):
+        calls.append(1)
+        return actions.assign(cross_attempt=pd.array([pd.NA] * len(actions), dtype="boolean"))
+
+    monkeypatch.setattr(cd, "add_cross_deliveries", fake)
+    item = _loaded(tmp_path, None, staged_attempt=False)
+    assert calls == [1] and "cross_attempt" in item[2].columns
+    xc._extract_counters(item, None)
+    assert calls == [1]

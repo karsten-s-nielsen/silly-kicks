@@ -120,6 +120,8 @@ def xcross_behind_line_match():
             "time_seconds": [0.9],
             "type_id": [spc.actiontype_id["cross"]],
             "result_id": [spc.result_id["success"]],
+            # ADR-133 label v2: the staged tracking attempt (as a staged dataset carries it) labels the frames.
+            "cross_attempt": pd.array([True], dtype="boolean"),
         }
     )
     return frames, actions

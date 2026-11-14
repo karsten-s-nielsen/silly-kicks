@@ -227,9 +227,12 @@ def _xcross_flip(frames: pd.DataFrame, actions, home_team_id, margin_m: float) -
     same row-set by construction -- no independent reconstruction to drift.
     """
     from silly_kicks.tracking import prepare_xcross_training_data
+    from silly_kicks.tracking._cross_delivery import _ensure_cross_attempts
 
     if actions is None:
         raise ValueError("xcross needs `actions` (cross opportunities); pass the match's SPADL actions")
+    # ADR-133 label v2: prepare reads the tracking cross attempt (frames with an unknown label leave the set).
+    actions = _ensure_cross_attempts(actions, frames)
     feats, _y, _g, meta = prepare_xcross_training_data(frames, actions, home_team_id=home_team_id, return_meta=True)
     if not len(feats):
         return _summarize_flip(np.array([]), np.array([]), [], margin_m)

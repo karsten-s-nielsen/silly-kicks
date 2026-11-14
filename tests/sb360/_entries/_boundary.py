@@ -528,6 +528,7 @@ def _call_corner_windows(actions, frames, links, home_team_id):
                 "kick_x": 104.5,
                 "kick_y": 1.0,
                 "corner_kind": "direct",
+                "corner_kind_source": "event",  # ADR-133: a SPADL-synthesized anchor, typed by the event layer
                 "corner_source": "spadl_corner",
             }
         ]

@@ -68,6 +68,7 @@ def _match_with_behind_line_defender():
             "time_seconds": [0.9],
             "type_id": [spc.actiontype_id["cross"]],
             "result_id": [spc.result_id["success"]],
+            "cross_attempt": pd.array([True], dtype="boolean"),  # ADR-133 label v2 (staged tracking attempt)
         }
     )
     return frames, actions

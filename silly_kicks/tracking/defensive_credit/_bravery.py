@@ -14,10 +14,12 @@ from silly_kicks.id_compat import same_id
 from silly_kicks.spadl import config as spadlconfig
 
 _SHOT = spadlconfig.actiontype_id["shot"]
-_CROSS = spadlconfig.actiontype_id["cross"]  # open-play cross
-_CORNER_CROSSED = spadlconfig.actiontype_id["corner_crossed"]
-_FREEKICK_CROSSED = spadlconfig.actiontype_id["freekick_crossed"]
-_SET_PIECE_CROSSES = frozenset({_CORNER_CROSSED, _FREEKICK_CROSSED})
+# ADR-133: a cross faced is the PROVIDER's own cross (cross_native True), not the geometric SPADL type, so the
+# block rate keeps its meaning and its denominator. The type only says open play vs set piece.
+_OPEN_PLAY = frozenset({spadlconfig.actiontype_id["pass"], spadlconfig.actiontype_id["cross"]})
+_SET_PIECE = frozenset(
+    spadlconfig.actiontype_id[t] for t in ("corner_crossed", "corner_short", "freekick_crossed", "freekick_short")
+)
 
 _COLS = [
     "game_id",
@@ -38,8 +40,17 @@ def compute_bravery(
     *,
     shot_blocked_column: str = "shot_blocked",
     cross_blocked_column: str = "cross_blocked",
+    cross_native_column: str = "cross_native",
 ) -> pd.DataFrame:
     """Per (game_id, defending team) bravery. The defending team is the OPPONENT of the actor.
+
+    A cross faced is the provider's own cross (``cross_native`` True, ADR-133): an open-play pass-class row
+    or a corner/free-kick row. The geometric SPADL type does not decide it, so re-typing never moves bravery.
+
+    Raises
+    ------
+    ValueError
+        If ``cross_native_column`` is absent (SPADL produced before ADR-133: re-convert first).
 
     Examples
     --------
@@ -49,10 +60,21 @@ def compute_bravery(
         bravery[["team_id", "bravery_pct_known_domain", "n_set_piece_crosses_faced"]]
     """
     a = actions
-    is_shot = a["type_id"] == _SHOT
-    is_open_cross = a["type_id"] == _CROSS
-    is_set_cross = a["type_id"].isin(_SET_PIECE_CROSSES)
-    final = a[is_shot | is_open_cross | is_set_cross]
+    if cross_native_column not in a.columns:
+        raise ValueError(
+            f"compute_bravery: column {cross_native_column!r} is absent. Bravery counts the provider's own "
+            f"crosses (ADR-133); re-convert the actions with silly-kicks >= 4.144 to get it."
+        )
+    native = a[cross_native_column].fillna(False).astype(bool)
+    kind = pd.Series(
+        np.select(
+            [a["type_id"] == _SHOT, a["type_id"].isin(_OPEN_PLAY) & native, a["type_id"].isin(_SET_PIECE) & native],
+            ["shot", "open", "set"],
+            default="",
+        ),
+        index=a.index,
+    )
+    final = a.assign(_bravery_kind=kind)[kind != ""]
     if final.empty:
         return pd.DataFrame({c: pd.Series([], dtype="float64" if "bravery" in c else "object") for c in _COLS})
 
@@ -60,12 +82,12 @@ def compute_bravery(
     for (game_id, actor_team), g in final.groupby(["game_id", "team_id"], dropna=True):
         # the DEFENDING team faced these actor_team final actions (two-team match assumption)
         defending_team = _opponent_team(a, game_id, actor_team)
-        n_shots = int((g["type_id"] == _SHOT).sum())
-        n_open = int((g["type_id"] == _CROSS).sum())
-        n_set = int(g["type_id"].isin(_SET_PIECE_CROSSES).sum())
+        n_shots = int((g["_bravery_kind"] == "shot").sum())
+        n_open = int((g["_bravery_kind"] == "open").sum())
+        n_set = int((g["_bravery_kind"] == "set").sum())
 
-        b_shots = _rate(g, _SHOT, shot_blocked_column)
-        b_open = _rate(g, _CROSS, cross_blocked_column)
+        b_shots = _rate(g, "shot", shot_blocked_column)
+        b_open = _rate(g, "open", cross_blocked_column)
         b_set = np.nan  # v1 column limitation -- always unknown
 
         known_blocked, known_faced = _known_domain(g, shot_blocked_column, cross_blocked_column)
@@ -96,8 +118,8 @@ def compute_bravery(
     return df
 
 
-def _rate(g, type_id, blocked_col):
-    sub = g[g["type_id"] == type_id]
+def _rate(g, kind, blocked_col):
+    sub = g[g["_bravery_kind"] == kind]
     if len(sub) == 0:
         return np.nan
     if blocked_col not in sub.columns or sub[blocked_col].isna().all():
@@ -110,8 +132,8 @@ def _known_domain(g, shot_col, cross_col):
     known_blocked = 0.0
     known_faced = 0
     any_known = False
-    for type_id, col in ((_SHOT, shot_col), (_CROSS, cross_col)):
-        sub = g[g["type_id"] == type_id]
+    for kind, col in (("shot", shot_col), ("open", cross_col)):
+        sub = g[g["_bravery_kind"] == kind]
         if len(sub) == 0:
             continue
         if col in sub.columns and not sub[col].isna().all():

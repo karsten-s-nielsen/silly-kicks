@@ -244,6 +244,7 @@ def _actions_frame() -> pd.DataFrame:
                 "bodypart_id": 0,
                 "shot_blocked": pd.NA,
                 "cross_blocked": pd.NA,
+                "cross_native": pd.NA,  # ADR-133 SPADL column
                 "type_name": tname,
             }
         )

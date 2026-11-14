@@ -231,6 +231,10 @@ _EXPECTED_DARK_COLUMNS = {
     ("corners.add_corner_windows", "first_possession_time"),
     ("corners.add_corner_windows", "winner_team_id"),
     ("corners.add_corner_windows", "winner_player_id"),
+    # TF-86 cross delivery (ADR-133): cross_height is set only on an attempt judged from a ball trajectory; a
+    # single SB360 freeze frame has none, so no attempt resolves and the column is both-NaN on every roster
+    # (no_signal -> not_exercised). cross_attempt is partial_nan -> honest_nan, so it is not dark.
+    ("add_cross_deliveries", "cross_height"),
 }
 
 

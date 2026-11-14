@@ -117,7 +117,14 @@ import pandas as pd
 
 from ..tracking import direction
 from . import config as spadlconfig
-from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
+from .base import (
+    _add_dribbles,
+    _derive_end_coordinates,
+    _native_cross_flag,
+    _synthesized_rows,
+    classify_deliveries,
+    sort_actions_chronologically,
+)
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
 from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -576,6 +583,16 @@ def convert_to_actions(
     report : ConversionReport
         Audit trail with mapped/excluded/unrecognized event-type counts.
 
+    Notes
+    -----
+    Crosses and set-piece deliveries follow one geometric rule for every provider
+    (:func:`silly_kicks.spadl.base.classify_deliveries`, ADR-133). The DFL label (``play_height``,
+    ``play_flat_cross``, the free-kick execution mode and the ADR-127 corner discriminator) is kept in
+    ``cross_native``. Event-only limits: a blocked cross and a delivery followed by a restart are typed
+    ``pass``, and a restart-ended set piece ``*_short``; the tracking layer (``add_cross_deliveries``)
+    decides them from the ball path. Measured recall of the event rule against ``cross_attempt``:
+    <recall: Task 10>.
+
     Examples
     --------
     Convert a Sportec/IDSSE bronze events DataFrame to SPADL -- preferred path::
@@ -663,6 +680,11 @@ def convert_to_actions(
             home_team_id=home_team_id,
             home_attacks_right_per_period=flips,
         )
+        # One delivery rule for every provider (ADR-133): play_height / play_flat_cross and the ADR-127 corner
+        # discriminator move to cross_native; the SPADL type comes from the geometry.
+        actions["cross_native"] = _native_cross_flag(actions["type_id"])
+        actions.loc[_synthesized_rows(actions), "cross_native"] = pd.NA  # a synthesized GK row has no DFL label
+        actions = classify_deliveries(actions)
         actions["action_id"] = range(len(actions))
         actions = _add_dribbles(actions)
 
@@ -1051,6 +1073,7 @@ def _build_raw_actions(
             "bodypart_id": bodypart_ids,
             "shot_blocked": _blocked_flag(n, applicable=is_shot, blocked=_shot_blocked_mask),
             "cross_blocked": _blocked_flag(n),
+            "cross_native": _blocked_flag(n),
             "tackle_winner_player_id": tackle_winner_player_arr,
             "tackle_winner_team_id": tackle_winner_team_arr,
             "tackle_loser_player_id": tackle_loser_player_arr,
@@ -1173,6 +1196,7 @@ def _synthesize_gk_distribution_actions(
             # Synthetic GK-distribution rows are never shots/crosses -> pd.NA (TF-51 prereq).
             "shot_blocked": _blocked_flag(n_synth),
             "cross_blocked": _blocked_flag(n_synth),
+            "cross_native": _blocked_flag(n_synth),
         }
     )
 

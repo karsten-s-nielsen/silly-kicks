@@ -81,7 +81,7 @@ XCROSS_FEATURE_NAMES_POSITION_ONLY = [f for f in XCROSS_FEATURE_NAMES_FAITHFUL i
 # Domain-filter constants (M1 re-justified; M-4 corridor = cross_zone dense-zone, not SkillCorner's).
 _WIDE_Y_LOW = 14.0  # cross_zone wide corridor (specialty.py:54)
 _WIDE_Y_HIGH = 54.0
-_ADVANCE_M = 35.0  # permissive default (SkillCorner _is_cross start_x>70 == 35 m); PR-B re-selects
+_ADVANCE_M = 35.0  # permissive default (the retired SkillCorner start_x>70 zone rule == 35 m); PR-B re-selects
 # Canonical penalty-area geometry. Aliased rather than inlined at the `in_box` use site below:
 # that predicate is VECTORIZED over numpy arrays, so it cannot call the scalar
 # `_geometry.in_penalty_area_goal_relative` without a per-element loop -- the single source here
@@ -350,6 +350,56 @@ def extract_xcross_features(
     return (features, box_detail) if return_box_detail else features
 
 
+#: The xCross label definition (ADR-133). 1 = a same-team SPADL ``cross`` in the horizon (the pre-ADR-133
+#: definition; an artifact without the metadata key reads as 1). 2 = a same-team tracking cross ATTEMPT
+#: (``cross_attempt``, all heights, blocked included) in the horizon, with unknown horizons excluded.
+XCROSS_LABEL_VERSION: int = 2
+
+#: ``cross_types`` entry -> the SPADL types whose ``cross_attempt`` it reads. The SPADL type only says open play vs
+#: which set piece: the tracking attempt decides the delivery (ADR-133 decision 10).
+_CROSS_TYPE_KINDS: dict[str, tuple[str, ...]] = {
+    "cross": ("pass", "cross"),
+    "corner_crossed": ("corner_crossed", "corner_short"),
+    "freekick_crossed": ("freekick_crossed", "freekick_short"),
+}
+
+
+def _cross_kind_mask(actions: pd.DataFrame, cross_types: tuple[str, ...] | list[str]) -> np.ndarray:
+    """Rows of the delivery kinds ``cross_types`` selects (ADR-133 §6.5). Refuses an unknown entry."""
+    unknown = [t for t in cross_types if t not in _CROSS_TYPE_KINDS]
+    if unknown:
+        raise ValueError(f"cross_types entries {unknown} are not delivery kinds; use {sorted(_CROSS_TYPE_KINDS)}")
+    type_ids = {_spc.actiontype_id[n] for t in cross_types for n in _CROSS_TYPE_KINDS[t]}
+    return actions["type_id"].isin(type_ids).to_numpy()
+
+
+def _require_cross_attempt(actions: pd.DataFrame, fn: str) -> None:
+    if "cross_attempt" not in actions.columns:
+        raise ValueError(
+            f"{fn}: actions have no 'cross_attempt' column. The xCross label v2 (ADR-133) counts tracking cross "
+            f"attempts: run silly_kicks.tracking.add_cross_deliveries(actions, frames) first. There is no fallback "
+            f"to the SPADL type."
+        )
+
+
+def _label_version_from_metadata(meta: dict) -> int:
+    """The label version an artifact was trained on: the recorded key, else 1 (the SPADL-type label)."""
+    return int(meta.get("xcross_label_version", 1))
+
+
+def _xcross_label_events(
+    actions: pd.DataFrame, cross_types: tuple[str, ...] | list[str] = _DEFAULT_CROSS_TYPES
+) -> pd.DataFrame:
+    """The rows label v2 counts as a cross attempt: a selected delivery kind with ``cross_attempt`` True (ADR-133).
+
+    One definition for :func:`build_xcross_labels` and the trainer's integrity counters and stoppage label times.
+    """
+    _require_cross_attempt(actions, "_xcross_label_events")
+    kind = _cross_kind_mask(actions, cross_types)
+    attempt = actions["cross_attempt"].astype("boolean").fillna(False).to_numpy(dtype=bool)
+    return actions.loc[kind & attempt]
+
+
 def build_xcross_labels(
     frames_index: pd.DataFrame,
     actions: pd.DataFrame,
@@ -358,14 +408,29 @@ def build_xcross_labels(
     cross_types: tuple[str, ...] = _DEFAULT_CROSS_TYPES,
     frame_team_col: str = "team_in_possession",
 ) -> pd.Series:
-    """Per-frame xCross label: 1 iff a same-team cross occurs in [t, t+horizon] (same period).
+    """Per-frame xCross label v2 (ADR-133): 1.0 iff a same-team cross ATTEMPT occurs in [t, t+horizon].
 
-    Open-play ``cross`` only by default; ``cross_types`` can add ``corner_crossed`` /
-    ``freekick_crossed`` for sensitivity. Thin wrapper over the shared occurrence helper.
+    A cross attempt is a row of a selected delivery kind with ``cross_attempt`` True (``add_cross_deliveries``):
+    ``"cross"`` selects open-play ``pass``/``cross`` rows, and ``"corner_crossed"`` / ``"freekick_crossed"``
+    select corner / free-kick rows (sensitivity runs). A frame whose horizon holds no attempt but holds an
+    UNKNOWN row of a selected kind (``cross_attempt`` <NA>: the frames could not judge it) is NaN -- unknown,
+    excluded from training, never 0. Rows of other kinds never make a frame unknown.
+
+    Raises
+    ------
+    ValueError
+        If ``actions`` has no ``cross_attempt`` column, or ``cross_types`` holds a non-delivery entry.
     """
-    type_ids = {_spc.actiontype_id[t] for t in cross_types}
-    crosses = actions[actions["type_id"].isin(type_ids)][["game_id", "period_id", "team_id", "time_seconds"]]
-    y = _build_occurrence_labels(frames_index, crosses, horizon=horizon_seconds, frame_team_col=frame_team_col)
+    _require_cross_attempt(actions, "build_xcross_labels")
+    kind = _cross_kind_mask(actions, cross_types)
+    attempt = actions["cross_attempt"].astype("boolean")
+    cols = ["game_id", "period_id", "team_id", "time_seconds"]
+    positive = _xcross_label_events(actions, cross_types)[cols]
+    unknown = actions.loc[kind & attempt.isna().to_numpy(dtype=bool), cols]
+    y_pos = _build_occurrence_labels(frames_index, positive, horizon=horizon_seconds, frame_team_col=frame_team_col)
+    y_unk = _build_occurrence_labels(frames_index, unknown, horizon=horizon_seconds, frame_team_col=frame_team_col)
+    y = y_pos.astype(float)
+    y[(y_pos == 0) & (y_unk == 1)] = np.nan
     return pd.Series(y, index=frames_index.index)
 
 
@@ -555,7 +620,21 @@ def prepare_xcross_training_data(
 
     features = pd.concat(feat_rows, ignore_index=True)
     frame_index = pd.DataFrame(frame_index_rows)  # carries team_in_possession (matches label helper)
-    y = np.asarray(build_xcross_labels(frame_index, actions, horizon_seconds=horizon_seconds, cross_types=cross_types))
+    y_raw = np.asarray(
+        build_xcross_labels(frame_index, actions, horizon_seconds=horizon_seconds, cross_types=cross_types),
+        dtype=float,
+    )
+    # ADR-133 label v2: unknown horizons (NaN) leave training and are counted per match, never labelled 0.
+    known = ~np.isnan(y_raw)
+    all_games = pd.unique(frame_index["game_id"])
+    unknown_by_game = frame_index.loc[~known, "game_id"].value_counts().to_dict()
+    features = features.loc[known].reset_index(drop=True)
+    frame_index = frame_index.loc[known].reset_index(drop=True)
+    if len(meta_details) == len(known):  # filled only on the return_meta path
+        meta_details = [d for d, k in zip(meta_details, known, strict=True) if k]
+    y = y_raw[known].astype(int)
+    # str keys: DataFrame.attrs travel as JSON metadata (parquet), which refuses numpy-int keys.
+    features.attrs["n_unknown_label_frames"] = {str(g): int(unknown_by_game.get(g, 0)) for g in all_games}
     groups = frame_index["game_id"].to_numpy()
     if return_meta:
         meta = frame_index.copy()
@@ -675,6 +754,10 @@ class XCrossAttemptModel:
         # The stoppage rule and the per-provider stoppage sources of the training frames (ADR-130). Written
         # into metadata.json only when set, so a re-save of an older bundle stays byte-identical.
         self.stoppage_provenance: dict | None = None
+        # The label definition the model is trained on (ADR-133). A new model trains on v2; load() restores the
+        # recorded version (1 when the key is absent), and save() writes the key only for v2+, so a re-save of a
+        # v1 bundle stays byte-identical.
+        self.label_version: int = XCROSS_LABEL_VERSION
 
     def fit(
         self,
@@ -749,6 +832,8 @@ class XCrossAttemptModel:
         }
         if self.stoppage_provenance is not None:
             metadata["stoppage_provenance"] = self.stoppage_provenance
+        if self.label_version >= 2:  # ADR-133: a v1 bundle re-saves byte-identically (no key = v1)
+            metadata["xcross_label_version"] = self.label_version
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:
             for fname in ["model.json", "metadata.json"]:
@@ -800,6 +885,7 @@ class XCrossAttemptModel:
         model.carrier_params = meta.get("carrier_params", dict(_DEFAULT_CARRIER_PARAMS))
         model.horizon_seconds = meta.get("horizon_seconds", 1.0)
         model.cross_types = meta.get("cross_types", model.cross_types)
+        model.label_version = _label_version_from_metadata(meta)
         model.shipped_variant = meta.get("shipped_variant")
         model.provider_list = meta.get("provider_list")
         model.training_commit = meta.get("training_commit")

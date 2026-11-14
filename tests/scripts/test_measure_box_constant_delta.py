@@ -140,6 +140,8 @@ def test_main_emits_the_training_flip_decision_inputs(tmp_path, monkeypatch):
             "time_seconds": [1.0],
             "type_id": [spc.actiontype_id["cross"]],
             "result_id": [spc.result_id["success"]],
+            # ADR-133 label v2: the staged tracking attempt (as a staged dataset carries it) labels the frames.
+            "cross_attempt": pd.array([True], dtype="boolean"),
         }
     ).to_parquet(cache / "_actions" / "skillcorner__100.parquet")
     (cache / "_home" / "skillcorner__100.json").write_text(json.dumps({"home_team_id": 1}))

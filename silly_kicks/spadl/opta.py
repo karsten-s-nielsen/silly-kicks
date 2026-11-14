@@ -11,6 +11,8 @@ from . import config as spadlconfig
 from .base import (
     _add_dribbles,
     _derive_end_coordinates,
+    _native_cross_flag,
+    classify_deliveries,
     min_dribble_length,
     sort_actions_chronologically,
 )
@@ -130,6 +132,15 @@ def convert_to_actions(
         DataFrame with corresponding SPADL actions, plus any
         ``preserve_native`` columns appended.
 
+    Notes
+    -----
+    Crosses and set-piece deliveries follow one geometric rule for every provider
+    (:func:`silly_kicks.spadl.base.classify_deliveries`, ADR-133). Opta's own label (qualifier 2) is
+    kept in ``cross_native``. Event-only limits: a blocked cross and a delivery followed by a restart
+    are typed ``pass``, and a restart-ended set piece ``*_short``; the tracking layer
+    (``add_cross_deliveries``) decides them from the ball path. Measured recall of the event rule
+    against ``cross_attempt``: <recall: Task 10>.
+
     Examples
     --------
     Preserve a top-level Opta field alongside the SPADL output::
@@ -221,6 +232,9 @@ def convert_to_actions(
         input_convention=ABSOLUTE_FRAME_HOME_RIGHT,
         home_team_id=home_team_id,
     )
+    # One delivery rule for every provider (ADR-133): the native q_2 typing moves to cross_native.
+    actions["cross_native"] = _native_cross_flag(actions["type_id"])
+    actions = classify_deliveries(actions)
     actions = _derive_end_coordinates(actions)
     actions = _fix_interceptions(actions)
     actions["action_id"] = range(len(actions))
