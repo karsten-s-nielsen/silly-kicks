@@ -11,7 +11,9 @@
 
 **Tech Stack:** Python 3.10+, pandas 2/3 (CoW), numpy, pytest. DGX for tests and data runs.
 
-**Spec:** `docs/superpowers/specs/2026-11-13-cross-definition-design.md` (r7; r6 was approved by the owner and by reviewers A and B; r7 is the §7.4 calibration amendment of 2026-11-14). Read it with this plan. Section numbers below (§) refer to it.
+**Spec:** `docs/superpowers/specs/2026-11-13-cross-definition-design.md` (r9; r6 was approved by the owner and by reviewers A and B; r7 is the §7.4 calibration amendment of 2026-11-14; r8 is the native-timing amendment of 2026-11-14, approved by A round 2 and B round 2; r9 is the SkillCorner end-rule fix of 2026-11-14, owner-ruled on review B CD-SB-23). Read it with this plan. Section numbers below (§) refer to it.
+
+**Plan r5 (2026-11-14), the native-timing amendment.** Run 2 on commit 2 (`b12c0fd9`) fired the release-match owner trigger. The owner paused, asked for the root cause and a spike, and ruled: fix the timing in this cycle, at the gold standard (spec decision 11, §5.1, §6.6). r5 adds Tasks 12–19 and a fourth commit. Tasks 9 and 10 Step 4 (the four runs) now read the clean commit 3 and the re-staged corpus; their memos are stamped with commit 3's sha; their constants, memos and number-dependent docs form commit 4. Where Tasks 9–11 say "commit 2" or "commit 3" for the numbers commit, read commit 4. The gates are listed once, with what each authorizes, in Global Constraints 5b ("The live gates").
 
 **Plan r4 (2026-11-14), the calibration amendment.** The first DGX runs on commit 1 `4490016c` showed that the r3 calibration rules measure alignment and detection error (spec §7.4). The owner ruled: replace the rules (spec §7.4), add `block_window_s`, widen the start-line candidates to 80, and add one commit for provenance. r4 changes the Global Constraints order, Task 9 (candidates) and Task 10 Step 4 (rules and runs). The rest is unchanged.
 
@@ -27,8 +29,17 @@
      - Commit 2: the spec r7 and plan r4 amendment, the `calibrate()` rules, `CANDIDATE_LINES` to 80, `CrossDeliveryParams.block_window_s` and the enricher's block window, with their tests. A/B review this delta, and both reports are answered. **Gate 2: commit 2 and push** (owner yes).
      - The four §7.4 runs on the clean commit 2.
      - Commit 3's content, on the uncommitted tree: the constants, the memos (stamped with commit 2's sha), Task 11's number-dependent docs, and a test that pins the defaults to the memo values. The number-independent docs (C4, AGENTS, docs/context, ADR-133's decision) already went in commit 1. A/B re-review this delta, and both reports are answered. **Gate 3: commit 3 and push** (owner yes).
+  5b. **r5 (owner ruling 2026-11-14): four commits.** Commit 2 (`b12c0fd9`) is pushed and CI is green. Runs 1–2 on it fired the release-match trigger; the native-timing fix is its own commit, because the runs must read a committed tree:
+     - Commit 3: spec r8, plan r5 and Tasks 12–18 (code, tests, number-independent docs). `/final-review`, then the A/B implementation reviews of this delta on the uncommitted tree; both reports are answered. **Gate 3: commit 3 and push** (owner yes, immediately before). Watch CI until it is green.
+     - Task 19, the re-stage, on the clean commit 3.
+     - The four §7.4 runs (Tasks 9 and 10 Step 4) on the clean commit 3 and the re-staged corpus.
+     - Commit 4's content, on the uncommitted tree: the constants, the memos (stamped with commit 3's sha), the number-dependent docs and the pin tests. A/B re-review; both reports are answered. **Gate 4: commit 4 and push** (owner yes, immediately before).
+     - **The live gates (r5; review A CD-PLAN-06).** Gates 1 and 2 are done (commits `4490016c`, `b12c0fd9`). Only two gates remain, and each authorizes exactly one thing:
+       - **Gate 3** authorizes commit 3 (the r8 code, tests and docs) and its push. It is asked in Task 18 Step 4.
+       - **Gate 4** authorizes commit 4 (the constants, memos, number-dependent docs, CHANGELOG, version and TODO) and its push. It is asked in Task 11 Step 3.
+       - Every other "Gate" in Tasks 9–11 is superseded by these two. The draft PR (#306) exists, so no PR gate remains. The merge, the tag and the release each need their own yes later.
   6. The draft PR (#306) was opened after commit 1 with the owner's yes. Watch CI on each push until it is green.
-  7. The merge, the tag and the release each need their own yes later. Merge with `--merge`, never squash: the memos cite commit 2's sha, and a squash would orphan it.
+  7. The merge, the tag and the release each need their own yes later. Merge with `--merge`, never squash: the memos cite commit 3's sha (r5), and a squash would orphan it.
 - **The `compute_bravery` loud break is accepted by the owner** (2026-11-13). The release notice names it, including the lakehouse `bravery_writer.py`.
 - **Tests run on the DGX checkout `~/sk-fsg`** (`karsten@192.168.68.73`). The AI-PC runs nothing heavy.
   - **Step 0, before Task 1:**
@@ -45,7 +56,7 @@
 - **Every `warnings.warn`** uses `stacklevel=2`.
 - **TF id:** TF-86. TF-85 is held by the campaign-throughput cycle (cycle 1b, the controller-step read fix). Its TODO row is a pending patch for that cycle's final commit, so it is not in `TODO.md` at `0cc07e6c`. Do not use TF-85.
 - **The version is single-sourced** in `silly_kicks/_version.py`. Bump the minor at commit-prep only (4.143.0 → 4.144.0), unless another release lands first.
-- **Data comes from pining only.** Databricks is not a source. No HF job or dataset upload is part of this cycle.
+- **Data comes from pining only.** Databricks is not a source. No HF job or dataset upload is part of this cycle. r5: the re-stage (Task 19) writes a new DGX directory, `~/cross-def/xshot187-r8/out`; it never overwrites `~/xshot187/out`, which other work reads. Publishing the re-staged corpus (a Hub upload or `datasets record`) needs the owner's go and is not in this plan.
 
 ## Review Focus
 
@@ -54,6 +65,9 @@
 3. **Mixed id dtypes:** `team_id` is `int64` on one row type and `object` / `category` on another (GS synthetic rows, SkillCorner). The same team must compare equal. Test owner: Task 1 (`test_team_id_dtype_invariance`).
 4. **Extra time and shoot-outs:** periods 3 and 4 behave like periods 1 and 2. Period 5 has only `shot_penalty` rows, so nothing is re-typed. Test owner: Task 1 (`test_extra_time_and_shootout_periods`).
 5. **Frames that cover only part of a match:** one period has no ball rows, or all ball z values are NaN. `cross_attempt` is `<NA>` (unknown) for that period, `cross_height` is `<NA>`, and nothing raises. Test owner: Task 5 (`test_period_without_ball_frames_is_unknown`).
+6. **r5: a GS event before its period's kickoff.** None exists in the 64 cached matches (measured 2026-11-14, `D:\Temp\cross-def\gs_prekick_clock.py`: 0), and SPADL documents `time_seconds` as non-negative. Expected: the converter raises a `ValueError` that names the event and the period (spec §6.6 B, review B CD-SB-18). Test owner: Task 14 (`test_event_before_kickoff_raises`, both sides: at the kickoff and just before it).
+7. **r5: a SkillCorner possession with no `time_end`.** Expected: the native row gets a NaN time (never `time_start`), its start stays `x_end`/`y_end`, one `UserWarning` names the count, nothing raises, and the row sorts last in its period (spec §6.6 A, review B CD-SB-21). Test owner: Task 13 (`test_missing_time_end_is_nan_not_time_start`).
+8. **r5: mixed `time_source` in one match.** GS native rows are `"tracking"`, synthetic GS rows take their source row's value, SkillCorner synthetic dribbles are `"event"`. Expected: the enricher picks the release per row, never per match. Test owner: Task 16 (`test_release_order_is_per_row`).
 
 ---
 
@@ -419,6 +433,7 @@
     4. plus `--block-radius-m` → the §7.3 evidence.
   - Pass each override exactly as the earlier `cross_definition.json` prints it (full float precision; `fixed_point` uses rtol 1e-9).
   - After run 2: if `calibration.release_match_owner_decision_needed` is true (spec §7.4 owner triggers), stop and take the result to the owner before run 3.
+  - r5: the runs read the clean commit 3 and the re-staged corpus (Task 19). After run 2 and after run 4, also read `native_release_owner_decision_needed` (spec §7.4 r8); if it is true, stop and take the result to the owner.
   - Expected: run 4's `fixed_point.all` is true (the four calibrated fields and `cross_start_x`), its `coverage_owner_decision_needed` is false, and the ratio is ≤ 1.5. A false fixed point or a failed bar stops the cycle, and the result goes to the owner.
   - `min_ball_coverage` stays 0.8 unless more than 20 % of a provider's rows fail it; then the owner decides.
 - [ ] **Step 5 (commit 3, r4):** set the `CrossDeliveryParams` defaults to the memo values. Add `test_cross_delivery_defaults_match_memo`, which pins them to `metrics.json`. Re-run `tests/tracking/test_cross_delivery.py` and the new test. Expected: PASS. Ledger the task.
@@ -457,8 +472,158 @@ Task 11 has two parts, one per commit (Global Constraints, order).
   - Write the commit 2 docs listed under Files.
   - Fill the converter docstring placeholders `<recall: Task 10>` from the Task 10 numbers. Check that `git grep -n "<recall: Task 10>"` returns nothing.
   - Run the doc gates above, the lint trio and the CI-faithful pytest scope. Expected: PASS.
-- [ ] **Step 3: the commit 2 review and gate.**
-  - Send A and B a re-review of the commit 2 delta: constants, memos, docs and the pin tests. Answer both.
-  - **Gate 2:** on the owner's explicit yes, make commit 2 and push.
-- [ ] **Step 4: Gate 3, the draft PR.** Ask for a separate yes, then open the draft PR and watch CI until it is green. The merge, the tag and the release each need their own yes later.
+- [ ] **Step 3 (r5: the commit 4 review and Gate 4).**
+  - Send A and B a re-review of the commit 4 delta: constants, memos, docs and the pin tests. Answer both.
+  - **Gate 4:** on the owner's explicit yes, make commit 4 and push. Watch CI until it is green.
+- [x] **Step 4: superseded (r5).** The draft PR (#306) was opened after commit 1 with the owner's yes. No PR gate remains (Global Constraints 5b, live gates).
 - [ ] **Step 5: After the merge and release,** send Part Deux the owed-retrain list from Task 8 and the restage note (the xshot187 `_actions` must be re-converted).
+
+---
+
+## r5 tasks (native timing, spec r8; commit 3 unless a step says otherwise)
+
+The order is Task 12 (measurements), then Tasks 13–18 test-first, then commit 3's review and gate (Task 18 Step 4), then Task 19 (re-stage), then Tasks 9–10 Step 4 (the runs) and commit 4. Each task ledgers its result; no per-task commits.
+
+### Task 12: The r8 measurements (before any code)
+
+**Files:**
+- Create: `docs/research/cross-definition/native-timing.md` and its `metrics.json`. They hold the §5.1 evidence and the numbers below, with the script paths (`D:\Temp\cross-def\*.py`) and the DGX output paths.
+- Scripts stay off-repo under `D:\Temp\cross-def\` (read-only measurements, like §5.1's).
+
+- [ ] **Step 1: Metrica (spec §6.6 C; review A CD-PLAN-07).** The bronze parquets in `tests/datasets/metrica/` carry no frame. The frame-bearing events are `tests/datasets/kloppy/metrica_events.json` (each event has `"start": {"frame": …, "time": …}`; `"time"` is the value the Metrica bronze carries as `start_time_s`), and the tracking is under `tests/datasets/tracking/metrica`. First check that the two are the same game (team ids and the first frames' times); ledger the result. Then compare every event's `start.time` with the tracking time of its `start.frame`. If the games differ, compare `start.time` with `start.frame` divided by the event file's frame rate, and say so in the ledger. Expected: the share within half a frame period. If every event is within it, Metrica emits `"tracking"`; otherwise `"event"`. Ledger the ruling with the number.
+- [x] **Step 2: GS events before the kickoff and the clock constant (done 2026-11-14, before the plan review closed; review B CD-SB-18 and C2).** `gs_prekick_clock.py` over the 64 cached matches: 0 converted events before their kickoff; `periodGameClockTime − periodElapsedTime` equals 0/2700/5400/6300 s in every match and period within 0.43 frames. The memo records both.
+- [ ] **Step 3: The frame-link shift (spec §6.6 "What stays").** For GS (62) and SkillCorner (98 cached) matches, link every action to frames with `link_actions_to_frames`, once with today's times and once with the r8 times (GS: `event_time − kickoff start_time` plus the period's constant 0/2700/5400/6300 s, because the staged frames are still on the match clock; SkillCorner: `time_end` after the period re-base) (review B C3). Report the median and 90th-percentile shift of the linked frame time, and the ball-to-action-start distance at the linked frame before and after.
+- [ ] **Step 4: The consumer list.** List every module that calls `link_actions_to_frames` (26 callers plus the definer in `tracking/utils.py`) and every frame-aware `add_*` that links by time. This list feeds Task 18's sweep.
+- [ ] **Step 5: Ledger the task.**
+
+### Task 13: SkillCorner, the action at the kick (spec §6.6 A)
+
+**Files:**
+- Modify: `silly_kicks/spadl/skillcorner.py` (native rows from `time_end` and `x_end`/`y_end`; the inference inputs keep `time_start` and `x_start`/`y_start`; `time_end`, `x_end`, `y_end` required); `silly_kicks/spadl/_skillcorner_inference.py` only if its time input must be named explicitly (the keeper save reads `next_row["time_seconds"]`, line 168, so it must receive the start time).
+- Modify fixtures: the SkillCorner test inputs that lack `time_end`. First find each fixture's generator. Where one exists, reproduce the committed fixture byte-for-byte before regenerating it (AGENTS.md registry rule). Where none exists, add `time_end` by a rule stated in the fixture's README and ledgered.
+- Modify: `tests/spadl/_delivery_scenes.py` (`_skillcorner` writes `time_end`, `x_end`, `y_end` for every event).
+- Retire the SkillCorner case of `tests/spadl/test_converter_reorder_regression.py` (review A CD-PLAN-08). The case proves one thing: moving `to_spadl_ltr` before `_add_dribbles` changed nothing but the typing, measured against goldens from the pre-move converter (`0cc07e6c`). Commit 1 (`4490016c`) proved it, and git history keeps that proof. §6.6 A changes every SkillCorner row on purpose, so a golden regenerated from the r8 converter would only snapshot the code under test. Delete `tests/spadl/fixtures/reorder_golden/skillcorner.parquet`, limit the parametrization to `kloppy`, and update the module docstring: say why the SkillCorner case retired and where its proof lives. Ledger the ruling.
+- Test: `tests/spadl/test_skillcorner.py`, `tests/spadl/test_converter_deliveries.py`.
+
+**Interfaces:**
+- Consumes: today's `_parse_time_start`, `_to_period_relative`, `_transform_coords`, `infer_defensive_actions`, `infer_keeper_saves`.
+- Produces: SkillCorner SPADL whose native rows sit at the kick (§6.6 A), with the end-coordinate rule per type.
+
+- [ ] **Step 1: Write the failing tests** (spec §7.1, SkillCorner bullets):
+  - `test_native_row_at_possession_end`: a possession with distinct start and end gives `time_seconds` from `time_end` (period re-based) and the start from `x_end`/`y_end`.
+  - `test_start_type_rows_stay_at_start`: an interception and a keeper save keep the start time (−0.01 s) and position. Plan r6 (review B CD-SB-24): the keeper save is built and asserted, with `time_end` ≠ `time_start`, so feeding `infer_keeper_saves` the end time fails the test.
+  - Plan r6 (spec r9, review B CD-SB-23) `test_untargeted_pass_and_clearance_end_at_the_next_reception`: an untargeted pass and a clearance end at the next possession's reception point, not at its kick, and the receiver's reception-to-kick carry is a synthetic dribble; a targeted pass still ends at its targeted reception; the last possession of a period falls back to `_derive_end_coordinates`. It replaces the r5 `test_pass_without_target_ends_at_the_next_start`, which pinned the next kick. `test_next_reception_never_crosses_a_period` (review A CD-IMPL-13): a period's last untargeted pass, followed by a possession in the next period, keeps end = start; a period-blind `shift(-1)` fails it.
+  - `test_missing_time_end_is_nan_not_time_start` (Review Focus 7): NaN time, start from `x_end`/`y_end`, and `pytest.warns(UserWarning)` with the count in the message.
+  - `test_carry_becomes_a_dribble`: the reception-to-kick carry of 5 m becomes a synthetic dribble.
+  - `test_end_coordinates_per_type`: a pass without a targeted receiver ends at the next possession's reception within its period (plan r6, spec r9; review A C36); a shot, a `foul_suffered`, a `possession_loss` and an `unknown` row end at their start.
+  - `test_period_relative_after_rebase`: the time restarts near 0 in periods 2–4.
+  - `test_kick_point_decides_the_cross_zone`: the reception is in the cross zone and the kick is outside it, so the row is not a `cross`; the reverse case is a `cross`.
+- [ ] **Step 2: Run the tests.** Expected: FAIL (today's rows sit at `time_start`/`x_start`).
+- [ ] **Step 3: Implement** per §6.6 A.
+- [ ] **Step 4: Run** `tests/spadl/`, `tests/atomic/` and `tests/providers/skillcorner/`. Expected: PASS. Every changed existing assertion is ledgered with its reason.
+- [ ] **Step 5: Ledger the task.**
+
+### Task 14: Gradient Sports, the possession event's own time (spec §6.6 B)
+
+**Files:**
+- Modify: `silly_kicks/spadl/gradientsports.py`:
+  - the new `time_seconds` (`event_time − kickoff start_time`), computed before the top sort;
+  - the anchors read before the exclusion filter;
+  - the per-period anchor rule (periods 1–4 raise; period 5 anchors at its first `start_time`; a period without converted actions needs none);
+  - the sort tiebreak `("start_time", "possession_event_id", "event_id")`;
+  - remove the Option D imputation (`_impute_time_seconds_by_start_time`) and its call;
+  - `time_seconds` leaves the required input columns; a NaN `event_time` on a converted row raises.
+- Modify: `scripts/_loader_pining.py` `_build_gradientsports`: the frame `time_seconds` from `periodElapsedTime`.
+- Modify fixtures (review A C27): the GS synthetic match already carries `eventTime`, `startTime` and the four kickoffs, with `eventTime == startTime` (`tests/datasets/gradientsports/_generate_synthetic_match.py:234-237`). The new cases need events whose `eventTime` and `startTime` differ, and an inversion pair. Change the generator, but first reproduce the committed `synthetic_match.json` byte-for-byte with it (the AGENTS.md generator rule); then regenerate and ledger the diff summary. `tests/spadl/_delivery_scenes.py::_gradientsports` gains `event_time`, `start_time` and kickoff rows.
+- The Option D record (review A C28): its Chesterton's fence is spec `2026-08-20-chronological-action-id-invariant-design` §2b and ADR-065. The Option D tests in `tests/spadl/test_gradientsports.py` (about lines 1207, 1232 and 1334; check 1780) change or retire with it; each is ledgered with its reason.
+- Modify: `tests/spadl/test_time_seconds_convention.py`. Add a GS lock case (period-relative in every period). Rewrite its docstring, whose scope note (lines 9–10, "Opta + StatsBomb only; GradientSports time_seconds is a verbatim pass-through") 6.6 B makes false (review B CD-SB-19).
+- Test: `tests/spadl/test_gradientsports.py`, `tests/scripts/test_loader_pining*.py`, `tests/spadl/test_time_seconds_convention.py`. If no GS loader fixture exists for the `validate_time_base` test, build the smallest raw GS tracking + events fixture under `tests/datasets/gradientsports/` and ledger its source.
+
+**Interfaces:**
+- Consumes: `sort_actions_chronologically` (`spadl/base.py:34`).
+- Produces: period-relative GS `time_seconds` on the possession event's own time; period-relative GS frames from the pining loader.
+
+- [ ] **Step 1: Write the failing tests** (spec §7.1, GS bullet):
+  - `test_time_is_event_time_minus_kickoff` in every period 1–4, and period-relative;
+  - `test_missing_kickoff_raises` (periods 1–4, both sides: present and missing);
+  - `test_shootout_period_5_anchors_at_first_event`;
+  - `test_period_without_actions_needs_no_anchor` (a period-0 `G` marker);
+  - `test_inversion_pair_sorts_by_event_time`: the `action_id` order follows the event time, and `_assert_chronological_action_id` passes;
+  - `test_foul_without_start_clock_gets_event_time`;
+  - `test_nan_event_time_raises`;
+  - `test_input_time_seconds_is_ignored`;
+  - `test_event_before_kickoff_raises` (Review Focus 6; both sides);
+  - `test_order_insensitive_under_shuffle`;
+  - `test_loader_frames_are_period_relative` and `validate_time_base` passing on a loaded GS fixture match.
+- [ ] **Step 2: Run the tests.** Expected: FAIL.
+- [ ] **Step 3: Implement** per §6.6 B. Chesterton's fence for Option D: cite its spec (§2b) and ADR in the ledger, with the measured reason it no longer reaches any output (144,541 of 144,541 events carry `eventTime`).
+- [ ] **Step 4: Run** `tests/spadl/`, `tests/atomic/`, `tests/scripts/` (loader tests) and `tests/tracking/test_stoppages.py`. Expected: PASS. Every changed existing assertion is ledgered with its reason.
+- [ ] **Step 5: Ledger the task.**
+
+### Task 15: The `time_source` column (spec §6.6 C)
+
+**Files:**
+- Modify: `silly_kicks/spadl/schema.py` (`SPADL_COLUMNS` and the per-provider dicts, after `cross_native`, dtype `object`; `TIME_SOURCE_VALUES`); `silly_kicks/spadl/utils.py` `_finalize_output` (default `"event"`, vocabulary check); every converter (GS and SkillCorner native rows `"tracking"`; Metrica per Task 12; others `"event"`; derived rows inherit; synthetic dribbles `"event"`); `silly_kicks/reflection.py` (non-geometric); `silly_kicks/atomic/spadl/base.py` (`preserve_native`); `docs/context/providers.md`.
+- Test: `tests/spadl/test_time_source.py` (new), `tests/spadl/test_output_contract.py`, `tests/test_reflection.py`, `tests/spadl/test_schema.py`.
+- Modify: `tests/spadl/test_converter_reorder_regression.py` `_EXCLUDED` gains `"time_source"`, as it holds `"cross_native"`. The kloppy golden keeps its pre-move provenance (`0cc07e6c`); regenerating it would repeat CD-PLAN-08 (review A C30). Ledger the ruling.
+
+- [ ] **Step 1: Write the failing tests** (spec §7.1, `time_source` bullet): the column, its dtype and vocabulary for every converter; the synthetic-dribble and derived-row values; the atomic opt-in carry; the reflection declaration; `_finalize_output` keeps it, and rejects a value outside the vocabulary.
+- [ ] **Step 2: Run the tests.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `tests/spadl/`, `tests/atomic/`, `tests/test_reflection.py`. Expected: PASS.
+- [ ] **Step 5: Ledger the task.**
+
+### Task 16: The enricher's release order and the driver (spec §6.3 step 0, §7.4 r8)
+
+**Files:**
+- Modify: `silly_kicks/tracking/_cross_delivery.py` (`_release_times`: step 0 for `"tracking"` rows; `release_source` gains `"native"`; a missing `time_source` means `"event"`; the module and function docstrings).
+- Modify: `scripts/build_cross_definition.py` (`calibrate`: native rows join the release-gap sample and the fail share, `release_match_m` stays on IDSSE ELASTIC rows; `alignment_class`/`ALIGNMENT_CLASSES` gain `"native"`; the report's per-provider native passer-touch statistics and `native_release_owner_decision_needed`, bounds ±0.30 s and 40 %).
+- Test: `tests/tracking/test_cross_delivery.py`, `tests/scripts/test_build_cross_definition.py`.
+
+- [ ] **Step 1: Write the failing tests** (spec §7.1, release-order, driver and trigger bullets):
+  - `test_tracking_row_uses_native_time`: a `"tracking"` row uses `time_seconds` although a confident `elastic_frame_id` points elsewhere; the same row as `"event"` uses ELASTIC (both sides).
+  - `test_missing_time_source_means_event`.
+  - `test_release_match_applies_to_native_rows` (both sides of `release_match_m`).
+  - `test_release_order_is_per_row` (Review Focus 8).
+  - `test_calibrate_includes_native_rows`: a toy where dropping the native rows changes `release_gap_s` and the fail share, while `release_match_m` stays the IDSSE value.
+  - `test_alignment_classes_include_native`, still a partition.
+  - `test_native_release_trigger`: both sides of −0.30/+0.30 s and of 40 %.
+- [ ] **Step 2: Run the tests.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `tests/tracking/test_cross_delivery.py`, `tests/scripts/test_build_cross_definition.py`, `tests/test_add_star_purity.py`. Expected: PASS.
+- [ ] **Step 5: Ledger the task.**
+
+### Task 17: ELASTIC episodes from `stoppage_state` (spec §6.6 D)
+
+**Files:**
+- Modify: `silly_kicks/tracking/_elastic_sync.py` (`_inplay_segments` reads `stoppage_state` when present: `"live"` in play, `"dead"`/`"unknown"` not; else `ball_state`); `docs/context/tracking-features.md` (TF-43 note).
+- Test: `tests/tracking/test_elastic_inplay_episodes.py`, `tests/tracking/test_elastic_sync_oracle.py` (floors unchanged).
+
+- [ ] **Step 1: Write the failing tests** (spec §7.1, ELASTIC bullet): episodes split at `"dead"` and `"unknown"`; frames without `stoppage_state` keep today's episodes; a restart inside its own `"unknown"` span is assigned to the nearest live episode on both sides of the span midpoint.
+- [ ] **Step 2: Run the tests.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `tests/tracking/test_elastic*.py`. Expected: PASS, with the oracle floors met.
+- [ ] **Step 5: Ledger the task.**
+
+### Task 18: The r8 caller sweep, the docs and the commit-3 gate
+
+**Files:**
+- Modify: `docs/research/cross-definition/caller-sweep.md` (seams 5–8 with evidence on both sides, from Task 12 Step 4); `docs/PRIVATE_CONSUMERS.md`: the lakehouse `skillcorner._PERIOD_START_SECONDS` entry (review B CD-SB-17), and rows in the form of its line-31 table for each r8 change a downstream consumer sees (review B CD-SB-20): the GS time base and its new required inputs; the SkillCorner kick point and its new required inputs; the GS and SkillCorner `action_id` renumber (ADR-065); `time_source`; the ELASTIC episodes and the GS stoppage spans; `docs/superpowers/adrs/ADR-017-*.md`: an amendment note that GS `time_seconds` is now computed by the converter, period-relative, not passed through (review B CD-SB-19); `docs/superpowers/adrs/ADR-065-*.md`: an amendment note that its GS `start_time` justification (line 38, the Option D imputation) no longer applies, and that `start_time` stays as a sort tiebreak (review A C26); `docs/superpowers/adrs/ADR-133-one-cross-definition.md` (a native-timing decision); `docs/context/providers.md` (SkillCorner kick point, GS event time, `time_source`); `AGENTS.md` only if a Key-conventions bullet changes (≤ 600 chars).
+- Owed retrains: extend Task 8's list with every artifact trained on GS or SkillCorner SPADL or on frames linked to their actions, classified from evidence.
+
+- [ ] **Step 1: The sweep.** Classify every seam 5–8 hit as value-changing or unaffected, with evidence. Test-first fixes for any "must change" hit.
+- [ ] **Step 2: The docs** listed under Files. Run the doc gates of Task 11.
+- [ ] **Step 3: Verify.** The lint trio, the CI-faithful pytest scope, the slow suite and the CI doctest command on the DGX (synced tree). Expected: exit 0, with the real exit codes shown (the known `test_dgx_e2e` environment failure excepted and named).
+- [ ] **Step 4: Review and Gate 3.** Run `/final-review`, then send A and B the implementation review of the commit-3 delta. Answer both reports, with fixes test-first. **Gate 3:** show the owner the file list, the diff summary, the verification and both verdicts; on the explicit yes, make commit 3 and push. Watch CI until it is green.
+- [ ] **Step 5: Ledger the task.**
+
+### Task 19: The re-stage (DGX, after Gate 3)
+
+- [ ] **Step 1: Check the tree and the target.** A clean checkout of commit 3 on the DGX (`require_clean_tree`; never `--allow-dirty`). `~/cross-def/xshot187-r8/out` must be absent or empty at the start; the driver creates directories with `exist_ok=True`, so the check is explicit (review B C1).
+- [ ] **Step 2: Re-stage.** Run `scripts.materialize_tc3_frames` with the xshot187 roster (`~/xshot187/roster.json`), the pining cache and the three providers, into `~/cross-def/xshot187-r8/out`, with K disjoint workers into one generation and one final pass (the `~/xshot187/stage_parallel.sh` pattern, pointed at the new directory). Never write to `~/xshot187/out`.
+- [ ] **Step 3: Check the re-stage.**
+  - On every GS match and period, check that `periodGameClockTime − periodElapsedTime` is the period's constant (0/2700/5400/6300 s) within one frame. Stop on a deviation and take it to the owner.
+  - Check the manifest: 187 matches, 0 failed, `run_commit` = commit 3, `run_tree_dirty` false.
+  - Compare the action counts per provider with the old corpus; SkillCorner grows by the new carries.
+- [ ] **Step 4: Point the runs at it.** Update `~/cross-def/dgx_run.sh` (`SHA` = commit 3, the data symlink to `~/cross-def/xshot187-r8/out`) and `D:\Temp\cross-def\sync.sh` (`BASE` = commit 3). Then run Tasks 9 and 10 Step 4 (the four §7.4 runs, both owner triggers read as stated there).
+- [ ] **Step 5: Ledger the task.**

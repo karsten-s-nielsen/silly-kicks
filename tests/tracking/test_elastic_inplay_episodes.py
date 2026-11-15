@@ -23,6 +23,7 @@ import pathlib
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from silly_kicks.id_compat import canonical_id
 from silly_kicks.spadl.utils import add_possessions
@@ -183,6 +184,37 @@ class TestInplaySegments:
         assert _inplay_segments(pd.DataFrame()) == {}
         frames = _frames_with_ball_state({1: ["alive", "alive"]}).drop(columns=["ball_state"])
         assert _inplay_segments(frames) == {}
+
+
+def _frames_with_stoppage(pattern: list[str]) -> pd.DataFrame:
+    """Frames whose ``ball_state`` is "alive" everywhere (as GS and SkillCorner record it) and whose ADR-130
+    ``stoppage_state`` follows ``pattern`` (live / dead / unknown)."""
+    frames = _frames_with_ball_state({1: ["alive"] * len(pattern)})
+    per_frame = dict(zip(range(100, 100 + len(pattern)), pattern, strict=True))
+    frames["stoppage_state"] = frames["frame_id"].map(per_frame)
+    return frames
+
+
+class TestStoppageStateEpisodes:
+    """ADR-133 r8 6.6 D: episodes come from ``stoppage_state`` when the frames carry it."""
+
+    def test_stoppage_state_wins_over_an_all_alive_ball_state(self):
+        frames = _frames_with_stoppage(["live", "live", "dead", "unknown", "live", "live"])
+        segs = _inplay_segments(frames)[(canonical_id(1), 1)]
+        np.testing.assert_allclose(segs, np.array([[100 / 25, 101 / 25], [104 / 25, 105 / 25]]))
+
+    def test_without_stoppage_state_ball_state_decides(self):
+        frames = _frames_with_ball_state({1: ["alive"] * 6})
+        assert _inplay_segments(frames)[(canonical_id(1), 1)].shape == (1, 2)  # one run: today's behaviour
+
+    @pytest.mark.parametrize(("frame", "episode"), [(103, 0), (106, 1)], ids=["nearer_first", "nearer_second"])
+    def test_restart_in_its_unknown_span_goes_to_the_nearest_live_episode(self, frame, episode):
+        # A GS restart's own span is "unknown" (tracking/_stoppages.py): live 100-101, unknown 102-107, live 108-109.
+        # The span midpoint is 104.5; an action on either side of it joins the nearer live episode.
+        frames = _frames_with_stoppage(["live", "live", *(["unknown"] * 6), "live", "live"])
+        actions = pd.DataFrame({"game_id": [1], "period_id": [1], "time_seconds": [frame / 25]})
+        ids = _inplay_episode_ids(actions, frames, params=ElasticSyncParams())
+        assert ids.tolist() == [episode]
 
 
 class TestAssignSegments:

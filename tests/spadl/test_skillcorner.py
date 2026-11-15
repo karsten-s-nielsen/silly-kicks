@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.spadl.schema import KLOPPY_SPADL_COLUMNS, SKILLCORNER_SPADL_COLUMNS, ConversionReport
@@ -364,17 +365,18 @@ class TestEndCoordinates:
         expected_end_x = (15.0 / 52.5) * 52.5 + 52.5  # = 67.5
         assert abs(first_pass["end_x"] - expected_end_x) < 0.5
 
-    def test_pass_without_targeted_reception_uses_x_end(self):
+    def test_pass_without_targeted_reception_ends_at_the_next_reception(self):
+        # ADR-133 r8 (spec 6.6 A): x_end is the pass's START (the kick point). Spec r9 (review B CD-SB-23): a pass
+        # without a targeted receiver ends at the next possession's RECEPTION, the ball's destination, not at the
+        # next kick.
         from silly_kicks.spadl.skillcorner import convert_to_actions
 
         events, meta = _load_basic_fixture()
         actions, _ = convert_to_actions(events, meta)
-        # Row 2 has no targeted_x_reception, x_end=18.0
-        passes = actions[actions["type_id"] == spadlconfig.actiontype_id["pass"]]
-        p2_passes = passes[passes["player_id"] == "p2"]
-        if len(p2_passes) > 0:
-            expected_end_x = (18.0 / 52.5) * 52.5 + 52.5  # = 70.5
-            assert abs(p2_passes.iloc[0]["end_x"] - expected_end_x) < 0.5
+        row = actions[actions["original_event_id"] == "8_1"].iloc[0]  # no targeted_x_reception
+        assert (row["start_x"], row["start_y"]) == pytest.approx((18.0 + 52.5, 12.0 + 34.0))
+        # the next possession is 8_2, received at x_start=40, y_start=-30 (and kicked at 42, -28)
+        assert (row["end_x"], row["end_y"]) == pytest.approx((40.0 + 52.5, -30.0 + 34.0))
 
 
 class TestDerivedActions:

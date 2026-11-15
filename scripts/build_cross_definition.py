@@ -31,6 +31,11 @@ RATIO_BAR: float = 1.5
 RELEASE_REFERENCE: str = "idsse"  # the clean-sync provider for release_match_m (spec r7 section 7.4)
 MIN_RELEASE_SAMPLES: int = 200  # owner trigger: fewer IDSSE ELASTIC-confident rows (spec r7 section 7.4)
 MAX_UNKNOWN_SHARE: float = 0.2  # owner trigger: the share a release match or a coverage floor may turn <NA>
+# Owner trigger on the native releases (spec r8 section 7.4): a provider's native rows need a median passer-touch
+# offset inside +-NATIVE_DT_BOUND_S and a passer-touch share of at least NATIVE_MIN_TOUCH_SHARE. Chosen after the
+# native preview (GS -0.23 s / 50.4 %, SkillCorner -0.20 s / 78.4 %); disclosed in the spec.
+NATIVE_DT_BOUND_S: float = 0.30
+NATIVE_MIN_TOUCH_SHARE: float = 0.40
 
 _TRACKING_PARAMS = ("block_radius_m", "direction_window_s", "release_gap_s", "min_ball_coverage", "release_match_m")
 _PARAMS = (
@@ -110,6 +115,20 @@ def fixed_point(cal: dict, params: dict, *, selected_line: float | None) -> dict
     return {**out, "all": all(out.values())}
 
 
+def _native_stats(passer_contact_dt: pd.Series) -> dict:
+    """The native-release check of spec r8 section 7.4: row count, passer-touch share, touch-offset quantiles."""
+    dt = passer_contact_dt.to_numpy(dtype=float)
+    found = dt[np.isfinite(dt)]
+    q = np.quantile(found, [0.05, 0.5, 0.95]) if len(found) else np.full(3, np.nan)
+    return {
+        "n": len(dt),
+        "touch_share": float(len(found) / len(dt)) if len(dt) else float("nan"),
+        "dt_q05": float(q[0]),
+        "dt_q50": float(q[1]),
+        "dt_q95": float(q[2]),
+    }
+
+
 def _p95(values: pd.Series) -> float:
     v = values.to_numpy(dtype=float)
     v = v[np.isfinite(v)]
@@ -129,16 +148,21 @@ def calibrate(rows: pd.DataFrame, *, block_window_s: float | None = None) -> dic
         block_window_s = CrossDeliveryParams().block_window_s
     applicable = rows[rows["applicable"]]
     el = applicable[applicable["release_source"] == "elastic"]
+    # r8: a native release (spec 6.3 step 0) counts wherever an ELASTIC-confident one does, except for the IDSSE
+    # release-match reference, whose rows are event-timed and so ELASTIC-aligned.
+    aligned = applicable[applicable["release_source"].isin(["native", "elastic"])]
     by = lambda df, col: {p: g[col].to_numpy(dtype=float) for p, g in df.groupby("provider")}  # noqa: E731
     release_match = _p95(el.loc[el["provider"] == RELEASE_REFERENCE, "release_dist_m"])
     # The percentile's own sample: finite IDSSE distances (a NaN distance never enters ``_p95``).
     n_release = int(el.loc[el["provider"] == RELEASE_REFERENCE, "release_dist_m"].notna().sum())
-    matched = el[el["release_dist_m"] <= release_match]
+    matched = aligned[aligned["release_dist_m"] <= release_match]
     # Over finite distances only: a NaN distance (unknown start, no ball frame) is <NA> whatever the match is.
     fail_share = {
         str(p): float((d > release_match).mean()) if len(d := g["release_dist_m"].dropna()) else float("nan")
-        for p, g in el.groupby("provider")
+        for p, g in aligned.groupby("provider")
     }
+    native = applicable[applicable["release_source"] == "native"]
+    native_release = {str(p): _native_stats(g["passer_contact_dt"]) for p, g in native.groupby("provider")}
     fr = rows.groupby("provider")["frame_rate"].min()
     gap = weighted_quantile(by(matched, "passer_contact_dt"), 0.95)
     gs_blocked = applicable[
@@ -155,7 +179,15 @@ def calibrate(rows: pd.DataFrame, *, block_window_s: float | None = None) -> dic
     return {
         "release_match_m": release_match,
         "n_release_match_samples": n_release,
-        "release_dist_p95_by_provider": {str(p): _p95(g["release_dist_m"]) for p, g in el.groupby("provider")},
+        "release_dist_p95_by_provider": {str(p): _p95(g["release_dist_m"]) for p, g in aligned.groupby("provider")},
+        "native_release": native_release,
+        "native_release_owner_decision_needed": bool(
+            any(
+                s["touch_share"] < NATIVE_MIN_TOUCH_SHARE
+                or not (np.isfinite(s["dt_q50"]) and abs(s["dt_q50"]) <= NATIVE_DT_BOUND_S)
+                for s in native_release.values()
+            )
+        ),
         "release_match_fail_share": fail_share,
         "release_match_owner_decision_needed": bool(
             n_release < MIN_RELEASE_SAMPLES or any(v > MAX_UNKNOWN_SHARE for v in fail_share.values())
@@ -373,6 +405,7 @@ def evidence(flat: pd.DataFrame, line: float) -> dict:
 #: Spec 7.3 alignment classes of a delivery row the tracking layer is asked to judge. They partition the rows:
 #: each row has exactly one.
 ALIGNMENT_CLASSES: tuple[str, ...] = (
+    "native",  # answered; release at the provider's own tracking-clock event time (spec r8 6.3 step 0)
     "aligned_elastic",  # answered; release from the confident ELASTIC frame
     "unaligned_but_matched",  # answered; release at the event time, ball within release_match_m
     "unknown_start",  # <NA>: the action start is not finite, so no release can be matched
@@ -388,6 +421,7 @@ ROW_CLASSES: tuple[str, ...] = ("open_play", "corner", "freekick")
 def alignment_class(rows: pd.DataFrame) -> pd.Series:
     """One spec 7.3 class per row (``ALIGNMENT_CLASSES``); needs ``release_match_cut``."""
     answered = rows["attempt"].notna().to_numpy()
+    native = (rows["release_source"] == "native").to_numpy()
     elastic = (rows["release_source"] == "elastic").to_numpy()
     known_start = np.isfinite(rows["start_x"].to_numpy(dtype=float)) & np.isfinite(
         rows["start_y"].to_numpy(dtype=float)
@@ -395,8 +429,8 @@ def alignment_class(rows: pd.DataFrame) -> pd.Series:
     dist = rows["release_dist_m"].to_numpy(dtype=float)
     cut = rows["release_match_cut"].to_numpy(dtype=float)
     cls = np.select(
-        [answered & elastic, answered, ~known_start, ~np.isfinite(dist), dist > cut],
-        ["aligned_elastic", "unaligned_but_matched", "unknown_start", "no_ball_at_release", "misaligned"],
+        [answered & native, answered & elastic, answered, ~known_start, ~np.isfinite(dist), dist > cut],
+        ["native", "aligned_elastic", "unaligned_but_matched", "unknown_start", "no_ball_at_release", "misaligned"],
         default="coverage_unanswerable",
     )
     return pd.Series(cls, index=rows.index)

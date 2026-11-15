@@ -51,6 +51,10 @@ Adds a durable converter-conventions contract to "Key conventions": converters a
 - **Plans:** `docs/superpowers/plans/2026-08-20-chronological-action-id-invariant.md`
 - **Issues / PRs:** PR-S159
 
+## Amendment (ADR-133 r8, 2026-11-14)
+
+The Gradient Sports `start_time` justification above (the `start_time`-ordered imputation of a null-`startGameClock` FOUL, "Option D") no longer applies. The converter's output `time_seconds` is now the possession event's own `event_time` minus its period's kickoff (spec `2026-11-13-cross-definition-design` §6.6 B), and every one of the 144,541 events carries `eventTime`, the FOUL events included; the imputation reached no output and is removed. `start_time` stays a required input, as the kickoff anchor and the first sort tiebreak: the converter sorts by `(game_id, period_id, time_seconds)` with the tiebreak `(start_time, possession_event_id, event_id)`. Sorting by the new time changes the rank of 89 of the 89,776 events that pass the exclusion filter (27 of 64 matches); on the 81,672 native converted actions 24 rows move (n minus the longest common subsequence of `original_event_id`) in 21 of 64 matches. So GS `action_id` renumbers — the atomic cross-table migration of the Consequences section applies again.
+
 ## Notes
 
 Measured on the real WC2022 Gradient Sports corpus (`scratchpad/gs_foul_id_probe.py`, `gs_mc_realdata.py`; 64 matches, 144,541 events, 28 null-clock FOULs): native array order 0/144,374 inversions vs `startGameClock`; `gameEventId` 31,090/144,374 (~21.5%); `start_time`/`eventTime` 0/144,374 and present on all 28 fouls; OLD-vs-NEW converter output byte-identical (`foul_time_diff=0`, `order_diff=0`).

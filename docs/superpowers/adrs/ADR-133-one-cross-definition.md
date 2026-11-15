@@ -49,7 +49,20 @@ next controller in the penalty area.
    (a restart-ended set piece `*_short`), and SkillCorner events miss defenders' in-box touches. The converter
    docstrings record each provider's measured recall.
 8. **Retrains are owed**, not done in this cycle: xCross, PassCompletionModel, XSuccessModel and the TF-46 corner
-   weights (`docs/research/cross-definition/caller-sweep.md`). Part Deux runs them after the release.
+   weights, and (decision 9) every artifact trained on Gradient Sports or SkillCorner actions or frame links: xShot,
+   the ghost-GK and ghost-outfield models, and both xT-GK retention variants
+   (`docs/research/cross-definition/caller-sweep.md`). Part Deux runs them after the release.
+9. **Native event timing (r8, owner ruling 2026-11-14).** Where a provider times its events from its own tracking
+   clock, the SPADL row carries that time, and the release uses it instead of ELASTIC:
+   - SkillCorner: a native row is the on-ball action at the possession END (`time_end`, `x_end`/`y_end`), not the
+     reception at its start; start-type derived rows and keeper saves stay at the start.
+   - Gradient Sports: `time_seconds` is the possession event's `event_time` minus its period's kickoff (PFF's own
+     frame sync within 0.067 s), period-relative (ADR-017); the converter sorts by it (ADR-065).
+   - A per-row provenance column `time_source` (`"tracking"` / `"event"`, ADR-054): GS, SkillCorner and Metrica are
+     `"tracking"`; synthetic dribbles and every other provider are `"event"`. `add_cross_deliveries` releases a
+     `"tracking"` row at its own time (step 0).
+   - ELASTIC splits episodes by the ADR-130 `stoppage_state` when the frames carry it.
+   - ELASTIC's score does not change: a location term lowered IDSSE ground-truth accuracy at every weight.
 
 ## Evidence
 
@@ -62,6 +75,13 @@ and detection error: they gave a 15 m release match and a 20 m block radius. Spe
 release match from the IDSSE clean-sync reference, the block sample limited to contacts within the fixed 1.0 s
 block window) and widened the start-line candidates to 80 m. The recorded values come from the r7 rules.
 
+Run 2 under the r7 rules fired the release-match owner trigger: the IDSSE match (4.67 m) turned 28.2 % of Gradient
+Sports and 31.7 % of SkillCorner ELASTIC-confident rows into `<NA>`. The root cause was the event timing, not the
+match (decision 9; `docs/research/cross-definition/native-timing.md`): SkillCorner placed each action at the
+reception, and Gradient Sports timed it with a whole-second clock at the start of the on-ball sequence. At the native
+times, 1.2 % (GS) and 4.3 % (SkillCorner) of rows lie beyond 4.67 m. The values are recorded from the four runs on
+the commit that carries decision 9, over a corpus re-staged with it.
+
 ## Consequences
 
 - SPADL values change for every provider: `cross` / `pass` counts, `corner_*` / `freekick_*` typing and the new
@@ -71,3 +91,7 @@ block window) and widened the start-line candidates to 80 m. The recorded values
 - The xCross label needs `cross_attempt`; `build_xcross_labels` refuses without it, and the staged corpora are
   restaged through `add_cross_deliveries` before the refit.
 - SkillCorner event-only corner typing becomes worse (its events miss in-box defensive touches); tracking decides it.
+- r8: Gradient Sports and SkillCorner actions move in time and (SkillCorner) in space, so every time-based frame link
+  on them moves to the action's own moment, and their `action_id` renumbers (an ADR-065 cross-table migration). The
+  GS converter needs `event_time`, `start_time` and the kickoff rows; SkillCorner needs `time_end`, `x_end`, `y_end`
+  (`docs/PRIVATE_CONSUMERS.md`).

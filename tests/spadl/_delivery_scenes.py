@@ -294,8 +294,9 @@ def _sportec(home_starts_left: bool = True) -> pd.DataFrame:
 # ----------------------------------------------------------------------------------------------------- gradientsports
 def _gradientsports(home_starts_left: bool = True, *, blocked: bool = False) -> pd.DataFrame:
     from silly_kicks.spadl import gradientsports as gs
+    from tests.spadl._gs_clock import with_event_clock
 
-    req = sorted(gs.EXPECTED_INPUT_COLUMNS)
+    req = sorted(gs.EXPECTED_INPUT_COLUMNS | {"time_seconds"})
     kinds = {"pass": ("PA", "O"), "cross": ("CR", "O"), "shot": ("SH", "O"), "corner_crossed": ("CR", "C")}
     kinds["goalkick"] = ("PA", "G")
     rows = []
@@ -303,15 +304,15 @@ def _gradientsports(home_starts_left: bool = True, *, blocked: bool = False) -> 
         pe, sp = kinds[kind]
         ax, ay = _absolute(x, y, team, period, "per_period", home_starts_left)
         row: dict[str, Any] = {c: None for c in req}
-        clock = t + (0.0 if period == 1 else 2700.0)
         row.update(
             {
                 "game_id": 10502,
                 "event_id": eid,
                 "possession_event_id": eid,
                 "period_id": period,
-                "time_seconds": clock,
-                "start_time": clock,
+                # The scene's period time; with_event_clock turns it into event_time after the period's kickoff
+                # (ADR-133 r8 6.6 B).
+                "time_seconds": t,
                 "team_id": 100 if team == "H" else 200,
                 "player_id": 1000 + eid,
                 "game_event_type": "OTB",
@@ -334,9 +335,9 @@ def _gradientsports(home_starts_left: bool = True, *, blocked: bool = False) -> 
         df[col] = df[col].astype("Int64")
     for col in ("game_id", "event_id", "period_id"):
         df[col] = df[col].astype("int64")
-    for col in ("time_seconds", "start_time", "ball_x", "ball_y"):
+    for col in ("time_seconds", "ball_x", "ball_y"):
         df[col] = df[col].astype("float64")
-    return df
+    return with_event_clock(df)
 
 
 # -------------------------------------------------------------------------------------------------------- skillcorner
@@ -347,26 +348,30 @@ def _skillcorner(home_starts_left: bool = True) -> pd.DataFrame:
         ex, ey = ends[eid]
         gi = {"corner_crossed": "corner_for", "goalkick": "goal_kick_for"}.get(kind)
         clock = t + (0.0 if period == 1 else 2700.0)
+        stamp = f"{int(clock // 60):02d}:{clock % 60:04.1f}"
+        # ADR-133 r8 (spec 6.6 A): the SPADL row is the action at the possession END, so the scene point is
+        # x_end/y_end at time_end (a zero-length possession); the ball's destination is the targeted reception.
         rows.append(
             {
                 "event_type": "player_possession",
                 "event_id": f"{eid}_0",
                 "period": period,
-                "time_start": f"{int(clock // 60):02d}:{clock % 60:04.1f}",
+                "time_start": stamp,
+                "time_end": stamp,
                 "team_id": "team_home" if team == "H" else "team_away",
                 "player_id": f"p{eid}",
                 "x_start": x - L / 2,
                 "y_start": y - W / 2,
-                "x_end": ex - L / 2,
-                "y_end": ey - W / 2,
+                "x_end": x - L / 2,
+                "y_end": y - W / 2,
                 "start_type": "pass_reception",
                 "end_type": "shot" if kind == "shot" else "pass",
                 "game_interruption_before": gi,
                 "game_interruption_after": None,
                 "is_header": False,
                 "hand_pass": False,
-                "player_targeted_x_reception": None,
-                "player_targeted_y_reception": None,
+                "player_targeted_x_reception": None if kind == "shot" else ex - L / 2,
+                "player_targeted_y_reception": None if kind == "shot" else ey - W / 2,
                 "player_targeted_third_pass": None,
                 "player_targeted_channel_pass": None,
             }

@@ -11,7 +11,7 @@ from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.reflection import SPADL_REFLECTION_KINDS, reflect
 
 from . import config as spadlconfig
-from .schema import SPADL_COLUMNS
+from .schema import SPADL_COLUMNS, TIME_SOURCE_VALUES
 
 if TYPE_CHECKING:
     # Type-only import for pyright fidelity. Runtime call site lazy-imports per ADR-005 § 5.
@@ -1723,6 +1723,18 @@ def _finalize_output(
                 f"_finalize_output: extra_columns overlap with schema: {sorted(overlap)}. "
                 f"These names are already part of the canonical schema; remove them from extra_columns."
             )
+
+    if "time_source" in schema:
+        # ADR-133 r8 6.6 C: a converter that does not time its events from tracking sets nothing ("event"); a
+        # synthetic dribble from _add_dribbles carries NaN here, and its interpolated time is "event" too.
+        if "time_source" in df.columns:
+            ts = df["time_source"].astype(object)
+            df = df.assign(time_source=ts.where(ts.notna(), "event"))
+        else:
+            df = df.assign(time_source="event")
+        bad = sorted({str(v) for v in df["time_source"].unique()} - set(TIME_SOURCE_VALUES))
+        if bad:
+            raise ValueError(f"_finalize_output: time_source value(s) {bad} outside {TIME_SOURCE_VALUES}.")
 
     cols = [*schema.keys(), *extras]
     result = df[cols].copy()

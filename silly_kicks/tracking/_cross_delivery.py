@@ -4,9 +4,10 @@ The event layer types a cross by one geometric rule (``spadl.base.classify_deliv
 a blocked cross or a delivery that ends in a restart, and some providers' events miss defenders' in-box touches.
 This enricher decides the delivery from the ball itself:
 
-* **Release.** The ELASTIC aligned frame (TF-43) when the action matched confidently; else the event time. The
-  nearest ball frame must lie within half a frame period of that time, and the ball must be within
-  ``release_match_m`` of the action start, or the path is unanswerable.
+* **Release.** The action's own time when its ``time_source`` is ``"tracking"`` (the provider timed it on its own
+  tracking clock; spec r8 §6.6); else the ELASTIC aligned frame (TF-43) when the action matched confidently; else
+  the event time. The nearest ball frame must lie within half a frame period of that time, and the ball must be
+  within ``release_match_m`` of the action start, or the path is unanswerable.
 * **Path.** From the release to the first resolved ball contact (ADR-124/125 detector) by a player other than the
   passer, at or after ``release + release_gap_s``, capped at ``release + path_cap_s``.
 * **Attempt.** The path enters the penalty area, or the first contact is an opponent block within
@@ -190,7 +191,7 @@ def _cross_delivery_diagnostics(
         return _diag_frame(out, applicable, diag, attempt, height)
 
     flip = acting_team_attacks_rtl(out, frames).to_numpy(dtype=object)
-    release_t, used_elastic = _release_times(out, frames)
+    release_t, used_native, used_elastic = _release_times(out, frames, rows)
     ball = _ball_by_period(frames)
     contacts = _contacts_by_period(detect_ball_contacts(frames, params=params.contact_params))
     team_of = _player_team(frames)
@@ -199,7 +200,7 @@ def _cross_delivery_diagnostics(
     acting_team = out["team_id"].to_numpy(dtype=object)
     passer = out["player_id"].to_numpy(dtype=object)
     for i in rows:
-        diag["release_source"][i] = "elastic" if used_elastic[i] else "event"
+        diag["release_source"][i] = "native" if used_native[i] else ("elastic" if used_elastic[i] else "event")
         diag["release_t"][i] = release_t[i]
         if pd.isna(flip[i]) or period[i] not in ball:
             continue
@@ -303,10 +304,27 @@ def _ensure_cross_attempts(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Da
     return add_cross_deliveries(actions, frames)
 
 
-def _release_times(actions: pd.DataFrame, frames: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """§6.3 release steps 1-2: the confident ELASTIC frame's time, else the event time; and which rows used ELASTIC."""
+def _release_times(
+    actions: pd.DataFrame, frames: pd.DataFrame, rows: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """§6.3 release steps 0-2: per row, the native time, else the confident ELASTIC frame's time, else the event time.
+
+    Step 0 (spec r8): a row whose ``time_source`` is ``"tracking"`` already carries its provider's tracking-clock
+    time, so ELASTIC is not consulted for it (it adds error there, spec §5.1). A missing ``time_source`` column means
+    ``"event"`` for every row. ``rows`` are the positions whose release the caller reads; when all of them are native,
+    ELASTIC is not run at all (a SkillCorner match's synthetic dribbles are "event" but never applicable). When it
+    runs, it aligns the whole action stream. Returns the release times and two masks: the rows released at the native
+    time, and the rows released at an ELASTIC frame.
+    """
     t = actions["time_seconds"].to_numpy(dtype=np.float64, copy=True)
+    native = (
+        (actions["time_source"].astype(object) == "tracking").to_numpy(dtype=bool)
+        if "time_source" in actions.columns
+        else np.zeros(len(actions), dtype=bool)
+    )
     used = np.zeros(len(actions), dtype=bool)
+    if native[rows].all():
+        return t, native, used
     if {"elastic_frame_id", "elastic_confidence"} <= set(actions.columns):
         fid = actions["elastic_frame_id"].to_numpy(dtype=np.float64, copy=True)
         conf = actions["elastic_confidence"].to_numpy(dtype=np.float64, copy=True)
@@ -320,9 +338,9 @@ def _release_times(actions: pd.DataFrame, frames: pd.DataFrame) -> tuple[np.ndar
             hit = lookup.reindex(ids)
             fid = hit["elastic_frame_id"].to_numpy(dtype=np.float64, copy=True)
             conf = hit["elastic_confidence"].to_numpy(dtype=np.float64, copy=True)
-    use = np.isfinite(fid) & np.isfinite(conf) & (conf >= ElasticSyncParams().min_confidence)
+    use = np.isfinite(fid) & np.isfinite(conf) & (conf >= ElasticSyncParams().min_confidence) & ~native
     if not use.any():
-        return t, used
+        return t, native, used
     ball = frames.loc[frames["is_ball"].to_numpy(dtype=bool), ["period_id", "frame_id", "time_seconds"]]
     ftime = dict(zip(zip(ball["period_id"], ball["frame_id"], strict=True), ball["time_seconds"], strict=True))
     period = actions["period_id"].to_numpy()
@@ -331,7 +349,7 @@ def _release_times(actions: pd.DataFrame, frames: pd.DataFrame) -> tuple[np.ndar
         if ft is not None:
             t[i] = float(ft)
             used[i] = True
-    return t, used
+    return t, native, used
 
 
 def _nearest_frame(t: np.ndarray, t0: float) -> int:

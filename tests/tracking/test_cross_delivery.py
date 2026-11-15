@@ -282,6 +282,80 @@ def test_release_alignment(monkeypatch):
     assert pd.isna(_attempt(a, _frames(early))[0][0])
 
 
+def _early_frames():
+    """The ball sits at (60, 30) until t=1.0, then is kicked from (80, 5) into the box."""
+    return _frames(_path((0.0, 1.0, (60.0, 30.0), (80.0, 5.0)), (1.0, 2.0, (80.0, 5.0), (95.0, 34.0))))
+
+
+def _diag(actions, frames):
+    from silly_kicks.tracking._cross_delivery import _cross_delivery_diagnostics
+
+    return _cross_delivery_diagnostics(actions, frames, CrossDeliveryParams())
+
+
+@pytest.mark.parametrize(
+    ("time_source", "expected_t", "source"), [("tracking", 1.0, "native"), ("event", 0.4, "elastic")]
+)
+def test_tracking_row_uses_native_time(time_source, expected_t, source):
+    # Spec r8 6.3 step 0: a "tracking" row's time_seconds IS the release; a confident ELASTIC frame elsewhere
+    # (frame 10 = t 0.4) is not consulted. The same row as "event" uses ELASTIC (both sides).
+    a = _actions([("pass", 1.0, 80.0, 5.0)])
+    a["elastic_frame_id"] = 10.0
+    a["elastic_confidence"] = 0.9
+    a["time_source"] = time_source
+    d = _diag(a, _early_frames())
+    assert d["release_source"].iloc[0] == source
+    assert d["release_t"].iloc[0] == pytest.approx(expected_t)
+
+
+def test_missing_time_source_means_event():
+    a = _actions([("pass", 1.0, 80.0, 5.0)])
+    a["elastic_frame_id"] = 10.0
+    a["elastic_confidence"] = 0.9
+    assert "time_source" not in a.columns
+    assert _diag(a, _early_frames())["release_source"].iloc[0] == "elastic"
+
+
+def test_release_match_applies_to_native_rows():
+    a = _actions([("pass", 1.0, 80.0, 5.0)])
+    a["time_source"] = "tracking"
+    m = P.release_match_m
+    off = _path((1.0, 2.0, (80.0, 5.0 + m + 0.01), (95.0, 34.0)))
+    on = _path((1.0, 2.0, (80.0, 5.0 + m - 0.01), (95.0, 34.0)))
+    assert pd.isna(_attempt(a, _frames(off))[0][0])
+    assert _attempt(a, _frames(on))[0] == [True]
+
+
+def test_release_order_is_per_row():
+    a = _actions([("pass", 1.0, 80.0, 5.0), ("pass", 1.0, 80.0, 5.0)])
+    a["elastic_frame_id"] = 10.0
+    a["elastic_confidence"] = 0.9
+    a["time_source"] = ["tracking", "event"]
+    d = _diag(a, _early_frames())
+    assert d["release_source"].tolist() == ["native", "elastic"]
+    assert d["release_t"].tolist() == pytest.approx([1.0, 0.4])
+
+
+def test_elastic_skipped_when_every_applicable_row_is_native(monkeypatch):
+    # Review A C31: a SkillCorner match always holds synthetic dribbles ("event"), which are never applicable. Only the
+    # applicable rows' release is read, so ELASTIC must not run when all of THOSE are native -- both sides.
+    import silly_kicks.tracking._cross_delivery as cd
+
+    calls = []
+    real = cd.align_events_to_frames
+    monkeypatch.setattr(cd, "align_events_to_frames", lambda *a, **k: calls.append(1) or real(*a, **k))
+    a = _actions([("pass", 1.0, 80.0, 5.0), ("dribble", 1.5, 85.0, 10.0)]).drop(
+        columns=["elastic_frame_id", "elastic_confidence"]
+    )
+    a["time_source"] = ["tracking", "event"]
+    d = _diag(a, _early_frames())
+    assert calls == []
+    assert d["release_source"].iloc[0] == "native"
+    a["time_source"] = ["event", "event"]  # an applicable non-native row needs ELASTIC
+    _diag(a, _early_frames())
+    assert calls == [1]
+
+
 def test_misaligned_release_is_unknown():
     a = _actions([("pass", 1.0, 80.0, 5.0)])
     m = P.release_match_m

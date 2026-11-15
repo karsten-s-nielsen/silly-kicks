@@ -32,7 +32,15 @@ SPADL_COLUMNS: dict[str, str] = {
     # pass-class rows and on corner/free-kick rows where the provider labels deliveries, pd.NA elsewhere and
     # on providers with no native label (SkillCorner).
     "cross_native": "boolean",
+    # Where the row's time_seconds comes from (ADR-133, spec 2026-11-13 r8 6.6 C): "tracking" where the provider
+    # times its events from its own tracking clock (Gradient Sports, SkillCorner, Metrica), "event" otherwise and
+    # on synthetic dribbles (interpolated time). Holds only against that provider's own frames. Closed vocabulary
+    # TIME_SOURCE_VALUES; _finalize_output fills a missing value with "event".
+    "time_source": "object",
 }
+
+#: The closed vocabulary of ``time_source`` (ADR-133, spec r8 6.6 C).
+TIME_SOURCE_VALUES: tuple[str, ...] = ("tracking", "event")
 
 SPADL_NAME_COLUMNS: dict[str, str] = {
     "type_name": "object",

@@ -202,6 +202,8 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "cross_blocked": "invariant",
     # --- the provider's native "crossed" label (ADR-133): a boolean flag, not geometric -> invariant ---
     "cross_native": "invariant",
+    # --- where time_seconds comes from (ADR-133 r8): a provenance token, not geometric -> invariant ---
+    "time_source": "invariant",
     # --- add_names() output. add_names attaches these routinely, and a DECLARED column is
     #     the only one whose kind is guaranteed right, so they belong here. ---
     "type_name": "invariant",

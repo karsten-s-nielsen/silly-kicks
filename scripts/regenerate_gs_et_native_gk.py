@@ -89,7 +89,8 @@ def _gradientsports_adapter_input(match_dir: Path, match_id: int) -> tuple[pd.Da
             game_id=game_id,
             period_id=int(fr["period"]),
             frame_id=int(fr["frameNum"]),
-            time_seconds=float(fr.get("periodGameClockTime", 0.0)),
+            # Period-relative, as the GS events (ADR-017; ADR-133 r8 6.6 B): periodGameClockTime is the match clock.
+            time_seconds=float(fr.get("periodElapsedTime", 0.0)),
             frame_rate=29.97,
             z=0.0,
             speed_native=float("nan"),

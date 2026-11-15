@@ -73,20 +73,41 @@ Classes:
 
 `tracking/defensive_credit/_bravery.py:42,90,93` and `atomic/tracking/features.py:323-357,433` read `cross_blocked` on rows with `cross_native == True` (Task 4). `scripts/probe_sb_cross_blocked.py` is a one-off probe of the StatsBomb native block join, unaffected (it reads raw events).
 
+## Seams 5–8: native event timing (spec r8, decision 11)
+
+The evidence for the moves is `native-timing.md` (§2, the frame-link shift). Classes as above, plus **link moves**: the reader links GS or SkillCorner actions to frames by time, so it now reads the frame at the action's own moment (the kick), not the reception (SkillCorner, a median 1.1 s earlier) or the whole-second sequence start (GS, a median 0.5 s earlier at the link).
+
+| Seam | Reader | Class | Evidence |
+|---|---|---|---|
+| 5, 6 | `tracking/utils.py` `link_actions_to_frames` and its callers (38 files mention it; `git grep -l link_actions_to_frames`) | link moves (GS, SkillCorner) | it reads `time_seconds`; the frame-aware `add_*` in the linking modules are listed in `native-timing.md` §2 |
+| 5 | every reader of SkillCorner `start_x`/`start_y` (VAEP features, xT moves, pressure at the action, packing, `classify_deliveries`) | intended shift | the start moves from the reception to the kick (6.6 A) |
+| 5 | SkillCorner `end_x`/`end_y` of shots, fouls and non-actions | intended shift | end = start (the GS convention) |
+| 5 | `_add_dribbles` on SkillCorner | intended shift | carries from the reception to the kick appear |
+| 6 | GS `time_seconds` readers: VAEP time features, possession gaps, `event_stoppage_spans` (ADR-130 GS dead-ball spans, `training_frame_mask`) | intended shift | the possession event's own time, period-relative (6.6 B) |
+| 6 | `scripts/_loader_pining.py` `_build_gradientsports` frames, `scripts/regenerate_gs_et_native_gk.py` frames | changed in this cycle (Task 14) | frames take `periodElapsedTime`, the clock the GS actions use |
+| 6 | the GS converter's input `time_seconds` (`startGameClock`) | changed in this cycle | no longer read; the lakehouse's period-offset normalization of it no longer reaches the output |
+| 6 | `docs/examples/gradientsports_wc2022_walkthrough.py` (builds the converter input) | changed in this cycle | passes `start_time` and `event_time` (it passed neither, so the converter raised); found by review A (C34) |
+| 5, 6 | stored tables keyed by `action_id` (GS, SkillCorner) | intended shift | `action_id` renumbers (GS: 24 native converted actions move in 21 of 64 matches; SkillCorner: new order and carries); an ADR-065 cross-table migration |
+| 7 | `time_source`: `spadl/schema.py`, `_finalize_output`, `reflection.py`, `convert_to_atomic(preserve_native=…)` | changed in this cycle (Task 15) | additive column |
+| 7 | `tracking/_cross_delivery.py` `_release_times` | changed in this cycle (Task 16) | step 0 reads it |
+| 8 | `align_events_to_frames`, `add_elastic_sync`, `elastic_sync_xfns`, `link_actions_to_frames_elastic` on frames with `stoppage_state` | intended shift (Task 17) | episodes split at dead and unknown spans; frames without it unchanged |
+
 ## Trained artifacts
 
-| Artifact | Reads SPADL type? | Retrain |
-|---|---|---|
-| `tracking/_xcross_weights` (xCross) | the label | **owed** (label v2) |
-| `expected_passing/weights` (PassCompletionModel) | trains on `pass` rows | **owed** |
-| `xsuccess/weights` (XSuccessModel) | action-type one-hot feature | **owed** |
-| `corners/_routine_weights`, `corners/_run_zone_weights` (TF-46) | trained on `corner_kind == "direct"` corners | **owed** (tracking decides `corner_kind`) |
-| `tracking/_receiver_weights` | completed `pass` ∪ `cross` | not owed (union) |
-| `tracking/_xshot_weights` | shot types only (`_xshot_occurrence.py:338`) | not owed |
-| `match_outcome/weights`, `win_probability/weights` | shot types only (`_compute.py:23`, `_state.py:18`) | not owed |
-| `tracking/_ghost_gk_weights`, `_ghost_outfield_weights` | shots and the set-piece union | not owed |
-| `xtgk/_retention_weights` | the move union (`_moves.py`) | not owed |
-| VAEP | no bundled weights | none (users refit) |
+| Artifact | Reads SPADL type? | r8: trained on GS or SkillCorner actions or links? | Retrain |
+|---|---|---|---|
+| `tracking/_xcross_weights` (xCross) | the label | yes (IDSSE + SkillCorner) | **owed** (label v2; r8 SkillCorner times) |
+| `expected_passing/weights` (PassCompletionModel) | trains on `pass` rows | no (StatsBomb open data) | **owed** (type) |
+| `xsuccess/weights` (XSuccessModel) | action-type one-hot feature | no (StatsBomb open data) | **owed** (type) |
+| `corners/_routine_weights`, `corners/_run_zone_weights` (TF-46) | trained on `corner_kind == "direct"` corners | yes (SkillCorner + IDSSE + SB360; `MODEL_CARD.md`) | **owed** (tracking decides `corner_kind`; r8 SkillCorner corner start and time) |
+| `tracking/_xshot_weights` | shot types only (`_xshot_occurrence.py:338`) | yes (IDSSE + SkillCorner, `provider_list`): shot times move to the kick | **owed** (r8) |
+| `tracking/_ghost_gk_weights` (4 variants) | shots and the set-piece union | yes (GS + SkillCorner + Sportec, `corpus_provenance`); the extraction reads the staged actions per game (`train_ghost_gk.py:405-451`) | **owed** (r8) |
+| `tracking/_ghost_outfield_weights` (2 variants) | shots and the set-piece union | yes (GS + SkillCorner + Sportec, `cv_mae_by_provider`); goal times set `score_diff` (`train_ghost_outfield.py:86-145`) | **owed** (r8) |
+| `xtgk/_retention_weights/default` | the move union (`_moves.py`) | yes (GS, 64 games): the release `pressure` is a time-based frame link at the action, and the label reads the next actions | **owed** (r8) |
+| `xtgk/_retention_weights/skillcorner` | the move union | yes (SkillCorner, 108 games): goal-kick and distribution starts move to the kick | **owed** (r8) |
+| `tracking/_receiver_weights` | completed `pass` ∪ `cross` | no (StatsBomb) | not owed |
+| `match_outcome/weights`, `win_probability/weights` | shot types only (`_compute.py:23`, `_state.py:18`) | no (StatsBomb open data) | not owed |
+| VAEP | no bundled weights | — | none (users refit) |
 
 ## Raw hit lists
 

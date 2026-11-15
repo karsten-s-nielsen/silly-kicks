@@ -24,7 +24,7 @@ from pathlib import Path
 import pandas as pd
 
 from silly_kicks.atomic.spadl import convert_to_atomic
-from silly_kicks.spadl import add_names, boundary_metrics, coverage_metrics, gradientsports
+from silly_kicks.spadl import add_names, add_possessions, boundary_metrics, coverage_metrics, gradientsports
 from silly_kicks.vaep.labels import scores
 
 # Match 10502 = NED-USA, 2022 R16. Edit to point at any match in the directory.
@@ -71,7 +71,13 @@ def load_gradientsports_events(gs_dir: Path, match_id: int) -> tuple[pd.DataFram
                 "event_id": int(ev["gameEventId"]),
                 "possession_event_id": ev.get("possessionEventId"),
                 "period_id": int(ge.get("period") or 0),
-                "time_seconds": ge.get("startGameClock"),
+                # The game event's start (the kickoff anchor and sort tiebreak) and the possession event's own time;
+                # the converter's time_seconds is event_time minus the period's kickoff start_time (ADR-133).
+                "start_time": ev.get("startTime"),
+                "event_time": ev.get("eventTime"),
+                # PFF's native in-play sequence: one stretch of play from a restart to the next stoppage. It can hold
+                # several team possessions. Kept through the converter with preserve_native for the boundary check.
+                "sequence": ev.get("sequence"),
                 "team_id": int(ge.get("teamId") or 0),
                 "player_id": ge.get("playerId"),
                 "game_event_type": ge.get("gameEventType"),
@@ -153,6 +159,7 @@ def main():
         home_team_id=home_team_id,
         home_team_start_left=home_team_start_left,
         home_team_start_left_extratime=home_team_start_left_extratime,
+        preserve_native=["sequence"],
     )
     print(f"  Converted to {report.total_actions} SPADL actions.")
     if report.has_unrecognized:
@@ -162,11 +169,30 @@ def main():
     atomic_actions = convert_to_atomic(actions)
     print(f"  Atomic-SPADL: {len(atomic_actions)} atomic actions.")
 
-    cov = coverage_metrics(actions, expected_action_types={"pass", "shot", "tackle", "cross"})
-    print(f"  Coverage: {cov}")
+    expected = {"pass", "shot", "tackle", "cross"}
+    cov = coverage_metrics(actions=actions, expected_action_types=expected)
+    print(
+        f"  Coverage: {cov['total_actions']} actions; expected types missing: {cov['missing'] or 'none'} "
+        f"(a full match should miss none of {sorted(expected)})."
+    )
 
-    bm = boundary_metrics(actions)
-    print(f"  Boundary: {bm}")
+    # Possession boundaries: add_possessions' heuristic team possessions vs PFF's native in-play `sequence` (one
+    # stretch of play from a restart to the next stoppage), on the rows that carry a sequence. The two split play
+    # differently: PFF at every stoppage, the heuristic at changes of team possession. So neither number reaches
+    # 1.0 on clean data. Recall = the share of PFF's sequence starts the heuristic also marks; precision = the share
+    # of heuristic boundaries that are also sequence starts (one sequence often holds several possessions).
+    # Reference, all 64 WC2022 matches: recall 0.80-0.91 (median 0.86), precision 0.46-0.64 (median 0.58). A match
+    # far below these ranges points to a conversion or input problem.
+    with_possessions = add_possessions(actions)
+    known = with_possessions["sequence"].notna()
+    bm = boundary_metrics(
+        heuristic=with_possessions.loc[known, "possession_id"],
+        native=with_possessions.loc[known, "sequence"].astype("int64"),
+    )
+    print(
+        f"  Possession boundaries vs PFF sequences: recall {bm['recall']:.2f} (WC2022 range 0.80-0.91), "
+        f"precision {bm['precision']:.2f} (WC2022 range 0.46-0.64)."
+    )
 
     actions_named = add_names(actions)
     s = scores(actions_named, nr_actions=10)

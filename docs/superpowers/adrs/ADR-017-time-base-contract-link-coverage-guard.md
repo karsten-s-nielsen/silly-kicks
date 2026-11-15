@@ -54,3 +54,7 @@ The convention-pinning lock tests enforce the contract only for converters whose
 - **Plans:** `docs/superpowers/plans/2026-06-04-tracking-time-base-contract.md`
 - **ADRs:** ADR-010 (symmetric fail-loud `require_et_direction` — the precedent this mirrors, one notch softer for a continuous signal)
 - **Origin:** luxury-lakehouse AC-1 change request, 2026-06-04
+
+## Amendment (ADR-133 r8, 2026-11-14)
+
+The Context's "GS *actions* … pass `time_seconds` through verbatim" no longer holds. The Gradient Sports converter now computes `time_seconds` itself, as the possession event's `event_time` minus its period's kickoff `start_time`: period-relative by construction, and equal to PFF's own frame synchronisation within 0.067 s (spec `2026-11-13-cross-definition-design` §6.6 B). The pining loader's GS frames move from `periodGameClockTime` (the match clock, the same defect this ADR describes on the frame side) to `periodElapsedTime`. `tests/spadl/test_time_seconds_convention.py` now locks Gradient Sports too.

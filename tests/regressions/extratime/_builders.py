@@ -63,8 +63,12 @@ def metrica_events_input(*, et: bool) -> pd.DataFrame:
 
 
 def gs_events_input(*, et: bool) -> pd.DataFrame:
+    # with_event_clock adds the kickoff of each period and the event_time GS now reads (ADR-133 r8 6.6 B); it keeps
+    # the builders' period times, so the 3.30 golden's time_seconds are unchanged.
+    from spadl._gs_clock import with_event_clock  # type: ignore
+
     df = _gs_events_rt()
-    return _append_et(df, "period_id") if et else df
+    return with_event_clock(_append_et(df, "period_id") if et else df)
 
 
 # ---- converter dispatch ---------------------------------------------------

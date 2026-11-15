@@ -3,16 +3,25 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.spadl import gradientsports as gs_mod
 from silly_kicks.spadl.schema import GRADIENTSPORTS_SPADL_COLUMNS
+from tests.spadl._gs_clock import with_event_clock
 
 # Minimum set of input columns to construct a one-row test DataFrame.
-# Mirrors the EXPECTED_INPUT_COLUMNS frozenset in gradientsports.py.
-_REQUIRED_COLS = sorted(gs_mod.EXPECTED_INPUT_COLUMNS)
+# Mirrors the EXPECTED_INPUT_COLUMNS frozenset in gradientsports.py, plus the legacy `time_seconds` the builders
+# below write as the intended period time (with_event_clock turns it into event_time; ADR-133 r8 6.6 B).
+_REQUIRED_COLS = sorted(gs_mod.EXPECTED_INPUT_COLUMNS | {"time_seconds"})
+
+
+def _gs_convert(events, *args, **kwargs):
+    """``convert_to_actions`` on the builder frame with the possession-event clock (``tests/spadl/_gs_clock.py``)."""
+    return gs_mod.convert_to_actions(with_event_clock(events), *args, **kwargs)
+
 
 _SYNTHETIC_FIXTURE = Path(__file__).parent.parent / "datasets" / "gradientsports" / "synthetic_match.json"
 _GENERATOR = _SYNTHETIC_FIXTURE.parent / "_generate_synthetic_match.py"
@@ -161,7 +170,7 @@ class TestGradientsportsContract:
 
     def test_returns_tuple_dataframe_conversion_report(self):
         events = _df_minimal_pass()
-        result = gs_mod.convert_to_actions(
+        result = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -174,7 +183,7 @@ class TestGradientsportsContract:
 
     def test_output_schema_matches_gradientsports_spadl_columns(self):
         events = _df_minimal_pass()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -184,7 +193,7 @@ class TestGradientsportsContract:
 
     def test_dtypes_match_schema(self):
         events = _df_minimal_pass()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -195,7 +204,7 @@ class TestGradientsportsContract:
 
     def test_empty_input_returns_empty_actions_with_schema(self):
         empty = pd.DataFrame({c: [] for c in _REQUIRED_COLS})
-        actions, report = gs_mod.convert_to_actions(
+        actions, report = _gs_convert(
             empty,
             home_team_id=100,
             home_team_start_left=True,
@@ -210,7 +219,7 @@ class TestGradientsportsContract:
         events = _df_minimal_pass()
         original_columns = list(events.columns)
         original_len = len(events)
-        _, _ = gs_mod.convert_to_actions(
+        _, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -223,15 +232,22 @@ class TestGradientsportsContract:
 class TestGradientsportsRequiredColumns:
     """Missing any required input column must raise ValueError with column names."""
 
-    @pytest.mark.parametrize("missing", _REQUIRED_COLS)
+    @pytest.mark.parametrize("missing", sorted(gs_mod.EXPECTED_INPUT_COLUMNS))
     def test_missing_required_column_raises(self, missing):
-        events = _df_minimal_pass().drop(columns=[missing])
+        # The input check runs first, so the frame goes in as built (no event clock added).
+        events = with_event_clock(_df_minimal_pass()).drop(columns=[missing])
         with pytest.raises(ValueError, match=missing):
             gs_mod.convert_to_actions(
                 events,
                 home_team_id=100,
                 home_team_start_left=True,
             )
+
+    def test_time_seconds_is_not_required(self):
+        # ADR-133 r8 6.6 B: the output time is event_time - kickoff; the input startGameClock is not read.
+        events = with_event_clock(_df_minimal_pass()).drop(columns=["time_seconds"])
+        actions, _ = gs_mod.convert_to_actions(events, home_team_id=100, home_team_start_left=True)
+        assert actions["time_seconds"].tolist() == pytest.approx([10.5])
 
 
 class TestGradientsportsCoordinateTranslation:
@@ -241,7 +257,7 @@ class TestGradientsportsCoordinateTranslation:
         df = _df_minimal_pass()
         df.loc[0, "ball_x"] = 0.0
         df.loc[0, "ball_y"] = 0.0
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -256,7 +272,7 @@ class TestGradientsportsCoordinateTranslation:
         df = _df_minimal_pass()
         df.loc[0, "ball_x"] = -52.5  # centered: left-side corner
         df.loc[0, "ball_y"] = -34.0
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -282,7 +298,7 @@ class TestGradientsportsCoordinateClipping:
         # ball_y=44.0 → SPADL 78.0 (OOB by 10m, matches lakehouse max_y=78.07)
         df.loc[0, "ball_x"] = 57.5
         df.loc[0, "ball_y"] = 44.0
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -298,7 +314,7 @@ class TestGradientsportsCoordinateClipping:
         # ball_y=-42.15 → SPADL -8.15 (matches lakehouse min_y=-8.15)
         df.loc[0, "ball_x"] = -57.9
         df.loc[0, "ball_y"] = -42.15
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -323,7 +339,7 @@ class TestGradientsportsCoordinateClipping:
         row2["ball_x"] = 57.5  # → SPADL 110.0 (OOB)
         row2["ball_y"] = 44.0  # → SPADL 78.0 (OOB)
         df = pd.concat([df, pd.DataFrame([row2])], ignore_index=True)
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -339,7 +355,7 @@ class TestGradientsportsCoordinateClipping:
         df.loc[0, "team_id"] = 200  # away
         df.loc[0, "ball_x"] = 57.5  # → SPADL 110.0, then LTR flip → 105-110=-5 (OOB low!)
         df.loc[0, "ball_y"] = 44.0  # → SPADL 78.0, then LTR y-flip → 68-78=-10 (OOB low!)
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -355,7 +371,7 @@ class TestGradientsportsCoordinateClipping:
         df = _df_minimal_pass()
         df.loc[0, "ball_x"] = 26.25  # → SPADL 78.75 (in bounds)
         df.loc[0, "ball_y"] = 10.0  # → SPADL 44.0 (in bounds)
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -367,7 +383,7 @@ class TestGradientsportsCoordinateClipping:
     def test_synthetic_fixture_all_coordinates_in_bounds(self):
         """Full synthetic fixture (including OOB events) produces zero OOB rows."""
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -395,7 +411,7 @@ class TestGradientsportsDirectionOfPlay:
         df.loc[0, "ball_y"] = 0.0
         df.loc[0, "team_id"] = 100  # home
         df.loc[0, "period_id"] = 1
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -411,7 +427,7 @@ class TestGradientsportsDirectionOfPlay:
         df.loc[0, "ball_y"] = 0.0
         df.loc[0, "team_id"] = 200  # away
         df.loc[0, "period_id"] = 1
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -426,7 +442,7 @@ class TestGradientsportsDirectionOfPlay:
         df.loc[0, "ball_x"] = 26.25
         df.loc[0, "team_id"] = 100  # home
         df.loc[0, "period_id"] = 2
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -440,7 +456,7 @@ class TestGradientsportsDirectionOfPlay:
         df.loc[0, "ball_x"] = 26.25
         df.loc[0, "team_id"] = 200  # away
         df.loc[0, "period_id"] = 2
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -456,7 +472,7 @@ class TestGradientsportsExtraTimeFallback:
         df = _df_minimal_pass()
         df.loc[0, "period_id"] = 3
         with pytest.raises(ValueError, match="home_team_start_left_extratime"):
-            gs_mod.convert_to_actions(
+            _gs_convert(
                 df,
                 home_team_id=100,
                 home_team_start_left=True,
@@ -466,7 +482,7 @@ class TestGradientsportsExtraTimeFallback:
         df = _df_minimal_pass()
         df.loc[0, "period_id"] = 4
         with pytest.raises(ValueError, match="home_team_start_left_extratime"):
-            gs_mod.convert_to_actions(
+            _gs_convert(
                 df,
                 home_team_id=100,
                 home_team_start_left=True,
@@ -475,7 +491,7 @@ class TestGradientsportsExtraTimeFallback:
     def test_period3_event_with_extratime_param_succeeds(self):
         df = _df_minimal_pass()
         df.loc[0, "period_id"] = 3
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -500,7 +516,7 @@ class TestGradientsportsBodyPart:
     def test_body_type_dispatch(self, body_type, expected_name):
         df = _df_minimal_pass()
         df.loc[0, "body_type"] = body_type
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -527,7 +543,7 @@ class TestGradientsportsPassDispatch:
     def test_pass_set_piece_composition(self, set_piece, expected_name):
         df = _df_minimal_pass()
         df.loc[0, "set_piece_type"] = set_piece
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -539,7 +555,7 @@ class TestGradientsportsPassDispatch:
     def test_pass_outcome_complete_is_success(self):
         df = _df_minimal_pass()
         df.loc[0, "pass_outcome_type"] = "C"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -550,7 +566,7 @@ class TestGradientsportsPassDispatch:
     def test_pass_outcome_fail_is_fail(self):
         df = _df_minimal_pass()
         df.loc[0, "pass_outcome_type"] = "F"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -574,7 +590,7 @@ class TestGradientsportsCrossDispatch:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "CR"
         df.loc[0, "set_piece_type"] = set_piece
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -591,7 +607,7 @@ class TestGradientsportsCrossDispatch:
         df.loc[0, "possession_event_type"] = "CR"
         df.loc[0, "cross_outcome_type"] = "C"
         df.loc[0, "pass_outcome_type"] = None
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -615,7 +631,7 @@ class TestGradientsportsShotDispatch:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "SH"
         df.loc[0, "set_piece_type"] = set_piece
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -643,7 +659,7 @@ class TestGradientsportsShotDispatch:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "SH"
         df.loc[0, "shot_outcome_type"] = shot_outcome
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -673,7 +689,7 @@ class TestGradientsportsShotOutcomeRegression:
         n_off_target = int((shot_outcomes == "O").sum())
         assert n_off_target >= 1, "fixture must contain >=1 off-target 'O' shot for this regression"
 
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -700,7 +716,7 @@ class TestGradientsportsRebound:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "RE"
         df.loc[0, "keeper_touch_type"] = None
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -720,7 +736,7 @@ class TestGradientsportsRebound:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "RE"
         df.loc[0, "keeper_touch_type"] = "C"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -748,7 +764,7 @@ class TestGradientsportsTackle:
 
     def test_tackle_type_id_set(self):
         df = self._df_tackle(winner_id=5, winner_team_id=200)
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -759,7 +775,7 @@ class TestGradientsportsTackle:
     def test_tackle_winner_columns_populated_when_challenger_wins(self):
         """Challenger (5/200) wins → carrier (1/100) lost."""
         df = self._df_tackle(winner_id=5, winner_team_id=200)
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -773,7 +789,7 @@ class TestGradientsportsTackle:
     def test_tackle_winner_columns_populated_when_carrier_holds(self):
         """Carrier (1/100) wins (== event_player_id) → challenger (5/200) lost."""
         df = self._df_tackle(winner_id=1, winner_team_id=100)
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -787,7 +803,7 @@ class TestGradientsportsTackle:
     def test_tackle_passthrough_NaN_on_non_tackle_rows(self):
         """A pass row has NA on all four tackle columns."""
         df = _df_minimal_pass()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -808,7 +824,7 @@ class TestGradientsportsClearanceDribbleTouchControl:
     def test_clearance(self):
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "CL"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -819,7 +835,7 @@ class TestGradientsportsClearanceDribbleTouchControl:
     def test_ball_carry(self):
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "BC"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -836,7 +852,7 @@ class TestGradientsportsClearanceDribbleTouchControl:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "BC"
         df.loc[0, "ball_carry_outcome"] = "R"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -848,7 +864,7 @@ class TestGradientsportsClearanceDribbleTouchControl:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "BC"
         df.loc[0, "ball_carry_outcome"] = "L"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -862,7 +878,7 @@ class TestGradientsportsClearanceDribbleTouchControl:
         mass-fail if a future feed drops or renames the field)."""
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "BC"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -873,7 +889,7 @@ class TestGradientsportsClearanceDribbleTouchControl:
     def test_touch_control(self):
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "TC"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -888,7 +904,7 @@ class TestGradientsportsFoul:
     def test_foul_synthesizes_additional_action(self):
         df = _df_minimal_pass()
         df.loc[0, "foul_type"] = "STANDARD"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -904,7 +920,7 @@ class TestGradientsportsFoul:
         df = _df_minimal_pass()
         df.loc[0, "foul_type"] = "STANDARD"
         df.loc[0, "final_foul_outcome_type"] = "Y"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -917,7 +933,7 @@ class TestGradientsportsFoul:
         df = _df_minimal_pass()
         df.loc[0, "foul_type"] = "STANDARD"
         df.loc[0, "final_foul_outcome_type"] = "R"
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -928,7 +944,7 @@ class TestGradientsportsFoul:
 
     def test_no_foul_no_synthesis(self):
         df = _df_minimal_pass()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -959,7 +975,7 @@ class TestGradientsportsExclusions:
         df = _df_minimal_pass()
         df.loc[0, "game_event_type"] = ge_type
         df.loc[0, "possession_event_type"] = None
-        actions, report = gs_mod.convert_to_actions(
+        actions, report = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -971,7 +987,7 @@ class TestGradientsportsExclusions:
     def test_otb_plus_it_excluded(self):
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "IT"
-        actions, report = gs_mod.convert_to_actions(
+        actions, report = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -984,7 +1000,7 @@ class TestGradientsportsExclusions:
         """OTB rows with empty possessionEventType are initialNonEvent markers."""
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = None
-        actions, report = gs_mod.convert_to_actions(
+        actions, report = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -1004,7 +1020,7 @@ class TestGradientsportsDedicatedFoulEvent:
         df.loc[0, "possession_event_type"] = "FO"
         df.loc[0, "foul_type"] = "I"
         df.loc[0, "final_foul_outcome_type"] = "Y"
-        actions, report = gs_mod.convert_to_actions(
+        actions, report = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -1105,7 +1121,7 @@ class TestGradientsportsNullActorEvents:
     def test_otb_ch_null_actor_does_not_crash(self):
         """OTB+CH challenge with null teamId must convert without error."""
         df = self._df_null_actor_challenge()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -1119,7 +1135,7 @@ class TestGradientsportsNullActorEvents:
     def test_foul_fo_null_actor_does_not_crash(self):
         """FOUL+FO foul with null teamId must convert without error."""
         df = self._df_null_actor_foul()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -1150,7 +1166,7 @@ class TestGradientsportsNullActorEvents:
         ):
             if col in df.columns:
                 df[col] = df[col].astype("Int64")
-        actions, _report = gs_mod.convert_to_actions(
+        actions, _report = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -1164,98 +1180,18 @@ class TestGradientsportsNullActorEvents:
 
 
 class TestGradientsportsNanTimeSeconds:
-    """Dedicated FOUL events (gameEventType=FOUL, possessionEventType=FO) in
-    real Gradient Sports data have NULL startGameClock — 28/28 across 13/64
-    WC2022 matches. The converter must impute time_seconds via ffill+bfill
-    within each period, not leak NaN into the output.
+    """Dedicated FOUL events (gameEventType=FOUL, possessionEventType=FO) in real Gradient Sports data have NULL
+    startGameClock -- 28/28 across 13/64 WC2022 matches. Since ADR-133 r8 (spec 6.6 B) the output time is the
+    event's own ``event_time`` minus its period's kickoff, which every event carries, so the former start_time-ordered
+    imputation (Option D) is gone. ``tests/spadl/test_gradientsports_event_time.py`` tests the foul's own time and
+    the order-insensitivity; this class keeps the end-to-end no-NaN check on the synthetic match.
     """
-
-    @staticmethod
-    def _build_df(event_specs: list[tuple[str | None, float | None, dict]]) -> pd.DataFrame:
-        """Build a multi-row input DataFrame from (pe_type, time_s, extras) specs."""
-        rows: list[dict] = []
-        for i, (pe_type, time_s, extra) in enumerate(event_specs, start=1):
-            row: dict[str, object] = {col: None for col in _REQUIRED_COLS}
-            row.update(
-                {
-                    "game_id": 10502,
-                    "event_id": i,
-                    "possession_event_id": i,
-                    "period_id": 1,
-                    "time_seconds": time_s,
-                    # Monotonic absolute clock in intended chronological order, so the
-                    # start_time-ordered FOUL imputation (Option D) recovers the native neighbour.
-                    "start_time": float(i),
-                    "team_id": 100,
-                    "player_id": 1,
-                    "game_event_type": "FOUL" if pe_type is None else "OTB",
-                    "possession_event_type": "FO" if pe_type is None else pe_type,
-                    "ball_x": 0.0,
-                    "ball_y": 0.0,
-                }
-            )
-            if pe_type is None:
-                row["foul_type"] = "I"
-                row["final_foul_outcome_type"] = "Y"
-            row.update(extra)
-            rows.append(row)
-        df = pd.DataFrame(rows)
-        for col in ("possession_event_id", "player_id"):
-            df[col] = df[col].astype("Int64")
-        return df
-
-    def test_dedicated_foul_nan_time_seconds_imputed(self):
-        """Single dedicated FOUL with NaN time_seconds between two valid events."""
-        df = self._build_df(
-            [
-                ("PA", 60.0, {"pass_outcome_type": "C", "body_type": "R", "set_piece_type": "O"}),
-                (None, None, {}),  # FOUL — NaN time_seconds
-                ("PA", 70.0, {"pass_outcome_type": "C", "body_type": "R", "set_piece_type": "O"}),
-            ]
-        )
-
-        actions, _ = gs_mod.convert_to_actions(
-            df,
-            home_team_id=100,
-            home_team_start_left=True,
-            home_team_start_left_extratime=True,
-        )
-        # The foul row must have a valid (non-NaN) time_seconds.
-        foul_mask = actions["type_id"] == spadlconfig.actiontype_id["foul"]
-        assert foul_mask.any(), "Expected at least one foul action"
-        assert actions.loc[foul_mask, "time_seconds"].notna().all(), (
-            "Dedicated FOUL with NULL startGameClock must have imputed time_seconds, got NaN"
-        )
-        # Imputed value should be 60.0 (forward-fill from the preceding pass).
-        assert actions.loc[foul_mask, "time_seconds"].iloc[0] == pytest.approx(60.0)
-
-    def test_period_leading_foul_uses_bfill(self):
-        """FOUL at the start of a period (no preceding event) uses back-fill."""
-        df = self._build_df(
-            [
-                (None, None, {}),  # FOUL at period start — NaN time_seconds
-                ("PA", 5.0, {"pass_outcome_type": "C", "body_type": "R", "set_piece_type": "O"}),
-            ]
-        )
-
-        actions, _ = gs_mod.convert_to_actions(
-            df,
-            home_team_id=100,
-            home_team_start_left=True,
-            home_team_start_left_extratime=True,
-        )
-        foul_mask = actions["type_id"] == spadlconfig.actiontype_id["foul"]
-        assert foul_mask.any()
-        assert actions.loc[foul_mask, "time_seconds"].notna().all(), (
-            "Period-leading FOUL must use bfill when no preceding event exists"
-        )
-        assert actions.loc[foul_mask, "time_seconds"].iloc[0] == pytest.approx(5.0)
 
     def test_synthetic_fixture_no_nan_time_seconds(self):
         """Full synthetic fixture (with realistic NULL startGameClock on FOUL)
         must produce zero NaN time_seconds in the output."""
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1265,79 +1201,6 @@ class TestGradientsportsNanTimeSeconds:
         assert not nan_mask.any(), (
             f"Found {nan_mask.sum()} NaN time_seconds in output:\n"
             f"{actions.loc[nan_mask, ['action_id', 'period_id', 'type_id', 'time_seconds']]}"
-        )
-
-
-class TestFoulTimeImputationIsOrderInsensitive:
-    """Option D (spec 2026-08-20 chronological-action-id §2b): a null-clock FOUL's ``time_seconds``
-    is imputed by a ``start_time``-ordered ffill/bfill, so it is a PURE FUNCTION of content --
-    identical under any input row permutation -- AND correct (the foul takes its
-    ``start_time``-predecessor's game clock). Measured on all 64 real GS WC2022 matches
-    (``scratchpad/gs_foul_id_probe.py``): ``gameEventId`` is ~21.5% non-chronological (unfit as a
-    chronology key), while ``start_time`` has 0/144,374 inversions and is present on all 28 null-clock
-    fouls. The old native-order ffill was correct on native-ordered feeds but NOT permutation-invariant.
-    """
-
-    @staticmethod
-    def _rows():
-        # (event_id, time_seconds, start_time, is_foul); start_time is the absolute clock.
-        # start_time order A(100) < B(200) < FOUL(250) < C(300); the FOUL's start_time-predecessor
-        # is pass B (clock 20.0), so the imputed foul clock must be 20.0 regardless of input order.
-        return [
-            (1, 10.0, 100.0, False),
-            (2, 20.0, 200.0, False),
-            (9, None, 250.0, True),  # FOUL — NaN startGameClock, start_time between B and C
-            (3, 30.0, 300.0, False),
-        ]
-
-    @classmethod
-    def _build(cls, rows):
-        recs = []
-        for eid, ts, st, is_foul in rows:
-            r: dict[str, object] = {col: None for col in _REQUIRED_COLS}
-            r.update(
-                {
-                    "game_id": 10502,
-                    "event_id": eid,
-                    "possession_event_id": eid,
-                    "period_id": 1,
-                    "time_seconds": ts,
-                    "start_time": st,
-                    "team_id": 100,
-                    "player_id": 1,
-                    "game_event_type": "FOUL" if is_foul else "OTB",
-                    "possession_event_type": "FO" if is_foul else "PA",
-                    "set_piece_type": "O",
-                    "ball_x": 0.0,
-                    "ball_y": 0.0,
-                    "body_type": "R",
-                }
-            )
-            if is_foul:
-                r["foul_type"] = "I"
-                r["final_foul_outcome_type"] = "Y"
-            else:
-                r["pass_outcome_type"] = "C"  # noqa: S105  # SPADL pass-outcome code, not a secret
-            recs.append(r)
-        df = pd.DataFrame(recs)
-        for col in ("possession_event_id", "player_id"):
-            df[col] = df[col].astype("Int64")
-        return df
-
-    def _foul_times(self, df):
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
-        m = actions["type_id"] == spadlconfig.actiontype_id["foul"]
-        return actions.loc[m, "time_seconds"].tolist()
-
-    def test_foul_time_is_startTime_predecessor_and_permutation_invariant(self):
-        rows = self._rows()
-        native = self._foul_times(self._build(rows))
-        reversed_ = self._foul_times(self._build(list(reversed(rows))))
-        assert native == reversed_, f"FOUL time must be permutation-invariant; native={native} reversed={reversed_}"
-        assert native == pytest.approx([20.0]), (
-            f"FOUL must take its start_time-predecessor's clock (20.0), got {native}"
         )
 
 
@@ -1351,7 +1214,7 @@ class TestGradientsportsReportCounts:
         df.loc[1, "possession_event_type"] = "SH"
         df.loc[1, "shot_outcome_type"] = "G"
         df.loc[1, "time_seconds"] = 11.0
-        _, report = gs_mod.convert_to_actions(
+        _, report = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -1372,7 +1235,7 @@ class TestGradientsportsEndCoordinates:
         df.loc[1, "ball_x"] = 20.0
         df.loc[1, "ball_y"] = 5.0
         df.loc[1, "time_seconds"] = 11.0
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -1384,7 +1247,7 @@ class TestGradientsportsEndCoordinates:
     def test_last_action_end_equals_start(self):
         """Last action has no successor — end falls back to its own start."""
         df = _df_minimal_pass()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -1407,7 +1270,7 @@ class TestGradientsportsEndCoordinates:
         df.loc[1, "ball_x"] = 20.0
         df.loc[1, "ball_y"] = 5.0
         df.loc[1, "time_seconds"] = 11.0
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -1424,7 +1287,7 @@ class TestGradientsportsEndCoordinates:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "BC"
         df.loc[0, "pass_outcome_type"] = None
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -1440,7 +1303,7 @@ class TestGradientsportsSyntheticMatchE2E:
 
     def test_synthetic_match_converts_with_no_unrecognized(self):
         events = _load_synthetic_events()
-        _, report = gs_mod.convert_to_actions(
+        _, report = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1452,7 +1315,7 @@ class TestGradientsportsSyntheticMatchE2E:
     def test_synthetic_match_dispatch_coverage(self):
         """Every documented dispatch row produces at least one action."""
         events = _load_synthetic_events()
-        actions, report = gs_mod.convert_to_actions(
+        actions, report = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1496,7 +1359,7 @@ class TestGradientsportsSyntheticMatchE2E:
         between synthetic-fixture coverage and the converter's excluded set.
         """
         events = _load_synthetic_events()
-        _, report = gs_mod.convert_to_actions(
+        _, report = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1522,7 +1385,7 @@ class TestGradientsportsSyntheticMatchE2E:
 
     def test_synthetic_match_yields_goal_actions(self):
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1540,7 +1403,7 @@ class TestGradientsportsSyntheticMatchE2E:
 
     def test_synthetic_match_yields_yellow_and_red_cards(self):
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1552,7 +1415,7 @@ class TestGradientsportsSyntheticMatchE2E:
 
     def test_synthetic_match_tackle_winner_columns_populated(self):
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1568,7 +1431,7 @@ class TestGradientsportsSyntheticMatchE2E:
         """Null-actor OTB+CH and FOUL+FO events (real WC 2022 pattern) convert
         with NaN team_id/player_id (never sentinel 0) instead of crashing."""
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1589,7 +1452,7 @@ class TestGradientsportsAtomicComposability:
         from silly_kicks.atomic.spadl import convert_to_atomic
 
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1611,7 +1474,7 @@ class TestGradientsportsAtomicComposability:
         from silly_kicks.atomic.spadl import add_possessions, convert_to_atomic
 
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1630,7 +1493,7 @@ class TestGradientsportsVaepComposability:
         from silly_kicks.vaep.labels import scores
 
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1646,7 +1509,7 @@ class TestGradientsportsVaepComposability:
         from silly_kicks.vaep.labels import concedes
 
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1665,7 +1528,7 @@ class TestGradientsportsNonEventExclusion:
         df.loc[1, "event_id"] = 2
         df.loc[1, "possession_event_id"] = 2
         df["nonEvent"] = [False, True]
-        actions, report = gs_mod.convert_to_actions(
+        actions, report = _gs_convert(
             df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
         )
         assert len(actions) == 1
@@ -1674,7 +1537,7 @@ class TestGradientsportsNonEventExclusion:
     def test_nonevent_column_absent_warns_and_noops(self):
         df = _df_minimal_pass()
         with pytest.warns(UserWarning, match="nonEvent"):
-            actions, report = gs_mod.convert_to_actions(
+            actions, report = _gs_convert(
                 df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
             )
         assert len(actions) == 1
@@ -1684,9 +1547,7 @@ class TestGradientsportsNonEventExclusion:
         # robust coercion: the string "false" must NOT be treated truthy (would invert exclusion).
         df = _df_minimal_pass()
         df["nonEvent"] = ["false"]
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         assert len(actions) == 1
 
 
@@ -1700,9 +1561,7 @@ class TestGradientsportsOwnGoalCapture:
         df.loc[0, "team_id"] = 100  # conceding (acting) team
         df.loc[0, "player_id"] = 7  # OG scorer (= gameEvents.playerId = rebounderPlayerId)
         df.loc[0, "ball_x"] = -45.0  # -> start_x 7.5 (own half), survives the Task-3 tripwire
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["bad_touch"]
         assert actions.iloc[0]["result_id"] == spadlconfig.result_id["owngoal"]
         assert actions.iloc[0]["team_id"] == 100
@@ -1712,9 +1571,7 @@ class TestGradientsportsOwnGoalCapture:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "RE"
         df.loc[0, "shot_outcome_type"] = None
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["keeper_save"]
 
 
@@ -1735,7 +1592,7 @@ class TestGradientsportsOwnGoalTripwire:
     def test_re_g_in_attacking_half_reverts_with_warning(self):
         df = self._re_g(ball_x=45.0)  # -> start_x 97.5 (attacking half) -> revert
         with pytest.warns(UserWarning, match="own-goal"):
-            actions, _ = gs_mod.convert_to_actions(
+            actions, _ = _gs_convert(
                 df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
             )
         assert actions.iloc[0]["result_id"] == spadlconfig.result_id["fail"]
@@ -1743,9 +1600,7 @@ class TestGradientsportsOwnGoalTripwire:
 
     def test_re_g_in_own_half_kept_as_owngoal_no_warning(self, recwarn):
         df = self._re_g(ball_x=-45.0)  # -> start_x 7.5 (own half) -> kept
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         assert actions.iloc[0]["result_id"] == spadlconfig.result_id["owngoal"]
         assert not [w for w in recwarn.list if "own-goal" in str(w.message)]
 
@@ -1762,9 +1617,7 @@ class TestGradientsportsCrossGoal:
         df.loc[0, "cross_outcome_type"] = "I"  # cross-as-pass incomplete
         df.loc[0, "team_id"] = 100
         df.loc[0, "player_id"] = 9  # crosser = scorer
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         assert len(actions) == 2
         # ADR-133: the synthesized shot carries the parent's coordinates, so in event data the delivery has no
         # end in the box (the event-only limit; tracking decides). GS's own label is kept in cross_native.
@@ -1788,9 +1641,7 @@ class TestGradientsportsCrossGoal:
         df.loc[0, "player_id"] = 9
         df.loc[0, "foul_type"] = "I"
         df.loc[0, "final_foul_outcome_type"] = "Y"
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         assert [actions.iloc[i]["type_id"] for i in range(len(actions))] == [
             # ADR-133: the synthesized shot carries the parent's coordinates, so the event data shows no
             # delivery into the box (the event-only limit); GS's own label is kept in cross_native.
@@ -1808,7 +1659,7 @@ class TestGradientsportsGoalCaptureRealistic:
 
     def test_owngoal_crossgoal_captured_disallowed_excluded(self):
         events = _load_synthetic_events()
-        actions, report = gs_mod.convert_to_actions(
+        actions, report = _gs_convert(
             events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
         )
         # exactly one own goal (the RE+G), on the conceding team 100
@@ -1825,7 +1676,7 @@ class TestGradientsportsGoalCaptureRealistic:
 
     def test_composition_dense_action_ids_and_order(self):
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
         )
         assert list(actions["action_id"]) == list(range(len(actions)))  # dense + contiguous
@@ -1871,6 +1722,103 @@ def test_the_generator_reproduces_the_committed_fixture():
         "committed fixture -- diff before you do it, and never let a hand-edit land in the JSON "
         f"alone. Produced {len(mod.build_match())} events; committed {len(json.loads(committed))}."
     )
+
+
+class TestSyntheticFixtureEventClock:
+    """The end-to-end fixture can tell ``event_time`` from ``start_time`` (ADR-133 r8 6.6 B; review A C27).
+
+    Raw GS ``startTime`` is the game event's (on-ball sequence's) start and ``eventTime`` the possession event's own
+    time, a median 1.59 s later (spec r8 5.1). A fixture with ``startTime == eventTime`` cannot show which clock the
+    converter reads. The precondition test pins the fixture's shape; the behaviour test pins the converter on it.
+    """
+
+    # The inversion pair: event 55 is the earlier possession event, event 56 starts its sequence first.
+    _FIRST, _SECOND = 55, 56
+
+    def test_fixture_precondition_possession_events_start_before_their_event_time(self):
+        events = _load_synthetic_events()
+        possession = events["possession_event_type"].notna()
+        lead = events.loc[possession, "event_time"] - events.loc[possession, "start_time"]
+        assert (lead > 0).all(), "every possession event's eventTime must lie after its sequence startTime"
+        kickoffs = events["game_event_type"].str.endswith("KICKOFF", na=False)
+        assert (events.loc[kickoffs, "event_time"] == events.loc[kickoffs, "start_time"]).all()
+
+        def val(eid: int, col: str) -> float:
+            (v,) = events.loc[events["event_id"] == eid, col].to_numpy(dtype=np.float64)
+            return float(v)
+
+        assert val(self._FIRST, "period_id") == val(self._SECOND, "period_id")
+        assert val(self._FIRST, "event_time") < val(self._SECOND, "event_time")
+        assert val(self._FIRST, "start_time") > val(self._SECOND, "start_time"), (
+            "the pair's start order must invert its event order"
+        )
+
+    def test_converter_times_and_orders_by_event_time(self):
+        events = _load_synthetic_events()
+        actions, _ = _gs_convert(
+            events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        kickoffs = events[events["game_event_type"].str.endswith("KICKOFF", na=False)]
+        anchor = dict(zip(kickoffs["period_id"], kickoffs["start_time"], strict=True))
+        native = actions[~actions["is_synthetic"].astype(bool)]
+        source = events.set_index("event_id").loc[native["original_event_id"].astype("int64")]
+        expected = source["event_time"].to_numpy() - source["period_id"].map(anchor).to_numpy()
+        assert native["time_seconds"].to_numpy() == pytest.approx(expected)
+        ids = native["original_event_id"].astype("int64").tolist()
+        assert ids.index(self._FIRST) < ids.index(self._SECOND)
+
+
+class TestGradientsportsPreserveNative:
+    """``preserve_native`` passes input columns through (found via the walkthrough gate, tests/test_examples_run.py).
+
+    The converter validated the columns and handed them to ``_finalize_output`` but never copied them onto the actions,
+    so every call with ``preserve_native`` raised ``extra_columns missing from df``.
+    """
+
+    def test_values_follow_their_source_event_including_synthesized_rows(self):
+        events = _load_synthetic_events()
+        events["native_tag"] = events["event_id"] * 10
+        actions, _ = _gs_convert(
+            events,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+            preserve_native=["native_tag"],
+        )
+        assert actions["is_synthetic"].astype(bool).any(), "precondition: the fixture synthesizes rows"
+        expected = actions["original_event_id"].astype("int64") * 10
+        assert (actions["native_tag"].astype("int64") == expected).all()
+
+    def test_extension_dtypes_pass_through_unchanged(self):
+        # Review A C35: "passthrough unchanged" includes the dtype. A to_numpy() copy turned Int64-with-NA into
+        # float64 and a string column into object/str.
+        events = _load_synthetic_events()
+        tag = pd.array([None if i % 3 == 0 else int(i) for i in range(len(events))], dtype="Int64")
+        events["native_int"] = tag
+        events["native_str"] = pd.array([f"s{i}" for i in range(len(events))], dtype="string")
+        actions, _ = _gs_convert(
+            events,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+            preserve_native=["native_int", "native_str"],
+        )
+        assert actions["native_int"].dtype == "Int64"
+        assert actions["native_int"].isna().any(), "precondition: NA survives into the output"
+        assert actions["native_str"].dtype == pd.StringDtype()
+
+    def test_empty_output_keeps_the_column(self):
+        events = with_event_clock(_df_minimal_pass())
+        events = events[events["game_event_type"] == "FIRSTKICKOFF"].assign(native_tag=1)
+        actions, _ = gs_mod.convert_to_actions(
+            events,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+            preserve_native=["native_tag"],
+        )
+        assert len(actions) == 0
+        assert "native_tag" in actions.columns
 
 
 class TestGradientsportsInputConventionGuard:
@@ -1933,9 +1881,7 @@ class TestGradientsportsInputConventionGuard:
             # Verified non-vacuous: this same filter DOES raise on the mis-declared data built by
             # `test_the_guard_FIRES_on_a_genuinely_mis_declared_convention`.
             warnings.filterwarnings("error", message=".*convention.*")
-            gs_mod.convert_to_actions(
-                events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-            )
+            _gs_convert(events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
 
     def test_the_guard_FIRES_on_a_genuinely_mis_declared_convention(self):
         """Non-vacuity for the raise path, through the REAL converter.
@@ -1960,9 +1906,7 @@ class TestGradientsportsInputConventionGuard:
 
         with mock.patch.dict(os.environ, {"SILLY_KICKS_ASSERT_INVARIANTS": "1"}):
             with pytest.raises(ValueError, match="declared=per_period_absolute"):
-                gs_mod.convert_to_actions(
-                    mis, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-                )
+                _gs_convert(mis, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
 
 
 class TestGradientsportsSyntheticProvenance:
@@ -1973,7 +1917,7 @@ class TestGradientsportsSyntheticProvenance:
         from silly_kicks.spadl.schema import GRADIENTSPORTS_SPADL_COLUMNS
 
         assert "is_synthetic" in GRADIENTSPORTS_SPADL_COLUMNS
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             _df_minimal_pass(), home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
         )
         assert "is_synthetic" in actions.columns
@@ -1987,9 +1931,7 @@ class TestGradientsportsSyntheticProvenance:
         df.loc[0, "pass_outcome_type"] = None
         df.loc[0, "team_id"] = 100
         df.loc[0, "player_id"] = 9
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         assert bool(actions.iloc[0]["is_synthetic"]) is False  # the real cross
         assert bool(actions.iloc[1]["is_synthetic"]) is True  # the synthesized shot
 
@@ -2007,7 +1949,7 @@ class TestGradientsportsSyntheticProvenance:
         parent was the last period-1 event surviving exclusion.
         """
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
         )
         syn = actions[actions["is_synthetic"].fillna(False).astype(bool)]
@@ -2041,9 +1983,7 @@ class TestGradientsportsSyntheticProvenance:
         df = _df_minimal_pass()  # real PA with an inline foul -> parent kept + synth foul row
         df.loc[0, "foul_type"] = "I"
         df.loc[0, "final_foul_outcome_type"] = "Y"
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         assert len(actions) == 2
         assert bool(actions.iloc[0]["is_synthetic"]) is False  # the pass
         assert bool(actions.iloc[1]["is_synthetic"]) is True  # the synthesized foul
@@ -2161,9 +2101,7 @@ class TestGradientsportsTeamAttributionNoSentinel:
 
     def test_null_actor_challenge_emits_na_team_and_player_not_sentinel(self):
         df = _df_two_attributed_passes_plus_null_team_row(null_player=True)
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         challenge = actions[actions["type_id"] == spadlconfig.actiontype_id["tackle"]]
         assert len(challenge) == 1
         assert pd.isna(challenge.iloc[0]["team_id"]), "null-actor challenge team_id must be NaN, not 0"
@@ -2173,9 +2111,7 @@ class TestGradientsportsTeamAttributionNoSentinel:
 
     def test_team_id_and_player_id_dtype_nullable_int64(self):
         df = _df_two_attributed_passes_plus_null_team_row(null_player=True)
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         assert str(actions["team_id"].dtype) == "Int64"
         assert str(actions["player_id"].dtype) == "Int64"
 
@@ -2183,9 +2119,7 @@ class TestGradientsportsTeamAttributionNoSentinel:
         # Challenge row carries a real canonical player_id (7) but NULL team_id;
         # player 7 is team 100 from row 0. ADR-001-legal canonical->canonical fill.
         df = _df_two_attributed_passes_plus_null_team_row(null_player=False, null_player_id_value=7)
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         challenge = actions[actions["type_id"] == spadlconfig.actiontype_id["tackle"]]
         assert len(challenge) == 1
         assert challenge.iloc[0]["team_id"] == 100, "self-heal must resolve team from the canonical player's match team"
@@ -2197,13 +2131,11 @@ class TestGradientsportsTeamAttributionNoSentinel:
             null_player=False, null_player_id_value=7, second_team_for_player_7=200
         )
         with pytest.raises(ValueError, match=r"ambiguous|two teams|more than one team"):
-            gs_mod.convert_to_actions(
-                df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-            )
+            _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
 
     def test_no_sentinel_zero_over_synthetic_golden_fixture(self):
         events = _load_synthetic_events()
-        actions, _ = gs_mod.convert_to_actions(
+        actions, _ = _gs_convert(
             events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
         )
         assert int((actions["team_id"] == 0).sum()) == 0, "no team_id sentinel 0 may remain"
@@ -2217,9 +2149,7 @@ class TestGradientsportsBlockDetection:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "SH"
         df.loc[0, "shot_outcome_type"] = "B"
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         row = actions[actions["type_id"] == spadlconfig.actiontype_id["shot"]].iloc[0]
         assert row["shot_blocked"] == True  # noqa: E712
         assert pd.isna(row["cross_blocked"])  # a shot row -> cross_blocked NA
@@ -2228,9 +2158,7 @@ class TestGradientsportsBlockDetection:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "CR"
         df.loc[0, "cross_outcome_type"] = "B"
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         # ADR-133: cross_blocked is keyed to GS's own cross (cross_native); the blocked delivery never reaches
         # the box, so its geometric SPADL type is `pass`.
         row = actions[actions["cross_native"] == True].iloc[0]  # noqa: E712
@@ -2246,9 +2174,7 @@ class TestGradientsportsBlockDetection:
         df.loc[0, "possession_event_type"] = "CR"
         df.loc[0, "set_piece_type"] = "C"  # corner -> corner_crossed
         df.loc[0, "cross_outcome_type"] = "B"
-        actions, _ = gs_mod.convert_to_actions(
-            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
-        )
+        actions, _ = _gs_convert(df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True)
         # ADR-133: the native crossed corner is kept in cross_native; geometrically it is `corner_short` (no
         # delivery into the box in this one-event fixture). Either way it is a set piece -> cross_blocked NA.
         row = actions[actions["type_id"] == spadlconfig.actiontype_id["corner_short"]].iloc[0]

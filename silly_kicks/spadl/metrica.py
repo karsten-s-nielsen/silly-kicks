@@ -312,6 +312,9 @@ def convert_to_actions(
         actions.loc[no_label, "cross_native"] = pd.NA
         actions = classify_deliveries(actions)
         actions["action_id"] = range(len(actions))
+        # Metrica stamps every event with its own tracking frame (Start Time [s] = Start Frame / 25; 3,620 of 3,620
+        # events in the sample, ADR-133 r8 6.6 C). The synthetic dribbles added next get "event" in _finalize_output.
+        actions["time_source"] = "tracking"
         actions = _add_dribbles(actions)
 
         actions["start_x"] = actions["start_x"].clip(0, spadlconfig.field_length)

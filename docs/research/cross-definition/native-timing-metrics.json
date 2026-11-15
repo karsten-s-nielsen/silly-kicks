@@ -1,0 +1,33 @@
+{
+  "memo": "docs/research/cross-definition/native-timing.md",
+  "library_commit": "b12c0fd9fc333a7a3abc1804ec0dbe47500d5112",
+  "library_tree_dirty": false,
+  "scripts": "off-repo with the author (align_tail_*.py, sc_kick_check.py, gs_truth_check.py, gs_native_check.py, spike_loc.py, r8_checks.py, native_preview.py, gs_prekick_clock.py, frame_link_shift.py, sb23_measure.py)",
+  "skillcorner_untargeted_end": {"matches": 118, "player_possession_rows": 125350, "rows": 16753,
+                                 "untargeted_passes": 15685, "clearances": 1068, "share_of_possessions": 0.134,
+                                 "next_kick_to_next_reception_q50_m": 0.88, "next_kick_to_next_reception_p95_m": 15.64,
+                                 "share_gt_1m": 0.491},
+  "corpus": {"dataset": "xshot187", "run_commit": "0cc07e6cf3195d874ccd63549368453978fa1c30", "source": "pining cache"},
+  "run2_trigger": {"commit": "b12c0fd9", "line": 75.0, "release_match_m": 4.668672512780024,
+                   "fail_share": {"gradientsports": 0.2819504522217853, "skillcorner": 0.31690966985084634, "idsse": 0.050314465408805034}},
+  "skillcorner_kick_point": {"matches": 98, "rows": 10315, "release_to_kick_q50_m": 0.86, "release_to_kick_p95_m": 6.3,
+                             "within_4_67_m": 0.937, "elastic_minus_frame_end_frames_q50": -2},
+  "gradientsports_truth": {"possession_events": 86067, "events_only_error_q99_max_s": 0.067,
+                           "elastic_within_0_5_s_all_pass_cross": 0.416, "pass_cross_rows": 71623},
+  "task12": {
+    "metrica": {"events": 3620, "max_abs_time_minus_frame_over_25_s": 0.0, "time_source": "tracking"},
+    "gs_events_before_kickoff": 0,
+    "gs_clock_constant_worst_deviation_frames": 0.43,
+    "frame_link_shift": {
+      "gradientsports": {"matches": 62, "native_actions": 30048, "linked_today": 0.862, "linked_r8": 0.878,
+                         "shift_q10_s": 0.1, "shift_q50_s": 0.5, "shift_q90_s": 0.93, "shift_gt_1s": 0.041,
+                         "ball_to_start_today_q50_m": 2.46, "ball_to_start_today_q90_m": 8.06,
+                         "ball_to_start_r8_q50_m": 0.0, "ball_to_start_r8_q90_m": 0.22,
+                         "note": "game events with one record only"},
+      "skillcorner": {"matches": 98, "native_actions": 119765, "linked_today": 1.0, "linked_r8": 1.0,
+                      "shift_q10_s": 0.0, "shift_q50_s": 1.1, "shift_q90_s": 3.7, "shift_gt_1s": 0.521,
+                      "ball_to_start_today_q50_m": 1.15, "ball_to_start_today_q90_m": 2.72,
+                      "ball_to_start_r8_q50_m": 1.49, "ball_to_start_r8_q90_m": 2.81}
+    }
+  }
+}

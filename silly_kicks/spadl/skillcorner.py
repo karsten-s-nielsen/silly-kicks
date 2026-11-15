@@ -19,6 +19,7 @@ See spec: ``docs/superpowers/specs/2026-05-14-skillcorner-events-converter-desig
 
 from __future__ import annotations
 
+import warnings
 from collections import Counter
 
 import numpy as np
@@ -26,7 +27,13 @@ import pandas as pd
 
 from . import config as spadlconfig
 from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves
-from .base import _add_dribbles, _derive_end_coordinates, classify_deliveries, sort_actions_chronologically
+from .base import (
+    _DERIVE_END_TYPE_IDS,
+    _add_dribbles,
+    _derive_end_coordinates,
+    classify_deliveries,
+    sort_actions_chronologically,
+)
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr
 from .schema import SKILLCORNER_SPADL_COLUMNS, ConversionReport
 from .utils import _blocked_flag, _finalize_output
@@ -83,6 +90,9 @@ def _transform_coords(
 # the period-relative seconds the tracking-frame contract requires (ADR-017). The offsets are
 # the regulation period boundaries (45/90/105/120 min), matching the Gradient Sports adapter.
 _PERIOD_START_SECONDS = {1: 0.0, 2: 45 * 60.0, 3: 90 * 60.0, 4: 105 * 60.0, 5: 120 * 60.0}
+
+#: The possession-end fields a native SPADL row is built from (ADR-133, spec r8 6.6 A).
+_REQUIRED_END_COLUMNS = ("time_end", "x_end", "y_end")
 
 
 def _parse_time_start(time_start: pd.Series) -> pd.Series:
@@ -215,8 +225,22 @@ def convert_to_actions(
     tuple[pd.DataFrame, ConversionReport]
         SPADL actions and conversion audit trail.
 
+    Raises
+    ------
+    ValueError
+        If ``time_end``, ``x_end`` or ``y_end`` is missing (ADR-133 r8): a native row is the on-ball action at
+        the possession END, so its time and start come from them.
+
+    Warns
+    -----
+    UserWarning
+        Once, with the count, when ``player_possession`` rows have no ``time_end``; their ``time_seconds`` is
+        NaN, never filled from ``time_start``.
+
     Notes
     -----
+    A native row (pass, shot, clearance, set-piece delivery, foul, loss) sits at the kick: ``time_end`` and
+    ``x_end``/``y_end``. Start-type interceptions/recoveries and keeper saves stay at the possession start.
     Deliveries follow :func:`silly_kicks.spadl.base.classify_deliveries` and its event-only limits (ADR-133).
     SkillCorner has no native cross label (``cross_native`` is ``<NA>``), and its events miss defenders'
     touches in the box, so many deliveries look short in events alone. Event-rule recall against
@@ -240,6 +264,12 @@ def convert_to_actions(
     pitch_length = match_metadata["pitch_length"]
     pitch_width = match_metadata["pitch_width"]
     home_team_id = str(match_metadata["home_team"]["id"])
+    missing_cols = [c for c in _REQUIRED_END_COLUMNS if c not in events.columns]
+    if missing_cols:
+        raise ValueError(
+            f"skillcorner.convert_to_actions: missing column(s) {missing_cols}. A SPADL row is the on-ball action "
+            "at the possession END (time_end, x_end, y_end), not the reception at its start (ADR-133, spec r8 6.6 A)."
+        )
 
     # --- Filter to player_possession rows with valid actors ---
     pp = events[events["event_type"] == "player_possession"].copy()
@@ -254,25 +284,46 @@ def convert_to_actions(
         obe["player_id"] = obe["player_id"].astype(str)
 
     # --- Time parsing --- (re-base the continuous broadcast clock to period-relative; ADR-017)
-    pp["time_seconds"] = _to_period_relative(_parse_time_start(pp["time_start"]), pp["period"])
+    # A player_possession row runs from the reception (time_start, x_start) to the on-ball action at its END
+    # (time_end, x_end): the pass, shot, clearance, set-piece delivery, foul or loss. The native SPADL row is that
+    # action, so it takes the end (ADR-133, spec r8 6.6 A). `start_seconds` keeps the reception time for the
+    # possession order and for the rows that happen at the start (start-type interceptions, keeper saves).
+    pp["start_seconds"] = _to_period_relative(_parse_time_start(pp["time_start"]), pp["period"])
+    time_end = pp["time_end"].astype("string")
+    has_end = time_end.notna() & (time_end.str.len() > 0)
+    end_seconds = pd.Series(np.nan, index=pp.index, dtype="float64")
+    if has_end.any():
+        end_seconds[has_end] = _to_period_relative(
+            _parse_time_start(time_end[has_end].astype(str)), pp.loc[has_end, "period"]
+        )
+    pp["time_seconds"] = end_seconds
+    n_missing_end = int((~has_end).sum())
+    if n_missing_end:
+        warnings.warn(
+            f"skillcorner: {n_missing_end} player_possession row(s) without time_end; their time_seconds is NaN "
+            "(never filled from time_start).",
+            UserWarning,
+            stacklevel=2,
+        )
     if len(obe) > 0 and "time_start" in obe.columns and "period" in obe.columns:
         obe["time_seconds"] = _to_period_relative(_parse_time_start(obe["time_start"]), obe["period"])
 
     # Order-insensitivity (chronological-action_id invariant): sort pp chronologically NOW --
     # before the sx/sy transforms and the .shift(-1)-based same_team_next / is_short lookups
     # below, whose results (and thus type_id/result_id and the derived-row times) otherwise
-    # depend on raw input order. SkillCorner's continuous broadcast clock makes ties rare;
+    # depend on raw input order. The possession order is the reception order (`start_seconds`,
+    # always known); a possession never ends after the next one starts (measured, spec r8 section 10).
     # mergesort keeps any co-timestamped rows in native order (§3a inter-timestamp scope). pp
     # carries `period` (not `period_id`) at this stage. The final combined sort
     # (period_id, time_seconds) at the end still runs to interleave the defensive/goalkick rows.
-    pp = sort_actions_chronologically(pp, by=("period", "time_seconds"))
+    pp = sort_actions_chronologically(pp, by=("period", "start_seconds"))
 
     total_pp = len(pp)
 
-    # --- Coordinate transform (start) ---
+    # --- Coordinate transform (start = the kick point, x_end / y_end) ---
     sx, sy = _transform_coords(
-        pp["x_start"].astype("float64"),
-        pp["y_start"].astype("float64"),
+        pp["x_end"].astype("float64"),
+        pp["y_end"].astype("float64"),
         pitch_length,
         pitch_width,
     )
@@ -290,8 +341,6 @@ def convert_to_actions(
     end_y_raw = raw_end_y.copy()
     end_x_raw[use_targeted] = pp.loc[use_targeted, "player_targeted_x_reception"].astype("float64")
     end_y_raw[use_targeted] = pp.loc[use_targeted, "player_targeted_y_reception"].astype("float64")
-
-    ex, ey = _transform_coords(end_x_raw, end_y_raw, pitch_length, pitch_width)
 
     # --- Body part dispatch ---
     bodypart_arr = _dispatch_bodypart(
@@ -380,6 +429,20 @@ def convert_to_actions(
         default=spadlconfig.actiontype_id["non_action"],
     )
 
+    # A pass-class row with no targeted reception ends at the NEXT possession's reception (its x_start/y_start; pp is
+    # in reception order), the ball's destination (spec r9 6.6 A, review B CD-SB-23). The next action's start is the
+    # next KICK since r8, so _derive_end_coordinates would end the pass at the receiver's kick and drop the receiver's
+    # carry. The last possession of a period has no next reception: its end stays the start, and
+    # _derive_end_coordinates applies as before.
+    by_period = pp.groupby("period", sort=False)
+    next_rx = by_period["x_start"].shift(-1).astype("float64")
+    next_ry = by_period["y_start"].shift(-1).astype("float64")
+    to_next_reception = np.isin(type_id_arr, list(_DERIVE_END_TYPE_IDS)) & ~use_targeted & next_rx.notna()
+    end_x_raw[to_next_reception] = next_rx[to_next_reception]
+    end_y_raw[to_next_reception] = next_ry[to_next_reception]
+
+    ex, ey = _transform_coords(end_x_raw, end_y_raw, pitch_length, pitch_width)
+
     # Result dispatch
     # D-S8 (2026-06-09): pass/set-piece result_id comes from the NATIVE pass outcome
     # (`pass_outcome` -> `received` -> residual `same_team_next`) via `_native_completion_result`,
@@ -460,9 +523,10 @@ def convert_to_actions(
             columns=["period", "time_seconds", "team_id", "player_id", "end_type", "x_start", "y_start"]
         )
 
+    # The derived rows happen at the possession START (spec r8 6.6 A), so the inference reads the reception time.
     pp_for_inference = pp[
-        ["event_id", "period", "time_seconds", "team_id", "player_id", "start_type", "x_start", "y_start"]
-    ].copy()
+        ["event_id", "period", "start_seconds", "team_id", "player_id", "start_type", "x_start", "y_start"]
+    ].rename(columns={"start_seconds": "time_seconds"})
 
     defensive = infer_defensive_actions(pp_for_inference, obe_for_inference)
     if len(defensive) > 0:
@@ -482,8 +546,8 @@ def convert_to_actions(
         defensive["action_id"] = 0  # will be re-indexed
 
     keeper_saves_pp = pp[
-        ["event_id", "period", "time_seconds", "team_id", "player_id", "end_type", "x_start", "y_start"]
-    ].copy()
+        ["event_id", "period", "start_seconds", "team_id", "player_id", "end_type", "x_start", "y_start"]
+    ].rename(columns={"start_seconds": "time_seconds"})
     if "game_interruption_after" in pp.columns:
         keeper_saves_pp["game_interruption_after"] = pp["game_interruption_after"].values
 
@@ -535,6 +599,9 @@ def convert_to_actions(
     # stays <NA> (set below). Event-only limit: SkillCorner events miss defenders' in-box touches, so many
     # deliveries look short here; the tracking layer (add_cross_deliveries) decides them from the ball path.
     actions = classify_deliveries(actions)
+    # SkillCorner derives its dynamic events from its tracking, so every native and derived row is on the tracking
+    # clock (ADR-133 r8 6.6 C). The synthetic dribbles added next get "event" in _finalize_output.
+    actions["time_source"] = "tracking"
     actions = _add_dribbles(actions)
 
     # Mark dribbles as derived

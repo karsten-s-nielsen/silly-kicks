@@ -184,6 +184,76 @@ def test_release_match_owner_trigger(dists, event_released, n, share, fires):
     assert cal["release_match_owner_decision_needed"] is fires
 
 
+def _native_rows(provider: str, dts: list[float], dist: float = 0.5) -> pd.DataFrame:
+    """Native-release rows (spec r8 6.3 step 0) with the given passer_contact_dt values (NaN = no touch found)."""
+    tmpl = _calibration_rows().iloc[0].to_dict()
+    recs = [
+        {
+            **tmpl,
+            "provider": provider,
+            "release_source": "native",
+            "release_dist_m": dist,
+            "passer_contact_dt": dt,
+            "cross_native": False,
+            "cross_blocked": False,
+        }
+        for dt in dts
+    ]
+    return pd.DataFrame(recs)
+
+
+def test_calibrate_includes_native_rows():
+    # Spec r8 7.4: native rows join the release-gap sample and the fail share; release_match_m stays the IDSSE
+    # ELASTIC value. Without the native GS rows the gap would be the IDSSE-only 95th percentile.
+    idsse = _calibration_rows()
+    idsse = idsse[idsse["provider"] == "idsse"]
+    gs = _native_rows("gradientsports", [0.30] * 20, dist=0.5)
+    gs.loc[gs.index[:4], "release_dist_m"] = 9.0  # 4 of 20 native GS rows beyond the IDSSE match
+    rows = pd.concat([idsse, gs], ignore_index=True)
+    cal = m.calibrate(rows, block_window_s=1.0)
+    only_idsse = m.calibrate(idsse, block_window_s=1.0)
+    assert cal["release_match_m"] == pytest.approx(only_idsse["release_match_m"])
+    assert cal["release_gap_s"] != pytest.approx(only_idsse["release_gap_s"])
+    assert cal["release_match_fail_share"]["gradientsports"] == pytest.approx(0.2)
+
+
+def test_alignment_classes_include_native():
+    g = pd.DataFrame(
+        {
+            "attempt": pd.array([True, True, pd.NA], dtype="boolean"),
+            "release_source": ["native", "elastic", "native"],
+            "release_dist_m": [1.0, 1.0, 9.0],
+            "start_x": 90.0,
+            "start_y": 5.0,
+            "release_match_cut": 3.0,
+        }
+    )
+    assert m.alignment_class(g).tolist() == ["native", "aligned_elastic", "misaligned"]
+    assert "native" in m.ALIGNMENT_CLASSES
+
+
+@pytest.mark.parametrize(
+    ("dts", "fires"),
+    [
+        pytest.param([-0.29] * 10, False, id="median_inside"),
+        pytest.param([0.30] * 10, False, id="median_at_upper_bound"),  # review B CD-SB-25 BC2: the bound is inside
+        pytest.param([-0.30] * 10, False, id="median_at_lower_bound"),
+        pytest.param([-0.31] * 10, True, id="median_below"),
+        pytest.param([0.31] * 10, True, id="median_above"),
+        pytest.param([-0.2] * 4 + [_NAN] * 6, False, id="share_at_40"),
+        pytest.param([-0.2] * 3 + [_NAN] * 7, True, id="share_below_40"),
+    ],
+)
+def test_native_release_trigger(dts, fires):
+    # Spec r8 7.4: a provider's native rows need a median passer_contact_dt inside [-0.30, +0.30] s and a passer-touch
+    # share of at least 40 %; else the owner decides.
+    cal = m.calibrate(_native_rows("gradientsports", dts), block_window_s=1.0)
+    assert cal["native_release_owner_decision_needed"] is fires
+    stats = cal["native_release"]["gradientsports"]
+    assert stats["n"] == len(dts)
+    assert stats["touch_share"] == pytest.approx(sum(pd.notna(d) for d in dts) / len(dts))
+
+
 def test_fixed_point_checks_each_calibrated_field_and_the_start_line():
     params = {"release_match_m": 5.0, "release_gap_s": 0.2, "block_radius_m": 8.0, "direction_window_s": 0.2}
     cal, run = dict(params), params | {"cross_start_x": 70.0}
@@ -206,10 +276,10 @@ def test_calibrate_without_idsse_reports_nan():
 def test_alignment_classes_partition_the_applicable_rows():
     g = pd.DataFrame(
         {
-            "attempt": pd.array([True, False, pd.NA, pd.NA, pd.NA, pd.NA], dtype="boolean"),
-            "release_source": ["elastic", "event", "event", "elastic", "event", "event"],
-            "release_dist_m": [1.0, 2.0, 9.0, np.nan, 1.0, np.nan],
-            "start_x": [90.0, 90.0, 90.0, 90.0, 90.0, np.nan],
+            "attempt": pd.array([True, False, pd.NA, pd.NA, pd.NA, pd.NA, True], dtype="boolean"),
+            "release_source": ["elastic", "event", "event", "elastic", "event", "event", "native"],
+            "release_dist_m": [1.0, 2.0, 9.0, np.nan, 1.0, np.nan, 1.0],
+            "start_x": [90.0, 90.0, 90.0, 90.0, 90.0, np.nan, 90.0],
             "start_y": 5.0,
             "release_match_cut": 3.0,
         }
@@ -222,6 +292,7 @@ def test_alignment_classes_partition_the_applicable_rows():
         "no_ball_at_release",
         "coverage_unanswerable",
         "unknown_start",
+        "native",
     ]
     assert set(cls) == set(m.ALIGNMENT_CLASSES)
 

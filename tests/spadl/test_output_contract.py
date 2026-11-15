@@ -35,6 +35,7 @@ def _make_valid_spadl_df(n: int = 3) -> pd.DataFrame:
             "shot_blocked": pd.array([pd.NA] * n, dtype="boolean"),
             "cross_blocked": pd.array([pd.NA] * n, dtype="boolean"),
             "cross_native": pd.array([pd.NA] * n, dtype="boolean"),
+            "time_source": ["event"] * n,  # ADR-133 r8
         }
     )
 
