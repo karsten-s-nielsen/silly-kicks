@@ -1,4 +1,4 @@
-"""Gradient Sports: ``time_seconds`` is the possession event's own time, period-relative (spec r8 §6.6 B).
+"""Gradient Sports: ``time_seconds`` is the possession event's own time, period-relative (cross spec §6.6 B).
 
 ``time_seconds = event_time - kickoff start_time`` of the row's period (ADR-017: period-relative). The kickoff rows
 are read before the converter's exclusion filter drops them. The input ``startGameClock`` (``time_seconds``) no

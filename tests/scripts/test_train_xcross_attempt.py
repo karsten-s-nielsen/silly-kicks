@@ -125,8 +125,8 @@ def test_the_probe_dataset_skips_dot_directories(tmp_path):
 
 
 def _label_scene() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Three open-play rows with a staged tracking verdict: a SPADL ``pass`` that IS an attempt (a blocked cross),
-    a SPADL ``cross`` that is NOT (the ball never reached the box), and one the frames could not judge."""
+    """Three open-play rows with a staged tracking verdict: a SPADL ``pass`` that IS an attempt (its ball path enters
+    the box), a SPADL ``cross`` that is NOT (the ball never reached the box), and one the frames could not judge."""
     from silly_kicks.spadl import config as spc
 
     actions = pd.DataFrame(

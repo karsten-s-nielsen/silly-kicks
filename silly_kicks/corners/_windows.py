@@ -60,6 +60,12 @@ def add_corner_windows(
         from silly_kicks.corners import add_corner_windows
         windowed = add_corner_windows(corners, frames, contacts)
     """
+    if "taker_player_id" not in corners.columns:
+        # ADR-134: without the taker, the taker's own touch after the kick could be named the winner, silently.
+        raise ValueError(
+            "add_corner_windows: corners has no 'taker_player_id' column; build the table with identify_corners, "
+            "which carries the corner taker so the first-contact winner is never the taker (ADR-134)"
+        )
     out = corners.copy()
     n = len(out)
     t_init = np.full(n, np.nan)
@@ -93,7 +99,12 @@ def add_corner_windows(
             t_target[i] = t_kick + params.target_cap_s
             continue
 
-        contact = first_contact_in_window(contacts, period, t_kick, t_kick + params.outcome_window_s)
+        # TF-79 v2 times the kick, so the taker's own touch can follow t_kick: the winner is anyone else
+        # (detector spec section 5). A <NA> taker (actions without player_id) skips nobody.
+        taker = out["taker_player_id"].iloc[i]
+        contact = first_contact_in_window(
+            contacts, period, t_kick, t_kick + params.outcome_window_s, exclude_player_id=taker
+        )
         if contact is not None:
             t_fc = float(contact["time_seconds"])
             first_contact_time[i] = t_fc

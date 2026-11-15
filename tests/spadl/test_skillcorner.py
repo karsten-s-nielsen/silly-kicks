@@ -366,7 +366,7 @@ class TestEndCoordinates:
         assert abs(first_pass["end_x"] - expected_end_x) < 0.5
 
     def test_pass_without_targeted_reception_ends_at_the_next_reception(self):
-        # ADR-133 r8 (spec 6.6 A): x_end is the pass's START (the kick point). Spec r9 (review B CD-SB-23): a pass
+        # ADR-133 (cross spec 6.6 A): x_end is the pass's START (the kick point). Review B CD-SB-23: a pass
         # without a targeted receiver ends at the next possession's RECEPTION, the ball's destination, not at the
         # next kick.
         from silly_kicks.spadl.skillcorner import convert_to_actions

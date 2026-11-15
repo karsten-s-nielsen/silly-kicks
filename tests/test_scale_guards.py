@@ -84,6 +84,23 @@ def test_detect_ball_contacts_is_subquadratic():
     assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="detect_ball_contacts")
 
 
+def test_contact_scorer_control_features_is_subquadratic():
+    from silly_kicks.tracking import BallContactParams
+    from silly_kicks.tracking import _contact_scorer as cs
+
+    params = BallContactParams(min_velocity_change_ms=0.0)
+
+    def measure(n):
+        frames = _ball_zigzag_frames(n)
+        opts = cs.option_rows(cs._merged_peaks(cs._candidate_peaks(frames, params, k_options=cs.K_OPTIONS), params))
+        assert len(opts) > n // 10  # the option count scales with the frame count (the fixture is not degenerate)
+        with rows_scanned_counter() as c:
+            cs.control_features(opts, frames, params)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="control_features")
+
+
 # ============================ rows_scanned growth adopters ============================
 def test__pressure_at_entry_is_subquadratic():
     import silly_kicks.causal._confounders as C

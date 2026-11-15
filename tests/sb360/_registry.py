@@ -309,7 +309,13 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: ball trajectory; a single SB360 freeze frame has none, so the attempt is unknown and `cross_height` is
 #: both-NaN -> no_signal -> not_exercised on all four legs = 1 column x 4. `cross_attempt` is partial_nan ->
 #: honest_nan (unknown on the freeze-frame leg where the continuous leg answers), not counted.
-NOT_EXERCISED_BUDGET = 79
+#:
+#: 79 -> 83 (+4): the TF-79 detector v2 (ADR-134). `first_contact_velocity_change_ms` now carries the admitting
+#: |Δv| of the one contact the tracking leg resolves, so it is all_nan -> honest_nan on velocity,
+#: defender_absent and gk_one_end (-3). Under gk_absent that contact no longer resolves on either leg (v2
+#: credits only a player in reach, no fallback radius), so the seven other first_contact_* columns go both-NaN
+#: -> no_signal -> not_exercised there (+7). `cross_attempt` is now `identical` -> `works` (not counted).
+NOT_EXERCISED_BUDGET = 83
 
 
 def _entry(

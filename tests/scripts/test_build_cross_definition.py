@@ -22,7 +22,7 @@ def test_f1():
 
 
 def test_selection_rule():
-    assert m.CANDIDATE_LINES == (52.5, 60.0, 65.0, 70.0, 75.0, 80.0)  # spec r7 §7.2 owner ruling (2026-11-14)
+    assert m.CANDIDATE_LINES == (52.5, 60.0, 65.0, 70.0, 75.0, 80.0)  # cross spec §7.2 owner ruling (2026-11-14)
     lines = m.CANDIDATE_LINES
     sb = dict(zip(lines, [0.60, 0.70, 0.66, 0.50, 0.45, 0.40], strict=True))
     gs = dict(zip(lines, [0.40, 0.50, 0.52, 0.30, 0.25, 0.20], strict=True))
@@ -62,13 +62,13 @@ def test_weighted_quantile_gives_each_group_equal_weight():
 
 
 def _calibration_rows() -> pd.DataFrame:
-    """Three providers, 20 applicable rows each (spec r7 §7.4).
+    """Three providers, 20 applicable rows each (cross spec §7.4).
 
     * ``release_dist_m``: IDSSE 0.1-2.0 m (the clean-sync reference); GS 1-20 m and SkillCorner 0.5-10 m carry
       alignment tails, so a pooled 95th percentile would differ from the IDSSE one.
     * ``passer_contact_dt`` rises with the row index, so the release-match filter changes the gap sample.
-    * GS rows 0-3 are native crosses with an opponent first contact; rows 0-2 are blocked; row 1's first contact
-      is a teammate; row 2's first contact comes after ``block_window_s``. Only row 0 passes every block filter.
+    * GS rows 0-3 are native crosses; rows 0-2 are blocked (``cross_blocked``). Every row's ``attempt`` is decided
+      and none is cut out (cross spec §6.3), unless a test says so.
     """
     rows = []
     for provider, fr in (("gradientsports", 25.0), ("skillcorner", 10.0), ("idsse", 25.0)):
@@ -88,17 +88,21 @@ def _calibration_rows() -> pd.DataFrame:
                     "cross_blocked": provider == "gradientsports" and i < 3,
                     "coverage": 0.5 if i < 5 else 1.0,
                     "frame_rate": fr,
+                    "attempt": True,
+                    "cut_out": False,
+                    "direction_cut": False,
+                    "direction_unresolved": False,
                 }
             )
     df = pd.DataFrame(rows)
-    for col in ("first_contact_is_opponent", "cross_native", "cross_blocked"):
+    for col in ("first_contact_is_opponent", "cross_native", "cross_blocked", "attempt"):
         df[col] = df[col].astype("boolean")
     return df
 
 
 def test_calibrate_release_match_uses_the_idsse_reference_only():
     rows = _calibration_rows()
-    cal = m.calibrate(rows, block_window_s=1.0)
+    cal = m.calibrate(rows)
     idsse = rows.loc[rows["provider"] == "idsse", "release_dist_m"].to_numpy()
     assert cal["release_match_m"] == pytest.approx(float(np.quantile(idsse, 0.95)))
     pooled = {str(p): g["release_dist_m"].to_numpy() for p, g in rows.groupby("provider")}
@@ -110,7 +114,7 @@ def test_calibrate_release_match_uses_the_idsse_reference_only():
 
 def test_calibrate_release_gap_uses_rows_that_pass_the_release_match():
     rows = _calibration_rows()
-    cal = m.calibrate(rows, block_window_s=1.0)
+    cal = m.calibrate(rows)
     ok = rows[rows["release_dist_m"] <= cal["release_match_m"]]
     gaps = {str(p): g["passer_contact_dt"].to_numpy() for p, g in ok.groupby("provider")}
     assert cal["release_gap_s"] == pytest.approx(max(m.weighted_quantile(gaps, 0.95), 1 / 25.0))
@@ -118,20 +122,43 @@ def test_calibrate_release_gap_uses_rows_that_pass_the_release_match():
     assert cal["release_gap_s"] != pytest.approx(max(m.weighted_quantile(every, 0.95), 1 / 25.0))
 
 
-def test_calibrate_block_radius_keeps_contacts_inside_the_block_window():
+def test_calibrate_has_no_block_sample():
+    # Cross spec §7.4: block_radius_m and its GS block sample are removed; calibrate takes no block_window_s.
+    cal = m.calibrate(_calibration_rows())
+    assert "block_radius_m" not in cal and "n_block_samples_gs" not in cal
+    with pytest.raises(TypeError):
+        m.calibrate(_calibration_rows(), block_window_s=1.0)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(("n_cut", "fires"), [(4, False), (5, True)], ids=["at_20", "above_20"])
+def test_cut_out_share_and_trigger(n_cut, fires):
+    # Cross spec §7.4: more than 20 % of a provider's answerable rows cut out fires the owner trigger (4/20 is at the
+    # bar, 5/20 above it).
     rows = _calibration_rows()
-    cal = m.calibrate(rows, block_window_s=1.0)
-    assert cal["block_radius_m"] == pytest.approx(4.0)  # row 0 only: row 1 is a teammate, row 2 is late
-    assert cal["n_block_samples_gs"] == 1
-    late = m.calibrate(rows, block_window_s=2.0)  # the window decides: row 2 (6.0 m at 1.5 s) joins
-    assert late["n_block_samples_gs"] == 2
-    assert late["block_radius_m"] == pytest.approx(float(np.quantile([4.0, 6.0], 0.95)))
+    gs = rows.index[rows["provider"] == "gradientsports"]
+    rows.loc[gs[:n_cut], "attempt"] = pd.NA
+    rows.loc[gs[:n_cut], "cut_out"] = True
+    cal = m.calibrate(rows)
+    assert cal["cut_out_share"]["gradientsports"] == pytest.approx(n_cut / 20)
+    assert cal["cut_out_share"]["idsse"] == 0.0
+    assert cal["cut_out_owner_decision_needed"] is fires
+
+
+def test_cut_out_share_excludes_unanswerable_rows():
+    # The denominator is the rows whose attempt is decided or cut out: an unanswerable row (<NA>, not cut out) is
+    # in neither the numerator nor the denominator.
+    rows = _calibration_rows()
+    gs = rows.index[rows["provider"] == "gradientsports"]
+    rows.loc[gs[:2], "attempt"] = pd.NA
+    rows.loc[gs[:2], "cut_out"] = True
+    rows.loc[gs[18:], "attempt"] = pd.NA  # 2 unanswerable rows
+    assert m.calibrate(rows)["cut_out_share"]["gradientsports"] == pytest.approx(2 / 18)
 
 
 def test_calibrate_keeps_the_fixed_rules():
-    cal = m.calibrate(_calibration_rows(), block_window_s=1.0)
+    cal = m.calibrate(_calibration_rows())
     assert cal["direction_window_s"] == pytest.approx(2 / 10.0)  # two frames at the LOWEST frame rate
-    assert cal["block_window_s"] == 1.0 and cal["path_cap_s"] == 4.0  # fixed, reported only
+    assert cal["cut_out_window_s"] == 1.0 and cal["path_cap_s"] == 4.0  # fixed, reported only
     assert cal["coverage_below_0.8_share"] == {"gradientsports": 0.25, "idsse": 0.25, "skillcorner": 0.25}
     assert cal["coverage_owner_decision_needed"] is True
 
@@ -169,7 +196,7 @@ _OVER = {"idsse": [1.0] * 200, "gradientsports": [1.0] * 7 + [9.0] * 3}  # 30 % 
     ],
 )
 def test_release_match_owner_trigger(dists, event_released, n, share, fires):
-    # Spec r7 §7.4: fewer than 200 finite IDSSE distances, or a provider whose ELASTIC-confident share beyond the
+    # Cross spec §7.4: fewer than 200 finite IDSSE distances, or a provider whose ELASTIC-confident share beyond the
     # release match exceeds 20 %, fires the trigger.
     tmpl = _calibration_rows().iloc[0].to_dict()
     rows = pd.DataFrame(
@@ -177,7 +204,7 @@ def test_release_match_owner_trigger(dists, event_released, n, share, fires):
     )
     if event_released is not None:
         rows.loc[rows["release_dist_m"] == event_released, "release_source"] = "event"
-    cal = m.calibrate(rows, block_window_s=1.0)
+    cal = m.calibrate(rows)
     assert cal["release_match_m"] == 1.0
     assert cal["n_release_match_samples"] == n
     assert cal["release_match_fail_share"] == pytest.approx(share)
@@ -185,7 +212,7 @@ def test_release_match_owner_trigger(dists, event_released, n, share, fires):
 
 
 def _native_rows(provider: str, dts: list[float], dist: float = 0.5) -> pd.DataFrame:
-    """Native-release rows (spec r8 6.3 step 0) with the given passer_contact_dt values (NaN = no touch found)."""
+    """Native-release rows (cross spec 6.3 step 0) with the given passer_contact_dt values (NaN = no touch found)."""
     tmpl = _calibration_rows().iloc[0].to_dict()
     recs = [
         {
@@ -203,15 +230,15 @@ def _native_rows(provider: str, dts: list[float], dist: float = 0.5) -> pd.DataF
 
 
 def test_calibrate_includes_native_rows():
-    # Spec r8 7.4: native rows join the release-gap sample and the fail share; release_match_m stays the IDSSE
+    # Cross spec 7.4: native rows join the release-gap sample and the fail share; release_match_m stays the IDSSE
     # ELASTIC value. Without the native GS rows the gap would be the IDSSE-only 95th percentile.
     idsse = _calibration_rows()
     idsse = idsse[idsse["provider"] == "idsse"]
     gs = _native_rows("gradientsports", [0.30] * 20, dist=0.5)
     gs.loc[gs.index[:4], "release_dist_m"] = 9.0  # 4 of 20 native GS rows beyond the IDSSE match
     rows = pd.concat([idsse, gs], ignore_index=True)
-    cal = m.calibrate(rows, block_window_s=1.0)
-    only_idsse = m.calibrate(idsse, block_window_s=1.0)
+    cal = m.calibrate(rows)
+    only_idsse = m.calibrate(idsse)
     assert cal["release_match_m"] == pytest.approx(only_idsse["release_match_m"])
     assert cal["release_gap_s"] != pytest.approx(only_idsse["release_gap_s"])
     assert cal["release_match_fail_share"]["gradientsports"] == pytest.approx(0.2)
@@ -226,10 +253,103 @@ def test_alignment_classes_include_native():
             "start_x": 90.0,
             "start_y": 5.0,
             "release_match_cut": 3.0,
+            "cut_out": False,
         }
     )
     assert m.alignment_class(g).tolist() == ["native", "aligned_elastic", "misaligned"]
     assert "native" in m.ALIGNMENT_CLASSES
+
+
+def test_alignment_classes_include_cut_out():
+    # Cross spec §7.3: a matched, answerable row that the cut-out rule made <NA> has its own class, not
+    # "coverage_unanswerable"; the classes still partition the rows.
+    g = pd.DataFrame(
+        {
+            "attempt": pd.array([pd.NA, pd.NA], dtype="boolean"),
+            "release_source": ["native", "native"],
+            "release_dist_m": [1.0, 1.0],
+            "start_x": 90.0,
+            "start_y": 5.0,
+            "release_match_cut": 3.0,
+            "cut_out": [True, False],
+        }
+    )
+    assert m.alignment_class(g).tolist() == ["cut_out", "coverage_unanswerable"]
+    assert "cut_out" in m.ALIGNMENT_CLASSES
+
+
+def test_evidence_counts_direction_cut_and_unresolved():
+    # Cross spec §7.3 run 3 (review A CD-PLAN-13): per provider, the cut-out rows, their share, the cut-out rows whose
+    # direction window the first contact cut, and the rows whose direction is unresolved.
+    g = pd.DataFrame(
+        {
+            "attempt": pd.array([pd.NA, pd.NA, pd.NA, False, True], dtype="boolean"),
+            "cut_out": [True, True, False, False, False],
+            "direction_cut": [True, False, False, False, False],
+            "direction_unresolved": [False, True, False, False, False],
+        }
+    )
+    assert m.cut_out_evidence(g) == {
+        "n_cut_out": 2,
+        "cut_out_share": pytest.approx(2 / 4),  # the third row is unanswerable: in neither part of the share
+        "n_cut_out_direction_cut": 1,
+        "n_direction_unresolved": 1,
+    }
+
+
+def test_block_call_report():
+    # Cross spec §7.3 / decision 12 (review A CD-SPEC-22, CD-PLAN-13): the GS block call (cut_out) against PFF code B
+    # (cross_blocked) on the open-play native crosses, and the code-B crosses whose block comes inside the gap.
+    rows = pd.DataFrame(
+        {
+            "provider": ["gradientsports"] * 3 + ["skillcorner"],
+            "cross_native": pd.array([True, True, True, pd.NA], dtype="boolean"),
+            "cross_blocked": pd.array([True, True, False, pd.NA], dtype="boolean"),
+            "attempt": pd.array([pd.NA, False, pd.NA, pd.NA], dtype="boolean"),
+            "cut_out": [True, False, True, True],
+            "release_t": [10.0, 20.0, 30.0, 40.0],
+            "next_opponent_t": [10.30, 20.05, 30.40, 40.10],
+        }
+    )
+    out = m.block_call(rows, release_gap_s=0.08)
+    assert out == {
+        "n": 3,
+        "n_called": 2,
+        "n_code_b": 2,
+        "precision": pytest.approx(0.5),
+        "recall": pytest.approx(0.5),
+        "n_block_inside_gap": 1,  # the second row: its opponent action comes 0.05 s after the release (release_t)
+    }
+
+
+def test_block_inside_gap_is_strict():
+    # A block exactly release_gap_s after the release is outside the gap: the enricher's path starts AT
+    # release + release_gap_s, so that contact can end the path (review B C5). Values are exact in binary.
+    rows = pd.DataFrame(
+        {
+            "provider": ["gradientsports"] * 2,
+            "cross_native": pd.array([True, True], dtype="boolean"),
+            "cross_blocked": pd.array([True, True], dtype="boolean"),
+            "attempt": pd.array([pd.NA, pd.NA], dtype="boolean"),
+            "cut_out": [True, True],
+            "release_t": [10.0, 20.0],
+            "next_opponent_t": [10.125, 20.0625],
+        }
+    )
+    assert m.block_call(rows, release_gap_s=0.125)["n_block_inside_gap"] == 1
+
+
+def test_next_opponent_t_skips_teammates_and_stops_at_the_period():
+    # The PFF block time is the next action by ANOTHER team in the same period; a teammate's action is skipped and
+    # the team compare is dtype-safe (ADR-019: 5 and 5.0 are the same team).
+    a = pd.DataFrame(
+        {
+            "period_id": [1, 1, 1, 1, 2],
+            "time_seconds": [1.0, 1.5, 2.0, 3.0, 0.5],
+            "team_id": pd.array([5, 5.0, 6, 6, 5], dtype=object),
+        }
+    )
+    np.testing.assert_array_equal(m._next_opponent_t(a), [2.0, 2.0, np.nan, np.nan, np.nan])
 
 
 @pytest.mark.parametrize(
@@ -245,9 +365,9 @@ def test_alignment_classes_include_native():
     ],
 )
 def test_native_release_trigger(dts, fires):
-    # Spec r8 7.4: a provider's native rows need a median passer_contact_dt inside [-0.30, +0.30] s and a passer-touch
-    # share of at least 40 %; else the owner decides.
-    cal = m.calibrate(_native_rows("gradientsports", dts), block_window_s=1.0)
+    # Cross spec 7.4: a provider's native rows need a median passer_contact_dt inside [-0.30, +0.30] s and a
+    # passer-touch share of at least 40 %; else the owner decides.
+    cal = m.calibrate(_native_rows("gradientsports", dts))
     assert cal["native_release_owner_decision_needed"] is fires
     stats = cal["native_release"]["gradientsports"]
     assert stats["n"] == len(dts)
@@ -255,12 +375,12 @@ def test_native_release_trigger(dts, fires):
 
 
 def test_fixed_point_checks_each_calibrated_field_and_the_start_line():
-    params = {"release_match_m": 5.0, "release_gap_s": 0.2, "block_radius_m": 8.0, "direction_window_s": 0.2}
+    params = {"release_match_m": 5.0, "release_gap_s": 0.2, "direction_window_s": 0.2}
     cal, run = dict(params), params | {"cross_start_x": 70.0}
-    # The expected keys are spelled out (spec r7 §7.4), not read from m._CALIBRATED, the constant under test.
+    # The expected keys are spelled out (cross spec §7.4), not read from m._CALIBRATED, the constant under test.
     assert m.fixed_point(cal, run, selected_line=70.0) == dict.fromkeys([*params, "cross_start_x", "all"], True)
-    off = m.fixed_point(cal | {"block_radius_m": 9.5}, run, selected_line=70.0)
-    assert off == {**dict.fromkeys(params, True), "block_radius_m": False, "cross_start_x": True, "all": False}
+    off = m.fixed_point(cal | {"release_gap_s": 0.25}, run, selected_line=70.0)
+    assert off == {**dict.fromkeys(params, True), "release_gap_s": False, "cross_start_x": True, "all": False}
     # Review A C9: a run at another line than the selected one (an omitted --cross-start-x) is not a fixed point.
     line = m.fixed_point(cal, params | {"cross_start_x": 52.5}, selected_line=70.0)
     assert line["cross_start_x"] is False and line["all"] is False
@@ -269,19 +389,20 @@ def test_fixed_point_checks_each_calibrated_field_and_the_start_line():
 
 def test_calibrate_without_idsse_reports_nan():
     rows = _calibration_rows()
-    cal = m.calibrate(rows[rows["provider"] != "idsse"], block_window_s=1.0)
+    cal = m.calibrate(rows[rows["provider"] != "idsse"])
     assert np.isnan(cal["release_match_m"]) and np.isnan(cal["release_gap_s"])
 
 
 def test_alignment_classes_partition_the_applicable_rows():
     g = pd.DataFrame(
         {
-            "attempt": pd.array([True, False, pd.NA, pd.NA, pd.NA, pd.NA, True], dtype="boolean"),
-            "release_source": ["elastic", "event", "event", "elastic", "event", "event", "native"],
-            "release_dist_m": [1.0, 2.0, 9.0, np.nan, 1.0, np.nan, 1.0],
-            "start_x": [90.0, 90.0, 90.0, 90.0, 90.0, np.nan, 90.0],
+            "attempt": pd.array([True, False, pd.NA, pd.NA, pd.NA, pd.NA, True, pd.NA], dtype="boolean"),
+            "release_source": ["elastic", "event", "event", "elastic", "event", "event", "native", "native"],
+            "release_dist_m": [1.0, 2.0, 9.0, np.nan, 1.0, np.nan, 1.0, 1.0],
+            "start_x": [90.0, 90.0, 90.0, 90.0, 90.0, np.nan, 90.0, 90.0],
             "start_y": 5.0,
             "release_match_cut": 3.0,
+            "cut_out": [False] * 7 + [True],
         }
     )
     cls = m.alignment_class(g).tolist()
@@ -293,6 +414,7 @@ def test_alignment_classes_partition_the_applicable_rows():
         "coverage_unanswerable",
         "unknown_start",
         "native",
+        "cut_out",
     ]
     assert set(cls) == set(m.ALIGNMENT_CLASSES)
 
@@ -312,6 +434,7 @@ def test_alignment_is_split_by_provider_and_row_class():
             "start_x": [90.0, 104.0, np.nan, 30.0, 70.0],
             "start_y": [5.0, 1.0, 5.0, 30.0, 10.0],
             "release_match_cut": 3.0,
+            "cut_out": False,
         }
     )
     t = m.alignment_table(flat)
@@ -375,7 +498,8 @@ def test_report_shape_on_the_toy_corpus(tmp_path):
     assert set(rep["fixed_point"]) == {*m._CALIBRATED, "cross_start_x", "all"}
     # No StatsBomb arm, so no selected line: the run line (52.5) is not a fixed point (review A C12 N3).
     assert rep["fixed_point"]["cross_start_x"] is False
-    assert rep["tracking_params"]["block_window_s"] == 1.0
+    assert rep["tracking_params"]["cut_out_window_s"] == 1.0
+    assert "block_radius_m" not in rep["tracking_params"]
     assert rep["reporting_line"] == 52.5 and rep["selected_start_line"] is None  # no StatsBomb arm in the toy
     ev = rep["evidence"]
     assert {"median_crosses_per_match", "ratio_bar", "cross_attempt", "alignment", "corner_kind_source"} <= set(ev)
@@ -384,3 +508,31 @@ def test_report_shape_on_the_toy_corpus(tmp_path):
         assert set(cells) <= set(m.ROW_CLASSES)
         for shares in cells.values():
             assert sum(shares[c] for c in m.ALIGNMENT_CLASSES) == pytest.approx(1.0)
+
+
+def test_tracking_params_carry_the_scorer_overrides():
+    # Scorer spec section 4: the cross runs read the clean code commit with the frozen scorer of the development run
+    # and its threshold as overrides; the scorer's peaks are threshold-free (min_velocity_change_ms 0).
+    from types import SimpleNamespace
+
+    from silly_kicks.tracking._ball_contact import BallContactParams
+
+    base = {k: None for k in (*m._TRACKING_PARAMS, *m._SCORER_PARAMS, "cross_start_x")}
+    scored = m._tracking_params(
+        SimpleNamespace(params={**base, "contact_scorer": "/runs/dev", "min_contact_probability": 0.35})
+    ).contact_params
+    assert (scored.contact_scorer, scored.min_contact_probability, scored.min_velocity_change_ms) == (
+        "/runs/dev",
+        0.35,
+        0.0,
+    )
+    assert m._tracking_params(SimpleNamespace(params=base)).contact_params == BallContactParams()
+
+
+def test_the_scorer_content_enters_the_token(tmp_path):
+    # A refit at the same path must start a new generation of the flat stage (scorer spec section 4).
+    (tmp_path / "model.json").write_text("{}", encoding="utf-8")
+    first = m._declare_scorer({"contact_scorer": str(tmp_path)})
+    (tmp_path / "model.json").write_text('{"x": 1}', encoding="utf-8")
+    assert m._declare_scorer({"contact_scorer": str(tmp_path)}) != first
+    assert m._declare_scorer({"contact_scorer": None}) == {}

@@ -363,14 +363,14 @@ def _resolve_team_ids(events: pd.DataFrame) -> pd.arrays.IntegerArray:
     return team.array  # type: ignore[return-value]
 
 
-#: The kickoff game event of each period, whose ``start_time`` anchors that period's clock (spec r8 6.6 B).
+#: The kickoff game event of each period, whose ``start_time`` anchors that period's clock (cross spec 6.6 B).
 _KICKOFF_GAME_EVENT = {1: "FIRSTKICKOFF", 2: "SECONDKICKOFF", 3: "THIRDKICKOFF", 4: "FOURTHKICKOFF"}
 #: The penalty-shootout period. It has no kickoff, so a caller that splits it out anchors it at its first event.
 _SHOOTOUT_PERIOD = 5
 
 
 def _period_anchors(events: pd.DataFrame) -> dict[int, float]:
-    """Per period, the video time its clock counts from (spec r8 6.6 B).
+    """Per period, the video time its clock counts from (cross spec 6.6 B).
 
     Periods 1-4: the ``start_time`` of the period's kickoff game event. Period 5 (a caller's split-out shootout):
     the first ``start_time`` of its rows. Read on the full input, before the exclusion filter drops the kickoffs.
@@ -390,7 +390,7 @@ def _period_anchors(events: pd.DataFrame) -> dict[int, float]:
 
 
 def _event_clock_time_seconds(events: pd.DataFrame, anchors: dict[int, float]) -> np.ndarray:
-    """``event_time - anchor[period]`` for the converted rows: period-relative (ADR-017; spec r8 6.6 B).
+    """``event_time - anchor[period]`` for the converted rows: period-relative (ADR-017; cross spec 6.6 B).
 
     Raises ``ValueError`` for a period with converted rows but no anchor, a NaN ``event_time``, or an event before
     its period's kickoff (``time_seconds`` is non-negative, ``spadl/schema.py``; none occurs in the 64 cached
@@ -524,7 +524,7 @@ def convert_to_actions(
     # (game_event_type, possession_event_type) pair is in the documented
     # excluded set; tally counts for the ConversionReport.
     # ------------------------------------------------------------------
-    # The kickoff anchors are read before the exclusion filter drops the kickoff rows (spec r8 6.6 B).
+    # The kickoff anchors are read before the exclusion filter drops the kickoff rows (cross spec 6.6 B).
     period_anchors = _period_anchors(events)
     ge_arr_full = events["game_event_type"].fillna("").to_numpy()
     pe_arr_full = events["possession_event_type"].fillna("").to_numpy()
@@ -632,8 +632,8 @@ def convert_to_actions(
     # synthesis masks (computed from `events`, applied to `actions` positionally) stay aligned. See
     # sort_actions_chronologically in .base.
     #
-    # time_seconds is the possession event's own time since its period's kickoff (ADR-133 r8 6.6 B). It replaces
-    # the whole-second startGameClock, which timed each action from the start of its on-ball sequence (a median
+    # time_seconds is the possession event's own time since its period's kickoff (ADR-133, cross spec 6.6 B). It
+    # replaces the whole-second startGameClock, which timed each action from the start of its on-ball sequence (a median
     # 1.29 s before the possession event on the native converted actions of the 64 WC2022 matches) and was null
     # on the dedicated FOUL events. Every event carries eventTime, so the former start_time-ordered foul imputation
     # (Option D; spec 2026-08-20-chronological-action-id-invariant 2b, ADR-065) no longer reaches any output and
@@ -915,7 +915,7 @@ def convert_to_actions(
     actions["end_y"] = actions["end_y"].clip(0, spadlconfig.field_width)
 
     # Every row's time is its possession event's own time, which PFF synchronises to its tracking frames
-    # (ADR-133 r8 6.6 B/C); synthesized rows share their parent's time. GS never calls _add_dribbles.
+    # (ADR-133, cross spec 6.6 B/C); synthesized rows share their parent's time. GS never calls _add_dribbles.
     actions["time_source"] = "tracking"
 
     # ------------------------------------------------------------------

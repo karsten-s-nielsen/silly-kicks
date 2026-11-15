@@ -1071,9 +1071,10 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         name="cross_attempt",
         definition=(
             "Tracking cross attempt: True when a cross-zone open-play pass, corner or free kick sends the ball into "
-            "the penalty area, or is blocked by an opponent while heading into it; False when it does not, and for an "
-            "open-play pass known to start outside the cross zone; <NA> when the frames cannot answer (misaligned "
-            "release, unknown start, too little ball data) or the row is not a delivery. "
+            "the penalty area; False when it does not, and for an open-play pass known to start outside the cross "
+            "zone; <NA> when the frames cannot answer (misaligned release, unknown start, too little ball data), "
+            "when an opponent's first touch within 1 s cuts out a ball heading into the box (a block cannot be told "
+            "from a touch near the crosser), or when the row is not a delivery. "
             "Counts all heights. Reads the delivery's own outcome, so it is a label, not a pre-action feature."
         ),
         unit="dimensionless",
@@ -1093,25 +1094,25 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     # -- Ball contact (TF-79) -------------------------------------------------------------------
     FeatureColumn(
         name="first_contact_time",
-        definition="Period-relative time (s) of the first detected ball contact in the action window; NaN if none.",
+        definition="Period-relative time (s) of the first contact by another player in the action window; NaN if none.",
         unit="seconds",
         emitting_module=_M_BALL_CONTACT,
     ),
     FeatureColumn(
         name="first_contact_player_id",
-        definition="Player who made the first detected ball contact in the action window; <NA> if unresolved.",
+        definition="Player of the first contact by another player than the actor in the action window; <NA> if none.",
         unit="dimensionless",
         emitting_module=_M_BALL_CONTACT,
     ),
     FeatureColumn(
         name="first_contact_x",
-        definition="Pitch x (metres, frame-LTR) of the first detected ball contact in the action window.",
+        definition="Pitch x (metres, frame-LTR) of the first contact by another player in the action window.",
         unit="metres",
         emitting_module=_M_BALL_CONTACT,
     ),
     FeatureColumn(
         name="first_contact_y",
-        definition="Pitch y (metres, frame-LTR) of the first detected ball contact in the action window.",
+        definition="Pitch y (metres, frame-LTR) of the first contact by another player in the action window.",
         unit="metres",
         emitting_module=_M_BALL_CONTACT,
     ),
@@ -1123,7 +1124,7 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     ),
     FeatureColumn(
         name="first_contact_confidence",
-        definition="First-contact detector confidence in [0,1] (break x proximity x detection); higher = stronger.",
+        definition="First-contact confidence in [0,1]: the contact scorer's probability, or the reach-gate score.",
         unit="probability",
         emitting_module=_M_BALL_CONTACT,
         higher_is_better=True,
@@ -1136,7 +1137,7 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     ),
     FeatureColumn(
         name="first_contact_source",
-        definition="Detection provenance of the first contact: rdp / velocity_break / both / unresolved.",
+        definition="Detection provenance of the first contact: velocity_break (TF-79 v2; rdp/both never emitted).",
         unit="dimensionless",
         emitting_module=_M_BALL_CONTACT,
     ),

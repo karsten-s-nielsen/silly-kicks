@@ -73,7 +73,7 @@ Classes:
 
 `tracking/defensive_credit/_bravery.py:42,90,93` and `atomic/tracking/features.py:323-357,433` read `cross_blocked` on rows with `cross_native == True` (Task 4). `scripts/probe_sb_cross_blocked.py` is a one-off probe of the StatsBomb native block join, unaffected (it reads raw events).
 
-## Seams 5–8: native event timing (spec r8, decision 11)
+## Seams 5–8: native event timing (cross spec decision 11)
 
 The evidence for the moves is `native-timing.md` (§2, the frame-link shift). Classes as above, plus **link moves**: the reader links GS or SkillCorner actions to frames by time, so it now reads the frame at the action's own moment (the kick), not the reception (SkillCorner, a median 1.1 s earlier) or the whole-second sequence start (GS, a median 0.5 s earlier at the link).
 
@@ -92,19 +92,41 @@ The evidence for the moves is `native-timing.md` (§2, the frame-link shift). Cl
 | 7 | `tracking/_cross_delivery.py` `_release_times` | changed in this cycle (Task 16) | step 0 reads it |
 | 8 | `align_events_to_frames`, `add_elastic_sync`, `elastic_sync_xfns`, `link_actions_to_frames_elastic` on frames with `stoppage_state` | intended shift (Task 17) | episodes split at dead and unknown spans; frames without it unchanged |
 
+## Seam 9: the TF-79 detector v2 (cross spec decision 12, ADR-134)
+
+Every contact changes for every provider (kinematic candidates, the contact scorer as the credit step, the actor skip). The readers, from
+`git grep -l -e detect_ball_contacts -e add_ball_contacts -e first_contact_ -e add_corner_windows -e
+_ensure_cross_attempts -- scripts silly_kicks`:
+
+| Reader | Reads | Class | Evidence |
+|---|---|---|---|
+| `tracking/_cross_delivery.py` | the first non-passer contact (path end), the passer's contact | value-changing | the cross runs read the frozen scorer as an override (scorer spec section 4) |
+| `corners/_windows.py` | `first_contact_in_window` after the kick | value-changing | the winner skips `taker_player_id`; `t_target` moves with the first contact |
+| `corners/_identify.py`, `corners/_columns.py` | the corner action's `player_id` | new column | `taker_player_id` joins `CORNER_IDENTIFY_COLUMNS` |
+| `corners/_encode.py:63` (`compute_corner_run_encoding`) | `t_target` from `add_corner_windows` | value-changing | the target snapshot moves with the v2 first contact |
+| `tracking/_ball_contact.py` `add_ball_contacts` | its own contacts | value-changing | `first_contact_*` is the first contact by another player |
+| `scripts/build_corner_routines.py` | `add_corner_windows` targets | retrain owed | the corner weights row below |
+| `scripts/train_xcross_attempt.py`, `scripts/hf_jobs/headtohead.py` | `cross_attempt` via `_ensure_cross_attempts` | retrain owed / evaluation | the xCross row below |
+| `scripts/validate_corners.py`, `scripts/measure_ball_contact_validation.py`, `scripts/measure_box_constant_delta.py`, `scripts/measure_f1b_feature_delta.py` | contacts or cross attempts | measurement re-reads | no stored artifact; a re-run reports v2 numbers |
+| `silly_kicks/feature_glossary.py`, `silly_kicks/reflection.py`, `silly_kicks/tracking/__init__.py`, `tracking/features.py` | declarations and re-exports | unaffected (text updated) | the `first_contact_*` and `contact_source` definitions say what v2 emits |
+| `_contact_scorer.decide_options` / `credit_options` (scorer v2, ADR-134 amendment 2) | a required keyword `decode_window_s` | signature change | callers: `_ball_contact._finalize_contacts` (the loaded scorer's value), `scripts/build_contact_scorer.py` `_score` (the fold or refit scorer's value), `tests/tracking/test_contact_scorer.py`, `tests/scripts/test_build_contact_scorer.py`; no other caller (`git grep -l -e decide_options -e credit_options`) |
+| `_ball_contact._finalize_contacts` | a keyword `frames` (required with a scorer) | signature change | the scorer path (`detect_ball_contacts`) passes the frames for the control features; the rule-mode callers (`scripts/measure_ball_contact_validation.py`, `tests/tracking/test_ball_contact.py`) are unchanged |
+| `scripts/_gs_truth.py` `meets_bar` / `select_point` | a required keyword `population` | signature change | callers: `scripts/build_contact_scorer.py` and `scripts/measure_ball_contact_validation.py` (both `"supported"`), `tests/scripts/test_gs_truth.py`; `score_next_touch` keeps its signature (the `sup_*` counts appear only when the sequences carry `supported`) |
+| `scripts/_loader_pining.py` | GS raw events | new accessor | `gradientsports_events_json` for the truth harness |
+
 ## Trained artifacts
 
-| Artifact | Reads SPADL type? | r8: trained on GS or SkillCorner actions or links? | Retrain |
+| Artifact | Reads SPADL type? | Trained on GS or SkillCorner actions or links? | Retrain |
 |---|---|---|---|
-| `tracking/_xcross_weights` (xCross) | the label | yes (IDSSE + SkillCorner) | **owed** (label v2; r8 SkillCorner times) |
+| `tracking/_xcross_weights` (xCross) | the label | yes (IDSSE + SkillCorner) | **owed** (label v2; the SkillCorner kick times; detector v2: the label's path end is the TF-79 v2 first contact, `train_xcross_attempt.py` via `_ensure_cross_attempts`) |
 | `expected_passing/weights` (PassCompletionModel) | trains on `pass` rows | no (StatsBomb open data) | **owed** (type) |
 | `xsuccess/weights` (XSuccessModel) | action-type one-hot feature | no (StatsBomb open data) | **owed** (type) |
-| `corners/_routine_weights`, `corners/_run_zone_weights` (TF-46) | trained on `corner_kind == "direct"` corners | yes (SkillCorner + IDSSE + SB360; `MODEL_CARD.md`) | **owed** (tracking decides `corner_kind`; r8 SkillCorner corner start and time) |
-| `tracking/_xshot_weights` | shot types only (`_xshot_occurrence.py:338`) | yes (IDSSE + SkillCorner, `provider_list`): shot times move to the kick | **owed** (r8) |
-| `tracking/_ghost_gk_weights` (4 variants) | shots and the set-piece union | yes (GS + SkillCorner + Sportec, `corpus_provenance`); the extraction reads the staged actions per game (`train_ghost_gk.py:405-451`) | **owed** (r8) |
-| `tracking/_ghost_outfield_weights` (2 variants) | shots and the set-piece union | yes (GS + SkillCorner + Sportec, `cv_mae_by_provider`); goal times set `score_diff` (`train_ghost_outfield.py:86-145`) | **owed** (r8) |
-| `xtgk/_retention_weights/default` | the move union (`_moves.py`) | yes (GS, 64 games): the release `pressure` is a time-based frame link at the action, and the label reads the next actions | **owed** (r8) |
-| `xtgk/_retention_weights/skillcorner` | the move union | yes (SkillCorner, 108 games): goal-kick and distribution starts move to the kick | **owed** (r8) |
+| `corners/_routine_weights`, `corners/_run_zone_weights` (TF-46) | trained on `corner_kind == "direct"` corners | yes (SkillCorner + IDSSE + SB360; `MODEL_CARD.md`) | **owed** (tracking decides `corner_kind`; the SkillCorner corner start and time; detector v2: `RunZoneModel` and `CornerRoutineModel` are fitted on targets timed by the TF-79 first contact, `scripts/build_corner_routines.py:41-50, 92-120`, and the winner now skips the taker) |
+| `tracking/_xshot_weights` | shot types only (`_xshot_occurrence.py:338`) | yes (IDSSE + SkillCorner, `provider_list`): shot times move to the kick | **owed** (native timing) |
+| `tracking/_ghost_gk_weights` (4 variants) | shots and the set-piece union | yes (GS + SkillCorner + Sportec, `corpus_provenance`); the extraction reads the staged actions per game (`train_ghost_gk.py:405-451`) | **owed** (native timing) |
+| `tracking/_ghost_outfield_weights` (2 variants) | shots and the set-piece union | yes (GS + SkillCorner + Sportec, `cv_mae_by_provider`); goal times set `score_diff` (`train_ghost_outfield.py:86-145`) | **owed** (native timing) |
+| `xtgk/_retention_weights/default` | the move union (`_moves.py`) | yes (GS, 64 games): the release `pressure` is a time-based frame link at the action, and the label reads the next actions | **owed** (native timing) |
+| `xtgk/_retention_weights/skillcorner` | the move union | yes (SkillCorner, 108 games): goal-kick and distribution starts move to the kick | **owed** (native timing) |
 | `tracking/_receiver_weights` | completed `pass` ∪ `cross` | no (StatsBomb) | not owed |
 | `match_outcome/weights`, `win_probability/weights` | shot types only (`_compute.py:23`, `_state.py:18`) | no (StatsBomb open data) | not owed |
 | VAEP | no bundled weights | — | none (users refit) |

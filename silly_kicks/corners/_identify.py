@@ -86,6 +86,11 @@ def identify_corners(
     out["period_id"] = c["period_id"].to_numpy()
     out["t_kick"] = c["time_seconds"].astype("float64").to_numpy()
     out["attacking_team_id"] = c["team_id"].to_numpy()
+    out["taker_player_id"] = (
+        actions.loc[c.index, "player_id"].astype(object).to_numpy()
+        if "player_id" in actions.columns
+        else np.full(len(c), pd.NA, dtype=object)
+    )
 
     midline = float(spadlconfig.field_width) / 2.0
     out["corner_side"] = np.where(c["start_y"].to_numpy() >= midline, "left", "right")
@@ -93,7 +98,7 @@ def identify_corners(
     out["kick_y"] = c["start_y"].astype("float64").to_numpy()
 
     # ADR-133 decision 10: when the actions carry the tracking cross attempt (add_cross_deliveries), it decides the
-    # delivery; where it is <NA> (unanswerable) or absent, the SPADL type decides, as before.
+    # delivery; where it is <NA> (unanswerable or cut out, ADR-133 decision 10) or absent, the SPADL type decides.
     kind = np.where(c["type_id"].to_numpy() == _CORNER_SHORT_ID, "short", "direct").astype(object)
     source = np.full(len(c), "event", dtype=object)
     if "cross_attempt" in actions.columns:

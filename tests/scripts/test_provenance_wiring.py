@@ -63,6 +63,11 @@ ARTIFACT_DRIVERS = (
     # the release's ship claim ("unification, measured no-op" vs a weights comparison).
     "materialize_tc3_frames",
     "measure_box_constant_delta",
+    # The TF-79 contact-scorer truth (scorer spec section 4): the materializer writes the staged dataset the scorer
+    # trains on (its run commit stamped), and the check writes the staged-equals-served verdict that gates the
+    # development run. Both read the pining corpus.
+    "materialize_gs_contact_truth",
+    "check_gs_contact_truth",
     # F1b (ADR-106) float32-storage feature-delta measurement. Runs each frame-geometry model's
     # shared extractor on a real corpus with float64 vs float32-rounded coordinates and writes
     # docs/research/f1b_float32/metrics.json (per-feature max/mean |delta| + gk_completion
@@ -250,6 +255,9 @@ ARTIFACT_DRIVERS = (
     # CrossDeliveryParams calibration and the per-provider ratio bar) -- the numbers that fix the shipped defaults,
     # over external data, so provenance.
     "build_cross_definition",
+    # The TF-79 contact scorer (scorer spec section 4): walks the staged gs_contact_truth dataset and writes the
+    # development and held-out reports and the frozen scorer -- the weights and the threshold that ship, so provenance.
+    "build_contact_scorer",
 )
 
 

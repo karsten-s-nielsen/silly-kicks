@@ -214,7 +214,8 @@ def classify_deliveries(actions: pd.DataFrame, *, cross_start_x: float = CROSS_S
     missing, or whose coordinates are NaN, never delivers.
 
     Event-only limits: a blocked cross and a restart-ended delivery are typed ``pass`` (and a restart-ended
-    set piece ``*_short``). The tracking layer (``add_cross_deliveries``) decides those from the ball path.
+    set piece ``*_short``). The tracking layer (``add_cross_deliveries``) decides the restart-ended delivery from
+    the ball path; a cross cut out by an opponent near the release stays ``<NA>`` there too (ADR-133 decision 10).
 
     Parameters
     ----------

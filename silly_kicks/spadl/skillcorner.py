@@ -91,7 +91,7 @@ def _transform_coords(
 # the regulation period boundaries (45/90/105/120 min), matching the Gradient Sports adapter.
 _PERIOD_START_SECONDS = {1: 0.0, 2: 45 * 60.0, 3: 90 * 60.0, 4: 105 * 60.0, 5: 120 * 60.0}
 
-#: The possession-end fields a native SPADL row is built from (ADR-133, spec r8 6.6 A).
+#: The possession-end fields a native SPADL row is built from (ADR-133, cross spec 6.6 A).
 _REQUIRED_END_COLUMNS = ("time_end", "x_end", "y_end")
 
 
@@ -268,7 +268,7 @@ def convert_to_actions(
     if missing_cols:
         raise ValueError(
             f"skillcorner.convert_to_actions: missing column(s) {missing_cols}. A SPADL row is the on-ball action "
-            "at the possession END (time_end, x_end, y_end), not the reception at its start (ADR-133, spec r8 6.6 A)."
+            "at the possession END (time_end, x_end, y_end), not the reception at its start (ADR-133, spec 6.6 A)."
         )
 
     # --- Filter to player_possession rows with valid actors ---
@@ -286,7 +286,7 @@ def convert_to_actions(
     # --- Time parsing --- (re-base the continuous broadcast clock to period-relative; ADR-017)
     # A player_possession row runs from the reception (time_start, x_start) to the on-ball action at its END
     # (time_end, x_end): the pass, shot, clearance, set-piece delivery, foul or loss. The native SPADL row is that
-    # action, so it takes the end (ADR-133, spec r8 6.6 A). `start_seconds` keeps the reception time for the
+    # action, so it takes the end (ADR-133, cross spec 6.6 A). `start_seconds` keeps the reception time for the
     # possession order and for the rows that happen at the start (start-type interceptions, keeper saves).
     pp["start_seconds"] = _to_period_relative(_parse_time_start(pp["time_start"]), pp["period"])
     time_end = pp["time_end"].astype("string")
@@ -312,7 +312,7 @@ def convert_to_actions(
     # before the sx/sy transforms and the .shift(-1)-based same_team_next / is_short lookups
     # below, whose results (and thus type_id/result_id and the derived-row times) otherwise
     # depend on raw input order. The possession order is the reception order (`start_seconds`,
-    # always known); a possession never ends after the next one starts (measured, spec r8 section 10).
+    # always known); a possession never ends after the next one starts (measured on the staged corpus, ADR-133).
     # mergesort keeps any co-timestamped rows in native order (§3a inter-timestamp scope). pp
     # carries `period` (not `period_id`) at this stage. The final combined sort
     # (period_id, time_seconds) at the end still runs to interleave the defensive/goalkick rows.
@@ -430,7 +430,7 @@ def convert_to_actions(
     )
 
     # A pass-class row with no targeted reception ends at the NEXT possession's reception (its x_start/y_start; pp is
-    # in reception order), the ball's destination (spec r9 6.6 A, review B CD-SB-23). The next action's start is the
+    # in reception order), the ball's destination (cross spec 6.6 A). The next action's start is the
     # next KICK since r8, so _derive_end_coordinates would end the pass at the receiver's kick and drop the receiver's
     # carry. The last possession of a period has no next reception: its end stays the start, and
     # _derive_end_coordinates applies as before.
@@ -523,7 +523,7 @@ def convert_to_actions(
             columns=["period", "time_seconds", "team_id", "player_id", "end_type", "x_start", "y_start"]
         )
 
-    # The derived rows happen at the possession START (spec r8 6.6 A), so the inference reads the reception time.
+    # The derived rows happen at the possession START (cross spec 6.6 A), so the inference reads the reception time.
     pp_for_inference = pp[
         ["event_id", "period", "start_seconds", "team_id", "player_id", "start_type", "x_start", "y_start"]
     ].rename(columns={"start_seconds": "time_seconds"})

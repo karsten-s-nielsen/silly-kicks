@@ -124,9 +124,13 @@ BLOCK_IN = ((82.0, 8.8), (70.0, 2.0))
 BLOCK_AWAY = ((77.0, 5.5), (90.0, 2.0))
 
 
-def _deflected(deflect, after, *, team="B", **kw):
-    """Released at (80, 5) at t=1.0; player 3 (of ``team``) stands at ``deflect`` and deflects the ball 0.25 s later."""
-    path = _path((1.0, 1.25, (80.0, 5.0), deflect), (1.25, 1.75, deflect, after))
+#: A far opponent contact (14.4 m from the release, still outside the box) on a ball heading into the box.
+FAR_IN = ((88.0, 17.0), (70.0, 2.0))
+
+
+def _deflected(deflect, after, *, team="B", t_hit=1.25, **kw):
+    """Released at (80, 5) at t=1.0; player 3 (of ``team``) stands at ``deflect`` and deflects the ball at ``t_hit``."""
+    path = _path((1.0, t_hit, (80.0, 5.0), deflect), (t_hit, t_hit + 0.5, deflect, after))
     return _frames(path, {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: (team, *deflect)}, **kw)
 
 
@@ -159,32 +163,148 @@ def test_unanswerable_cross_zone_row_is_unknown():
     assert pd.isna(att[0]) and pd.isna(height[0])
 
 
-def test_block_radius_both_sides():
-    (dx, dy), _after = BLOCK_IN
-    dist = float(np.hypot(dx - 80.0, dy - 5.0))
-    a, f = _actions([("pass", 1.0, 80.0, 5.0)]), _deflected(*BLOCK_IN)
-    assert _attempt(a, f, block_radius_m=dist + 0.5)[0] == [True]
-    assert _attempt(a, f, block_radius_m=dist - 0.5)[0] == [False]  # decided by the path only
-
-
-def test_block_radius_measured_from_release():
-    # Spec 6.3: the block radius is measured from the RELEASE (the ball), not the event's start. The event start sits
-    # 2.5 m from the ball (inside release_match_m), and the defender 4.3 m from the ball but 2.4 m from the start.
-    a, f = _actions([("pass", 1.0, 80.0, 7.5)]), _deflected(*BLOCK_IN)
-    assert _attempt(a, f, block_radius_m=3.5)[0] == [False]
-    assert _attempt(a, f, block_radius_m=4.8)[0] == [True]
-
-
-def test_block_window_both_sides():
-    # Spec r7 §6.3: a block is an opponent's first contact within block_window_s of the release. The defender
-    # meets the ball 0.25 s after the release, 4.3 m away; inside the radius, the window alone decides.
-    a, f = _actions([("pass", 1.0, 80.0, 5.0)]), _deflected(*BLOCK_IN)
+def test_cut_out_is_unknown_at_any_distance():
+    # Cross spec §6.3 case 2: no box entry, an opponent's first contact inside cut_out_window_s, the initial direction
+    # into the box -> <NA> (cut out), whatever the contact's distance from the release (block_radius_m is gone).
     from silly_kicks.tracking._cross_delivery import _cross_delivery_diagnostics
 
-    dt = _cross_delivery_diagnostics(a, f, CrossDeliveryParams())["first_contact_dt"][0]
-    assert 0.2 < dt < 0.4  # precondition: the block contact sits between the two windows below
-    assert _attempt(a, f, block_window_s=dt + 0.05)[0] == [True]
-    assert _attempt(a, f, block_window_s=dt - 0.05)[0] == [False]  # a late contact is not a block
+    a = _actions([("pass", 1.0, 80.0, 5.0)])
+    for scene, t_hit in ((BLOCK_IN, 1.25), (FAR_IN, 1.6)):
+        f = _deflected(*scene, t_hit=t_hit)
+        d = _cross_delivery_diagnostics(a, f)
+        assert bool(d["first_contact_is_opponent"].iloc[0])  # precondition: the opponent's contact is detected
+        assert pd.isna(_attempt(a, f)[0][0])
+        assert bool(d["cut_out"].iloc[0])
+    with pytest.raises(TypeError):
+        CrossDeliveryParams(block_radius_m=5.0)  # type: ignore[call-arg]
+
+
+def test_cut_out_window_both_sides():
+    # Review Focus 9: a contact exactly at cut_out_window_s is inside it (<=); just beyond it the row is False.
+    from silly_kicks.tracking._cross_delivery import _cross_delivery_diagnostics
+
+    a, f = _actions([("pass", 1.0, 80.0, 5.0)]), _deflected(*BLOCK_IN)
+    dt = float(_cross_delivery_diagnostics(a, f)["first_contact_dt"].iloc[0])
+    assert 0.0 < dt < 1.0  # precondition
+    assert pd.isna(_attempt(a, f, cut_out_window_s=dt)[0][0])
+    assert _attempt(a, f, cut_out_window_s=dt - 1e-6)[0] == [False]
+
+
+def test_cut_out_needs_the_box_direction():
+    # The same opponent contact on a ball heading away from the box is not aimed at it: False, not cut out.
+    from silly_kicks.tracking._cross_delivery import _cross_delivery_diagnostics
+
+    a = _actions([("pass", 1.0, 80.0, 5.0)])
+    for mirror in (False, True):
+        f = _deflected(*BLOCK_AWAY, mirror=mirror)
+        assert _attempt(a, f)[0] == [False]
+        assert not bool(_cross_delivery_diagnostics(a, f)["cut_out"].iloc[0])
+
+
+def test_teammate_first_contact_is_not_a_cut_out():
+    a = _actions([("pass", 1.0, 80.0, 5.0)])
+    assert _attempt(a, _deflected(*BLOCK_IN, team="A"))[0] == [False]
+
+
+def test_box_entry_wins_over_a_later_opponent_contact():
+    # The ball enters the box before the opponent touches it: an attempt, whatever happens next.
+    into = _path((1.0, 1.6, (80.0, 5.0), (92.0, 30.0)), (1.6, 2.1, (92.0, 30.0), (80.0, 50.0)))
+    f = _frames(into, {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 50.0), 3: ("B", 92.0, 30.0)})
+    assert _attempt(_actions([("pass", 1.0, 80.0, 5.0)]), f)[0] == [True]
+
+
+def test_cut_out_has_no_height():
+    ball_z = [(t, x, y, 2.5) for t, x, y, _z in _path((1.0, 1.25, (80.0, 5.0), BLOCK_IN[0]), (1.25, 1.75, *BLOCK_IN))]
+    f = _frames(ball_z, {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: ("B", *BLOCK_IN[0])})
+    att, height = _attempt(_actions([("pass", 1.0, 80.0, 5.0)]), f)
+    assert pd.isna(att[0]) and pd.isna(height[0])
+
+
+def test_cut_out_orientation_invariance():
+    a = _actions([("pass", 1.0, 80.0, 5.0)])
+    straight = add_cross_deliveries(a, _deflected(*BLOCK_IN))
+    mirrored = add_cross_deliveries(a, _deflected(*BLOCK_IN, mirror=True))
+    pd.testing.assert_frame_equal(straight, mirrored)
+    assert pd.isna(straight["cross_attempt"].iloc[0])
+
+
+def test_cut_out_corner_falls_back_to_event():
+    # Review Focus 9: a cut-out corner is <NA>; TF-46 then takes the SPADL type (corner_kind_source "event").
+    from silly_kicks.corners import identify_corners
+
+    a = _actions([("corner_crossed", 1.0, 80.0, 5.0)])
+    out = add_cross_deliveries(a, _deflected(*BLOCK_IN))
+    assert pd.isna(out["cross_attempt"].iloc[0])
+    corners = identify_corners(out, provider="gradientsports")
+    assert corners["corner_kind"].tolist() == ["direct"]
+    assert corners["corner_kind_source"].tolist() == ["event"]
+
+
+def test_cut_out_cross_makes_the_xcross_label_unknown():
+    # Cross spec §6.5: the enricher's cut-out row is an unknown label (NaN), never 0 and never 1.
+    from silly_kicks.tracking import _xcross_attempt as xc
+
+    out = add_cross_deliveries(_actions([("pass", 1.0, 80.0, 5.0)]), _deflected(*BLOCK_IN))
+    assert pd.isna(out["cross_attempt"].iloc[0])
+    fidx = pd.DataFrame(
+        {"game_id": [1], "period_id": [1], "frame_id": [1], "time_seconds": [0.5], "team_in_possession": ["A"]}
+    )
+    y = np.asarray(xc.build_xcross_labels(fidx, out, horizon_seconds=1.0), dtype=float)
+    assert np.isnan(y).all()
+
+
+def test_unresolved_direction_is_unknown():
+    # Review B CD-SB-28 (owner ruling): an initial direction that cannot be resolved (fewer than 2 finite ball frames
+    # in the direction window) is unknown. BLOCK_AWAY resolves to "away" (False); with one finite frame it is <NA>.
+    from silly_kicks.tracking._cross_delivery import _cross_delivery_diagnostics
+
+    a = _actions([("pass", 1.0, 80.0, 5.0)])
+    base = _path((1.0, 1.25, (80.0, 5.0), BLOCK_AWAY[0]), (1.25, 1.75, *BLOCK_AWAY))
+    players = {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: ("B", *BLOCK_AWAY[0])}
+
+    def blank(lo):
+        return [(t, np.nan, np.nan, z) if lo <= t < 1.2 else (t, x, y, z) for t, x, y, z in base]
+
+    # A 0.15 s direction window over [1.0, 1.15]: 1 / 2 finite frames (the 1.2 s frame, kept for the contact, is out).
+    one, two = _frames(blank(1.01), players), _frames(blank(1.05), players)
+    params = CrossDeliveryParams(min_ball_coverage=0.3, direction_window_s=0.15)
+    for f in (one, two):
+        assert bool(_cross_delivery_diagnostics(a, f, params)["first_contact_is_opponent"].iloc[0])
+    assert pd.isna(_attempt(a, one, min_ball_coverage=0.3, direction_window_s=0.15)[0][0])
+    assert _attempt(a, two, min_ball_coverage=0.3, direction_window_s=0.15)[0] == [False]
+
+
+def test_cut_window_excludes_the_contact_frame_at_10hz():
+    # Review A CD-IMPL-15 (cross spec 6.3, C39): at 10 Hz an opponent's contact on the frame at 1.1 s lies inside
+    # the 0.2 s direction window; the cut window holds the frames STRICTLY before it -- only the release frame -- so
+    # the direction is unresolved and the row is <NA>. Counting the contact's own frame would resolve it.
+    from silly_kicks.tracking._cross_delivery import _cross_delivery_diagnostics
+
+    hit = (81.0, 6.5)
+    ball = _path((1.0, 1.1, (80.0, 5.0), hit), (1.1, 1.6, hit, (70.0, 2.0)), fps=10)
+    f = _frames(ball, {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: ("B", *hit)})
+    f["frame_rate"] = 10.0
+    f["frame_id"] = (f["time_seconds"] * 10).round().astype(int)
+    params = CrossDeliveryParams(release_gap_s=0.05)
+    d = _cross_delivery_diagnostics(_actions([("pass", 1.0, 80.0, 5.0)]), f, params)
+    assert bool(d["first_contact_is_opponent"].iloc[0])  # precondition: the opponent's contact is the first one
+    assert d["first_contact_dt"].iloc[0] == pytest.approx(0.1, abs=1e-6)
+    assert pd.isna(d["attempt"].iloc[0])
+    assert bool(d["direction_unresolved"].iloc[0]) and bool(d["cut_out"].iloc[0])
+
+
+def test_direction_window_stops_at_first_contact():
+    # Review A C37: the opponent touches the ball 0.1 s after the release and it rebounds away from the box. The
+    # direction window (0.2 s) is cut at the contact, so the direction is the cross's own (into the box): <NA>.
+    from silly_kicks.tracking._cross_delivery import _ray_hits_box
+
+    hit = (81.2, 6.8)
+    path = _path((1.0, 1.1, (80.0, 5.0), hit), (1.1, 1.5, hit, (66.0, 0.5)))
+    f = _frames(path, {1: ("A", 80.0, 5.0), 2: ("A", 96.0, 34.0), 3: ("B", *hit)})
+    # Non-vacuity: over the uncut window the ball's net movement points away from the box.
+    w = [(x, y) for t, x, y, _z in path if 1.0 <= t <= 1.2 + 1e-9]
+    assert not _ray_hits_box(80.0, 5.0, w[-1][0] - w[0][0], w[-1][1] - w[0][1])
+    assert pd.isna(_attempt(_actions([("pass", 1.0, 80.0, 5.0)]), f, release_gap_s=0.04)[0][0])
 
 
 def test_passer_excluded():
@@ -297,7 +417,7 @@ def _diag(actions, frames):
     ("time_source", "expected_t", "source"), [("tracking", 1.0, "native"), ("event", 0.4, "elastic")]
 )
 def test_tracking_row_uses_native_time(time_source, expected_t, source):
-    # Spec r8 6.3 step 0: a "tracking" row's time_seconds IS the release; a confident ELASTIC frame elsewhere
+    # Cross spec 6.3 step 0: a "tracking" row's time_seconds IS the release; a confident ELASTIC frame elsewhere
     # (frame 10 = t 0.4) is not consulted. The same row as "event" uses ELASTIC (both sides).
     a = _actions([("pass", 1.0, 80.0, 5.0)])
     a["elastic_frame_id"] = 10.0
@@ -435,21 +555,6 @@ def test_orientation_invariance():
     straight = add_cross_deliveries(a, _frames(INTO_BOX))
     mirrored = add_cross_deliveries(a, _frames(INTO_BOX, mirror=True))
     pd.testing.assert_frame_equal(straight, mirrored)
-
-
-@pytest.mark.parametrize(("block", "expected"), [(BLOCK_IN, True), (BLOCK_AWAY, False)], ids=["in", "away"])
-def test_blocked_cross_by_direction_and_orientation(block, expected):
-    # A block is an attempt only when the initial ball direction points into the box. The test reads that
-    # DIRECTION, so a right-to-left attacking team must flip it too (ADR-028).
-    a = _actions([("pass", 1.0, 80.0, 5.0)])
-    assert _attempt(a, _deflected(*block))[0] == [expected]
-    assert _attempt(a, _deflected(*block, mirror=True))[0] == [expected]
-
-
-def test_teammate_deflection_is_not_a_block():
-    # Spec §6.3: only an OPPONENT's first contact is a block. A teammate's touch at the same point ends the path.
-    a = _actions([("pass", 1.0, 80.0, 5.0)])
-    assert _attempt(a, _deflected(*BLOCK_IN, team="A"))[0] == [False]
 
 
 def test_period_without_ball_frames_is_unknown():

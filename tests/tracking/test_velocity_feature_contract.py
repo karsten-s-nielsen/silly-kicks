@@ -179,7 +179,8 @@ def _ast_frame_scoring_fns() -> set[tuple[str, str]]:
 # a model-class/predict reference) that do NOT need their OWN guard call. Four verified categories:
 #   (a) wrappers that DELEGATE to a registry serve entry which carries the guard;
 #   (b) model-agnostic EVAL probes (offline, not a production serve path);
-#   (c) scorers of the velocity-FREE GkCompletionModel (no velocity feature to fabricate);
+#   (c) scorers of a velocity-FREE model (no velocity feature to fabricate): GkCompletionModel, and the
+#       TF-79 contact scorer, whose kinematics are computed from positions, never a provider velocity column;
 #   (d) velocity-keyed variant RESOLVERS -- they reference the model CLASS (to call `from_variant`)
 #       but never extract features or `.predict`; they return `(model, key)`, and the guard lives in
 #       the compute_* / _serve_positions_core registry entry that consumes that return.
@@ -212,6 +213,12 @@ _GUARD_EXEMPT: dict[tuple[str, str], str] = {
     ("_ghost_gk", "_resolve_ghost_model_for_frames"): (
         "velocity-keyed variant resolver (cat. d): returns (model, key), never extracts/predicts; the "
         "guard lives in _serve_positions_core (registry entry) which calls it"
+    ),
+    ("_ball_contact", "_finalize_contacts"): (
+        "velocity-free scorer (cat. c): the TF-79 contact scorer's features (dv, speed_in/out, the control "
+        "features) are computed from ball and player POSITIONS on the deduped samples (control_features, "
+        "_velocity_change_series; scorer spec r7 2.2); no provider vx/vy column is read, so a velocity-less "
+        "provider has no velocity feature to fabricate"
     ),
 }
 

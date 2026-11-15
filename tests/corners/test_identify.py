@@ -189,3 +189,11 @@ def test_kind_source_vocabulary_closed():
     out = identify_corners(acts, provider="sportec")
     assert set(out["corner_kind_source"].astype(str)) <= CORNER_KIND_SOURCE_VALUES
     assert list(out["corner_kind_source"].cat.categories) == sorted(CORNER_KIND_SOURCE_VALUES)
+
+
+def test_taker_player_id_carried_from_the_corner_action():
+    # Detector spec section 5: add_corner_windows skips the taker's own contact, so the table carries the taker.
+    acts = _actions([{"type_id": _CORNER_CROSSED, "start_x": 104.5, "start_y": 0.2, "time_seconds": 100.0}])
+    assert identify_corners(acts, provider="sportec")["taker_player_id"].tolist() == ["p1"]
+    no_player = identify_corners(acts.drop(columns="player_id"), provider="sportec")
+    assert no_player["taker_player_id"].isna().all()  # an action stream without player_id: unknown, not a guess

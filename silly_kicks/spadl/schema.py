@@ -39,7 +39,7 @@ SPADL_COLUMNS: dict[str, str] = {
     "time_source": "object",
 }
 
-#: The closed vocabulary of ``time_source`` (ADR-133, spec r8 6.6 C).
+#: The closed vocabulary of ``time_source`` (ADR-133, cross spec 6.6 C).
 TIME_SOURCE_VALUES: tuple[str, ...] = ("tracking", "event")
 
 SPADL_NAME_COLUMNS: dict[str, str] = {

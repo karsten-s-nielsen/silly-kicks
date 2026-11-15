@@ -852,10 +852,10 @@ def build_match():
             )
             conv_eid += 1
 
-    # INVERSION PAIR (ADR-133 r8 6.6 B; review A C27). Event 56 (eventTime 1310) starts its on-ball sequence at 1298,
-    # before event 55 (eventTime 1300, startTime 1298.5): start order and event order disagree, as on some rows of the
-    # real WC2022 feed (spec r8 6.6 B). A converter that times or sorts by startTime puts 56 first; the right one
-    # puts 55 first.
+    # INVERSION PAIR (ADR-133, cross spec 6.6 B; review A C27). Event 56 (eventTime 1310) starts its on-ball sequence
+    # at 1298, before event 55 (eventTime 1300, startTime 1298.5): start order and event order disagree, as on some
+    # rows of the real WC2022 feed (cross spec 6.6 B). A converter that times or sorts by startTime puts 56 first;
+    # the right one puts 55 first.
     # Only startTime and the matching startGameClock change, so no event count or converted time moves.
     inverted = next(e for e in events if e["gameEventId"] == 56)
     inverted["startTime"] = 200.0 + 1298.0

@@ -5,14 +5,17 @@ a blocked cross or a delivery that ends in a restart, and some providers' events
 This enricher decides the delivery from the ball itself:
 
 * **Release.** The action's own time when its ``time_source`` is ``"tracking"`` (the provider timed it on its own
-  tracking clock; spec r8 §6.6); else the ELASTIC aligned frame (TF-43) when the action matched confidently; else
+  tracking clock; cross spec §6.6); else the ELASTIC aligned frame (TF-43) when the action matched confidently; else
   the event time. The nearest ball frame must lie within half a frame period of that time, and the ball must be
   within ``release_match_m`` of the action start, or the path is unanswerable.
 * **Path.** From the release to the first resolved ball contact (ADR-124/125 detector) by a player other than the
   passer, at or after ``release + release_gap_s``, capped at ``release + path_cap_s``.
-* **Attempt.** The path enters the penalty area, or the first contact is an opponent block within
-  ``block_radius_m`` of the ball at the release and within ``block_window_s`` of the release, while the initial
-  ball direction, from the release, points into the penalty area.
+* **Attempt.** ``True`` when the path enters the penalty area. ``<NA>`` (cut out, cross spec §6.3) when it does not,
+  the first contact is an opponent's within ``cut_out_window_s`` of the release, and the initial ball direction
+  points into the penalty area or cannot be resolved: the detector cannot tell a block from an opponent's touch near
+  the crosser, so the label claims neither. ``False`` otherwise. The initial direction is the mean ball movement over
+  ``direction_window_s`` after the release, cut at the first contact when that comes earlier (the contact's own frame
+  is out); fewer than two finite ball frames leave it unresolved.
 * **Unknown, never guessed.** A row whose action start is unknown fails the release match (``<NA>``); an
   open-play pass is ``False`` only when its start is known to lie outside the cross zone.
 
@@ -57,19 +60,19 @@ class CrossDeliveryParams:
 
     Examples
     --------
-    A stricter release check and a wider block radius::
+    A stricter release check::
 
-        params = CrossDeliveryParams(release_match_m=2.0, block_radius_m=6.0)
+        params = CrossDeliveryParams(release_match_m=2.0)
         out = add_cross_deliveries(actions, frames, params=params)
     """
 
-    block_radius_m: float = 5.0
     direction_window_s: float = 0.2
     release_gap_s: float = 0.12
     min_ball_coverage: float = 0.8
     release_match_m: float = 3.0
-    #: Fixed, not calibrated (spec r7 §6.3): a block is an opponent's first contact within this time of the release.
-    block_window_s: float = 1.0
+    #: Fixed, not calibrated (cross spec §6.3): an opponent's first contact within this time of the release, on a ball
+    #: heading into the box that never enters it, cuts the delivery out (``cross_attempt`` <NA>).
+    cut_out_window_s: float = 1.0
     path_cap_s: float = 4.0
     cross_start_x: float = CROSS_START_X
     contact_params: BallContactParams = dataclasses.field(default_factory=BallContactParams)
@@ -107,7 +110,8 @@ def add_cross_deliveries(
 
     * open-play ``pass``/``cross`` released in the cross zone (wide, at or beyond ``params.cross_start_x``) and
       corner / free-kick rows: True or False by the ball path; ``<NA>`` when the path is unanswerable (no aligned
-      release, an unknown action start, too little ball coverage, or an unresolved attacking direction);
+      release, an unknown action start, too little ball coverage, or an unresolved attacking direction) or cut out
+      by an opponent near the release (cross spec §6.3);
     * open-play ``pass``/``cross`` whose start is known to lie outside the cross zone: False;
     * every other row: ``<NA>`` (not applicable).
 
@@ -171,7 +175,9 @@ def _cross_delivery_diagnostics(
         "first_contact_is_opponent": np.full(n, None, dtype=object),
         "first_contact_dist_m": np.full(n, np.nan),
         "coverage": np.full(n, np.nan),
-        "blocked_in": np.zeros(n, dtype=bool),
+        "cut_out": np.zeros(n, dtype=bool),
+        "direction_cut": np.zeros(n, dtype=bool),
+        "direction_unresolved": np.zeros(n, dtype=bool),
     }
     applicable = np.zeros(n, dtype=bool)
     if n == 0:
@@ -244,21 +250,29 @@ def _cross_delivery_diagnostics(
         if fl:
             px, py = _L - px, _W - py
         enters = bool(np.any(finite & (px >= _BOX_X) & (py >= _BOX_Y_LO) & (py <= _BOX_Y_HI)))
-        blocked_in = False
-        if not enters and c is not None:
-            in_window = c[0] - t0 <= params.block_window_s  # a later first contact is not the block (spec r7 §6.3)
-            if opponent and in_window and c_dist <= params.block_radius_m:
+        cut_out = False
+        if not enters and c is not None and opponent and c[0] - t0 <= params.cut_out_window_s:
+            # Cross spec §6.3 case 2: the initial direction over direction_window_s, cut at the first contact (its own
+            # frame out); fewer than two finite frames leave it unresolved, which is unknown too.
+            direction_cut = c[0] < t0 + params.direction_window_s
+            if direction_cut:
+                w = int(np.searchsorted(t, c[0], side="left"))
+            else:
                 w = int(np.searchsorted(t, t0 + params.direction_window_s + 1e-9, side="right"))
-                wx, wy = bx[k:w], by[k:w]
-                ok = np.isfinite(wx) & np.isfinite(wy)
-                if ok.sum() >= 2:
-                    dx, dy = wx[ok][-1] - wx[ok][0], wy[ok][-1] - wy[ok][0]
-                    if fl:
-                        dx, dy = -dx, -dy
-                    blocked_in = _ray_hits_box(rx, ry, dx, dy)
-        diag["blocked_in"][i] = blocked_in
-        attempt[i] = enters or blocked_in
-        if attempt[i]:
+            wx, wy = bx[k:w], by[k:w]
+            ok = np.isfinite(wx) & np.isfinite(wy)
+            if ok.sum() >= 2:
+                dx, dy = wx[ok][-1] - wx[ok][0], wy[ok][-1] - wy[ok][0]
+                if fl:
+                    dx, dy = -dx, -dy
+                cut_out = _ray_hits_box(rx, ry, dx, dy)
+            else:
+                cut_out = True
+                diag["direction_unresolved"][i] = True
+            diag["direction_cut"][i] = direction_cut and cut_out
+        diag["cut_out"][i] = cut_out
+        attempt[i] = True if enters else (None if cut_out else False)
+        if attempt[i] is True:
             zs, zz = zsrc[seg], bz[seg]
             if len(zz) and np.all(zs == "measured") and np.isfinite(zz).any():
                 height[i] = "aerial" if np.nanmax(zz) > params.contact_params.aerial_z_m else "ground"
@@ -309,7 +323,7 @@ def _release_times(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """§6.3 release steps 0-2: per row, the native time, else the confident ELASTIC frame's time, else the event time.
 
-    Step 0 (spec r8): a row whose ``time_source`` is ``"tracking"`` already carries its provider's tracking-clock
+    Step 0 (cross spec 6.3): a row whose ``time_source`` is ``"tracking"`` already carries its provider's tracking-clock
     time, so ELASTIC is not consulted for it (it adds error there, spec §5.1). A missing ``time_source`` column means
     ``"event"`` for every row. ``rows`` are the positions whose release the caller reads; when all of them are native,
     ELASTIC is not run at all (a SkillCorner match's synthetic dribbles are "event" but never applicable). When it

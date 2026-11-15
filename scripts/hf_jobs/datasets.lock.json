@@ -1,4 +1,598 @@
 {
+  "gs_contact_truth": {
+    "generation": null,
+    "home_teams": null,
+    "identity": {
+      "flat": {
+        "corpus_match_ids_sha256": "8586822a4528d05e0895ee660826576ef81f22e00b2217cc80ddcd1317aeec33",
+        "corpus_n_matches": 64
+      },
+      "pergame": {
+        "corpus_match_ids_sha256": "25c20735ee0884d1a2b1ed915abc8289ef303da34dba6ee13b512415d5a622c7",
+        "corpus_n_matches": 64
+      }
+    },
+    "kind": "pergame",
+    "n_units": 64,
+    "provider_id_kinds": {
+      "gradientsports": "int"
+    },
+    "public_ids": [
+      [
+        "gradientsports",
+        "10504"
+      ],
+      [
+        "gradientsports",
+        "10505"
+      ],
+      [
+        "gradientsports",
+        "10506"
+      ],
+      [
+        "gradientsports",
+        "10507"
+      ],
+      [
+        "gradientsports",
+        "10508"
+      ],
+      [
+        "gradientsports",
+        "10509"
+      ],
+      [
+        "gradientsports",
+        "10510"
+      ],
+      [
+        "gradientsports",
+        "10511"
+      ],
+      [
+        "gradientsports",
+        "10512"
+      ],
+      [
+        "gradientsports",
+        "10513"
+      ],
+      [
+        "gradientsports",
+        "10514"
+      ],
+      [
+        "gradientsports",
+        "10515"
+      ],
+      [
+        "gradientsports",
+        "10516"
+      ],
+      [
+        "gradientsports",
+        "10517"
+      ],
+      [
+        "gradientsports",
+        "3812"
+      ],
+      [
+        "gradientsports",
+        "3813"
+      ],
+      [
+        "gradientsports",
+        "3814"
+      ],
+      [
+        "gradientsports",
+        "3815"
+      ],
+      [
+        "gradientsports",
+        "3816"
+      ],
+      [
+        "gradientsports",
+        "3817"
+      ],
+      [
+        "gradientsports",
+        "3818"
+      ],
+      [
+        "gradientsports",
+        "3819"
+      ],
+      [
+        "gradientsports",
+        "3820"
+      ],
+      [
+        "gradientsports",
+        "3821"
+      ],
+      [
+        "gradientsports",
+        "3822"
+      ],
+      [
+        "gradientsports",
+        "3823"
+      ],
+      [
+        "gradientsports",
+        "3824"
+      ],
+      [
+        "gradientsports",
+        "3825"
+      ],
+      [
+        "gradientsports",
+        "3826"
+      ],
+      [
+        "gradientsports",
+        "3827"
+      ],
+      [
+        "gradientsports",
+        "3828"
+      ],
+      [
+        "gradientsports",
+        "3829"
+      ],
+      [
+        "gradientsports",
+        "3830"
+      ],
+      [
+        "gradientsports",
+        "3831"
+      ],
+      [
+        "gradientsports",
+        "3832"
+      ],
+      [
+        "gradientsports",
+        "3833"
+      ],
+      [
+        "gradientsports",
+        "3834"
+      ],
+      [
+        "gradientsports",
+        "3835"
+      ],
+      [
+        "gradientsports",
+        "3836"
+      ],
+      [
+        "gradientsports",
+        "3837"
+      ],
+      [
+        "gradientsports",
+        "3838"
+      ],
+      [
+        "gradientsports",
+        "3839"
+      ],
+      [
+        "gradientsports",
+        "3840"
+      ],
+      [
+        "gradientsports",
+        "3841"
+      ],
+      [
+        "gradientsports",
+        "3842"
+      ],
+      [
+        "gradientsports",
+        "3843"
+      ],
+      [
+        "gradientsports",
+        "3844"
+      ],
+      [
+        "gradientsports",
+        "3845"
+      ],
+      [
+        "gradientsports",
+        "3846"
+      ],
+      [
+        "gradientsports",
+        "3847"
+      ],
+      [
+        "gradientsports",
+        "3848"
+      ],
+      [
+        "gradientsports",
+        "3849"
+      ],
+      [
+        "gradientsports",
+        "3850"
+      ],
+      [
+        "gradientsports",
+        "3851"
+      ],
+      [
+        "gradientsports",
+        "3852"
+      ],
+      [
+        "gradientsports",
+        "3853"
+      ],
+      [
+        "gradientsports",
+        "3854"
+      ],
+      [
+        "gradientsports",
+        "3855"
+      ],
+      [
+        "gradientsports",
+        "3856"
+      ],
+      [
+        "gradientsports",
+        "3857"
+      ],
+      [
+        "gradientsports",
+        "3858"
+      ],
+      [
+        "gradientsports",
+        "3859"
+      ]
+    ],
+    "recorded_at": "2026-11-16T11:01:56+00:00",
+    "repo": "silly-kicks/hf-refit-gs-contact-truth",
+    "revision": "1c7463007f24fc0769fef88cf268404752f08eb1",
+    "units": [
+      {
+        "game": "gradientsports-10502",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10502"
+      },
+      {
+        "game": "gradientsports-10503",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10503"
+      },
+      {
+        "game": "gradientsports-10504",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10504"
+      },
+      {
+        "game": "gradientsports-10505",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10505"
+      },
+      {
+        "game": "gradientsports-10506",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10506"
+      },
+      {
+        "game": "gradientsports-10507",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10507"
+      },
+      {
+        "game": "gradientsports-10508",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10508"
+      },
+      {
+        "game": "gradientsports-10509",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10509"
+      },
+      {
+        "game": "gradientsports-10510",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10510"
+      },
+      {
+        "game": "gradientsports-10511",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10511"
+      },
+      {
+        "game": "gradientsports-10512",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10512"
+      },
+      {
+        "game": "gradientsports-10513",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10513"
+      },
+      {
+        "game": "gradientsports-10514",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10514"
+      },
+      {
+        "game": "gradientsports-10515",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10515"
+      },
+      {
+        "game": "gradientsports-10516",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10516"
+      },
+      {
+        "game": "gradientsports-10517",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-10517"
+      },
+      {
+        "game": "gradientsports-3812",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3812"
+      },
+      {
+        "game": "gradientsports-3813",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3813"
+      },
+      {
+        "game": "gradientsports-3814",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3814"
+      },
+      {
+        "game": "gradientsports-3815",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3815"
+      },
+      {
+        "game": "gradientsports-3816",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3816"
+      },
+      {
+        "game": "gradientsports-3817",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3817"
+      },
+      {
+        "game": "gradientsports-3818",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3818"
+      },
+      {
+        "game": "gradientsports-3819",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3819"
+      },
+      {
+        "game": "gradientsports-3820",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3820"
+      },
+      {
+        "game": "gradientsports-3821",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3821"
+      },
+      {
+        "game": "gradientsports-3822",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3822"
+      },
+      {
+        "game": "gradientsports-3823",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3823"
+      },
+      {
+        "game": "gradientsports-3824",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3824"
+      },
+      {
+        "game": "gradientsports-3825",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3825"
+      },
+      {
+        "game": "gradientsports-3826",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3826"
+      },
+      {
+        "game": "gradientsports-3827",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3827"
+      },
+      {
+        "game": "gradientsports-3828",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3828"
+      },
+      {
+        "game": "gradientsports-3829",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3829"
+      },
+      {
+        "game": "gradientsports-3830",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3830"
+      },
+      {
+        "game": "gradientsports-3831",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3831"
+      },
+      {
+        "game": "gradientsports-3832",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3832"
+      },
+      {
+        "game": "gradientsports-3833",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3833"
+      },
+      {
+        "game": "gradientsports-3834",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3834"
+      },
+      {
+        "game": "gradientsports-3835",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3835"
+      },
+      {
+        "game": "gradientsports-3836",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3836"
+      },
+      {
+        "game": "gradientsports-3837",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3837"
+      },
+      {
+        "game": "gradientsports-3838",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3838"
+      },
+      {
+        "game": "gradientsports-3839",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3839"
+      },
+      {
+        "game": "gradientsports-3840",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3840"
+      },
+      {
+        "game": "gradientsports-3841",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3841"
+      },
+      {
+        "game": "gradientsports-3842",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3842"
+      },
+      {
+        "game": "gradientsports-3843",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3843"
+      },
+      {
+        "game": "gradientsports-3844",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3844"
+      },
+      {
+        "game": "gradientsports-3845",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3845"
+      },
+      {
+        "game": "gradientsports-3846",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3846"
+      },
+      {
+        "game": "gradientsports-3847",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3847"
+      },
+      {
+        "game": "gradientsports-3848",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3848"
+      },
+      {
+        "game": "gradientsports-3849",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3849"
+      },
+      {
+        "game": "gradientsports-3850",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3850"
+      },
+      {
+        "game": "gradientsports-3851",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3851"
+      },
+      {
+        "game": "gradientsports-3852",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3852"
+      },
+      {
+        "game": "gradientsports-3853",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3853"
+      },
+      {
+        "game": "gradientsports-3854",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3854"
+      },
+      {
+        "game": "gradientsports-3855",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3855"
+      },
+      {
+        "game": "gradientsports-3856",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3856"
+      },
+      {
+        "game": "gradientsports-3857",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3857"
+      },
+      {
+        "game": "gradientsports-3858",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3858"
+      },
+      {
+        "game": "gradientsports-3859",
+        "source_provider": "gradientsports",
+        "stem": "gradientsports-3859"
+      }
+    ]
+  },
   "sb360": {
     "generation": "g",
     "home_teams": false,

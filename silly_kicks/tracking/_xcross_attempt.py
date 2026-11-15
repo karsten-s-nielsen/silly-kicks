@@ -352,7 +352,7 @@ def extract_xcross_features(
 
 #: The xCross label definition (ADR-133). 1 = a same-team SPADL ``cross`` in the horizon (the pre-ADR-133
 #: definition; an artifact without the metadata key reads as 1). 2 = a same-team tracking cross ATTEMPT
-#: (``cross_attempt``, all heights, blocked included) in the horizon, with unknown horizons excluded.
+#: (``cross_attempt``, all heights) in the horizon, with unknown horizons (unanswerable or cut out) excluded.
 XCROSS_LABEL_VERSION: int = 2
 
 #: ``cross_types`` entry -> the SPADL types whose ``cross_attempt`` it reads. The SPADL type only says open play vs

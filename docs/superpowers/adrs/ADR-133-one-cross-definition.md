@@ -4,10 +4,10 @@
 |---|---|
 | **Date** | 2026-11-13 |
 | **Status** | Accepted |
-| **Deciders** | Karsten Nielsen (owner decisions 1-10 and the implementation-review rulings, 2026-11-13) |
-| **Review record** | independent reviews A and B: spec r1 to r6, plan r1 to r3, implementation r1 (`D:\Development\_reviews\2026-11-13-cross-definition-*`) |
+| **Deciders** | Karsten Nielsen (owner decisions and review rulings, 2026-11-13 to 2026-11-15) |
+| **Review record** | independent reviews A and B (`D:\Development\_reviews\2026-11-1[345]-cross-definition-*`) |
 | **Supersedes / amends** | supersedes in part ADR-127 (the Sportec `play_height` corner discriminator decides only `cross_native` now); amends ADR-046 (`cross_blocked` is keyed to the provider's own cross) |
-| **Source spec** | `docs/superpowers/specs/2026-11-13-cross-definition-design.md` (r6) |
+| **Source spec** | `docs/superpowers/specs/2026-11-13-cross-definition-design.md` |
 
 ## Context
 
@@ -35,24 +35,28 @@ next controller in the penalty area.
    emits no `PassType` qualifier.
 3. **`cross_blocked` is keyed to `cross_native`** on open-play rows. Its meaning does not change; bravery reads
    `cross_native` so its rates keep their denominator.
-4. **The tracking layer decides the delivery** (TF-86 `add_cross_deliveries`): `cross_attempt` (the ball path enters
-   the penalty area, or an opponent blocks it within a radius of the release and within 1.0 s of it while it heads
-   in) and `cross_height`
+4. **The tracking layer decides the delivery** (TF-86 `add_cross_deliveries`): `cross_attempt` (True when the ball
+   path enters the penalty area; `<NA>`, cut out, when it does not, an opponent's first contact comes within 1.0 s of
+   the release, and the initial direction points into the box or cannot be resolved; False otherwise; decision 10)
+   and `cross_height`
    (aerial above the ADR-125 1.8 m threshold; honest `<NA>` unless the ball z is measured). The release is aligned
    through ELASTIC (TF-43), taken at the nearest ball frame, and checked against the action start; the path ends at
    the first ball contact by another player (ADR-124/125). An unanswerable path, or an unknown action start, is
    `<NA>`, never a guess. It covers open play and set pieces, one match per call.
-5. **The xCross label is version 2**: a same-team `cross_attempt` in the horizon, all heights, blocked included;
-   unknown horizons leave training. Model metadata records `xcross_label_version`; causal opportunities select by it.
+5. **The xCross label is version 2**: a same-team `cross_attempt` in the horizon, all heights; unknown horizons
+   (an unanswerable or cut-out attempt) leave training, and a causal spell with an unknown treatment leaves the
+   opportunity table. Model metadata records `xcross_label_version`; causal opportunities select by it.
 6. **TF-46 `corner_kind`** reads `cross_attempt` when present (`corner_kind_source`: tracking, event, gi).
 7. **Event-only limits, stated**: without tracking, a blocked cross and a delivery followed by a restart are `pass`
-   (a restart-ended set piece `*_short`), and SkillCorner events miss defenders' in-box touches. The converter
+   (a restart-ended set piece `*_short`), and SkillCorner events miss defenders' in-box touches. The tracking layer
+   covers the restart-ended delivery and the in-box touches; a cross cut out near the release stays `<NA>` there too
+   (decision 10). The converter
    docstrings record each provider's measured recall.
 8. **Retrains are owed**, not done in this cycle: xCross, PassCompletionModel, XSuccessModel and the TF-46 corner
    weights, and (decision 9) every artifact trained on Gradient Sports or SkillCorner actions or frame links: xShot,
    the ghost-GK and ghost-outfield models, and both xT-GK retention variants
    (`docs/research/cross-definition/caller-sweep.md`). Part Deux runs them after the release.
-9. **Native event timing (r8, owner ruling 2026-11-14).** Where a provider times its events from its own tracking
+9. **Native event timing (owner ruling 2026-11-14).** Where a provider times its events from its own tracking
    clock, the SPADL row carries that time, and the release uses it instead of ELASTIC:
    - SkillCorner: a native row is the on-ball action at the possession END (`time_end`, `x_end`/`y_end`), not the
      reception at its start; start-type derived rows and keeper saves stay at the start.
@@ -63,6 +67,11 @@ next controller in the penalty area.
      `"tracking"` row at its own time (step 0).
    - ELASTIC splits episodes by the ADR-130 `stoppage_state` when the frames carry it.
    - ELASTIC's score does not change: a location term lowered IDSSE ground-truth accuracy at every weight.
+10. **A cross cut out by an opponent is unknown (owner rulings 2026-11-15).** Against PFF's code B on
+    847 GS open-play crosses, the tracking block call had precision 0.14 at a base rate of 0.20, and no radius or
+    contact-strength gate gave it signal (spec section 5.2; probes `D:\Temp\cross-def\block_probe*.py`). The rule:
+    no box entry, an opponent's first contact within `cut_out_window_s` (1.0 s, fixed), and an initial direction into
+    the box or unresolved -> `cross_attempt` `<NA>`. `block_radius_m` and its calibration are removed.
 
 ## Evidence
 
@@ -91,7 +100,7 @@ the commit that carries decision 9, over a corpus re-staged with it.
 - The xCross label needs `cross_attempt`; `build_xcross_labels` refuses without it, and the staged corpora are
   restaged through `add_cross_deliveries` before the refit.
 - SkillCorner event-only corner typing becomes worse (its events miss in-box defensive touches); tracking decides it.
-- r8: Gradient Sports and SkillCorner actions move in time and (SkillCorner) in space, so every time-based frame link
+- Native timing: Gradient Sports and SkillCorner actions move in time and (SkillCorner) in space, so every time-based frame link
   on them moves to the action's own moment, and their `action_id` renumbers (an ADR-065 cross-table migration). The
   GS converter needs `event_time`, `start_time` and the kickoff rows; SkillCorner needs `time_end`, `x_end`, `y_end`
   (`docs/PRIVATE_CONSUMERS.md`).

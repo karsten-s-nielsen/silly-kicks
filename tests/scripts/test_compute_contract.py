@@ -27,6 +27,16 @@ _NOT_A_PIPELINE: dict[str, str] = {
         "the DGX STAGING tool: it materialises the neutral flat corpus that `datasets record` then measures; "
         "it is the input side of every staged dataset, not a compute pipeline."
     ),
+    "materialize_gs_contact_truth": (
+        "the DGX STAGING tool of the gs_contact_truth dataset (scorer spec section 4): it writes the loader's frames, "
+        "the SPADL actions and the PFF sequences that `stage` and `datasets record` take; the input side of a staged "
+        "dataset, like materialize_tc3_frames, not a compute pipeline."
+    ),
+    "check_gs_contact_truth": (
+        "the DGX VERIFICATION of the gs_contact_truth staging (scorer spec section 4): it compares the materialized "
+        "frames with the live pining loader and computes nothing a stage could own; it runs only where the pining "
+        "token lives (DGX), never on HF."
+    ),
     "_xt_corpus": "a LIBRARY helper (the xT corpus pass) called by drivers; its pipeline is its caller's.",
     "_stages": (
         "the stage-contract ENGINE itself (ADR-128): it calls for_each only to run one ItemStage unit; every "
@@ -207,4 +217,5 @@ def test_the_compliant_set_is_the_cycle1_migration():
         "train_xsuccess",
         "build_territory_ranking_census",
         "build_cross_definition",  # ADR-133: born ready (scaffolded)
+        "build_contact_scorer",  # ADR-134 amendment: born ready (scaffolded)
     }

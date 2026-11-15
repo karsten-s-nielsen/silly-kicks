@@ -87,6 +87,7 @@ def test_committed_declarations_carry_the_spec_values():
         "xshot17": ("redistributable", "public"),
         "xshot115": ("restricted", "extended"),
         "xcross_probe": ("restricted", "public"),
+        "gs_contact_truth": ("restricted", "public"),  # the TF-79 scorer truth (scorer spec section 4)
         "sb360": ("restricted", "extended"),
         "sb_open": ("redistributable", "public"),
     }

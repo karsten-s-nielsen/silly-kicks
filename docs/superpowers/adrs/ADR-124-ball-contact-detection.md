@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-10-14 |
-| **Status** | Accepted |
+| **Status** | Accepted; candidate and attribution design superseded by ADR-134 (TF-79 v2, 2026-11-15) |
 | **Deciders** | Karsten |
 
 > **ADR number coordination (RESOLVED, owner ruling 2026-10-15).** TF-79 is **ADR-124** — the next free ADR
@@ -69,6 +69,13 @@ attribution; "unresolved" is a kept NaN row (E7), never a guess.
   (KDD 2026, arXiv:2602.12080, MPL-2.0 — inspiration only, no code lifted). See `NOTICE`.
 
 ## Notes
+
+> **Amended by ADR-134 (2026-11-15).** Notes 3 and 5 no longer hold for the defaults. Two thresholds
+> (`contact_radius_m`, `min_velocity_change_ms`) are chosen against PFF truth on a development half of the GS
+> matches and scored once on the held-out half; the design used all 62 matches, so the held-out half guards the
+> thresholds only. `min_velocity_change_ms` is now the candidate threshold, not an opt-in floor at 0: the shipped
+> consumers read the first contact after an action, where a false touch is the measured harm, and the deferred
+> alignment stage that motivated "never hard-drop" can still set it to 0. RDP and the 5 m fallback are removed.
 
 Design decisions recorded here and enforced in code/tests:
 1. Output shape = per-contact table + action enricher; **no `*_xfns`** (producer primitive, like TF-5/TF-48).

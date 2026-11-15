@@ -13,7 +13,7 @@ which-routine-wins rankings stay consumer-side. Arm 1 is offence (unsupervised, 
    join cross-table on the stable natural key `(game_id, period_id, t_kick)`, never on `corner_id`.
 2. `add_corner_windows(corners, frames, contacts)` — per-corner timing: `t_init` (`t_kick - 2 s`),
    `t_target` (`min(first_contact + lead, t_kick + cap)`), the first-contact winner from the shipped
-   TF-79 `first_contact_in_window` (NaN when unresolved — NO GI fallback); SB360 freeze corners take the
+   TF-79 `first_contact_in_window`, skipping the taker (`taker_player_id`, ADR-134; a table without the column is refused) (NaN when unresolved — NO GI fallback); SB360 freeze corners take the
    kick frame. `first_possession_time` is a GI diagnostic.
 3. Reflect every corner to the canonical side (Y-flip for right-flag corners), so one orientation.
 4. `compute_corner_run_encoding(windowed, frames, model=RunZoneModel)` — each attacker's run encoded as

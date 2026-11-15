@@ -885,17 +885,8 @@ _EXAMPLES_DEBT: dict[str, str] = {
         "TF-14 aggregator emitting the 6 back-line geometry columns plus linkage provenance."
     ),
     # TF-79 ball-contact detection (candidate-touch primitive; covered by tests/tracking/test_ball_contact.py)
-    "silly_kicks/tracking/_ball_contact.py::detect_ball_contacts": (
-        "TF-79 candidate-touch detector: ball trajectory -> per-contact table."
-    ),
-    "silly_kicks/tracking/_ball_contact.py::add_ball_contacts": (
-        "TF-79 action enricher: first ball contact in each action window (first_contact_* columns)."
-    ),
     "silly_kicks/tracking/_ball_contact.py::first_contact_in_window": (
         "TF-79 low-level corner-window query: earliest resolved contact in [t0, t1)."
-    ),
-    "silly_kicks/tracking/_ball_contact.py::BallContactParams": (
-        "TF-79 fixed/pre-registered detection parameters (frozen dataclass)."
     ),
     # TF-4 off-ball runs and line breaks
     "silly_kicks/tracking/features.py::add_off_ball_runs": (

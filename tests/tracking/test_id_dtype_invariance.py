@@ -97,12 +97,30 @@ def test_aggregator_category_team_id_invariant(agg):
     )
 
 
+def test_ball_contacts_scene_is_non_vacuous():
+    """ADR-056 precondition: the add_ball_contacts entry has teeth only if the actor skip changes the answer on the
+    numeric baseline: the actor's own contact (player 10) comes first, the skip returns the opponent (player 20)."""
+    from silly_kicks.tracking._ball_contact import detect_ball_contacts
+    from tests.tracking.conftest_id_dtype import _ball_contacts_scene
+
+    _scene_a, scene_f = _ball_contacts_scene(make_actions(), make_frames())
+    contacts = detect_ball_contacts(scene_f)
+    own = contacts[(contacts["player_id"].astype("float") == 10) & ((contacts["time_seconds"] - 1.0).abs() < 0.05)]
+    assert len(own) == 1  # review A C47: the actor's own contact exists, so the skip has something to skip
+    agg = next(a for a in AGGREGATORS if a.__name__ == "add_ball_contacts")
+    out = agg(make_actions(), make_frames(), 5)
+    assert int(out["first_contact_player_id"].iloc[0]) == 20
+    assert out["first_contact_time"].iloc[0] > 1.1  # the deflection, not the actor's own touch at 1.0 s
+
+
 def test_cross_delivery_scene_is_non_vacuous():
-    """ADR-056 precondition: the add_cross_deliveries entry has teeth only if its scene separates an opponent
-    block (True) from a teammate deflection (False) on the numeric baseline."""
+    """ADR-056 precondition: the add_cross_deliveries entry has teeth only if its scene separates an opponent's
+    cut-out (<NA>, cross spec §6.3) from a teammate deflection (False) on the numeric baseline. A team compare that
+    breaks across dtypes turns the cut-out into False, or the teammate row into <NA>."""
     agg = next(a for a in AGGREGATORS if a.__name__ == "add_cross_deliveries")
     out = agg(make_actions(), make_frames(), 5)
-    assert out["cross_attempt"].tolist() == [True, False]
+    got = out["cross_attempt"].tolist()
+    assert pd.isna(got[0]) and got[1] is False
 
 
 def test_enumerated_surface_equals_registered():  # B3 meta-assertion

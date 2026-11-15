@@ -225,11 +225,11 @@ def _cross_deliveries(a, f):
 
     The shared fixture has no wide delivery and no frames after the action, so a bare entry would compare all-<NA>
     to all-<NA> (vacuous). The scene has two team-5 crosses from opposite wings, each deflected 4.3 m after the
-    release and pushed back out. Action 0 is deflected by an OPPONENT (player 20, team 6): a block heading into the
-    box, so ``cross_attempt`` is True. Action 1 is deflected by a TEAMMATE (player 12, team 5): the path ends
-    outside the box, so it is False. A team comparison that breaks across dtypes flips one of them; a passer
-    comparison that breaks makes the passer's own touch the first contact. The ids are re-spelled from the swept
-    ``a``/``f`` columns, so the scene stays on the gate's permutation axis.
+    release and pushed back out. Action 0 is deflected by an OPPONENT (player 20, team 6) while heading into the
+    box: a cut-out, so ``cross_attempt`` is <NA> (cross spec §6.3). Action 1 is deflected by a TEAMMATE (player 12,
+    team 5): the path ends outside the box, so it is False. A team comparison that breaks across dtypes flips one of
+    them; a passer comparison that breaks makes the passer's own touch the first contact. The ids are re-spelled
+    from the swept ``a``/``f`` columns, so the scene stays on the gate's permutation axis.
     """
     from tests.tracking.test_cross_delivery import _actions, _frames, _path
 
@@ -246,8 +246,33 @@ def _cross_deliveries(a, f):
     return F.add_cross_deliveries(scene_a, scene_f)
 
 
+def _ball_contacts_scene(a, f):
+    """The add_ball_contacts scene, with every id column spelled in the SWEPT dtype.
+
+    Player 10 (team 5) receives the ball and crosses it at t=1.0 (his own contact); opponent 20 (team 6) deflects it at
+    t=1.25. The action is player 10's, so the actor skip (detector spec section 5; review B CD-SB-44) makes 20 the
+    first contact; an actor compare that breaks across dtypes returns 10 instead.
+    """
+    from tests.tracking.test_cross_delivery import _actions, _frames, _path
+
+    d0 = (82.0, 8.8)
+    ball = _path((0.5, 1.0, (75.0, 5.0), (80.0, 5.0)), (1.0, 1.25, (80.0, 5.0), d0), (1.25, 1.75, d0, (70.0, 2.0)))
+    scene_a = _actions([("pass", 1.0, 80.0, 5.0, 5, 10)])
+    scene_f = _frames(ball, {10: (5, 80.0, 5.0), 20: (6, *d0)}, ltr_team=5)
+    for col in ("team_id", "player_id"):
+        scene_a[col] = _id_like(scene_a[col], a[col])
+        scene_f[col] = _id_like(scene_f[col], f[col])
+    return scene_a, scene_f
+
+
+def _ball_contacts(a, f):
+    """add_ball_contacts on :func:`_ball_contacts_scene`."""
+    return F.add_ball_contacts(*_ball_contacts_scene(a, f))
+
+
 AGGREGATORS = [
     _a(F.add_action_context, "add_action_context"),
+    _named(lambda a, f, home_team_id: _ball_contacts(a, f), "add_ball_contacts"),
     _named(lambda a, f, home_team_id: _cross_deliveries(a, f), "add_cross_deliveries"),
     _a(F.add_actor_pre_window, "add_actor_pre_window"),
     _named(lambda a, f, home_team_id: _das(a, f), "add_das"),
@@ -308,16 +333,6 @@ REGISTERED_AGGREGATORS = _add_star_names(F) | _add_star_names(_keeper_identity_m
 # unaccounted public function rather than passing unnoticed.
 NON_LINKED_AGGREGATORS: dict[str, str] = {
     # "add_xxx": "reason it compares no action/frame/home_team ids",
-    "add_ball_contacts": (
-        "Links each action to the ball-contact table by TIME WINDOW (period_id + time_seconds), never "
-        "by an action-vs-frame player/team id, so this gate's permutation (which varies actions/frames/"
-        "home_team_id dtypes) reaches no such comparison. Its only id-scalar is `first_contact_in_window`'s "
-        "`period_id` -- a PERIOD NUMBER, not an entity id (classified NOT_INVARIANT in "
-        "tests/invariants/test_public_id_scalar_registry.py). The emitted `first_contact_player_id` is an "
-        "OUTPUT id column (excluded by `_is_id_col` from the value comparison), and detect_ball_contacts "
-        "attributes contacts to frame player ids positionally within a frame (no caller-supplied id axis). "
-        "Dtype-robustness of the contacts table itself is covered by tests/tracking/test_ball_contact.py."
-    ),
     "add_defending_gk_player_id": (
         "Takes NO frames -- its second positional is a keeper_map, not a frames DataFrame -- so this "
         "gate's permutation (which varies actions/frames/home_team_id dtypes) reaches no action-vs-"

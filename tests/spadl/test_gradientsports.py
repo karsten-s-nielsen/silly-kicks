@@ -14,7 +14,7 @@ from tests.spadl._gs_clock import with_event_clock
 
 # Minimum set of input columns to construct a one-row test DataFrame.
 # Mirrors the EXPECTED_INPUT_COLUMNS frozenset in gradientsports.py, plus the legacy `time_seconds` the builders
-# below write as the intended period time (with_event_clock turns it into event_time; ADR-133 r8 6.6 B).
+# below write as the intended period time (with_event_clock turns it into event_time; ADR-133, cross spec 6.6 B).
 _REQUIRED_COLS = sorted(gs_mod.EXPECTED_INPUT_COLUMNS | {"time_seconds"})
 
 
@@ -244,7 +244,7 @@ class TestGradientsportsRequiredColumns:
             )
 
     def test_time_seconds_is_not_required(self):
-        # ADR-133 r8 6.6 B: the output time is event_time - kickoff; the input startGameClock is not read.
+        # ADR-133, cross spec 6.6 B: the output time is event_time - kickoff; the input startGameClock is not read.
         events = with_event_clock(_df_minimal_pass()).drop(columns=["time_seconds"])
         actions, _ = gs_mod.convert_to_actions(events, home_team_id=100, home_team_start_left=True)
         assert actions["time_seconds"].tolist() == pytest.approx([10.5])
@@ -1725,10 +1725,10 @@ def test_the_generator_reproduces_the_committed_fixture():
 
 
 class TestSyntheticFixtureEventClock:
-    """The end-to-end fixture can tell ``event_time`` from ``start_time`` (ADR-133 r8 6.6 B; review A C27).
+    """The end-to-end fixture can tell ``event_time`` from ``start_time`` (ADR-133, cross spec 6.6 B; review A C27).
 
     Raw GS ``startTime`` is the game event's (on-ball sequence's) start and ``eventTime`` the possession event's own
-    time, a median 1.59 s later (spec r8 5.1). A fixture with ``startTime == eventTime`` cannot show which clock the
+    time, a median 1.59 s later (cross spec 5.1). A fixture with ``startTime == eventTime`` cannot show which clock the
     converter reads. The precondition test pins the fixture's shape; the behaviour test pins the converter on it.
     """
 

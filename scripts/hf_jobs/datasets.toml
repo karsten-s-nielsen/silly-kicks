@@ -45,6 +45,15 @@ access = "mount"
 read_concurrency = 4  # the tc3 measurement (same mount type)
 description = "the held-out Gradient Sports TF-19 probe matches for xcross_attempt"
 
+[datasets.gs_contact_truth]
+repo = "silly-kicks/hf-refit-gs-contact-truth"
+kind = "pergame"
+raw = "restricted"
+provenance = "public"
+access = "mount"
+read_concurrency = 4  # the tc3 measurement (same mount type)
+description = "the 64 Gradient Sports WC2022 matches: loader frames, SPADL actions and PFF on-ball sequences (TF-79 scorer)"
+
 [datasets.sb360]
 repo = "silly-kicks/hf-refit-sb360"
 kind = "flat_tc3"

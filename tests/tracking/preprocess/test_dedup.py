@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from silly_kicks.tracking.preprocess._dedup import trajectory_dedup_mask
 
@@ -43,6 +44,25 @@ def test_single_point():
 
 def test_empty():
     assert trajectory_dedup_mask(np.array([]), np.array([])).tolist() == []
+
+
+def test_rest_run_longer_than_rest_s_is_kept_whole():
+    # ADR-134: a run that lasts longer than rest_s is a ball at rest (a measurement), not a stale repeat: all its
+    # samples stay. A run that lasts exactly rest_s or less is still collapsed.
+    t = np.array([0.0, 0.25, 0.5, 0.75, 1.0, 1.25])
+    y = np.zeros(6)
+    rest = np.array([0.0, 0.0, 0.0, 0.0, 1.0, 2.0])  # run 0.0 .. 0.75: 0.75 s
+    assert trajectory_dedup_mask(rest, y, t=t, rest_s=0.5).tolist() == [True] * 6
+    assert trajectory_dedup_mask(rest, y, t=t, rest_s=0.75).tolist() == [True, False, False, False, True, True]
+    stale = np.array([0.0, 1.0, 1.0, 1.0, 2.0, 3.0])  # run 0.25 .. 0.75: exactly 0.5 s
+    assert trajectory_dedup_mask(stale, y, t=t, rest_s=0.5).tolist() == [True, True, False, False, True, True]
+
+
+def test_rest_s_needs_t():
+    with pytest.raises(ValueError, match="together"):
+        trajectory_dedup_mask(np.zeros(3), np.zeros(3), rest_s=0.5)
+    with pytest.raises(ValueError, match="together"):
+        trajectory_dedup_mask(np.zeros(3), np.zeros(3), t=np.arange(3.0))
 
 
 def test_nan_frames_are_kept_not_treated_as_duplicates():

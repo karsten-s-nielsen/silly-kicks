@@ -36,6 +36,9 @@ CORNER_IDENTIFY_COLUMNS: dict[str, str] = {
     "period_id": "int64",
     "t_kick": "float64",
     "attacking_team_id": "object",
+    # The corner action's player (<NA> when the actions carry no player_id): add_corner_windows skips the taker's
+    # own contact, so the first-contact winner is never the taker (TF-79 v2, detector spec section 5).
+    "taker_player_id": "object",
     CORNER_SIDE: "category",
     "kick_x": "float64",
     "kick_y": "float64",

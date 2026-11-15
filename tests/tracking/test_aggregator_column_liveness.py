@@ -651,8 +651,10 @@ def _ball_contact_scene():
             "action_id": [0, 1],
             "period_id": [1, 1],
             "time_seconds": [0.0, 0.44],
-            "team_id": pd.Series([5, 6], dtype="int64"),
-            "player_id": pd.Series([p_a, p_b], dtype="int64"),
+            # TF-79 v2 skips the action's own player (detector spec section 5): each action belongs to the OTHER
+            # player, so its first contact is the touch that follows (A for action 0, B for action 1).
+            "team_id": pd.Series([6, 5], dtype="int64"),
+            "player_id": pd.Series([p_b, p_a], dtype="int64"),
             "start_x": [50.0, 62.0],
             "start_y": [34.0, 48.0],
             "end_x": [60.0, 62.0],

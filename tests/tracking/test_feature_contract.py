@@ -152,6 +152,24 @@ class _FakeIntegrityError(Exception):
     pass
 
 
+def test_a_given_probe_is_the_one_hashed():
+    """Scorer spec S2.3: a model whose extractor needs a trajectory passes its own probe, so ``probe_sha256`` is that
+    probe's hash and an edit to it takes the probe-change path. The default stays the shared single-frame probe."""
+    import numpy as np
+    import pandas as pd
+
+    from silly_kicks.tracking._feature_contract import contract_probe_frame, feature_contract
+
+    traj = pd.DataFrame({"frame_id": [1, 2], "time_seconds": [0.0, 0.04], "x": [50.0, 51.0]})
+    shared = feature_contract(lambda: np.array([1.0]), constants={})
+    own = feature_contract(lambda: np.array([1.0]), constants={}, probe=traj)
+    edited = feature_contract(lambda: np.array([1.0]), constants={}, probe=traj.assign(x=[50.0, 52.0]))
+    explicit_default = feature_contract(lambda: np.array([1.0]), constants={}, probe=contract_probe_frame())
+    assert shared["probe_sha256"] == explicit_default["probe_sha256"]  # the default is unchanged
+    assert own["probe_sha256"] != shared["probe_sha256"]
+    assert edited["probe_sha256"] != own["probe_sha256"]
+
+
 def test_round_trip_on_an_unmodified_contract_passes():
     """Guards a real trap: with chirality's equal_nan=False this fails on a vector against ITSELF
     whenever the vector contains a NaN (measured: 3 structurally-NaN ghost features)."""

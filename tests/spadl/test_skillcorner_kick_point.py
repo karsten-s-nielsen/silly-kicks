@@ -203,7 +203,7 @@ def test_non_pass_rows_end_at_their_start(end_type, type_name):
 
 @pytest.mark.parametrize(("end_type", "type_name"), [("pass", "pass"), ("clearance", "clearance")])
 def test_untargeted_pass_and_clearance_end_at_the_next_reception(end_type, type_name):
-    # Spec r9 6.6 A (review B CD-SB-23): with no targeted receiver the ball's destination is the next possession's
+    # Cross spec 6.6 A (review B CD-SB-23): with no targeted receiver the ball's destination is the next possession's
     # RECEPTION (18, 6), not its kick (26, 6); the receiver's carry from reception to kick is a synthetic dribble.
     a = _convert(
         [

@@ -5,9 +5,9 @@ The delivery rule needs canonical SPADL LTR rows before synthetic dribbles exist
 typing: ``_add_dribbles`` pairs only same-team, same-period rows, and ``to_spadl_ltr`` mirrors a team's rows
 in a period as one block. The golden frame was captured from the pre-move converter (``0cc07e6c`` plus
 the all-``<NA>`` ``cross_native`` placeholder) with ``type_id`` and ``cross_native`` dropped; ``time_source``
-(spec r8 §6.6 C) is dropped too, so the golden keeps its pre-move provenance.
+(cross spec §6.6 C) is dropped too, so the golden keeps its pre-move provenance.
 
-The SkillCorner case retired in commit 3 (spec r8 §6.6 A, review A CD-PLAN-08). It proved the same move for
+The SkillCorner case retired in commit 3 (cross spec §6.6 A, review A CD-PLAN-08). It proved the same move for
 SkillCorner against its own pre-move golden, and commit 1 (``4490016c``) holds that proof. Section 6.6 A then
 moved every SkillCorner native row to the kick on purpose, so a golden regenerated from the r8 converter would
 only snapshot the code under test.

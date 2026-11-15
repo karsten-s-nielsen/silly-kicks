@@ -21,10 +21,24 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
 
+from scripts._gs_truth import (
+    BAR_FALSE_FIRST,
+    BAR_RIGHT,
+    BAR_TIMING_S,
+    SUPPORT_RADIUS_M,
+    TRUTH_TAU_S,
+    otb_sequences,
+    score_next_touch,
+    select_point,
+    shares,
+    split_of,
+    track_supported,
+)
 from silly_kicks.id_compat import canonical_id
 from silly_kicks.tracking import BallContactParams, detect_ball_contacts
 
@@ -166,9 +180,187 @@ def _aggregate(long: pd.DataFrame, counters: dict, *, n_matches: int, providers,
     }
 
 
-def run(out, *, providers=None, match_ids=None, provenance=None, cache_dir=None, source=None) -> dict:
+# ---------------------------------------------------------------------------------------------------------------
+# TF-79 v2 GS truth mode (detector spec 2026-11-15 r2 sections 2, 6 and 7; ADR-134). The truth is PFF's on-ball
+# sequences (OTB game events): a player, a team, and [startTime, endTime] on the event clock, period-relative through
+# the period's kickoff startTime. The measure is what the cross enricher and TF-46 read: after a release, the first
+# contact by another player. Thresholds are chosen on the development half and scored once on the held-out half.
+# ---------------------------------------------------------------------------------------------------------------
+#: The 20-point rule-mode development grid (detector spec section 6): the reach and the change threshold.
+GRID_RADII = (0.8, 1.0, 1.2, 1.5)
+GRID_DV = (1.0, 2.0, 3.0, 4.0, 5.0)
+#: The other-provider owner trigger (absolute change against the commit-3 v1 reference).
+OTHER_PROVIDER_DELTA = 0.10
+
+
+def _scorer_sha(params: BallContactParams | None) -> str | None:
+    """The frozen scorer's ``model.json`` sha256 for the token (None without a scorer)."""
+    import hashlib
+
+    if params is None or not params.contact_scorer:
+        return None
+    model = Path(params.contact_scorer) / "model.json"
+    return hashlib.sha256(model.read_bytes()).hexdigest() if model.is_file() else "missing"
+
+
+def _token_inputs(params: BallContactParams | None) -> dict:
+    """The shard token: a change to any of these values starts a new generation."""
+    return {
+        "tolerances_s": list(TOLERANCES_S),
+        "detector": "v2",
+        "params": repr(params or BallContactParams()),
+        "contact_scorer_model_sha256": _scorer_sha(params),  # a refit at the same path is a new generation
+        "geometry": "frame_ltr",
+    }
+
+
+def scorer_params(contact_scorer: str | None, min_contact_probability: float | None) -> BallContactParams | None:
+    """The detector the other-provider reports score: the development run's frozen scorer and its threshold, on
+    threshold-free peaks (scorer spec section 3); ``None`` (the library defaults) when no scorer is given."""
+    if not contact_scorer:
+        return None
+    if min_contact_probability is None:
+        raise ValueError("--contact-scorer needs --min-contact-probability (the development run's chosen threshold)")
+    return BallContactParams(
+        contact_scorer=contact_scorer,
+        min_contact_probability=float(min_contact_probability),
+        min_velocity_change_ms=0.0,
+    )
+
+
+def other_provider_trigger(reference: dict, current: dict) -> dict:
+    """The detector spec section 6 owner trigger: an IDSSE or SkillCorner agreement share (same-player contact
+    within 0.5 s) that falls by more than ``OTHER_PROVIDER_DELTA`` from the commit-3 v1 reference, or a SkillCorner
+    unresolved rate that rises by more than it."""
+    details = {}
+    fires = False
+    for p in ("idsse", "skillcorner"):
+        ref = (reference.get("per_provider") or {}).get(p)
+        cur = (current.get("per_provider") or {}).get(p)
+        if not ref or not cur:
+            continue
+        fall = ref["agreement_vs_tolerance"]["agree_within_0.5s"] - cur["agreement_vs_tolerance"]["agree_within_0.5s"]
+        rise = cur["unresolved_rate"] - ref["unresolved_rate"]
+        hit = fall > OTHER_PROVIDER_DELTA or (p == "skillcorner" and rise > OTHER_PROVIDER_DELTA)
+        details[p] = {"agreement_fall": fall, "unresolved_rise": rise, "fires": bool(hit)}
+        fires = fires or hit
+    return {"fires": bool(fires), "details": details}
+
+
+def run_gs_truth(out, *, match_ids=None, provenance=None, cache_dir=None, source=None) -> dict:
+    """Score the RULE detector (the reach gate) against PFF truth on the development half (detector spec section 6):
+    the 20-point grid and its selection. It is the model-free baseline of the contact scorer (scorer spec section 3);
+    the scorer's own development and held-out runs are ``scripts/build_contact_scorer.py``. ``source=(refs, load)``
+    injects a loader for tests, where ``load(ref)`` returns ``(loaded_match, events_json)``.
+    """
+    from scripts._driver import for_each, shard_path
+    from scripts._provenance import git_provenance
+    from silly_kicks.tracking._ball_contact import _candidate_peaks, _finalize_contacts
+
+    prov_run = provenance or git_provenance()
+    points = [BallContactParams(contact_radius_m=r, min_velocity_change_ms=v) for r in GRID_RADII for v in GRID_DV]
+    if source is None:
+        from _loader_pining import gradientsports_events_json, pining_source, resolve_cache_dir
+
+        cd = resolve_cache_dir(cache_dir)
+        refs, load_full = pining_source(["gradientsports"], match_ids=match_ids, token=None, cache_dir=cd)
+
+        def load(ref):
+            return load_full(ref), gradientsports_events_json(ref, cache_dir=cd)
+    else:
+        refs, load = source
+    refs = [r for r in refs if split_of(r.match_id) == "dev"]
+
+    def _work(item):
+        lm, events_json = item
+        frames = lm[3]
+        seq = otb_sequences(events_json)
+        seq = seq.assign(supported=track_supported(seq, frames))  # the bar's population (scorer spec r7 section 3)
+        peaks = _candidate_peaks(frames, BallContactParams())
+        rows = []
+        for p in points:
+            s = score_next_touch(seq, _finalize_contacts(peaks, p, pid_dtype=frames["player_id"].dtype))
+            offsets = s.pop("release_offsets")
+            rows.append(
+                {
+                    "contact_radius_m": p.contact_radius_m,
+                    "min_velocity_change_ms": p.min_velocity_change_ms,
+                    **s,
+                    "release_offsets": json.dumps(offsets),
+                }
+            )
+        return pd.DataFrame(rows)
+
+    res = for_each(
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
+        work=_work,
+        counters=lambda _item, _frame: {"n_matches": 1},
+        shard_root=Path(out) / "shards",
+        token_inputs={
+            "mode": "gs_truth",
+            "split": "dev",
+            "tau_s": TRUTH_TAU_S,
+            "points": [[p.contact_radius_m, p.min_velocity_change_ms] for p in points],
+            "detector": "v2",
+            "support_radius_m": SUPPORT_RADIUS_M,  # the shards carry the supported counts (scorer spec r7)
+        },
+        tag="ball_contact_truth",
+        label="match",
+    )
+    if res.failures:
+        raise RuntimeError(f"ball-contact truth failures: {res.failures}")
+    long = pd.concat([pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys], ignore_index=True)
+    count_cols = [
+        "n",
+        "right",
+        "false_first",
+        "wrong_player",
+        "missed",
+        "n_block",
+        "block_right",
+        "block_missed",
+        "n_contacts",
+        "n_unresolved",
+        "sup_n",
+        "sup_right",
+        "sup_false_first",
+        "sup_wrong_player",
+        "sup_missed",
+    ]
+    grid: dict[tuple[float, float], dict] = {}
+    for key, g in long.groupby(["contact_radius_m", "min_velocity_change_ms"], sort=True):
+        r, v = cast("tuple[float, float]", key)
+        offsets = [o for js in g["release_offsets"] for o in json.loads(js)]
+        grid[(float(r), float(v))] = shares(g[count_cols].sum().to_dict(), offsets)
+    report: dict = {
+        "run_commit": prov_run.get("commit"),
+        "run_tree_dirty": prov_run.get("dirty"),
+        "split": "dev",
+        "tau_s": TRUTH_TAU_S,
+        "bar": {"right": BAR_RIGHT, "false_first": BAR_FALSE_FIRST, "timing_s": BAR_TIMING_S},
+        "matches": sorted(str(r.match_id) for r in refs),
+        "grid": [{"contact_radius_m": r, "min_velocity_change_ms": v, **m} for (r, v), m in grid.items()],
+    }
+    picked = select_point(
+        grid, prefer=lambda k: (-k[1], k[0]), population="supported"
+    )  # the larger threshold, then the smaller radius
+    chosen = cast("tuple[float, float] | None", picked)
+    report["chosen"] = {"contact_radius_m": chosen[0], "min_velocity_change_ms": chosen[1]} if chosen else None
+    report["chosen_on_grid_edge"] = chosen is not None and (
+        chosen[0] in (GRID_RADII[0], GRID_RADII[-1]) or chosen[1] in (GRID_DV[0], GRID_DV[-1])
+    )
+    o = Path(out)
+    o.mkdir(parents=True, exist_ok=True)
+    (o / "truth_dev.json").write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    return report
+
+
+def run(out, *, providers=None, match_ids=None, provenance=None, cache_dir=None, source=None, params=None) -> dict:
     """Validate ball-contact detection and write the memo. ``source=(refs, load)`` injects a loader
-    for tests (no network). ``run`` is called directly by tests; enforcement lives in ``main``."""
+    for tests (no network). ``params`` scores a chosen point (the TF-79 v2 other-provider report). ``run`` is called
+    directly by tests; enforcement lives in ``main``."""
     from scripts._driver import for_each, shard_path
     from scripts._provenance import git_provenance
 
@@ -186,7 +378,7 @@ def run(out, *, providers=None, match_ids=None, provenance=None, cache_dir=None,
 
     def _work(item):
         provider, _match_id, actions, frames, *_ = item
-        rows, tally = _evaluate_match(actions, frames)
+        rows, tally = _evaluate_match(actions, frames, params=params)
         _meta.clear()
         _meta.update({"n_matches": 1})
         _meta.update({f"{k}__{provider}": v for k, v in tally.items()})
@@ -204,7 +396,7 @@ def run(out, *, providers=None, match_ids=None, provenance=None, cache_dir=None,
         work=_work,
         counters=lambda _item, _frame: dict(_meta),
         shard_root=Path(out) / "shards",
-        token_inputs={"tolerances_s": list(TOLERANCES_S), "detector": "rdp+velocity_break+dv", "geometry": "frame_ltr"},
+        token_inputs=_token_inputs(params),
         tag="ball_contact",
         label="match",
     )
@@ -280,17 +472,28 @@ def main() -> None:
     parser.add_argument("--providers", nargs="+", default=None, help=f"providers (default {_PROVIDERS})")
     parser.add_argument("--match-ids-json", type=Path, default=None, help="optional JSON pin of provider -> [match_id]")
     parser.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (provenance stamps it)")
+    parser.add_argument(
+        "--gs-truth", action="store_true", help="the rule detector's development grid against PFF truth (GS only)"
+    )
+    parser.add_argument("--reference", type=Path, default=None, help="v1 metrics.json for the other-provider trigger")
+    parser.add_argument("--contact-scorer", default=None, help="the frozen scorer directory (scorer spec section 3)")
+    parser.add_argument("--min-contact-probability", type=float, default=None, help="the frozen scorer's threshold")
     args = parser.parse_args()
 
     from scripts._provenance import git_provenance, require_clean_tree
 
     match_ids = json.loads(args.match_ids_json.read_text(encoding="utf-8")) if args.match_ids_json else None
-    metrics = run(
-        args.out,
-        providers=args.providers,
-        match_ids=match_ids,
-        provenance=require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty),
-    )
+    prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
+    if args.gs_truth:
+        rep = run_gs_truth(args.out, match_ids=match_ids, provenance=prov)
+        print(f"ball-contact truth (rule, dev): chosen={rep.get('chosen')}")
+        return
+    params = scorer_params(args.contact_scorer, args.min_contact_probability)
+    metrics = run(args.out, providers=args.providers, match_ids=match_ids, provenance=prov, params=params)
+    if args.reference:
+        trig = other_provider_trigger(json.loads(args.reference.read_text(encoding="utf-8")), metrics)
+        (args.out / "other_provider_trigger.json").write_text(json.dumps(trig, indent=2), encoding="utf-8")
+        print(f"other-provider trigger fires={trig['fires']}")
     o = metrics["overall"]
     print(
         f"ball-contact: contacts/min={o['contact_rate_per_min']:.1f} "

@@ -5,8 +5,9 @@ the observations are measured, and the verdicts and rationales come from the ``_
 kept in its own family file, like the other per-feature entries.
 
 ``add_cross_deliveries`` judges a delivery from the ball trajectory. A single SB360 freeze frame per action has
-none, so delivery rows are unknown (``<NA>``) on that leg and ``cross_attempt`` observes ``partial_nan``;
-``cross_height`` needs an attempt, so it is both-NaN (``no_signal``).
+none, and on this fixture the tracking leg resolves no attempt either (the detector v2 contacts, ADR-134): both
+legs give the same ``cross_attempt`` (``False`` where the start is known outside the cross zone, ``<NA>``
+elsewhere), so it observes ``identical``. ``cross_height`` needs an attempt, so it is both-NaN (``no_signal``).
 """
 
 from __future__ import annotations
@@ -23,15 +24,7 @@ _entry(
         "cross_height",
     ),
     velocity={
-        "cross_attempt": AxisVerdict(
-            "partial_nan",
-            "differs_by_design",
-            rationale=(
-                "Cause isolated as frame_count. On a freeze-frame the pre-window contains a single sample, so the "
-                "metric is defined for some actions and not others; the NaNs are honest absences rather than "
-                "fabricated values. [measured cause=frame_count]"
-            ),
-        ),
+        "cross_attempt": AxisVerdict("identical", "works"),
         "cross_height": AxisVerdict(
             "no_signal",
             "not_exercised",
@@ -44,15 +37,7 @@ _entry(
     },
     visibility={
         "gk_absent": {
-            "cross_attempt": AxisVerdict(
-                "partial_nan",
-                "differs_by_design",
-                rationale=(
-                    "Cause isolated as frame_count. On a freeze-frame the pre-window contains a single sample, so "
-                    "the metric is defined for some actions and not others; the NaNs are honest absences rather "
-                    "than fabricated values. [measured cause=frame_count]"
-                ),
-            ),
+            "cross_attempt": AxisVerdict("identical", "works"),
             "cross_height": AxisVerdict(
                 "no_signal",
                 "not_exercised",
@@ -64,15 +49,7 @@ _entry(
             ),
         },
         "defender_absent": {
-            "cross_attempt": AxisVerdict(
-                "partial_nan",
-                "differs_by_design",
-                rationale=(
-                    "Cause isolated as frame_count. On a freeze-frame the pre-window contains a single sample, so "
-                    "the metric is defined for some actions and not others; the NaNs are honest absences rather "
-                    "than fabricated values. [measured cause=frame_count]"
-                ),
-            ),
+            "cross_attempt": AxisVerdict("identical", "works"),
             "cross_height": AxisVerdict(
                 "no_signal",
                 "not_exercised",

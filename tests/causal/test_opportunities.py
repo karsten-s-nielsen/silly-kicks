@@ -166,3 +166,27 @@ def test_causal_selects_by_label_version():
     v2 = O._team_period_action_times(a, 1, 1, 7, ("cross",), from_cross_attempt=True)
     assert list(v1) == [2.0, 3.0]
     assert list(v2) == [1.0]
+
+
+def test_unknown_treatment_spell_is_excluded():
+    # Cross spec §6.5 (review A CD-SPEC-18): label v2's unknown rule for the causal treatment. A spell whose
+    # exposure window holds no attempt but an unknown selected-kind row has an unknown treatment (None), never Z = 0.
+    cfg = O.xcross_config({"cross_types": ["cross"], "xcross_label_version": 2})
+    a = pd.DataFrame(
+        {
+            "game_id": [1, 1],
+            "period_id": [1, 1],
+            "team_id": [7, 7],
+            "time_seconds": [2.0, 2.5],
+            "type_id": [_c.actiontype_id["pass"], _c.actiontype_id["pass"]],
+            "cross_attempt": pd.array([pd.NA, False], dtype="boolean"),
+        }
+    )
+    assert O._label_treatment(a, 1, 1, 7, cfg, 1.9, 60.0) == (None, None)  # the unknown row is inside the window
+    assert O._label_treatment(a, 1, 1, 7, cfg, 2.0, 60.0) == (0, None)  # just outside (the window starts after entry)
+    known = a.assign(cross_attempt=pd.array([pd.NA, True], dtype="boolean"))
+    assert O._label_treatment(known, 1, 1, 7, cfg, 1.9, 60.0) == (1, 2.5)  # a known attempt in the window wins
+    # The table drops the unknown spells and counts them per match.
+    table = O._opportunity_table([{"game_id": 1, "Z": 1}, None, {"game_id": 1, "Z": 0}], [1, 1, 1], ["game_id", "Z"])
+    assert table["Z"].tolist() == [1, 0]
+    assert table.attrs["n_unknown_treatment_spells"] == {"1": 1}
