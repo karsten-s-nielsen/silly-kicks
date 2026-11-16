@@ -350,6 +350,14 @@ DRIVERS: dict[str, DriverSpec] = {
             "fresh_zero": ("n_failed", "n_counters_unrecorded", "n_excluded"),
         },
     ),
+    "cross_definition": DriverSpec(
+        "cross_definition", "scripts.build_cross_definition", "rebaseline", "docs/research/cross-definition"
+    ),
+    # The TF-79 contact scorer (scorer spec section 4): one name for the DRIVERS key and the manifest job, so adopt's
+    # (job, variant, tier) match finds its artifact.
+    "build_contact_scorer": DriverSpec(
+        "build_contact_scorer", "scripts.build_contact_scorer", "rebaseline", "docs/research/contact_scorer"
+    ),
     # --- scaffold: drivers above ---
 }
 

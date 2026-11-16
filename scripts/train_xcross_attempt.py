@@ -596,7 +596,11 @@ def _load_match(ref: _PergameRef, ctx):
     frames = read_dataset_parquet(root / ref.files[0])
     # ADR-130: fail closed on a dataset staged without it; this load serves the extract and the probe stages.
     require_stoppage_state(frames, ref.prov)
-    actions = read_dataset_parquet(root / ref.files[1])
+    from silly_kicks.tracking._cross_delivery import _ensure_cross_attempts
+
+    # ADR-133 label v2: enrich ONCE per match here, so the work unit and the integrity counters share it (a no-op
+    # on a corpus staged with cross_attempt).
+    actions = _ensure_cross_attempts(read_dataset_parquet(root / ref.files[1]), frames)
     home = None
     home_map = _home_map(ctx) if ref.dataset_param == "dataset" else None
     if home_map is not None:
@@ -615,7 +619,11 @@ def _prepare(item, ctx):
     collision = set(_SIDE_COLS) & set(XCROSS_FEATURE_NAMES_FAITHFUL)
     if collision:
         raise ValueError(f"side columns {sorted(collision)} collide with feature names")
+    from silly_kicks.tracking._cross_delivery import _ensure_cross_attempts
+
     _prov, _mid, actions, frames, home = item
+    # ADR-133 label v2: the label reads the tracking cross attempt (as staged, else computed from the frames).
+    actions = _ensure_cross_attempts(actions, frames)
     return prepare_xcross_training_data(
         frames,
         actions,
@@ -627,18 +635,25 @@ def _prepare(item, ctx):
     )
 
 
+def _label_times(actions: pd.DataFrame) -> pd.DataFrame:
+    """The label v2 events' ``(period_id, time_seconds)`` (ADR-133): the tracking cross attempts the label counts."""
+    from silly_kicks.tracking._xcross_attempt import _xcross_label_events
+
+    return _xcross_label_events(actions).reindex(columns=["period_id", "time_seconds"]).reset_index(drop=True)
+
+
 def _extract_work(item, ctx) -> pd.DataFrame | None:
     """One match -> its tidy feature rows + the four side columns (the legacy `_extract._work`), or None."""
-    prov, mid, actions, frames, _home = item
     from scripts._study_shared import stoppage_side_columns
-    from silly_kicks.spadl import config as spc
-    from silly_kicks.tracking._xcross_attempt import _DEFAULT_CROSS_TYPES
+    from silly_kicks.tracking._cross_delivery import _ensure_cross_attempts
 
-    crosses = actions[actions["type_id"].isin([spc.actiontype_id[t] for t in _DEFAULT_CROSS_TYPES])]
+    prov, mid, actions, frames, home = item
+    actions = _ensure_cross_attempts(actions, frames)  # once per match; _prepare then reads it as staged
+    item = (prov, mid, actions, frames, home)
     side = stoppage_side_columns(
         frames,
         horizon_seconds=ctx.params["horizon_seconds"],
-        label_times=crosses.reindex(columns=["period_id", "time_seconds"]),
+        label_times=_label_times(actions),
     )
     X, y, groups = _prepare(item, ctx)
     if not len(X):
@@ -653,13 +668,15 @@ def _extract_work(item, ctx) -> pd.DataFrame | None:
 
 
 def _extract_counters(item, _frame) -> dict:
-    """The ADR-126 integrity inputs of one match (crosses by the label's own ``type_id`` set, frames,
-    duration): counters only, never in a token or the artifact (ADR-128 plan Task 20)."""
+    """The ADR-126 integrity inputs of one match (the label's own events: label v2 tracking cross attempts,
+    ADR-133; frames; duration): counters only, never in a token or the artifact (ADR-128 plan Task 20)."""
     from scripts._integrity_counters import integrity_counters
-    from silly_kicks.tracking._xcross_attempt import _DEFAULT_CROSS_TYPES
+    from silly_kicks.tracking._cross_delivery import _ensure_cross_attempts
+    from silly_kicks.tracking._xcross_attempt import _CROSS_TYPE_KINDS, _DEFAULT_CROSS_TYPES, _xcross_label_events
 
     _prov, _mid, actions, frames, _home = item
-    return integrity_counters(frames, actions, _DEFAULT_CROSS_TYPES)
+    events = _xcross_label_events(_ensure_cross_attempts(actions, frames))
+    return integrity_counters(frames, events, [n for t in _DEFAULT_CROSS_TYPES for n in _CROSS_TYPE_KINDS[t]])
 
 
 def _extract_reduce(results, ctx) -> pd.DataFrame:

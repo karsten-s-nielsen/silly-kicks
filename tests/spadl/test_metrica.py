@@ -106,7 +106,10 @@ class TestMetricaActionMapping:
         actions, _ = metrica_mod.convert_to_actions(
             _df_metrica("PASS", "CROSS"), home_team_id="Home", home_team_start_left=True
         )
-        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
+        # ADR-133: the CROSS subtype is kept in cross_native; a lone pass has no delivery into the box, so the
+        # geometric SPADL type is `pass`.
+        assert actions["cross_native"].iloc[0] == True  # noqa: E712
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_pass_goalkick(self):
         actions, _ = metrica_mod.convert_to_actions(
@@ -358,7 +361,8 @@ class TestMetricaSetPieceShotComposition:
         )
         actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         type_set = set(actions["type_id"].tolist())
-        assert spadlconfig.actiontype_id["freekick_short"] in type_set
+        # ADR-133: the next action (the shot) starts in the penalty area, so the free kick is a delivery.
+        assert spadlconfig.actiontype_id["freekick_crossed"] in type_set
         assert spadlconfig.actiontype_id["shot"] in type_set
         assert spadlconfig.actiontype_id["shot_freekick"] not in type_set
 
@@ -403,7 +407,8 @@ class TestMetricaSetPieceShotComposition:
         )
         actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         type_set = set(actions["type_id"].tolist())
-        assert spadlconfig.actiontype_id["corner_short"] in type_set
+        # ADR-133: the next action (the shot) starts in the penalty area, so the corner is a delivery.
+        assert spadlconfig.actiontype_id["corner_crossed"] in type_set
         assert spadlconfig.actiontype_id["shot"] in type_set
 
 

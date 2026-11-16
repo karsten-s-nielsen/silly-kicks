@@ -574,6 +574,7 @@ def _converter_entries() -> list[IdScalarEntry]:
     import silly_kicks.tracking.skillcorner as sk_frames
     import silly_kicks.tracking.sportec as sportec_frames
     from silly_kicks.tracking import direction
+    from tests.spadl._gs_clock import with_event_clock
     from tests.spadl.test_gradientsports import _df_minimal_pass as gs_events_fixture
     from tests.spadl.test_metrica import _df_metrica_pass_by_gk
     from tests.spadl.test_opta import TestOptaPreserveNative
@@ -640,7 +641,10 @@ def _converter_entries() -> list[IdScalarEntry]:
         _e(
             "silly_kicks.spadl.gradientsports.convert_to_actions",
             lambda s: gs_events.convert_to_actions(
-                gs_events_fixture(), home_team_id=s, home_team_start_left=True, home_team_start_left_extratime=True
+                with_event_clock(gs_events_fixture()),  # kickoff + event_time (ADR-133, cross spec 6.6 B)
+                home_team_id=s,
+                home_team_start_left=True,
+                home_team_start_left_extratime=True,
             ),
             matched=100,  # the gradientsports fixture's own home team
         ),
@@ -783,6 +787,26 @@ def _causal_entries() -> list[IdScalarEntry]:
 # ---- tracking: per-frame + per-window primitives -----------------------------------------
 
 
+def _contacts_home_then_away() -> pd.DataFrame:
+    """Two resolved contacts in period 1: the home player 5 at 1.0 s, then the away player 6 at 2.0 s."""
+    from silly_kicks.tracking._ball_contact import CONTACT_SOURCE_VALUES
+
+    return pd.DataFrame(
+        {
+            "period_id": [1, 1],
+            "frame_id": [25, 50],
+            "time_seconds": [1.0, 2.0],
+            "player_id": pd.array([HOME, AWAY], dtype="Int64"),
+            "contact_x": [60.0, 70.0],
+            "contact_y": [34.0, 34.0],
+            "velocity_change_ms": [5.0, 5.0],
+            "confidence": [0.8, 0.8],
+            "is_aerial": pd.array([False, False], dtype="boolean"),
+            "contact_source": pd.Categorical(["velocity_break"] * 2, categories=CONTACT_SOURCE_VALUES),
+        }
+    )
+
+
 def _tracking_primitive_entries() -> list[IdScalarEntry]:
     import silly_kicks.tracking as T
 
@@ -800,6 +824,13 @@ def _tracking_primitive_entries() -> list[IdScalarEntry]:
     # `compute_packing_metrics` entry below, which varies `attacking_team_id` against a
     # canonically-keyed map in one call.
     return [
+        _e(
+            # Detector spec section 5 (review B CD-SB-44): `exclude_player_id` is a player-id scalar compared via
+            # ids_match. Excluding the home player 5 (as 5 or "5") must return the away player's contact either way.
+            # `period_id` is a period number, not an entity id, and stays a raw compare.
+            "silly_kicks.tracking._ball_contact.first_contact_in_window",
+            lambda s: T.first_contact_in_window(_contacts_home_then_away(), 1, 0.0, 10.0, exclude_player_id=s),
+        ),
         _e(
             "silly_kicks.tracking._defensive_line.select_back_line_players",
             # 3rd arg was `home_team_id`; ADR-055 re-keyed it to `defends_x0: bool`. The old
@@ -958,7 +989,12 @@ def _tracking_model_entries() -> list[IdScalarEntry]:
         ),
         _e(
             "silly_kicks.tracking._xcross_attempt.prepare_xcross_training_data",
-            lambda s: T.prepare_xcross_training_data(frames_attacking_wide(), tracking_actions(), home_team_id=s),
+            # ADR-133 label v2: the actions carry a staged tracking cross attempt.
+            lambda s: T.prepare_xcross_training_data(
+                frames_attacking_wide(),
+                tracking_actions().assign(cross_attempt=lambda a: pd.array([True] * len(a), dtype="boolean")),
+                home_team_id=s,
+            ),
         ),
         _e(
             "silly_kicks.tracking._ghost_gk.prepare_ghost_gk_training_data",
@@ -1243,17 +1279,6 @@ COVERED_BY_AGGREGATOR_GATE: dict[str, str] = {
 #: Genuinely cannot be dtype-invariant. Each entry states WHY, and each is a case where
 #: invariance would mean the function is BROKEN -- not a case we chose not to test.
 NOT_INVARIANT: dict[str, str] = {
-    "silly_kicks.tracking._ball_contact.first_contact_in_window": (
-        "The flagged scalar is `period_id` -- a PERIOD NUMBER (1-5), which this registry's own module "
-        "docstring explicitly lists as id-SHAPED but NOT an entity id (alongside cluster labels). The "
-        "name-based discovery heuristic (`name.endswith('_id')`) false-positives it. ADR-019's "
-        "dtype-invariance targets provider-assigned player/team ids (where a float/str/Int64 skew "
-        "silently mis-resolves '366' vs 366.0); a period number carries no such id-space. The repo's "
-        "OWN idiom confirms this split -- shipped code routes game_id/player_id through id_compat but "
-        "compares period_id with raw `==` (coordination/_signals.py:657 `same_id(g, game) and int(p) == "
-        "period`; coordination/_windows.py:286). `first_contact_in_window` compares NO player/team id "
-        "(the only scalar compare is the period filter), so there is no entity-id invariance to assert."
-    ),
     "silly_kicks.tracking.utils.validate_id_dtypes": (
         "The DIAGNOSTIC itself (ADR-019's loud guard). Its entire job is to REPORT that an id "
         "scalar's dtype disagrees with the columns, so identical output across a matched and a "

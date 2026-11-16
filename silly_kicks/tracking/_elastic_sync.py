@@ -686,21 +686,31 @@ def _aligned_error(frame: int, expected_time: float, fit, params: ElasticSyncPar
 
 
 def _inplay_segments(frames: pd.DataFrame) -> dict[tuple, np.ndarray]:
-    """Per ``(canonical game_id, period_id)`` maximal ``ball_state=="alive"`` run time intervals.
+    """Per ``(canonical game_id, period_id)`` maximal in-play run time intervals.
 
     The paper's alignment episodes are *consecutive in-play frames* (arXiv:2608.30227), NOT
-    ``spadl.add_possessions`` possessions. Returns a dict mapping ``(canonical game_id, period_id)``
-    to a float ``(k, 2)`` array of ``[time_lo, time_hi]`` for each maximal run of consecutive alive
-    frames (sorted by ``frame_id``). A group with no alive frame is omitted; missing ``ball_state``
-    or an empty frame set yields ``{}``. ``ball_state`` is frame-level, so the value is taken once
-    per ``frame_id``.
+    ``spadl.add_possessions`` possessions. In play is ``stoppage_state == "live"`` when the frames carry
+    the ADR-130 ``stoppage_state`` (ADR-133 r8 6.6 D), else ``ball_state == "alive"``. Returns a dict
+    mapping ``(canonical game_id, period_id)`` to a float ``(k, 2)`` array of ``[time_lo, time_hi]`` for
+    each maximal run of consecutive in-play frames (sorted by ``frame_id``). A group with no in-play
+    frame is omitted; frames with neither column, or an empty frame set, yield ``{}``. The state is
+    frame-level, so the value is taken once per ``frame_id``.
     """
     out: dict[tuple, np.ndarray] = {}
-    if frames.empty or "ball_state" not in frames.columns:
+    # ADR-133 r8 6.6 D: frames that carry the ADR-130 `stoppage_state` split episodes by it ("live" = in play;
+    # "dead" and "unknown" are not). Gradient Sports and SkillCorner record `ball_state == "alive"` on every frame,
+    # so without this one episode would span a whole half. Observed providers' `stoppage_state` copies `ball_state`.
+    if "stoppage_state" in frames.columns:
+        state_col, in_play = "stoppage_state", "live"
+    elif "ball_state" in frames.columns:
+        state_col, in_play = "ball_state", "alive"
+    else:
+        return out
+    if frames.empty:
         return out
     for (gid, pid), grp in frames.groupby(["game_id", "period_id"], sort=False):
         per_frame = grp.drop_duplicates("frame_id").sort_values("frame_id")
-        alive = (per_frame["ball_state"] == "alive").to_numpy()
+        alive = (per_frame[state_col].astype(object) == in_play).to_numpy()
         if not alive.any():
             continue
         times = np.asarray(per_frame["time_seconds"].values, dtype=np.float64)

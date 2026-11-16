@@ -116,6 +116,7 @@ _M_SHAPE_GRAPH = "silly_kicks.tracking._shape_graph"
 _M_DEFENSIVE_LINE = "silly_kicks.tracking._defensive_line"
 _M_DAS = "silly_kicks.tracking._das"
 _M_BALL_CONTACT = "silly_kicks.tracking._ball_contact"
+_M_CROSS_DELIVERY = "silly_kicks.tracking._cross_delivery"
 _M_PRESSURE = "silly_kicks.tracking.pressure"
 _M_PITCH_CONTROL = "silly_kicks.tracking.pitch_control"
 _M_GK_INFLUENCE = "silly_kicks.tracking._gk_influence"
@@ -137,6 +138,7 @@ _M_COORDINATION = "silly_kicks.coordination._compute"  # TF-58 team-coordination
 _A_STRUCTURAL = "arXiv:2603.28916"  # Karakus & Arkadas 2026 (LBS/SGM/SDI; shared by packing's LBS inequality)
 _A_SPEARMAN_2018 = "Spearman, W. (2018)"  # Beyond Expected Goals (OBSO / pitch-control foundation)
 _A_PAUSA = "arXiv:2506.09349"  # Lee 2026 PAUSA
+_A_VIDAL_CODINA = "arXiv:2202.00804"  # Vidal-Codina et al. 2022, tracking-only event detection (TF-86 cross)
 _A_FERNANDEZ_BORNN = "Fernandez, J., & Bornn, L. (2018)"  # Wide Open Spaces (space creation)
 _A_SOTUDEH = "Sotudeh, H. (2026)"  # shape graph
 #: No published methodology -- the observed region is a PROVIDER-SUPPLIED polygon (StatsBomb 360
@@ -1064,28 +1066,53 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_DAS,
         attribution=_A_DAS,
     ),
+    # -- Cross delivery (TF-86, ADR-133) ---------------------------------------------------------
+    FeatureColumn(
+        name="cross_attempt",
+        definition=(
+            "Tracking cross attempt: True when a cross-zone open-play pass, corner or free kick sends the ball into "
+            "the penalty area; False when it does not, and for an open-play pass known to start outside the cross "
+            "zone; <NA> when the frames cannot answer (misaligned release, unknown start, too little ball data), "
+            "when an opponent's first touch within 1 s cuts out a ball heading into the box (a block cannot be told "
+            "from a touch near the crosser), or when the row is not a delivery. "
+            "Counts all heights. Reads the delivery's own outcome, so it is a label, not a pre-action feature."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_CROSS_DELIVERY,
+        attribution=_A_VIDAL_CODINA,
+    ),
+    FeatureColumn(
+        name="cross_height",
+        definition=(
+            "Height of a tracking cross attempt: 'aerial' when the ball peaks above 1.8 m (the ball-contact "
+            "detector's aerial threshold) on its path, 'ground' otherwise; <NA> when the ball height is not "
+            "measured (for example SkillCorner's broadcast estimate) or the row is not an attempt."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_CROSS_DELIVERY,
+    ),
     # -- Ball contact (TF-79) -------------------------------------------------------------------
     FeatureColumn(
         name="first_contact_time",
-        definition="Period-relative time (s) of the first detected ball contact in the action window; NaN if none.",
+        definition="Period-relative time (s) of the first contact by another player in the action window; NaN if none.",
         unit="seconds",
         emitting_module=_M_BALL_CONTACT,
     ),
     FeatureColumn(
         name="first_contact_player_id",
-        definition="Player who made the first detected ball contact in the action window; <NA> if unresolved.",
+        definition="Player of the first contact by another player than the actor in the action window; <NA> if none.",
         unit="dimensionless",
         emitting_module=_M_BALL_CONTACT,
     ),
     FeatureColumn(
         name="first_contact_x",
-        definition="Pitch x (metres, frame-LTR) of the first detected ball contact in the action window.",
+        definition="Pitch x (metres, frame-LTR) of the first contact by another player in the action window.",
         unit="metres",
         emitting_module=_M_BALL_CONTACT,
     ),
     FeatureColumn(
         name="first_contact_y",
-        definition="Pitch y (metres, frame-LTR) of the first detected ball contact in the action window.",
+        definition="Pitch y (metres, frame-LTR) of the first contact by another player in the action window.",
         unit="metres",
         emitting_module=_M_BALL_CONTACT,
     ),
@@ -1097,7 +1124,7 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     ),
     FeatureColumn(
         name="first_contact_confidence",
-        definition="First-contact detector confidence in [0,1] (break x proximity x detection); higher = stronger.",
+        definition="First-contact confidence in [0,1]: the contact scorer's probability, or the reach-gate score.",
         unit="probability",
         emitting_module=_M_BALL_CONTACT,
         higher_is_better=True,
@@ -1110,7 +1137,7 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     ),
     FeatureColumn(
         name="first_contact_source",
-        definition="Detection provenance of the first contact: rdp / velocity_break / both / unresolved.",
+        definition="Detection provenance of the first contact: velocity_break (TF-79 v2; rdp/both never emitted).",
         unit="dimensionless",
         emitting_module=_M_BALL_CONTACT,
     ),

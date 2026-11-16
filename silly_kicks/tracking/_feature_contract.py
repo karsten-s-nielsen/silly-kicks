@@ -172,17 +172,27 @@ def contract_probe_frame() -> pd.DataFrame:
     return frame
 
 
-def feature_contract(extract_on_probe: Callable[[], np.ndarray], *, constants: dict[str, float]) -> dict:
+def feature_contract(
+    extract_on_probe: Callable[[], np.ndarray],
+    *,
+    constants: dict[str, float],
+    probe: pd.DataFrame | None = None,
+) -> dict:
     """Build the contract.
 
     ``extract_on_probe`` is a ZERO-ARGUMENT closure the model supplies, binding its own extractor
     to :func:`contract_probe_frame`. The three extractors' signatures genuinely do not unify, so
     this module stays extractor-agnostic.
 
+    ``probe`` is the frame the closure reads when it is not the shared single-frame
+    :func:`contract_probe_frame` (default): a model whose features need a trajectory (the TF-79
+    contact scorer) passes its own probe, so ``probe_sha256`` hashes the frame the fingerprint was
+    actually computed on, and an edit to that probe takes the probe-change path at ``load()``.
+
     Raises on a non-finite vector: a NaN feature is one the contract could never gate, so allowing
     it would ship a fingerprint with silent holes in it.
     """
-    frame = contract_probe_frame()
+    frame = contract_probe_frame() if probe is None else probe
     probe_sha = hashlib.sha256(json.dumps(frame.to_dict("records"), sort_keys=True, default=str).encode()).hexdigest()
     values = np.asarray(extract_on_probe(), dtype=float).ravel()
     if not np.all(np.isfinite(values)):

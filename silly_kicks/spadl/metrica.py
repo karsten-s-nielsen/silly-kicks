@@ -69,7 +69,16 @@ import pandas as pd
 
 from ..tracking import direction
 from . import config as spadlconfig
-from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
+from .base import (
+    _CORNER_IDS,
+    _FREEKICK_IDS,
+    _add_dribbles,
+    _derive_end_coordinates,
+    _native_cross_flag,
+    _synthesized_rows,
+    classify_deliveries,
+    sort_actions_chronologically,
+)
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
 from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -217,6 +226,13 @@ def convert_to_actions(
         ``None``. Pass goalkeeper_ids from match metadata (squad records
         / dim_players join) to enable GK coverage on Metrica data.
 
+    Notes
+    -----
+    Deliveries follow :func:`silly_kicks.spadl.base.classify_deliveries` and its event-only limits (ADR-133).
+    Metrica's own label (the ``CROSS`` subtype) is kept in ``cross_native``; set pieces (positional) and
+    synthesized GK passes carry no label (``<NA>``). Event-rule recall against ``cross_attempt``:
+    <recall: Task 10>.
+
     Examples
     --------
     Convert a Metrica bronze events DataFrame to SPADL -- preferred path::
@@ -288,7 +304,17 @@ def convert_to_actions(
             home_team_id=home_team_id,
             home_attacks_right_per_period=flips,
         )
+        # One delivery rule for every provider (ADR-133): the native CROSS subtype moves to cross_native.
+        actions["cross_native"] = _native_cross_flag(actions["type_id"])
+        # Metrica labels only the open-play CROSS subtype: its set pieces are positional (no crossed/short
+        # split) and a synthesized GK pass has no provider event, so both carry no native label.
+        no_label = actions["type_id"].isin([*_CORNER_IDS, *_FREEKICK_IDS]).to_numpy() | _synthesized_rows(actions)
+        actions.loc[no_label, "cross_native"] = pd.NA
+        actions = classify_deliveries(actions)
         actions["action_id"] = range(len(actions))
+        # Metrica stamps every event with its own tracking frame (Start Time [s] = Start Frame / 25; 3,620 of 3,620
+        # events in the sample, ADR-133 r8 6.6 C). The synthetic dribbles added next get "event" in _finalize_output.
+        actions["time_source"] = "tracking"
         actions = _add_dribbles(actions)
 
         actions["start_x"] = actions["start_x"].clip(0, spadlconfig.field_length)
@@ -541,6 +567,7 @@ def _build_raw_actions(
             "bodypart_id": bodypart_ids,
             "shot_blocked": _blocked_flag(n, applicable=is_shot, blocked=_shot_blocked_mask),
             "cross_blocked": _blocked_flag(n),
+            "cross_native": _blocked_flag(n),
         }
     )
 
@@ -627,6 +654,7 @@ def _synthesize_metrica_gk_pass(
             "bodypart_id": np.full(n_synth, spadlconfig.bodypart_id["other"], dtype=np.int64),
             "shot_blocked": _blocked_flag(n_synth),
             "cross_blocked": _blocked_flag(n_synth),
+            "cross_native": _blocked_flag(n_synth),
         }
     )
     synth["_row_order"] = src_indices.astype(np.int64) * 2 + 1

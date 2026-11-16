@@ -33,6 +33,13 @@ AWAY_TEAM_NAME = "Test United"
 
 OUTPUT_PATH = Path(__file__).parent / "synthetic_match.json"
 
+#: A possession event happens after its game event (the on-ball sequence) starts: raw GS ``eventTime`` lies after
+#: ``startTime`` (ADR-133, spec 2026-11-13 r8 5.1; 1.5 s here is a round illustrative lead). The converter times
+#: an action from ``eventTime`` (r8 6.6 B), so the fixture must keep the two apart. Game events without a possession
+#: event (kickoffs, OUT, SUB, END, markers) keep ``startTime == eventTime``: the kickoff ``startTime`` is the
+#: period's clock anchor, so every converted time stays ``time_s`` since kickoff. ``startGameClock`` is not read.
+SEQUENCE_LEAD_S = 1.5
+
 
 def _ge_envelope(ge_type, *, period, time_s, team_id, player_id, set_piece="O", home_team=True):
     """gameEvents skeleton."""
@@ -227,14 +234,15 @@ def make_event(
     if pe_type is not None:
         pe["possessionEventType"] = pe_type
     pe.update(pe_overrides)
+    event_time = 200.0 + time_s
     return {
         "gameId": 99999,
         "gameEventId": event_id,
         "possessionEventId": event_id,
-        "startTime": 200.0 + time_s,
-        "endTime": 200.0 + time_s,
+        "startTime": event_time - (SEQUENCE_LEAD_S if pe_type is not None else 0.0),
+        "endTime": event_time,
         "duration": 0.0,
-        "eventTime": 200.0 + time_s,
+        "eventTime": event_time,
         "sequence": float(event_id),
         "gameEvents": _ge_envelope(
             ge_type,
@@ -279,14 +287,15 @@ def _hand_authored(event, *, raw_time):
     ``ball["x"]``/``["y"]`` and ``startGameClock``.
 
     * ``ball`` carries no ``visibility`` / ``z`` key.
-    * ``startTime`` / ``endTime`` / ``eventTime`` hold the raw clock, not ``200.0 + time_s``.
+    * ``endTime`` / ``eventTime`` hold the raw clock, not ``200.0 + time_s``; ``startTime`` holds the raw clock
+      less :data:`SEQUENCE_LEAD_S` (ADR-133 r8: until then it equalled the raw clock too).
     * ``startFormattedGameClock`` reads ``"00:12"`` at clocks of 1000 / 1100 / 1200 s.
 
     They are reproduced VERBATIM rather than normalized so that restoring them is provably a
     no-op on the committed bytes. A generator that "improves" the artifact in the same change
     that restores it cannot show which of the two edits moved the file.
     """
-    event["startTime"] = raw_time
+    event["startTime"] = raw_time - SEQUENCE_LEAD_S
     event["endTime"] = raw_time
     event["eventTime"] = raw_time
     event["gameEvents"]["startFormattedGameClock"] = "00:12"
@@ -842,6 +851,16 @@ def build_match():
                 )
             )
             conv_eid += 1
+
+    # INVERSION PAIR (ADR-133, cross spec 6.6 B; review A C27). Event 56 (eventTime 1310) starts its on-ball sequence
+    # at 1298, before event 55 (eventTime 1300, startTime 1298.5): start order and event order disagree, as on some
+    # rows of the real WC2022 feed (cross spec 6.6 B). A converter that times or sorts by startTime puts 56 first;
+    # the right one puts 55 first.
+    # Only startTime and the matching startGameClock change, so no event count or converted time moves.
+    inverted = next(e for e in events if e["gameEventId"] == 56)
+    inverted["startTime"] = 200.0 + 1298.0
+    inverted["gameEvents"]["startGameClock"] = 1298
+    inverted["gameEvents"]["startFormattedGameClock"] = "21:38"
 
     # END markers.
     events.append(make_event(eid, ge_type="END", pe_type=None, period=2, time_s=2700.0, ball_x=0.0, ball_y=0.0))

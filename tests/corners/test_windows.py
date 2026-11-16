@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from silly_kicks.corners import CORNER_WINDOW_COLUMNS, add_corner_windows
 
@@ -15,6 +16,7 @@ def _corner(source="spadl_corner", t_kick=100.0, period=1):
             "period_id": [period],
             "t_kick": [t_kick],
             "attacking_team_id": ["tA"],
+            "taker_player_id": [pd.NA],  # unknown taker: honest, skips nobody
             "corner_side": pd.Series(["left"], dtype="category"),
             "kick_x": [104.5],
             "kick_y": [1.0],
@@ -120,3 +122,31 @@ def test_pure_does_not_mutate_inputs():
     pd.testing.assert_frame_equal(frames, fb)
     pd.testing.assert_frame_equal(contacts, kb)
     assert out is not corners
+
+
+def test_missing_taker_column_raises():
+    # Owner ruling 2026-11-15 (review A CD-IMPL-16): a corners table without taker_player_id (built before 4.144 or
+    # by hand) would let the taker be named the winner, silently; it is refused at the edge. A <NA> taker is allowed.
+    with pytest.raises(ValueError, match=r"taker_player_id.*identify_corners"):
+        add_corner_windows(_corner().drop(columns="taker_player_id"), _frames(), _contacts())
+    assert add_corner_windows(_corner(), _frames(), _contacts())["winner_player_id"].tolist() == ["pW"]
+
+
+def test_taker_is_never_the_first_contact_winner():
+    # Detector spec section 5 (owner ruling 6): v2 times the kick, so the taker's own touch can follow t_kick; the
+    # winner is the first contact by anyone else. Both sides: the taker's contact just after the kick, and a corner
+    # whose taker made no contact (the first contact wins).
+    contacts = pd.DataFrame(
+        {
+            "period_id": [1, 1],
+            "frame_id": [3, 5],
+            "time_seconds": [100.1, 100.5],
+            "player_id": ["pW", "pX"],
+            "contact_source": pd.Series(["velocity_break", "velocity_break"], dtype="object"),
+        }
+    )
+    frames = pd.concat([_frames(), _frames().assign(frame_id=3)], ignore_index=True)
+    taken_by_w = add_corner_windows(_corner().assign(taker_player_id=["pW"]), frames, contacts)
+    assert taken_by_w["winner_player_id"].iloc[0] == "pX"
+    taken_by_z = add_corner_windows(_corner().assign(taker_player_id=["pZ"]), frames, contacts)
+    assert taken_by_z["winner_player_id"].iloc[0] == "pW"

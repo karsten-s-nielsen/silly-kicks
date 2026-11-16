@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-10-17 |
-| **Status** | Accepted |
+| **Status** | Accepted; superseded in part by ADR-133 (2026-11-13): the `play_height` discriminator now sets only `cross_native`; the SPADL corner type comes from the one geometric delivery rule |
 | **Deciders** | Karsten |
 
 ## Context

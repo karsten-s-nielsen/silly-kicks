@@ -357,6 +357,37 @@ def load_match(
     )
 
 
+def gradientsports_events_json(
+    ref: MatchRef,
+    *,
+    cache_dir: str | Path | None = None,
+    token: str | None = None,
+    base_url: str | None = None,
+) -> list[dict]:
+    """The raw Gradient Sports events JSON of ONE match (events-only artifacts; cached when a cache dir resolves).
+
+    The TF-79 v2 truth harness reads PFF's on-ball sequences from it: each ``OTB`` game event carries the player and
+    ``startTime``/``endTime`` (detector spec 2026-11-15 r2 section 2). Never requests the tracking artifact.
+    """
+    import tempfile
+
+    if ref.provider != "gradientsports":
+        raise ValueError(f"gradientsports_events_json reads Gradient Sports matches only, not {ref.provider!r}")
+    tok = _resolve_token(token)
+    base = base_url or _base_url()
+    cd = resolve_cache_dir(cache_dir)
+    if cd is not None:
+        dl_dir = Path(cd) / ref.provider / str(ref.match_id)
+        dl_dir.mkdir(parents=True, exist_ok=True)
+        paths = _download_artifacts(
+            ref.provider, ref.match_id, ref.artifacts, tok, base, dl_dir, use_cache=True, events_only=True
+        )
+        return json.loads(Path(paths["events"]).read_text(encoding="utf-8"))
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _download_artifacts(ref.provider, ref.match_id, ref.artifacts, tok, base, Path(tmp), events_only=True)
+        return json.loads(Path(paths["events"]).read_text(encoding="utf-8"))
+
+
 def pining_source(
     providers: list[str],
     *,
@@ -1162,10 +1193,12 @@ def _gs_flatten_events(events_json: list[dict], roster: pd.DataFrame) -> pd.Data
             "event_id": ev["gameEventId"],
             "possession_event_id": ev.get("possessionEventId"),
             "period_id": ge.get("period"),
+            # The converter no longer reads time_seconds (ADR-133 r8 6.6 B): it times each action as
+            # event_time minus its period's kickoff start_time. startGameClock stays in the flat frame.
             "time_seconds": ge.get("startGameClock"),
-            # Absolute event clock -- the order-insensitive basis for imputing a null-startGameClock
-            # FOUL's time_seconds (spadl.gradientsports Option D). Present on every real GS event.
+            # The game event's start video time: the kickoff anchor and the first sort tiebreak.
             "start_time": ev.get("startTime"),
+            # The possession event's own video time: the source of the action's time_seconds.
             "event_time": ev.get("eventTime"),
             "team_id": ge.get("teamId"),
             "player_id": ge.get("playerId"),
@@ -1321,7 +1354,9 @@ def _build_gradientsports(paths, tracking_limit=None, *, with_velocity: bool = T
             game_id=game_id,
             period_id=int(fr["period"]),
             frame_id=int(fr["frameNum"]),
-            time_seconds=float(fr.get("periodGameClockTime", 0.0)),
+            # Period-relative (ADR-017; tracking/gradientsports.py:70), the clock the GS events use (ADR-133 r8
+            # 6.6 B). periodGameClockTime is the match clock: periodElapsedTime + 0/2700/5400/6300 s.
+            time_seconds=float(fr.get("periodElapsedTime", 0.0)),
             frame_rate=29.97,
             z=0.0,
             speed_native=float("nan"),

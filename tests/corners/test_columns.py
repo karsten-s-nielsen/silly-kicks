@@ -51,3 +51,11 @@ def test_closed_vocabularies_are_frozensets():
     assert CORNER_KIND_VALUES == frozenset({"direct", "short", "unclear"})
     assert CORNER_SOURCE_VALUES == frozenset({"skillcorner_gi", "spadl_corner", "sb360_event"})
     assert TARGET_SNAPSHOT_SOURCE_VALUES == frozenset({"first_contact", "kick_plus_2s", "sb360_event"})
+
+
+def test_corner_kind_source_vocabulary_and_schema():
+    # ADR-133: which signal decided corner_kind -- the tracking attempt, the SPADL type, or the GI refinement.
+    from silly_kicks.corners._columns import CORNER_KIND_SOURCE, CORNER_KIND_SOURCE_VALUES
+
+    assert CORNER_KIND_SOURCE_VALUES == frozenset({"tracking", "event", "gi"})
+    assert CORNER_IDENTIFY_COLUMNS[CORNER_KIND_SOURCE] == "category"

@@ -311,15 +311,16 @@ def _divergence_rows(item, zone_model) -> pd.DataFrame:
     Mirrors ``build_corner_routines._snapshot_rows`` but the SECOND snapshot is the kick frame (t_kick),
     not the target, so the pooled reduce can bound the -2s-vs-kick-frame (SB360 serve) mismatch.
     """
-    from silly_kicks.corners import add_corner_windows, identify_corners
+    from silly_kicks.corners import add_corner_windows
     from silly_kicks.corners._encode import _nearest_frame_xy, _reflect_y
     from silly_kicks.tracking._ball_contact import detect_ball_contacts
 
     cols = ["init_x", "init_y", "kick_x", "kick_y"]
     if zone_model is None or item.frames is None or item.frames.empty:
         return pd.DataFrame(columns=cols)
-    corners = identify_corners(item.actions, provider=item.provider)
-    corners = corners[corners["corner_kind"] == "direct"]
+    from scripts.build_corner_routines import _direct_corners
+
+    corners = _direct_corners(item.actions, item.frames, item.provider)
     if corners.empty:
         return pd.DataFrame(columns=cols)
     windowed = add_corner_windows(corners, item.frames, detect_ball_contacts(item.frames))
@@ -404,7 +405,10 @@ def main() -> None:
     def _match_rows(item) -> pd.DataFrame:
         if zone_model is None or routine_model is None or item.frames is None or item.frames.empty:
             return pd.DataFrame()
-        corners = identify_corners(item.actions, provider=item.provider)
+        # ADR-133 decision 10: the tracking cross attempt decides each corner's delivery (direct vs short).
+        from silly_kicks.tracking._cross_delivery import _ensure_cross_attempts
+
+        corners = identify_corners(_ensure_cross_attempts(item.actions, item.frames), provider=item.provider)
         windowed = add_corner_windows(corners, item.frames, detect_ball_contacts(item.frames))
         encoding = compute_corner_run_encoding(windowed, item.frames, model=zone_model)
         feats = compute_corner_routine_features(encoding, model=routine_model)

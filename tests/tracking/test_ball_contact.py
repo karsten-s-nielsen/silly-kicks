@@ -2,102 +2,319 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from silly_kicks.tracking import _ball_contact as bc
 
-
 # --------------------------------------------------------------------------- #
-# Task 1: RDP kernel + params
+# Detector v2 (detector spec sections 4-5): kinematic candidates, reach, params, actor skip.
+# Retired v1 tests (each ledgered): the RDP kernel tests, the velocity-break kernel tests, the fallback attribution
+# tests, the RDP-only merge test and the opt-in velocity floor test -- the code they pinned is gone.
 # --------------------------------------------------------------------------- #
-def test_rdp_keeps_true_vertices_drops_collinear():
-    # An L-shaped path: straight run, one corner, straight run.
-    xy = np.array([[0, 0], [1, 0], [2, 0], [2, 1], [2, 2]], dtype=float)
-    keep = bc._rdp(xy, epsilon_m=0.3)
-    assert keep[0] and keep[-1]
-    assert keep[2]  # the corner
-    assert not keep[1] and not keep[3]  # collinear mids
+_V2 = dict(contact_radius_m=1.2, min_velocity_change_ms=3.0, kinematic_window_s=0.067, merge_window_s=0.12)
 
 
-def test_rdp_epsilon_monotone():
-    xy = np.array([[0, 0], [1, 0.2], [2, 0], [3, 0.2], [4, 0]], dtype=float)
-    coarse = bc._rdp(xy, epsilon_m=1.0).sum()
-    fine = bc._rdp(xy, epsilon_m=0.05).sum()
-    assert fine >= coarse
+def _p(**kw) -> bc.BallContactParams:
+    return bc.BallContactParams(**{**_V2, **kw})
 
 
-def test_ball_contact_params_rejects_bad_radius():
+def _scene(legs, players=None, *, fps=25.0, z: object = 0.1, z_source="measured"):
+    """A ball on piecewise-linear legs ``(t0, t1, (x0, y0), (x1, y1))``, sampled at ``fps``; ``players`` maps a player
+    id to ``(team, x, y)`` (static). ``z`` is a number or a callable of time. A ball at rest repeats its position
+    exactly, as a provider that freezes the dead ball does (IDSSE)."""
+    players = {7: ("T1", 60.0, 34.0)} if players is None else players
+    t_end = legs[-1][1]
+    rows = []
+    for k in range(round(t_end * fps) + 1):
+        t = k / fps
+        for t0, t1, (x0, y0), (x1, y1) in legs:
+            if t0 - 1e-9 <= t <= t1 + 1e-9:
+                f = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+                x, y = x0 + f * (x1 - x0), y0 + f * (y1 - y0)
+                break
+        zz = z(t) if callable(z) else z
+        base = dict(game_id=1, period_id=1, frame_id=k, time_seconds=t, frame_rate=fps)
+        rows.append(
+            {
+                **base,
+                "player_id": pd.NA,
+                "team_id": pd.NA,
+                "is_ball": True,
+                "x": x,
+                "y": y,
+                "z": zz,
+                "z_source": z_source,
+            }
+        )
+        for pid, (team, px, py) in players.items():
+            rows.append(
+                {
+                    **base,
+                    "player_id": pid,
+                    "team_id": team,
+                    "is_ball": False,
+                    "x": px,
+                    "y": py,
+                    "z": 0.0,
+                    "z_source": "absent",
+                }
+            )
+    df = pd.DataFrame(rows)
+    df["player_id"] = df["player_id"].astype("Int64")
+    return df
+
+
+def _speed_change(d, *, knee=1.0, at=(60.0, 34.0)):
+    """A ball along +x at 10 m/s that changes to 10 + d m/s at ``knee``, at the point ``at``."""
+    x0 = at[0] - 10.0 * knee
+    return [(0.0, knee, (x0, at[1]), at), (knee, knee + 1.0, at, (at[0] + 10.0 + d, at[1]))]
+
+
+def _resolved(out):
+    return out[out["contact_source"] == "velocity_break"]
+
+
+def _near(out, t, tol=0.05):
+    return out[(out["time_seconds"] - t).abs() <= tol]
+
+
+def test_candidate_threshold_both_sides():
+    above = bc.detect_ball_contacts(_scene(_speed_change(3.2)), params=_p())
+    below = bc.detect_ball_contacts(_scene(_speed_change(2.8)), params=_p())
+    assert len(_near(_resolved(above), 1.0)) == 1
+    assert len(_near(below, 1.0, tol=0.2)) == 0
+
+
+def test_constant_speed_has_no_candidate():
+    out = bc.detect_ball_contacts(_scene([(0.0, 2.0, (40.0, 34.0), (60.0, 34.0))]), params=_p())
+    assert len(out) == 0
+
+
+def test_curved_flight_is_not_a_contact():
+    # A ball at 20 m/s turning 1.5 degrees per frame: a curve in flight (the v1 RDP false positive), no touch.
+    fps, v, turn = 25.0, 20.0, np.radians(1.5)
+    pts, x, y, h = [], 40.0, 10.0, 0.0
+    for k in range(51):
+        pts.append((k / fps, x, y))
+        x, y, h = x + v / fps * np.cos(h), y + v / fps * np.sin(h), h + turn
+    legs = [(pts[i][0], pts[i + 1][0], pts[i][1:], pts[i + 1][1:]) for i in range(len(pts) - 1)]
+    out = bc.detect_ball_contacts(_scene(legs, {7: ("T1", 50.0, 12.0)}), params=_p())
+    assert len(out) == 0
+
+
+def test_kick_from_rest_passes_the_speed_gate():
+    kick = [(0.0, 1.0, (60.0, 34.0), (60.0, 34.0)), (1.0, 2.0, (60.0, 34.0), (75.0, 34.0))]
+    out = bc.detect_ball_contacts(_scene(kick), params=_p())
+    assert len(_near(_resolved(out), 1.0)) == 1  # incoming 0 (an exactly static ball), outgoing 15 m/s
+    slow = [(0.0, 1.0, (59.5, 34.0), (60.0, 34.0)), (1.0, 2.0, (60.0, 34.0), (61.5, 34.0))]  # 0.5 -> 1.5 m/s
+    out_slow = bc.detect_ball_contacts(_scene(slow), params=_p(min_velocity_change_ms=0.1))
+    assert len(_near(out_slow, 1.0, tol=0.2)) == 0  # both speeds below min_candidate_speed_ms (2.0)
+
+
+def test_kick_timed_within_one_frame():
+    out = _resolved(bc.detect_ball_contacts(_scene(_speed_change(8.0, knee=1.2)), params=_p()))
+    assert len(out) == 1 and abs(float(out["time_seconds"].iloc[0]) - 1.2) <= 1 / 25.0 + 1e-9
+
+
+@pytest.mark.parametrize(("offset", "credited"), [(1.15, True), (1.25, False)], ids=["inside", "outside"])
+def test_reach_radius_both_sides(offset, credited):
+    out = bc.detect_ball_contacts(_scene(_speed_change(5.0), {7: ("T1", 60.0, 34.0 + offset)}), params=_p())
+    hit = _near(out, 1.0)
+    assert len(hit) == 1
+    assert (hit["contact_source"].iloc[0] == "velocity_break") is credited
+
+
+def test_ball_above_reach_is_unresolved():
+    high = bc.detect_ball_contacts(_scene(_speed_change(5.0), z=3.0), params=_p())
+    assert _near(high, 1.0)["contact_source"].tolist() == ["unresolved"]
+    unknown_z = bc.detect_ball_contacts(_scene(_speed_change(5.0), z=np.nan), params=_p())
+    assert _near(unknown_z, 1.0)["contact_source"].tolist() == ["velocity_break"]  # NaN z skips the height check
+
+
+def test_no_fallback_beyond_reach():
+    out = bc.detect_ball_contacts(_scene(_speed_change(5.0), {7: ("T1", 60.0, 37.0)}), params=_p())
+    assert _near(out, 1.0)["contact_source"].tolist() == ["unresolved"]  # 3 m away: v1 credited it (5 m fallback)
+
+
+def test_frame_without_players_is_unresolved():
+    out = bc.detect_ball_contacts(_scene(_speed_change(5.0), {}), params=_p())
+    assert _near(out, 1.0)["contact_source"].tolist() == ["unresolved"]
+
+
+def test_ground_bounce_is_not_a_candidate():
+    def z(t):  # falls to the ground at t = 1.0 and bounces back up; the horizontal velocity never changes
+        return 2.0 * (t - 1.0) ** 2
+
+    out = bc.detect_ball_contacts(_scene([(0.0, 2.0, (50.0, 34.0), (70.0, 34.0))], z=z), params=_p())
+    assert len(out) == 0
+
+
+def test_merge_window_both_sides():
+    legs = [
+        (0.0, 1.0, (50.0, 34.0), (60.0, 34.0)),
+        (1.0, 1.2, (60.0, 34.0), (62.0, 34.0 + 2.0)),  # a turn at 1.0, another at 1.2
+        (1.2, 2.2, (62.0, 36.0), (72.0, 36.0)),
+    ]
+    players = {7: ("T1", 60.0, 34.0), 9: ("T2", 62.0, 36.0)}
+    wide = bc.detect_ball_contacts(_scene(legs, players), params=_p(merge_window_s=0.3))
+    narrow = bc.detect_ball_contacts(_scene(legs, players), params=_p(merge_window_s=0.1))
+    assert len(_near(wide, 1.1, tol=0.15)) == 1
+    assert len(_near(narrow, 1.1, tol=0.15)) == 2
+
+
+@pytest.mark.parametrize("fps", [29.97, 25.0, 10.0])
+def test_frame_rate_floor(fps):
+    # kinematic_window_s (0.067 s) is below the 25 and 10 Hz frame floors; the window floors at two frame intervals.
+    # The ball rests exactly still before the kick: the rest run outlasts the window, so the dedup keeps it.
+    kick = [(0.0, 1.0, (60.0, 34.0), (60.0, 34.0)), (1.0, 2.0, (60.0, 34.0), (75.0, 34.0))]
+    out = bc.detect_ball_contacts(_scene(kick, fps=fps), params=_p())
+    assert len(_near(_resolved(out), 1.0, tol=1.5 / fps)) == 1
+
+
+@pytest.mark.parametrize(("fps", "off_m"), [(25.0, 0.1), (10.0, 0.2)])
+def test_window_spans_two_frame_intervals(fps, off_m):
+    # One sample off the line of a 10 m/s flight by off_m, across the flight: the change at that sample is
+    # 2 * off_m / window. Over two frame intervals it is 2.5 / 2.0 m/s (below 3.0, no candidate); over one interval it
+    # would be 5.0 / 4.0 m/s (a false candidate).
+    legs = [(0.0, 2.0, (40.0, 34.0), (60.0, 34.0))]
+    noisy = _scene(legs, fps=fps)
+    k = round(1.0 * fps)
+    noisy.loc[noisy["is_ball"] & (noisy["frame_id"] == k), "y"] += off_m
+    assert len(bc.detect_ball_contacts(noisy, params=_p())) == 0
+    sharper = bc.detect_ball_contacts(noisy, params=_p(min_velocity_change_ms=1.5))
+    assert len(_near(sharper, 1.0, tol=0.01)) == 1  # precondition: the noisy sample is a peak of the change
+
+
+def test_stale_repeat_in_flight_is_collapsed():
+    # A 10 m/s flight whose provider repeats one position for a single frame (shorter than the window): a stale
+    # repeat, collapsed by the dedup, so no candidate. Kept, it would read as a stop and a restart.
+    legs = [(0.0, 2.0, (40.0, 34.0), (60.0, 34.0))]
+    f = _scene(legs)
+    ball = f["is_ball"]
+    for col in ("x", "y"):
+        f.loc[ball & (f["frame_id"] == 26), col] = f.loc[ball & (f["frame_id"] == 25), col].to_numpy()
+    assert len(bc.detect_ball_contacts(f, params=_p())) == 0
+
+
+def test_merge_floor_is_two_frame_intervals():
+    # Two candidates 0.15 s apart: one cluster at 10 Hz (floor 0.2 s), two at 25 Hz (merge_window_s 0.12 s wins).
+    mag, src, t = {0: 5.0, 1: 4.0}, {0: "velocity_break", 1: "velocity_break"}, {0: 1.0, 1: 1.15}
+    assert len(bc._merge_clusters([0, 1], mag, src, t, _p(), frame_period=0.1)) == 1
+    assert len(bc._merge_clusters([0, 1], mag, src, t, _p(), frame_period=0.04)) == 2
+
+
+def test_change_threshold_is_inclusive():
+    # min_velocity_change_ms is "at least": a peak exactly at the threshold is kept, one just below it is dropped.
+    peaks = bc._candidate_peaks(_scene(_speed_change(5.0)), _p())
+    dv = float(peaks["dv"].max())
+    at = bc._finalize_contacts(peaks, _p(min_velocity_change_ms=dv), pid_dtype="Int64")
+    above = bc._finalize_contacts(peaks, _p(min_velocity_change_ms=float(np.nextafter(dv, np.inf))), pid_dtype="Int64")
+    assert len(at) == 1 and len(above) == 0
+
+
+def test_velocity_change_is_the_admitting_change():
+    out = _resolved(bc.detect_ball_contacts(_scene(_speed_change(3.2)), params=_p()))
+    assert float(out["velocity_change_ms"].iloc[0]) == pytest.approx(3.2, abs=0.05)
+
+
+def test_confidence_proximity_both_ends():
+    at = _resolved(bc.detect_ball_contacts(_scene(_speed_change(5.0), {7: ("T1", 60.0, 34.0)}), params=_p()))
+    edge = _resolved(bc.detect_ball_contacts(_scene(_speed_change(5.0), {7: ("T1", 60.0, 35.199)}), params=_p()))
+    # proximity = 1 - dist / contact_radius_m, weight 0.20: 1.0 at the ball, about 0.0 at the edge of reach
+    assert float(at["confidence"].iloc[0]) - float(edge["confidence"].iloc[0]) == pytest.approx(0.20, abs=1e-3)
+
+
+@pytest.mark.parametrize("field", ["rdp_epsilon_m", "speed_drop_frac", "heading_turn_deg", "contact_exist_radius_m"])
+def test_removed_params_raise_type_error(field):
+    removed: dict[str, Any] = {field: 1.0}
+    with pytest.raises(TypeError):
+        bc.BallContactParams(**removed)
+
+
+def test_positional_params_raise_type_error():
+    with pytest.raises(TypeError):
+        bc.BallContactParams(0.3)  # type: ignore[misc]  # a v1 positional call (rdp_epsilon_m first)
+
+
+@pytest.mark.parametrize(
+    ("field", "bad", "ok"),
+    [
+        ("kinematic_window_s", 0.0, 0.001),
+        ("contact_radius_m", 0.0, 0.01),
+        ("min_velocity_change_ms", -0.1, 0.0),
+        ("merge_window_s", 0.0, 0.01),
+    ],
+)
+def test_post_init_checks_both_sides(field, bad, ok):
     with pytest.raises(ValueError):
-        bc.BallContactParams(contact_radius_m=6.0, contact_exist_radius_m=5.0)
+        bc.BallContactParams(**{field: bad})
+    assert getattr(bc.BallContactParams(**{field: ok}), field) == ok
 
 
-# --------------------------------------------------------------------------- #
-# Task 2: velocity-break kernel
-# --------------------------------------------------------------------------- #
-def _line(n, dt, vx, vy, x0=0.0, y0=0.0):
-    t = np.arange(n) * dt
-    x = x0 + vx * t
-    y = y0 + vy * t
-    return np.column_stack([x, y]), t
+def test_v2_emits_only_velocity_break_and_unresolved():
+    out = pd.concat(
+        [
+            bc.detect_ball_contacts(_synthetic_match_frames()),
+            bc.detect_ball_contacts(_scene(_speed_change(5.0), {7: ("T1", 60.0, 37.0)}), params=_p()),
+        ]
+    )
+    assert set(out["contact_source"].astype(object)) == {"velocity_break", "unresolved"}
 
 
-def _join(xy1, t1, xy2, dt):
-    t2 = t1[-1] + dt + np.arange(len(xy2)) * dt
-    return np.vstack([xy1, xy2]), np.concatenate([t1, t2])
+def test_empty_and_single_frame_inputs():
+    one = _scene([(0.0, 0.0, (60.0, 34.0), (60.0, 34.0))])
+    assert len(bc.detect_ball_contacts(one, params=_p())) == 0
+    no_ball = one[~one["is_ball"]]
+    out = bc.detect_ball_contacts(no_ball, params=_p())
+    assert len(out) == 0 and list(out.columns) == list(bc._CONTACT_COLUMNS)
 
 
-def test_velocity_break_fires_on_speed_drop():
-    xy1, t1 = _line(6, 0.1, 10.0, 0.0)
-    xy2, _ = _line(6, 0.1, 1.0, 0.0, x0=xy1[-1, 0])
-    xy, t = _join(xy1, t1, xy2, 0.1)
-    mask, _mag = bc._velocity_breaks(xy, t, bc.BallContactParams())
-    assert mask.any()
+def _contacts_actor():
+    return pd.DataFrame(
+        {
+            "period_id": [1, 1, 1],
+            "frame_id": [24, 26, 30],
+            "time_seconds": [0.98, 1.02, 1.20],
+            "player_id": pd.array([7, 7, 9], dtype="Int64"),
+            "contact_x": [60.0, 60.2, 61.0],
+            "contact_y": [34.0, 34.0, 34.0],
+            "velocity_change_ms": [5.0, 5.0, 5.0],
+            "confidence": [0.8, 0.8, 0.8],
+            "is_aerial": pd.array([False, False, False], dtype="boolean"),
+            "aerial_source": pd.Categorical(["measured"] * 3),
+            "contact_source": pd.Categorical(["velocity_break"] * 3, categories=bc.CONTACT_SOURCE_VALUES),
+        }
+    )
 
 
-def test_velocity_break_fires_on_heading_turn():
-    xy1, t1 = _line(6, 0.1, 5.0, 0.0)
-    xy2, _ = _line(6, 0.1, 0.0, 5.0, x0=xy1[-1, 0], y0=xy1[-1, 1])
-    xy, t = _join(xy1, t1, xy2, 0.1)
-    mask, _mag = bc._velocity_breaks(xy, t, bc.BallContactParams())
-    assert mask.any()
+@pytest.mark.parametrize("excluded", [7, "7", 7.0], ids=["int", "str", "float"])
+def test_first_contact_in_window_skips_excluded_player(excluded):
+    # Detector spec section 5 (owner ruling 6): the actor's own contact after t0 is skipped, dtype-safe.
+    c = _contacts_actor()
+    found = [
+        bc.first_contact_in_window(c, 1, 1.0, 2.0),  # no exclusion: the actor at 1.02
+        bc.first_contact_in_window(c, 1, 1.0, 2.0, exclude_player_id=excluded),
+        bc.first_contact_in_window(c, 1, 0.9, 2.0, exclude_player_id=excluded),  # the actor at 0.98 too
+    ]
+    assert all(f is not None for f in found)
+    assert [f["player_id"] for f in found if f is not None] == [7, 9, 9]
 
 
-def test_velocity_break_silent_on_smooth_line():
-    xy, t = _line(20, 0.1, 6.0, 0.0)
-    mask, _mag = bc._velocity_breaks(xy, t, bc.BallContactParams())
-    assert not mask.any()
-
-
-def test_velocity_break_frame_rate_invariant():
-    for dt in (0.1, 0.04):
-        xy1, t1 = _line(8, dt, 8.0, 0.0)
-        xy2, _ = _line(8, dt, 0.5, 0.0, x0=xy1[-1, 0])
-        xy, t = _join(xy1, t1, xy2, dt)
-        mask, _m = bc._velocity_breaks(xy, t, bc.BallContactParams())
-        assert mask.any()
-
-
-# --------------------------------------------------------------------------- #
-# Task 3: attribution + merge/representative
-# --------------------------------------------------------------------------- #
-def test_attribution_rejects_overhead_ball():
-    players = pd.DataFrame({"player_id": [7], "x": [10.0], "y": [10.0]})
-    pid, _dist = bc._attribute(0, np.array([10.0]), np.array([10.0]), np.array([4.0]), players, bc.BallContactParams())
-    assert pd.isna(pid)
-
-
-def test_attribution_nearest_playable():
-    players = pd.DataFrame({"player_id": [7, 9], "x": [10.5, 20.0], "y": [10.0, 10.0]})
-    pid, dist = bc._attribute(0, np.array([10.0]), np.array([10.0]), np.array([0.1]), players, bc.BallContactParams())
-    assert pid == 7 and dist < 1.0
-
-
-def test_attribution_no_player_in_range_is_unresolved():
-    players = pd.DataFrame({"player_id": [7], "x": [50.0], "y": [50.0]})
-    pid, _dist = bc._attribute(0, np.array([10.0]), np.array([10.0]), np.array([0.1]), players, bc.BallContactParams())
-    assert pd.isna(pid)
+@pytest.mark.parametrize("dtype", ["Int64", "object-str"])
+def test_add_ball_contacts_skips_the_actor(dtype):
+    # The synthetic match: player A (7) touches at 0.4 s, player B (9) at 0.8 s. An action by A at 0.3 s gets B as its
+    # first contact; an action by B gets A. The action's player_id dtype differs from the frames' (Int64).
+    frames = _synthetic_match_frames()
+    for actor, expected in ((_P_A, _P_B), (_P_B, _P_A)):
+        pid = pd.array([actor], dtype="Int64") if dtype == "Int64" else [str(actor)]
+        actions = pd.DataFrame(
+            {"game_id": [1], "action_id": [0], "period_id": [1], "time_seconds": [0.3], "player_id": pid}
+        )
+        assert int(bc.add_ball_contacts(actions, frames)["first_contact_player_id"].iloc[0]) == expected
 
 
 def test_merge_representative_is_max_magnitude_frame():
@@ -118,15 +335,6 @@ def test_merge_keeps_two_touches_beyond_window():
     assert len(out) == 2
 
 
-def test_merge_rdp_only_cluster_keeps_earliest_vertex():
-    cands = [3, 4]
-    mag = {3: 0.0, 4: 0.0}
-    src = {3: "rdp", 4: "rdp"}
-    t = {3: 2.00, 4: 2.02}
-    out = bc._merge_clusters(cands, mag, src, t, bc.BallContactParams())
-    assert len(out) == 1 and out[0].frame_pos == 3 and out[0].source == "rdp"
-
-
 # --------------------------------------------------------------------------- #
 # Task 4: detect_ball_contacts (synthetic fixture)
 # --------------------------------------------------------------------------- #
@@ -137,7 +345,7 @@ _BX, _BY = 62.0, 48.0
 
 def _synthetic_match_frames(*, gap_period2: bool = True) -> pd.DataFrame:
     """Two periods, 25 fps, ball + two players. Planted contacts:
-    - contact A at frame 10: a sharp heading turn at player A (ground, z=0.1) -> source "both";
+    - contact A at frame 10: a sharp heading turn at player A (ground, z=0.1) -> a v2 "velocity_break";
     - contact B at frame 20: ball dead-stops at player B (aerial, z=2.4)   -> source "velocity_break".
     Period 2 inserts a 3-frame NaN-ball detection gap (frames 12-14).
     """
@@ -217,7 +425,7 @@ def test_detect_contacts_recovers_planted_touches():
     }
     resolved = out[out["contact_source"] != "unresolved"]
     assert resolved["player_id"].notna().all()
-    assert out["contact_source"].nunique() >= 2  # non-vacuity: >1 source
+    assert set(resolved["contact_source"].astype(object)) == {"velocity_break"}  # v2: one candidate method
     assert resolved["player_id"].nunique() >= 2  # non-vacuity: >1 player
 
 
@@ -251,15 +459,6 @@ def test_confidence_monotone_in_velocity_change():
     lo = bc._confidence(1.0, 1.0, 1.0, 1.0, dv_scale_ms=5.0)
     hi = bc._confidence(20.0, 1.0, 1.0, 1.0, dv_scale_ms=5.0)
     assert hi > lo and 0.0 <= lo <= hi <= 1.0
-
-
-def test_min_velocity_change_floor_is_opt_in():
-    frames = _synthetic_match_frames()
-    keep_all = bc.detect_ball_contacts(frames)  # default floor 0.0 -> no loss
-    floored = bc.detect_ball_contacts(frames, params=bc.BallContactParams(min_velocity_change_ms=100.0))
-    # a 100 m/s floor is physically unreachable -> drops candidates; default keeps strictly more
-    assert len(keep_all) >= len(floored)
-    assert (floored["contact_source"] != "unresolved").sum() <= (keep_all["contact_source"] != "unresolved").sum()
 
 
 def test_detect_contacts_pure():
@@ -396,8 +595,10 @@ def test_velocity_change_detects_turn_over_the_time_window():
     tt = np.array([0.00, 0.04, 0.08, 0.12, 0.16, 0.20, 0.24])
     bx = np.where(tt <= 0.12, 10.0 * tt, 10.0 * 0.12)
     by = np.where(tt <= 0.12, 0.0, 10.0 * (tt - 0.12))
-    dv = bc._velocity_change_at(bx, by, tt, 3, 0.12)
-    assert 13.0 < dv < 15.0
+    dv, s_in, s_out, _turn = bc._velocity_change_series(bx, by, tt, 0.12)
+    assert 13.0 < dv[3] < 15.0
+    assert s_in[3] == pytest.approx(10.0) and s_out[3] == pytest.approx(10.0)
+    assert np.isnan(dv[0]) and np.isnan(dv[-1])  # no sample on one side
 
 
 def test_time_based_window_matches_old_on_dense_uniform_sampling():

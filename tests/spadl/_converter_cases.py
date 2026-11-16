@@ -335,8 +335,9 @@ def _skillcorner_run(events: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 def _gradientsports_input() -> pd.DataFrame:
     from silly_kicks.spadl import gradientsports as gs
+    from tests.spadl._gs_clock import kickoff_time, with_event_clock
 
-    req = sorted(gs.EXPECTED_INPUT_COLUMNS)
+    req = sorted(gs.EXPECTED_INPUT_COLUMNS | {"time_seconds"})
 
     def _p(eid, t, player, x):
         base: dict[str, Any] = {c: None for c in req}
@@ -346,10 +347,9 @@ def _gradientsports_input() -> pd.DataFrame:
                 "event_id": eid,
                 "possession_event_id": eid,
                 "period_id": 1,
+                # The intended period time; with_event_clock turns it into event_time (ADR-133 r8 6.6 B).
                 "time_seconds": t,
-                # start_time == game clock here (monotonic in intended chronological order); it is
-                # the order-insensitive basis for imputing the NaN-time FOUL below (Option D).
-                "start_time": t,
+                "start_time": kickoff_time(1) + t,
                 "team_id": 100,
                 "player_id": player,
                 "game_event_type": "OTB",
@@ -363,9 +363,9 @@ def _gradientsports_input() -> pd.DataFrame:
         )
         return base
 
-    def _foul(eid, start_time, player, x):
-        # Dedicated FOUL: NULL startGameClock -> NaN time_seconds, imputed by start_time-ordered
-        # ffill (Option D). Its presence makes this case exercise the order-insensitive foul path.
+    def _foul(eid, t, player, x):
+        # Dedicated FOUL: NULL startGameClock (NaN input time_seconds) but its own eventTime, which the converter
+        # reads (ADR-133 r8 6.6 B). Its presence keeps the foul path in this order-insensitivity case.
         base: dict[str, Any] = {c: None for c in req}
         base.update(
             {
@@ -374,7 +374,8 @@ def _gradientsports_input() -> pd.DataFrame:
                 "possession_event_id": eid,
                 "period_id": 1,
                 "time_seconds": float("nan"),
-                "start_time": start_time,
+                "event_time": kickoff_time(1) + t,
+                "start_time": kickoff_time(1) + t,
                 "team_id": 100,
                 "player_id": player,
                 "game_event_type": "FOUL",
@@ -393,7 +394,7 @@ def _gradientsports_input() -> pd.DataFrame:
         [
             _p(2, 20.0, 2, -30.0),
             _p(4, 40.0, 4, 30.0),
-            _foul(5, 25.0, 1, 5.0),  # NaN time_seconds; start_time 25 -> imputes to pass@20
+            _foul(5, 25.0, 1, 5.0),  # NaN startGameClock; its own event_time puts it at 25 s
             _p(1, 10.0, 1, -10.0),
             _p(3, 30.0, 3, 10.0),
         ]
@@ -415,9 +416,10 @@ def _gradientsports_input() -> pd.DataFrame:
     df["period_id"] = df["period_id"].astype("int64")
     df["time_seconds"] = df["time_seconds"].astype("float64")
     df["start_time"] = df["start_time"].astype("float64")
+    df["event_time"] = df["event_time"].astype("float64")
     df["ball_x"] = df["ball_x"].astype("float64")
     df["ball_y"] = df["ball_y"].astype("float64")
-    return df
+    return with_event_clock(df)
 
 
 def _gradientsports_run(events: pd.DataFrame) -> pd.DataFrame:

@@ -16,7 +16,7 @@ import pandas as pd
 
 from silly_kicks.spadl import config as spadlconfig
 
-from ._columns import CORNER_IDENTIFY_COLUMNS
+from ._columns import CORNER_IDENTIFY_COLUMNS, CORNER_KIND_SOURCE_VALUES
 from ._config import CornerWindowParams
 
 _DEFAULT_WINDOW_PARAMS = CornerWindowParams()
@@ -86,21 +86,39 @@ def identify_corners(
     out["period_id"] = c["period_id"].to_numpy()
     out["t_kick"] = c["time_seconds"].astype("float64").to_numpy()
     out["attacking_team_id"] = c["team_id"].to_numpy()
+    out["taker_player_id"] = (
+        actions.loc[c.index, "player_id"].astype(object).to_numpy()
+        if "player_id" in actions.columns
+        else np.full(len(c), pd.NA, dtype=object)
+    )
 
     midline = float(spadlconfig.field_width) / 2.0
     out["corner_side"] = np.where(c["start_y"].to_numpy() >= midline, "left", "right")
     out["kick_x"] = c["start_x"].astype("float64").to_numpy()
     out["kick_y"] = c["start_y"].astype("float64").to_numpy()
 
-    kind = np.where(c["type_id"].to_numpy() == _CORNER_SHORT_ID, "short", "direct")
+    # ADR-133 decision 10: when the actions carry the tracking cross attempt (add_cross_deliveries), it decides the
+    # delivery; where it is <NA> (unanswerable or cut out, ADR-133 decision 10) or absent, the SPADL type decides.
+    kind = np.where(c["type_id"].to_numpy() == _CORNER_SHORT_ID, "short", "direct").astype(object)
+    source = np.full(len(c), "event", dtype=object)
+    if "cross_attempt" in actions.columns:
+        att = actions.loc[c.index, "cross_attempt"].astype("boolean")
+        known = att.notna().to_numpy(dtype=bool)
+        kind[known] = np.where(att[known].to_numpy(dtype=bool), "direct", "short")
+        source[known] = "tracking"
     out["corner_kind"] = kind
     out["corner_source"] = _SOURCE_BY_PROVIDER.get(provider, "spadl_corner")
+    out["corner_kind_source"] = source
 
     if provider == "skillcorner" and gi is not None and len(gi) > 0:
         out = _apply_gi_refinement(out, gi)
 
     out = out.reset_index(drop=True)
-    return out.reindex(columns=list(CORNER_IDENTIFY_COLUMNS)).astype(CORNER_IDENTIFY_COLUMNS)
+    out = out.reindex(columns=list(CORNER_IDENTIFY_COLUMNS)).astype(CORNER_IDENTIFY_COLUMNS)
+    out["corner_kind_source"] = pd.Categorical(
+        out["corner_kind_source"].astype(object), categories=sorted(CORNER_KIND_SOURCE_VALUES)
+    )
+    return out
 
 
 def _apply_gi_refinement(out: pd.DataFrame, gi: pd.DataFrame) -> pd.DataFrame:
@@ -114,4 +132,5 @@ def _apply_gi_refinement(out: pd.DataFrame, gi: pd.DataFrame) -> pd.DataFrame:
         & ~merged["start_type"].isin(_CONFIRMING_START_TYPES)
     )
     merged.loc[unclear, "corner_kind"] = "unclear"
+    merged.loc[unclear, "corner_kind_source"] = "gi"  # the GI refinement wins over a tracking decision
     return merged.drop(columns=["game_interruption_before", "start_type"])

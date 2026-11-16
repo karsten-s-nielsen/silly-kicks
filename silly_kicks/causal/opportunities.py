@@ -86,6 +86,9 @@ class OpportunityConfig:
     emit_outcome_partition: bool = False  # Layer 2: Y_attempt / Y_close_attempt / Y_far_attempt
     treatment_covariate: str | None = None  # D5: None = action-occurrence treatment (legacy)
     treatment_threshold_m: float | None = None
+    # ADR-133: True for an xCross model trained on label v2 -- a treatment is a tracking cross ATTEMPT
+    # (cross_attempt True on the selected delivery kinds), not the SPADL type. False keeps the v1 type rule.
+    treatment_from_cross_attempt: bool = False
 
 
 def xcross_config(model_metadata: dict) -> OpportunityConfig:
@@ -102,6 +105,7 @@ def xcross_config(model_metadata: dict) -> OpportunityConfig:
     return OpportunityConfig(
         treatment_type_names=tuple(model_metadata.get("cross_types", ("cross",))),
         outcome_type_names=("shot", "shot_freekick", "shot_penalty"),
+        treatment_from_cross_attempt=int(model_metadata.get("xcross_label_version", 1)) >= 2,
     )
 
 
@@ -301,7 +305,21 @@ def build_opportunities(
     # `_partition_from_distances`, which is exactly why that test exists.
     if cfg.emit_outcome_partition:
         cols += ["Y_attempt", "Y_close_attempt", "Y_far_attempt", "score_differential"]
-    return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
+    return _opportunity_table(rows, [sp["gid"] for sp in spells], cols)
+
+
+def _opportunity_table(rows: list, game_ids: list, cols: list) -> pd.DataFrame:
+    """The opportunity table from the per-spell rows. A ``None`` row is a spell whose treatment is unknown (ADR-133
+    label v2 rule, cross spec 6.5): it is dropped, and ``attrs["n_unknown_treatment_spells"]`` counts it per
+    match, never as ``Z = 0``."""
+    kept = [r for r in rows if r is not None]
+    unknown: dict[str, int] = {}
+    for r, gid in zip(rows, game_ids, strict=True):
+        if r is None:
+            unknown[str(gid)] = unknown.get(str(gid), 0) + 1
+    out = pd.DataFrame(kept, columns=cols) if kept else pd.DataFrame(columns=cols)
+    out.attrs["n_unknown_treatment_spells"] = unknown
+    return out
 
 
 def _frame_domain_state(grp, goal_map, gid, per, advance_m, cfg):
@@ -326,7 +344,7 @@ def _frame_domain_state(grp, goal_map, gid, per, advance_m, cfg):
     return poss_team, goal_x, _in_wide_area(bx, by, goal_x, advance_m)
 
 
-def _row(sp, actions, cfg, score_fn, home_team_id) -> dict:
+def _row(sp, actions, cfg, score_fn, home_team_id) -> dict | None:
     grp, gid, per, team, goal_x = sp["grp"], sp["gid"], sp["per"], sp["team"], sp["goal_x"]
     carrier_s = grp["ball_carrier_player_id"].dropna()
     carrier_pid = carrier_s.iloc[0] if not carrier_s.empty else None
@@ -346,6 +364,8 @@ def _row(sp, actions, cfg, score_fn, home_team_id) -> dict:
         z, t_anchor = _label_treatment_covariate(feats, cfg.treatment_covariate, cfg.treatment_threshold_m), None
     else:
         z, t_anchor = _label_treatment(actions, gid, per, team, cfg, entry, sp["end_time"])
+        if z is None:
+            return None  # an unknown treatment leaves the table (label v2 rule, cross spec 6.5)
     anchor = _resolve_anchor(z=z, t_anchor=t_anchor, entry=entry)
     row.update(
         game_id=gid,
@@ -373,13 +393,30 @@ def _row(sp, actions, cfg, score_fn, home_team_id) -> dict:
     return row
 
 
-def _team_period_action_times(actions, gid, per, team, type_names) -> np.ndarray:
-    type_ids = {_spc.actiontype_id[n] for n in type_names}
+def _team_period_action_times(actions, gid, per, team, type_names, *, from_cross_attempt: bool = False) -> np.ndarray:
+    if from_cross_attempt:
+        # ADR-133 label v2: the tracking attempt on the selected delivery kinds, the same rule the model trained on.
+        from silly_kicks.tracking._xcross_attempt import _cross_kind_mask, _require_cross_attempt
+
+        _require_cross_attempt(actions, "causal opportunities")
+        kind = _cross_kind_mask(actions, type_names) & actions["cross_attempt"].astype("boolean").fillna(
+            False
+        ).to_numpy(dtype=bool)
+    else:
+        kind = actions["type_id"].isin({_spc.actiontype_id[n] for n in type_names}).to_numpy()
     sel = (  # ids_match: dtype-safe action<->frame team/game id seam (ADR-019)
-        ids_match(actions["game_id"], gid)
-        & (actions["period_id"] == per)
-        & ids_match(actions["team_id"], team)
-        & actions["type_id"].isin(type_ids)
+        ids_match(actions["game_id"], gid) & (actions["period_id"] == per) & ids_match(actions["team_id"], team) & kind
+    )
+    return np.sort(actions.loc[sel, "time_seconds"].to_numpy(dtype=float))
+
+
+def _team_period_unknown_attempt_times(actions, gid, per, team, type_names) -> np.ndarray:
+    """Times of the team's selected-kind rows whose ``cross_attempt`` is unknown (``<NA>``) in one period."""
+    from silly_kicks.tracking._xcross_attempt import _cross_kind_mask
+
+    kind = _cross_kind_mask(actions, type_names) & actions["cross_attempt"].isna().to_numpy(dtype=bool)
+    sel = (
+        ids_match(actions["game_id"], gid) & (actions["period_id"] == per) & ids_match(actions["team_id"], team) & kind
     )
     return np.sort(actions.loc[sel, "time_seconds"].to_numpy(dtype=float))
 
@@ -425,11 +462,21 @@ def _resolve_anchor(*, z: int, t_anchor: float | None, entry: float) -> float:
     return float(t_anchor) if (z and t_anchor is not None) else float(entry)
 
 
-def _label_treatment(actions, gid, per, team, cfg, entry, end_time) -> tuple[int, float | None]:
+def _label_treatment(actions, gid, per, team, cfg, entry, end_time) -> tuple[int | None, float | None]:
+    """``(Z, anchor)``. ``Z`` is ``None`` (unknown) when the window holds no attempt but holds a row of a selected kind
+    whose ``cross_attempt`` is unknown: the label v2 rule (ADR-133 decision 9; cross spec 6.5), never ``Z = 0``."""
     hi = min(entry + cfg.exposure_window_seconds, end_time)  # R3-M1: clamp the Z-window to possession continuity
-    ts = _team_period_action_times(actions, gid, per, team, cfg.treatment_type_names)
+    ts = _team_period_action_times(
+        actions, gid, per, team, cfg.treatment_type_names, from_cross_attempt=cfg.treatment_from_cross_attempt
+    )
     win = ts[(ts > entry) & (ts <= hi)]
-    return (1, float(win[0])) if len(win) else (0, None)
+    if len(win):
+        return 1, float(win[0])
+    if cfg.treatment_from_cross_attempt:
+        unk = _team_period_unknown_attempt_times(actions, gid, per, team, cfg.treatment_type_names)
+        if ((unk > entry) & (unk <= hi)).any():
+            return None, None
+    return 0, None
 
 
 _GOAL_XY = (105.0, 34.0)  # SPADL action-LTR: the attacked goal centre, for BOTH teams

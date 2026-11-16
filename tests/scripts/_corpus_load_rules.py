@@ -51,6 +51,7 @@ _LOADER_NON_CORPUS: dict[str, str] = {
     "pining_source": "(refs, load) tracking factory: composes list_match_refs + load_match; not a stream/loop",
     "open_data_source": "(refs, load) open-data factory: composes list_open_data_refs + load_open_data_match",
     "open_lineups": "returns ONE match's lineups (the census team map), cached like the events; not a corpus call",
+    "gradientsports_events_json": "returns ONE GS match's cached raw events JSON (the PFF truth); not a corpus call",
 }
 
 #: Rule A exemption, function-granular (spec section 5.3). ``(module, function)``.

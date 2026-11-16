@@ -55,8 +55,9 @@ def test_registry_surface_is_the_expected_size():
     left ``tracking.__all__`` with it. Dropped 34 -> 32 at the xT-GK v1 retirement (ADR-121):
     ``add_xt_gk`` and ``add_gk_completion`` left ``tracking.__all__`` when v1 was removed.
     Bumped 32 -> 33 at TF-79 (``add_ball_contacts`` entered ``tracking.__all__``).
+    Bumped 33 -> 34 at TF-86 (``add_cross_deliveries`` entered ``tracking.__all__``; ADR-133).
     """
-    assert len(_public_add_names()) == 33, sorted(_public_add_names())
+    assert len(_public_add_names()) == 34, sorted(_public_add_names())
 
 
 @pytest.mark.parametrize("name", sorted(MIRROR_ENTRIES))

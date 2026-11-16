@@ -174,6 +174,10 @@ def _feat_xcross(frames, actions, home_team_id):
 
     if actions is None:
         return None
+    from silly_kicks.tracking._cross_delivery import _ensure_cross_attempts
+
+    # ADR-133 label v2: prepare reads the tracking cross attempt (frames with an unknown label leave the set).
+    actions = _ensure_cross_attempts(actions, frames)
     # return_meta=True surfaces the row-aligned frame index (game_id/period_id/frame_id); the box-detail
     # columns it also carries are ignored -- only the selected-frame key is needed here.
     feats, _y, _g, meta = prepare_xcross_training_data(

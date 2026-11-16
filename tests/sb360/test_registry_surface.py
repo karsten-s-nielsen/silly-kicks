@@ -213,15 +213,11 @@ _EXPECTED_DARK_COLUMNS = {
     # was DEMOTED to experimental in 4.112.0 -- ADR-090 construct-validity -- so it carries no boundary
     # verdict at all now.)
     #
-    # TF-79 ball-contact (ADR-125): detect_ball_contacts is continuous-only -- a single SB360
-    # freeze-frame has no trajectory segment (needs >= 2 ball frames), so NO contact resolves on any
-    # roster. These two are the pure-signal columns that then carry nothing at all (both legs all-NaN
-    # -> no_signal -> not_exercised): the |Δv| measurement and the z-gated aerial boolean (ADR-125 §B
-    # makes is_aerial honest-NaN unless z is measured, and SB360 z is absent). NOT a regression -- any
-    # pre-dedup "coverage" was a spurious freeze-frame contact (the sawtooth artifact), i.e. fabricated,
-    # not evidence. The other seven first_contact_* columns stay honest_nan (all_nan), so they are not
-    # dark; only these two reclassify. Multi-frame tracking exercises both.
-    ("add_ball_contacts", "first_contact_velocity_change_ms"),
+    # TF-79 ball-contact (ADR-125): the z-gated aerial boolean is honest-NaN unless z is measured (ADR-125 §B),
+    # and SB360 z is absent, so it is both-NaN on every roster (no_signal -> not_exercised). The other eight
+    # first_contact_* columns are honest_nan on defender_absent and gk_one_end (the tracking leg resolves one
+    # contact; detector v2 reports its admitting |Δv|, ADR-134, which lit first_contact_velocity_change_ms),
+    # so they are not dark. Multi-frame tracking with measured z exercises it.
     ("add_ball_contacts", "first_contact_is_aerial"),
     # TF-46 Arm 1 corners.add_corner_windows (boundary): the first-contact winner comes from the TF-79
     # continuous ball-contact primitive and first_possession_time from the GI feed -- both structurally
@@ -231,6 +227,10 @@ _EXPECTED_DARK_COLUMNS = {
     ("corners.add_corner_windows", "first_possession_time"),
     ("corners.add_corner_windows", "winner_team_id"),
     ("corners.add_corner_windows", "winner_player_id"),
+    # TF-86 cross delivery (ADR-133): cross_height is set only on an attempt judged from a ball trajectory; a
+    # single SB360 freeze frame has none, so no attempt resolves and the column is both-NaN on every roster
+    # (no_signal -> not_exercised). cross_attempt is identical -> works, so it is not dark.
+    ("add_cross_deliveries", "cross_height"),
 }
 
 

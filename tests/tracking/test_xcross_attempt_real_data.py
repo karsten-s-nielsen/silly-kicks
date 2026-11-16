@@ -68,6 +68,8 @@ def _synthesize_cross_actions(frames: pd.DataFrame, n: int = 8) -> pd.DataFrame:
             "type_id": [spc.actiontype_id["cross"]] * len(cand),
             "result_id": [spc.result_id["success"]] * len(cand),
             "action_id": np.arange(len(cand)),
+            # ADR-133 label v2: these tests exercise the features, so the crosses carry a staged tracking attempt.
+            "cross_attempt": pd.array([True] * len(cand), dtype="boolean"),
         }
     )
 

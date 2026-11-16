@@ -75,7 +75,7 @@ import pandas as pd
 from silly_kicks.tracking import direction
 
 from . import config as spadlconfig
-from .base import _derive_end_coordinates, sort_actions_chronologically
+from .base import _derive_end_coordinates, _native_cross_flag, classify_deliveries, sort_actions_chronologically
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import GRADIENTSPORTS_SPADL_COLUMNS, ConversionReport
 from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -90,12 +90,13 @@ EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
         "event_id",
         "possession_event_id",
         "period_id",
-        "time_seconds",
-        # Absolute event clock (raw GS ``startTime``). Chronology-faithful and present on EVERY
-        # event including null-``startGameClock`` FOULs, so it is the order-insensitive basis for
-        # imputing a FOUL's ``time_seconds`` (measured: 0/144,374 inversions vs the game clock on
-        # 64 real WC2022 matches; ``gameEventId`` is ~21.5% inverted and unfit). See the imputation
-        # block below and ``_impute_time_seconds_by_start_time``.
+        # The possession event's own video time (raw GS ``eventTime``), present on every event (144,541 of
+        # 144,541 in the 64 cached WC2022 matches). ``time_seconds`` is ``event_time`` minus the period's
+        # kickoff ``start_time``: period-relative (ADR-017) and equal to PFF's own frame sync within 0.067 s
+        # (ADR-133, spec 2026-11-13 r8 6.6 B). The input ``startGameClock`` is not read.
+        "event_time",
+        # The game event's start video time (raw GS ``startTime``): the kickoff anchor and the first sort
+        # tiebreak (ADR-065).
         "start_time",
         "team_id",
         "player_id",
@@ -362,53 +363,60 @@ def _resolve_team_ids(events: pd.DataFrame) -> pd.arrays.IntegerArray:
     return team.array  # type: ignore[return-value]
 
 
-def _impute_time_seconds_by_start_time(events: pd.DataFrame) -> np.ndarray:
-    """Impute NaN ``time_seconds`` by an ffill/bfill ORDERED BY ``start_time`` within each period.
+#: The kickoff game event of each period, whose ``start_time`` anchors that period's clock (cross spec 6.6 B).
+_KICKOFF_GAME_EVENT = {1: "FIRSTKICKOFF", 2: "SECONDKICKOFF", 3: "THIRDKICKOFF", 4: "FOURTHKICKOFF"}
+#: The penalty-shootout period. It has no kickoff, so a caller that splits it out anchors it at its first event.
+_SHOOTOUT_PERIOD = 5
 
-    Real Gradient Sports FOUL events carry a NULL ``startGameClock`` (-> NaN ``time_seconds``) but a
-    non-null absolute ``start_time``. Ordering the ffill by ``start_time`` (with ``event_time`` as a
-    per-row fallback) makes the imputed value a PURE FUNCTION of content -- identical under any input
-    row permutation -- and chronologically correct (a NaN row takes its ``start_time``-predecessor's
-    game clock). Measured basis: on 64 real WC2022 matches ``start_time`` has 0/144,374 inversions vs
-    ``startGameClock`` and is present on all 28 null-clock fouls, whereas ``gameEventId`` is ~21.5%
-    inverted (``scratchpad/gs_foul_id_probe.py``).
 
-    Returns a float64 ndarray aligned to ``events`` row positions (never reorders ``events`` itself;
-    the top-of-frame sort happens after this, keyed on the now-populated ``time_seconds``).
+def _period_anchors(events: pd.DataFrame) -> dict[int, float]:
+    """Per period, the video time its clock counts from (cross spec 6.6 B).
 
-    Fallback: if a NaN-``time_seconds`` row lacks BOTH ``start_time`` and ``event_time``, the ordering
-    key is undefined, so imputation falls back to native row order (the pre-4.x behaviour) with a
-    warning. Unobserved on real GS data (every foul carries ``start_time``); a caller hitting it has
-    an incomplete feed.
+    Periods 1-4: the ``start_time`` of the period's kickoff game event. Period 5 (a caller's split-out shootout):
+    the first ``start_time`` of its rows. Read on the full input, before the exclusion filter drops the kickoffs.
     """
-    order_key = events["start_time"].to_numpy(dtype="float64")
-    if "event_time" in events.columns:
-        event_time = events["event_time"].to_numpy(dtype="float64")
-        order_key = np.where(np.isnan(order_key), event_time, order_key)  # fresh array (writable)
+    ge = events["game_event_type"].fillna("").to_numpy()
+    period = events["period_id"].to_numpy()
+    start = events["start_time"].to_numpy(dtype="float64")
+    anchors: dict[int, float] = {}
+    for p, kickoff in _KICKOFF_GAME_EVENT.items():
+        hit = (period == p) & (ge == kickoff) & np.isfinite(start)
+        if hit.any():
+            anchors[p] = float(start[hit].min())
+    shootout = (period == _SHOOTOUT_PERIOD) & np.isfinite(start)
+    if shootout.any():
+        anchors[_SHOOTOUT_PERIOD] = float(start[shootout].min())
+    return anchors
 
-    work = pd.DataFrame(
-        {
-            "_pos": np.arange(len(events)),
-            "period_id": events["period_id"].to_numpy(),
-            "time_seconds": events["time_seconds"].to_numpy(dtype="float64"),
-            "_ord": order_key,
-        }
-    )
-    if np.isnan(order_key).any():
-        warnings.warn(
-            "gradientsports: row(s) with NaN time_seconds lack a start_time/event_time ordering "
-            "key; imputing time_seconds in native row order (NOT permutation-invariant). Supply "
-            "start_time (raw GS startTime) to make foul-time imputation order-insensitive.",
-            UserWarning,
-            stacklevel=2,
+
+def _event_clock_time_seconds(events: pd.DataFrame, anchors: dict[int, float]) -> np.ndarray:
+    """``event_time - anchor[period]`` for the converted rows: period-relative (ADR-017; cross spec 6.6 B).
+
+    Raises ``ValueError`` for a period with converted rows but no anchor, a NaN ``event_time``, or an event before
+    its period's kickoff (``time_seconds`` is non-negative, ``spadl/schema.py``; none occurs in the 64 cached
+    WC2022 matches, so one is a data defect).
+    """
+    period = events["period_id"].to_numpy()
+    missing = sorted({int(p) for p in period if int(p) not in anchors})
+    if missing:
+        raise ValueError(
+            f"gradientsports: no kickoff event for period {', '.join(map(str, missing))}; time_seconds is the "
+            "possession event's "
+            "time since its period's kickoff (event_time - kickoff start_time, ADR-133 r8). Supply the "
+            "FIRSTKICKOFF..FOURTHKICKOFF game events."
         )
-        work = work.sort_values(["period_id", "_pos"], kind="mergesort")
-    else:
-        # Stable: co-`start_time` rows keep their native adjacency within the period.
-        work = work.sort_values(["period_id", "_ord", "_pos"], kind="mergesort")
-    work["time_seconds"] = work.groupby("period_id")["time_seconds"].transform(lambda s: s.ffill().bfill())
-    work = work.sort_values("_pos", kind="mergesort")
-    return work["time_seconds"].to_numpy(dtype="float64")
+    event_time = events["event_time"].to_numpy(dtype="float64")
+    if np.isnan(event_time).any():
+        bad = events.loc[np.isnan(event_time), "event_id"].tolist()[:5]
+        raise ValueError(f"gradientsports: converted event(s) {bad} have no event_time (raw GS eventTime).")
+    t = event_time - np.array([anchors[int(p)] for p in period], dtype="float64")
+    if (t < 0).any():
+        i = int(np.flatnonzero(t < 0)[0])
+        raise ValueError(
+            f"gradientsports: event {events['event_id'].iloc[i]} in period {int(period[i])} lies {-t[i]:.3f} s "
+            "before its period's kickoff; time_seconds would be negative."
+        )
+    return t
 
 
 def convert_to_actions(
@@ -450,7 +458,17 @@ def convert_to_actions(
     ValueError
         If any column in :data:`EXPECTED_INPUT_COLUMNS` is missing from
         ``events``, or if ``period_id`` 3/4 rows exist but
-        ``home_team_start_left_extratime`` is ``None``.
+        ``home_team_start_left_extratime`` is ``None``. Also (ADR-133 r8):
+        a period 1-4 that holds a converted event but no kickoff game event,
+        a converted event with a NaN ``event_time``, or a converted event
+        before its period's kickoff (``time_seconds`` is
+        ``event_time - kickoff start_time``, period-relative).
+
+    Notes
+    -----
+    Deliveries follow :func:`silly_kicks.spadl.base.classify_deliveries` and its event-only limits (ADR-133).
+    Gradient Sports' own label (``CR``) is kept in ``cross_native``. Event-rule recall against
+    ``cross_attempt``: <recall: Task 10>.
 
     Examples
     --------
@@ -506,6 +524,8 @@ def convert_to_actions(
     # (game_event_type, possession_event_type) pair is in the documented
     # excluded set; tally counts for the ConversionReport.
     # ------------------------------------------------------------------
+    # The kickoff anchors are read before the exclusion filter drops the kickoff rows (cross spec 6.6 B).
+    period_anchors = _period_anchors(events)
     ge_arr_full = events["game_event_type"].fillna("").to_numpy()
     pe_arr_full = events["possession_event_type"].fillna("").to_numpy()
 
@@ -591,7 +611,9 @@ def convert_to_actions(
             "tackle_loser_team_id",
         ):
             actions[col] = pd.array([], dtype="Int64")
-        actions = _finalize_output(actions, schema=GRADIENTSPORTS_SPADL_COLUMNS)
+        for col in preserve_native or ():
+            actions[col] = events[col].reset_index(drop=True)  # empty, with the input dtype
+        actions = _finalize_output(actions, schema=GRADIENTSPORTS_SPADL_COLUMNS, extra_columns=preserve_native)
         report = ConversionReport(
             provider="gradientsports",
             total_events=total_events_input,
@@ -603,33 +625,23 @@ def convert_to_actions(
         return actions, report
 
     # ------------------------------------------------------------------
-    # Chronological-action_id invariant (top sort). Impute NaN time_seconds
-    # FIRST, then sort the post-exclusion events into
-    # (game_id, period_id, time_seconds) order at the TOP -- before ANY
-    # positional / .shift()-based derivation (_derive_end_coordinates, the
-    # foul/cross-goal synthesis __order__, action_id assignment). Everything
-    # below is built 1:1 from this frame, so action_id becomes chronological and
-    # the synthesis masks (computed from `events`, applied to `actions`
-    # positionally) stay aligned. On native (already-chronological) input the
-    # sort is a stable no-op. See sort_actions_chronologically in .base.
+    # Chronological-action_id invariant (top sort). The time is computed FIRST, then the post-exclusion events
+    # are sorted into (game_id, period_id, time_seconds) order at the TOP -- before ANY positional /
+    # .shift()-based derivation (_derive_end_coordinates, the foul/cross-goal synthesis __order__, action_id
+    # assignment). Everything below is built 1:1 from this frame, so action_id becomes chronological and the
+    # synthesis masks (computed from `events`, applied to `actions` positionally) stay aligned. See
+    # sort_actions_chronologically in .base.
     #
-    # Imputation must precede the sort: real Gradient Sports data has NULL
-    # startGameClock on all dedicated FOUL events (gameEventType=FOUL,
-    # possessionEventType=FO) -- 28/28 across 13/64 WC2022 matches. A foul has no
-    # game clock and so cannot participate in a time_seconds sort; its time is
-    # imputed by an ORDER-INSENSITIVE ffill/bfill keyed on `start_time` (the raw
-    # absolute clock, present on every event including fouls) -- NOT on native row
-    # order, which would make the imputed value depend on input permutation. See
-    # _impute_time_seconds_by_start_time and its measured basis (§2b of the spec).
-    if events["time_seconds"].isna().any():
-        events = events.copy()
-        events["time_seconds"] = _impute_time_seconds_by_start_time(events)
-    # `start_time` is the tiebreak: an imputed FOUL takes its predecessor's (coarse) game clock, so it
-    # is CO-TIMESTAMPED with that predecessor. `time_seconds` alone cannot order the pair, and the
-    # adjacent pass's `.shift(-1)`-derived end coord depends on which comes first -- so co-timestamped
-    # rows are pinned by the fine-grained absolute `start_time` (the intra-timestamp sequence key,
-    # 0/144,374 inversions vs the game clock on real GS). Makes the whole converter order-insensitive.
-    events = sort_actions_chronologically(events, tiebreak=("start_time",))
+    # time_seconds is the possession event's own time since its period's kickoff (ADR-133, cross spec 6.6 B). It
+    # replaces the whole-second startGameClock, which timed each action from the start of its on-ball sequence (a median
+    # 1.29 s before the possession event on the native converted actions of the 64 WC2022 matches) and was null
+    # on the dedicated FOUL events. Every event carries eventTime, so the former start_time-ordered foul imputation
+    # (Option D; spec 2026-08-20-chronological-action-id-invariant 2b, ADR-065) no longer reaches any output and
+    # is removed. The tiebreak (start_time, possession_event_id, event_id) makes the order a pure function of
+    # content (ADR-065).
+    events = events.copy()
+    events["time_seconds"] = _event_clock_time_seconds(events, period_anchors)
+    events = sort_actions_chronologically(events, tiebreak=("start_time", "possession_event_id", "event_id"))
 
     # ------------------------------------------------------------------
     # Dispatch (type_id, result_id, bodypart_id)
@@ -692,12 +704,14 @@ def convert_to_actions(
             # after the synthesis concat below.
             "shot_blocked": _blocked_flag(_n_ev, applicable=(_pe == "SH"), blocked=(_shot_outcome == "B")),
             "cross_blocked": _blocked_flag(_n_ev, applicable=_open_play_cross, blocked=(_cross_outcome == "B")),
+            "cross_native": _blocked_flag(_n_ev),
         }
     )
 
-    # time_seconds NaN-imputation now happens on `events` at the top of the
-    # frame (before the chronological sort), so `actions["time_seconds"]` is
-    # already non-NaN here -- see the top-of-frame block.
+    # preserve_native: carry the caller's input columns 1:1 onto the actions BEFORE the foul / cross-goal
+    # synthesis below, which copies parent rows, so a synthesized row carries its parent event's values.
+    for col in preserve_native or ():
+        actions[col] = events[col].array  # the array itself: an extension dtype (Int64, string) stays as it is
 
     # ------------------------------------------------------------------
     # Tackle winner/loser passthrough (ADR-001)
@@ -844,7 +858,7 @@ def convert_to_actions(
     # Synthesized rows are .copy()'d from their parents, so they inherit the parent's
     # block flag — but they are converter-injected, NOT real block observations. Reset
     # to pd.NA. No-op when no synthesized rows are present.
-    actions.loc[actions["is_synthetic"], ["shot_blocked", "cross_blocked"]] = pd.NA
+    actions.loc[actions["is_synthetic"], ["shot_blocked", "cross_blocked", "cross_native"]] = pd.NA
 
     # ------------------------------------------------------------------
     # Per-period direction-of-play normalisation. Routed through the canonical
@@ -859,6 +873,15 @@ def convert_to_actions(
         home_team_id=home_team_id,
         home_attacks_right_per_period=home_attacks_right_per_period,
     )
+
+    # One delivery rule for every provider (ADR-133): the native CR typing moves to cross_native (synthesized
+    # rows keep <NA>); the SPADL type comes from the geometry. GS never calls _add_dribbles, so its carries are
+    # native next actions.
+    _real = ~actions["is_synthetic"].to_numpy(dtype=bool)
+    _flag = _native_cross_flag(actions["type_id"])
+    _flag[~_real] = pd.NA
+    actions["cross_native"] = _flag
+    actions = classify_deliveries(actions)
 
     # ------------------------------------------------------------------
     # Component 1 own-goal geometry tripwire (post-LTR). SPADL-LTR puts the acting team attacking
@@ -890,6 +913,10 @@ def convert_to_actions(
     actions["start_y"] = actions["start_y"].clip(0, spadlconfig.field_width)
     actions["end_x"] = actions["end_x"].clip(0, spadlconfig.field_length)
     actions["end_y"] = actions["end_y"].clip(0, spadlconfig.field_width)
+
+    # Every row's time is its possession event's own time, which PFF synchronises to its tracking frames
+    # (ADR-133, cross spec 6.6 B/C); synthesized rows share their parent's time. GS never calls _add_dribbles.
+    actions["time_source"] = "tracking"
 
     # ------------------------------------------------------------------
     # Finalize

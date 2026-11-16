@@ -524,10 +524,12 @@ def _call_corner_windows(actions, frames, links, home_team_id):
                 "period_id": int(a0["period_id"]),
                 "t_kick": float(a0["time_seconds"]),
                 "attacking_team_id": a0["team_id"],
+                "taker_player_id": a0["player_id"] if "player_id" in actions.columns else pd.NA,
                 "corner_side": "left",
                 "kick_x": 104.5,
                 "kick_y": 1.0,
                 "corner_kind": "direct",
+                "corner_kind_source": "event",  # ADR-133: a SPADL-synthesized anchor, typed by the event layer
                 "corner_source": "spadl_corner",
             }
         ]

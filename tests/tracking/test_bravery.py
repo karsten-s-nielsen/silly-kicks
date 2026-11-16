@@ -27,11 +27,27 @@ def _final_actions(rows):
         d["result_id"] = spadlconfig.result_id[str(d.pop("result_name", "fail"))]
         d.setdefault("shot_blocked", pd.NA)
         d.setdefault("cross_blocked", pd.NA)
+        # ADR-133: the provider's own label. Default: the native label equals the given type (a native cross is
+        # a cross); a test re-types rows explicitly to separate the two.
+        d.setdefault("cross_native", _native_default(d["type_id"]))
         out.append(d)
     df = pd.DataFrame(out)
     df["shot_blocked"] = pd.array(df["shot_blocked"].tolist(), dtype="boolean")
     df["cross_blocked"] = pd.array(df["cross_blocked"].tolist(), dtype="boolean")
+    df["cross_native"] = pd.array(df["cross_native"].tolist(), dtype="boolean")
     return df
+
+
+_CROSSED = {spadlconfig.actiontype_id[t] for t in ("cross", "corner_crossed", "freekick_crossed")}
+_SHORT = {spadlconfig.actiontype_id[t] for t in ("pass", "corner_short", "freekick_short")}
+
+
+def _native_default(type_id):
+    if type_id in _CROSSED:
+        return True
+    if type_id in _SHORT:
+        return False
+    return pd.NA
 
 
 def test_bravery_worked_example_shots_only():
@@ -64,6 +80,61 @@ def test_all_na_cross_column_yields_nan_open_play_component():
     out = compute_bravery(_final_actions(rows))
     row = out[out["team_id"] == 20].iloc[0]
     assert np.isnan(row["bravery_open_play_crosses"])  # unknown -> NaN, not 0
+
+
+def _retyped(native_rows, retype):
+    """The same native actions after the geometric re-typing: ``retype`` maps row index -> new type name."""
+    df = _final_actions(native_rows)
+    for i, name in retype.items():
+        df.loc[i, "type_id"] = spadlconfig.actiontype_id[name]
+    return df
+
+
+_NATIVE_ROWS = [
+    dict(type_name="shot", team_id=10, player_id=1, shot_blocked=True),
+    dict(type_name="shot", team_id=10, player_id=1, shot_blocked=False),
+    dict(type_name="cross", team_id=10, player_id=2, cross_blocked=True),  # native cross, blocked
+    dict(type_name="cross", team_id=10, player_id=2, cross_blocked=False),  # native cross, delivered
+    dict(type_name="cross", team_id=10, player_id=2, cross_blocked=False),  # native cross, short delivery
+    dict(type_name="pass", team_id=10, player_id=5),  # native pass that the geometry calls a cross
+    dict(type_name="corner_crossed", team_id=10, player_id=3),
+    dict(type_name="corner_short", team_id=10, player_id=3),  # native short corner delivered into the box
+]
+
+
+def test_bravery_unchanged_under_retyping():
+    # ADR-133: bravery reads the provider's own label (cross_native), so the geometric re-typing of the SPADL
+    # type moves no bravery output.
+    before = compute_bravery(_final_actions(_NATIVE_ROWS))
+    after = compute_bravery(
+        _retyped(_NATIVE_ROWS, {2: "pass", 4: "pass", 5: "cross", 6: "corner_short", 7: "corner_crossed"})
+    )
+    pd.testing.assert_frame_equal(before, after)
+    row = after[after["team_id"] == 20].iloc[0]
+    assert row["n_open_play_crosses_faced"] == 3
+    assert row["n_set_piece_crosses_faced"] == 1
+    assert row["bravery_open_play_crosses"] == pytest.approx(1 / 3)
+
+
+def test_bravery_atomic_matches_standard():
+    from silly_kicks.atomic.tracking.features import compute_bravery as atomic_compute_bravery
+
+    actions = _retyped(_NATIVE_ROWS, {2: "pass", 5: "cross"})
+    std = compute_bravery(actions)
+    atomic = atomic_compute_bravery(actions)
+    shared = [c for c in std.columns if c not in ("bravery_set_piece_crosses", "n_set_piece_crosses_faced")]
+    pd.testing.assert_frame_equal(std[shared], atomic[shared])
+
+
+@pytest.mark.parametrize("atomic", [False, True])
+def test_bravery_requires_cross_native(atomic):
+    actions = _final_actions(_NATIVE_ROWS).drop(columns="cross_native")
+    if atomic:
+        from silly_kicks.atomic.tracking.features import compute_bravery as fn
+    else:
+        fn = compute_bravery
+    with pytest.raises(ValueError, match="cross_native"):
+        fn(actions)
 
 
 def test_both_columns_na_yields_nan_headline_and_warns():

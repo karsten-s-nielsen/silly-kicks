@@ -29,7 +29,9 @@ _CLAUDE = Path("CLAUDE.md")
 _CONTEXT = Path("docs/context")
 
 _TARGET_BYTES = 45 * 1024  # §3.1 TARGET — enforces the ~80% cut
-_CEILING_BYTES = 27750  # §3.1 CEILING — landed (24131) + 15% (anti-regression brake)
+# §3.1 CEILING — landed (24131) + 15% (anti-regression brake) = 27750; + 526 B for the ADR-133 Key-conventions
+# bullet (owner ruling 2026-11-13: add the bullet and raise the ceiling by its size).
+_CEILING_BYTES = 28276
 _MAX_BULLET_CHARS = 600  # §3.5.2
 _CONTEXT_MIN_BYTES = 100 * 1024  # the moved WHY must land, not vanish
 

@@ -176,6 +176,8 @@ def _label_frames_and_actions():
             "team_id": ["A", "A"],
             "time_seconds": [0.9, 0.2],
             "type_id": [spc.actiontype_id["cross"], spc.actiontype_id["pass"]],
+            # ADR-133 label v2: the tracking attempt decides (add_cross_deliveries output).
+            "cross_attempt": pd.array([True, False], dtype="boolean"),
         }
     )
     return frames_index, actions
@@ -194,10 +196,75 @@ def test_build_xcross_labels_set_pieces_togglable():
     fidx, actions = _label_frames_and_actions()
     actions.loc[1, "type_id"] = spc.actiontype_id["corner_crossed"]
     actions.loc[1, "time_seconds"] = 0.1
+    actions.loc[1, "cross_attempt"] = True  # the corner delivery reached the box (tracking)
     y_open = xc.build_xcross_labels(fidx, actions, horizon_seconds=1.0)
     y_all = xc.build_xcross_labels(fidx, actions, horizon_seconds=1.0, cross_types=("cross", "corner_crossed"))
     assert list(np.asarray(y_open)) == [1, 1, 1, 0]  # corner ignored
     assert np.asarray(y_all)[0] == 1  # corner at 0.1 now counts
+
+
+def _v2_actions(rows):
+    """rows: (type_name, t, cross_attempt) for team A."""
+    from silly_kicks.spadl import config as spc
+
+    return pd.DataFrame(
+        {
+            "game_id": ["g"] * len(rows),
+            "period_id": [1] * len(rows),
+            "team_id": ["A"] * len(rows),
+            "time_seconds": [r[1] for r in rows],
+            "type_id": [spc.actiontype_id[r[0]] for r in rows],
+            "cross_attempt": pd.array([r[2] for r in rows], dtype="boolean"),
+        }
+    )
+
+
+def test_label_row_classes():
+    # ADR-133 §6.5: "cross" reads cross_attempt on open-play pass-class rows, whatever the SPADL type says.
+    fidx, _ = _label_frames_and_actions()
+    a = _v2_actions([("pass", 0.9, True)])  # a native/geometric pass that tracking calls an attempt
+    assert list(np.asarray(xc.build_xcross_labels(fidx, a))) == [1, 1, 1, 0]
+    a = _v2_actions([("cross", 0.9, False)])  # a geometric cross that tracking says never reached the box
+    assert list(np.asarray(xc.build_xcross_labels(fidx, a))) == [0, 0, 0, 0]
+    a = _v2_actions([("corner_short", 0.1, True)])  # set-piece kind read only when selected
+    assert list(np.asarray(xc.build_xcross_labels(fidx, a))) == [0, 0, 0, 0]
+    y = xc.build_xcross_labels(fidx, a, cross_types=("cross", "corner_crossed"))
+    assert list(np.asarray(y)) == [1, 0, 0, 0]
+
+
+def test_unknown_label_only_from_selected_kind():
+    fidx, _ = _label_frames_and_actions()
+    # A shot and a set piece with <NA> (not applicable / not selected) never make a frame unknown.
+    a = _v2_actions([("shot", 0.5, pd.NA), ("corner_short", 0.5, pd.NA)])
+    y = np.asarray(xc.build_xcross_labels(fidx, a), dtype=float)
+    assert list(y) == [0, 0, 0, 0]
+    # An unanswerable cross-zone pass (<NA>) makes the frames whose horizon holds it unknown (NaN), never 0.
+    a = _v2_actions([("pass", 0.5, pd.NA)])
+    y = np.asarray(xc.build_xcross_labels(fidx, a), dtype=float)
+    assert np.isnan(y[:2]).all() and list(y[2:]) == [0, 0]
+    # A known attempt in the same horizon wins: the frame is positive, not unknown.
+    a = _v2_actions([("pass", 0.5, pd.NA), ("pass", 0.6, True)])
+    y = np.asarray(xc.build_xcross_labels(fidx, a), dtype=float)
+    assert list(y[:2]) == [1, 1]
+
+
+@pytest.mark.parametrize("cross_types", [("cross",), ("corner_crossed",), ("cross", "freekick_crossed")])
+def test_missing_cross_attempt_raises(cross_types):
+    fidx, actions = _label_frames_and_actions()
+    with pytest.raises(ValueError, match="add_cross_deliveries"):
+        xc.build_xcross_labels(fidx, actions.drop(columns="cross_attempt"), cross_types=cross_types)
+
+
+def test_unknown_cross_type_entry_raises():
+    fidx, actions = _label_frames_and_actions()
+    with pytest.raises(ValueError, match="cross_types"):
+        xc.build_xcross_labels(fidx, actions, cross_types=("throw_in",))
+
+
+def test_label_version_written_and_defaulted():
+    assert xc.XCrossAttemptModel().label_version == 2
+    assert xc._label_version_from_metadata({}) == 1
+    assert xc._label_version_from_metadata({"xcross_label_version": 2}) == 2
 
 
 # --- Task 5: prepare_xcross_training_data ---
@@ -265,9 +332,41 @@ def _mini_match():
             "time_seconds": [0.9],
             "type_id": [spc.actiontype_id["cross"]],
             "result_id": [spc.result_id["success"]],
+            "cross_attempt": pd.array([True], dtype="boolean"),  # ADR-133 label v2 (tracking attempt)
         }
     )
     return frames, actions
+
+
+def test_prepare_excludes_and_counts_unknown_label_frames():
+    # ADR-133 §6.5: an unanswerable cross-zone attempt makes the frames whose horizon holds it unknown; they
+    # leave training and the count is reported per match -- they are never labelled 0.
+    frames, actions = _mini_match()
+    X_all, y_all, _ = xc.prepare_xcross_training_data(frames, actions, home_team_id="A")
+    actions.loc[0, "cross_attempt"] = pd.NA
+    X, y, groups = xc.prepare_xcross_training_data(frames, actions, home_team_id="A")
+    assert len(X) == len(y) == len(groups) == len(X_all) - int(y_all.sum())
+    assert X.attrs["n_unknown_label_frames"] == {"g": int(y_all.sum())}
+    assert set(np.unique(y)).issubset({0})
+
+
+def test_xshot_labels_unchanged():
+    # Non-regression guard (ADR-133): the shared occurrence-label helper still gives the xShot labels pinned at
+    # 0cc07e6c. Passes before and after the xCross v2 label change.
+    from silly_kicks.spadl import config as spc
+    from silly_kicks.tracking import _xshot_occurrence as xs
+
+    fidx, _ = _label_frames_and_actions()
+    shots = pd.DataFrame(
+        {
+            "game_id": ["g"],
+            "period_id": [1],
+            "team_id": ["A"],
+            "time_seconds": [0.9],
+            "type_id": [spc.actiontype_id["shot"]],
+        }
+    )
+    assert list(np.asarray(xs.build_xshot_labels(fidx, shots, horizon_seconds=1.0))) == [1, 1, 1, 0]
 
 
 def test_prepare_returns_features_labels_groups():

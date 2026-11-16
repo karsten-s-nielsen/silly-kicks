@@ -125,6 +125,7 @@ def _encoding_frames():
             "corner_id": [0, 1],
             "period_id": [1, 1],
             "attacking_team_id": ["tA", "tA"],
+            "taker_player_id": [pd.NA, pd.NA],
             "corner_side": pd.Series(["left", "left"], dtype="category"),
             "corner_kind": pd.Series(["direct", "direct"], dtype="category"),
             "t_init": [98.0, 198.0],

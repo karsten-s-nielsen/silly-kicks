@@ -88,6 +88,7 @@ def test_add_corner_windows_tolerates_ball_row_na_player_id():
             "period_id": [1],
             "t_kick": [100.0],
             "attacking_team_id": ["tA"],
+            "taker_player_id": [pd.NA],
             "corner_side": pd.Series(["left"], dtype="category"),
             "corner_kind": pd.Series(["direct"], dtype="category"),
             "corner_source": pd.Series(["spadl_corner"], dtype="category"),

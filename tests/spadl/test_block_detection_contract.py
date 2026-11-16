@@ -55,7 +55,9 @@ def test_cross_blocked_is_subset_of_open_play_cross_type():
         load_wyscout_2team_synthetic,
     )
 
-    open_cross = spadlconfig.actiontype_id["cross"]
+    # ADR-133: cross_blocked is keyed to the provider's own open-play cross (cross_native True on a pass-class
+    # row), not to the geometric SPADL type.
+    open_play = [spadlconfig.actiontype_id["pass"], spadlconfig.actiontype_id["cross"]]
     saw_non_na = False
     for loader in (
         lambda: load_statsbomb(7298),
@@ -70,7 +72,8 @@ def test_cross_blocked_is_subset_of_open_play_cross_type():
             continue
         non_na = actions["cross_blocked"].notna()
         saw_non_na = saw_non_na or bool(non_na.any())
-        offending = actions[non_na & (actions["type_id"] != open_cross)]
+        native_open_cross = actions["type_id"].isin(open_play) & actions["cross_native"].fillna(False).astype(bool)
+        offending = actions[non_na & ~native_open_cross]
         assert offending.empty, (
             f"cross_blocked is non-NA on {len(offending)} non-open-play-cross rows "
             f"(types {sorted(offending['type_id'].unique())}); it must be pd.NA on set-piece crosses "

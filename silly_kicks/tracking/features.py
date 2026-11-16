@@ -68,6 +68,7 @@ from ._action_orientation import (
 )
 from ._ball_carrier import infer_ball_carrier
 from ._ball_contact import add_ball_contacts
+from ._cross_delivery import add_cross_deliveries
 from ._das import (
     DAS_SOURCE_COMPUTED,
     DAS_SOURCE_TEAM_UNRESOLVED,
@@ -121,6 +122,7 @@ __all__ = [
     "add_actor_pre_window",
     "add_ball_contacts",
     "add_cover_shadows",
+    "add_cross_deliveries",
     "add_das",
     "add_defensive_line",
     "add_elastic_sync",

@@ -1,21 +1,26 @@
-"""Ball-contact detection primitive (TF-79).
+"""Ball-contact detection primitive (TF-79, v2: ADR-134; detector and scorer specs of 2026-11-15).
 
-Candidate touches from a ball trajectory (RDP structural breaks UNION velocity
-breaks), z-aware 3D proximity attribution to a player, confidence, aerial flag,
-and provenance. Pure (pandas in, pandas out; no I/O, no global-state mutation).
+A candidate touch is a real kinematic change in the ball: a local maximum of the change between the mean horizontal
+ball velocity just before and just after a sample. The credit step is either the reach gate (``contact_scorer=None``:
+the nearest player within ``contact_radius_m``, no fallback radius) or the contact scorer (the K nearest players
+scored by :mod:`._contact_scorer` with their control features; after its first-touch decoding, the best one is
+credited when its probability reaches ``min_contact_probability``; scorer spec r7).
+A measured ball above ``contact_max_z_m`` is never credited; a candidate nobody is credited for is kept as an
+``"unresolved"`` row (E7 -- never a guess). Pure (pandas in, pandas out; no global-state mutation; the scorer's
+bundled weights are read once, lazily).
 
-This is the candidate-touch stage only: the Needleman-Wunsch event alignment and
-inserted touch events stay in the deferred PathCRF item (that code is never
-lifted; RDP here is the classical Ramer-Douglas-Peucker algorithm, implemented
-fresh). See the design at
-``docs/superpowers/specs/2026-10-14-tf79-ball-contact-detection-design.md`` and
-``NOTICE`` for citations.
+The detector is staged, so a sweep or a fit scores exactly the shipped code: :func:`_candidate_peaks` (the
+threshold-free kinematic peaks with their kinematics and nearest players), :func:`_merged_peaks` (the change threshold
+and the merge) and :func:`_finalize_contacts` (the credit and the output values). Designs:
+``docs/superpowers/specs/2026-11-15-tf79-contact-detector-v2-design.md`` and ``...-tf79-contact-scorer-design.md``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import pairwise
+from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -24,47 +29,54 @@ from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.tracking.schema import Z_SOURCE_VALUES
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class BallContactParams:
-    """Fixed, pre-registered detection parameters (spec sec. 3).
+    """Detection parameters (detector spec section 4). Keyword-only: a v1 positional call raises ``TypeError``.
 
-    Defaults are derived from physics / geometry and the TF-48 contact priors;
-    they are NEVER selected against the real accuracy corpus (spec sec. 14
-    no-leakage rule), only against the synthetic-recovery fixture.
+    ``contact_radius_m`` and ``min_velocity_change_ms`` are chosen on a development half of the GS matches and
+    scored once on the held-out half (ADR-124 as amended by ADR-134); every other field is a physics prior.
+
+    Examples
+    --------
+    A wider reach::
+
+        params = BallContactParams(contact_radius_m=1.5)
+        contacts = detect_ball_contacts(frames, params=params)
     """
 
-    rdp_epsilon_m: float = 0.3
-    """RDP tolerance: ~2-3x optical ball positional noise (above noise, below a real deflection)."""
-    speed_drop_frac: float = 0.40
-    """Velocity-break: fractional per-second speed drop."""
-    heading_turn_deg: float = 35.0
-    """Velocity-break: heading change, degrees."""
-    contact_radius_m: float = 2.0
-    """Attribution radius (TF-48 prior ``_CONTACT_RADIUS_M``)."""
-    contact_exist_radius_m: float = 5.0
-    """Looser existence bar (TF-48 prior ``_CONTACT_EXIST_RADIUS_M``)."""
+    contact_radius_m: float = 1.2
+    """Reach: the nearest player within this horizontal distance of the ball is credited; no fallback radius."""
     contact_max_z_m: float = 2.6
-    """Playable ball height (TF-48 prior ``_CONTACT_MAX_Z_M``)."""
+    """Playable ball height; a measured ball above it is out of reach (TF-48 prior)."""
     aerial_z_m: float = 1.8
     """``is_aerial`` threshold (chest/head boundary); meaningful only where z is measured."""
-    merge_window_s: float = 0.12
-    """Dedup window; applied as ``max(merge_window_s, 2 * frame_period)``."""
+    min_velocity_change_ms: float = 3.0
+    """Candidate threshold: the peak change between the mean velocity before and after the sample (m/s)."""
     min_candidate_speed_ms: float = 2.0
-    """Ignore near-dead-ball jitter below this incoming speed."""
+    """Ignore near-dead-ball jitter: the incoming or the outgoing speed must reach this."""
+    kinematic_window_s: float = 0.067
+    """Half-window of the mean velocities; applied as ``max(kinematic_window_s, 2 * frame_period)``."""
+    merge_window_s: float = 0.12
+    """Peaks closer than ``max(merge_window_s, 2 * frame_period)`` keep the larger one."""
     dv_scale_ms: float = 5.0
-    """Soft scale for folding the contact's velocity-vector change |Δv| into ``confidence``
-    (``1 - exp(-|Δv| / dv_scale_ms)``); ~a firm touch. NOT a hard cut."""
-    min_velocity_change_ms: float = 0.0
-    """OPT-IN hard floor on |Δv| (m/s). Default 0.0 = keep EVERY candidate (no data loss); a
-    consumer that wants fewer candidates raises it or thresholds on ``velocity_change_ms``/``confidence``."""
+    """Soft scale for folding the velocity change into ``confidence`` (``1 - exp(-|dv| / dv_scale_ms)``)."""
+    contact_scorer: str | None = None
+    """The credit step: ``None`` is the reach gate; ``"default"`` (the bundled weights) or a directory path is the
+    contact scorer. A string keeps the params hashable and free of I/O; the weights load on first use."""
+    min_contact_probability: float = 0.5
+    """With a scorer: the best option is credited when its probability is at least this."""
 
     def __post_init__(self) -> None:
-        if self.contact_radius_m > self.contact_exist_radius_m:
-            raise ValueError("contact_radius_m must be <= contact_exist_radius_m")
-        if not (0.0 < self.speed_drop_frac <= 1.0):
-            raise ValueError("speed_drop_frac must be in (0, 1]")
-        if self.heading_turn_deg <= 0.0:
-            raise ValueError("heading_turn_deg must be > 0")
+        if not 0.0 < self.min_contact_probability < 1.0:
+            raise ValueError("min_contact_probability must be in (0, 1)")
+        if self.kinematic_window_s <= 0.0:
+            raise ValueError("kinematic_window_s must be > 0")
+        if self.contact_radius_m <= 0.0:
+            raise ValueError("contact_radius_m must be > 0")
+        if self.min_velocity_change_ms < 0.0:
+            raise ValueError("min_velocity_change_ms must be >= 0")
+        if self.merge_window_s <= 0.0:
+            raise ValueError("merge_window_s must be > 0")
 
 
 #: Shared immutable default; a frozen dataclass is safe as a module singleton (avoids a B008 call in
@@ -72,157 +84,28 @@ class BallContactParams:
 _DEFAULT_PARAMS = BallContactParams()
 
 
-def _rdp(xy: np.ndarray, epsilon_m: float) -> np.ndarray:
-    """Ramer-Douglas-Peucker polyline simplification.
-
-    Returns a boolean keep-mask over ``xy`` rows: endpoints always kept, and an
-    interior point kept iff its perpendicular distance to the current segment
-    exceeds ``epsilon_m``. Classical algorithm (Ramer 1972; Douglas & Peucker
-    1973), implemented fresh -- no third-party code.
-
-    Parameters
-    ----------
-    xy:
-        ``(n, 2)`` float array of successive points.
-    epsilon_m:
-        Simplification tolerance in metres.
-    """
-    xy = np.asarray(xy, dtype=np.float64)
-    n = len(xy)
-    keep = np.zeros(n, dtype=bool)
-    if n == 0:
-        return keep
-    keep[0] = True
-    keep[-1] = True
-    if n <= 2:
-        return keep
-    stack: list[tuple[int, int]] = [(0, n - 1)]
-    while stack:
-        i0, i1 = stack.pop()
-        if i1 <= i0 + 1:
-            continue
-        a = xy[i0]
-        b = xy[i1]
-        ab = b - a
-        denom = float(np.hypot(ab[0], ab[1]))
-        seg = xy[i0 + 1 : i1] - a
-        if denom == 0.0:
-            dist = np.hypot(seg[:, 0], seg[:, 1])
-        else:
-            dist = np.abs(ab[0] * seg[:, 1] - ab[1] * seg[:, 0]) / denom
-        k = int(np.argmax(dist))
-        if dist[k] > epsilon_m:
-            idx = i0 + 1 + k
-            keep[idx] = True
-            stack.append((i0, idx))
-            stack.append((idx, i1))
-    return keep
-
-
-def _velocity_breaks(xy: np.ndarray, t: np.ndarray, params: BallContactParams) -> tuple[np.ndarray, np.ndarray]:
-    """Kinematic break detection over a single ball segment.
-
-    Returns ``(break_mask, break_magnitude)`` over the ``n`` input points.
-    A point fires when the incoming per-second speed drops by at least
-    ``speed_drop_frac`` OR the heading turns by at least ``heading_turn_deg``,
-    provided the incoming speed is at least ``min_candidate_speed_ms``. Speed is
-    computed per second (``dx/dt``), so thresholds are frame-rate independent.
-    ``break_magnitude`` is ``max(drop / speed_drop_frac, turn / heading_turn_deg)``
-    -- used later as the merged-cluster representative-frame selector and as a
-    confidence input.
-    """
-    xy = np.asarray(xy, dtype=np.float64)
-    t = np.asarray(t, dtype=np.float64)
-    n = len(xy)
-    mask = np.zeros(n, dtype=bool)
-    mag = np.zeros(n, dtype=np.float64)
-    if n < 3:
-        return mask, mag
-    dt = np.diff(t)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        dt = np.where(dt > 0, dt, np.nan)
-        vel = np.diff(xy, axis=0) / dt[:, None]  # per-second velocity
-    speed = np.hypot(vel[:, 0], vel[:, 1])
-    for i in range(1, n - 1):
-        s0 = speed[i - 1]
-        s1 = speed[i]
-        if not (np.isfinite(s0) and np.isfinite(s1)):
-            continue
-        if s0 < params.min_candidate_speed_ms:
-            continue
-        drop = (s0 - s1) / s0 if s0 > 0 else 0.0
-        if s0 > 0 and s1 > 0:
-            cos = float(np.clip(np.dot(vel[i - 1], vel[i]) / (s0 * s1), -1.0, 1.0))
-            turn_deg = float(np.degrees(np.arccos(cos)))
-        else:
-            turn_deg = 0.0
-        fired_drop = drop >= params.speed_drop_frac
-        fired_turn = turn_deg >= params.heading_turn_deg
-        if fired_drop or fired_turn:
-            mask[i] = True
-            mag[i] = max(drop / params.speed_drop_frac, turn_deg / params.heading_turn_deg)
-    return mask, mag
-
-
 @dataclass(frozen=True)
 class _Candidate:
     """A merged candidate contact (internal)."""
 
-    frame_pos: int  # position into the segment's ball-row arrays
+    frame_pos: int  # position into the candidate arrays
     time: float
-    source: str  # one of {"rdp", "velocity_break", "both"}
+    source: str  # always "velocity_break" in v2
     magnitude: float
 
 
-def _attribute(cand_pos, bx, by, bz, players, params: BallContactParams):
-    """Attribute a candidate frame to the nearest playable player.
-
-    ``bx``/``by``/``bz`` are the ball coordinate arrays for the segment and
-    ``cand_pos`` indexes the candidate frame. ``players`` is a DataFrame with
-    ``player_id``/``x``/``y`` columns for that frame. Returns
-    ``(player_id, distance)`` for the nearest player within the attribution
-    radius, else ``(pd.NA, nan)``. A ball above ``contact_max_z_m`` (and not NaN)
-    is overhead -- not a contact (returns NA).
-    """
-    z = bz[cand_pos]
-    playable = bool(np.isnan(z) or z <= params.contact_max_z_m)
-    if not playable or players is None or len(players) == 0:
-        return pd.NA, float("nan")
-    px = players["x"].to_numpy(dtype=np.float64, copy=True)
-    py = players["y"].to_numpy(dtype=np.float64, copy=True)
-    d = np.hypot(px - float(bx[cand_pos]), py - float(by[cand_pos]))
-    finite = np.isfinite(d)
-    if not finite.any():
-        return pd.NA, float("nan")
-    near = finite & (d <= params.contact_radius_m)
-    pool = near if near.any() else (finite & (d <= params.contact_exist_radius_m))
-    if not pool.any():
-        return pd.NA, float("nan")
-    cand_idx = np.where(pool)[0]
-    best = cand_idx[int(np.argmin(d[cand_idx]))]
-    return players["player_id"].iloc[int(best)], float(d[best])
-
-
 def _merge_clusters(cands, mag, source, t, params: BallContactParams, *, frame_period: float = 0.0) -> list[_Candidate]:
-    """Collapse candidate frames that fall within the merge window.
+    """Collapse candidate positions that fall within the merge window, keeping the larger change.
 
-    ``cands`` is a list of frame positions; ``mag``/``source``/``t`` map a frame
-    position to its velocity-break magnitude, source token, and time.
-    ``frame_period`` is the ball-track SAMPLING interval (seconds), NOT candidate
-    spacing -- candidates are sparse events, so the window must come from the real
-    sample rate. Candidates within ``max(merge_window_s, 2 * frame_period)`` of
-    each other collapse to one contact whose representative frame is the
-    maximum-magnitude frame (ties -> the earliest). A cluster with no
-    velocity-break member (all magnitudes 0, i.e. an RDP-only cluster) keeps its
-    earliest RDP vertex frame. The cluster source is ``"both"`` when it mixes rdp
-    and velocity_break signals (or contains a frame already tagged ``both``), else
-    the single source.
+    ``cands`` is a list of positions; ``mag``/``source``/``t`` map a position to its velocity change, source token and
+    time. ``frame_period`` is the ball-track SAMPLING interval, not the candidate spacing. Candidates within
+    ``max(merge_window_s, 2 * frame_period)`` of the previous one join its cluster; the representative is the
+    largest change (ties -> the earliest).
     """
     if not cands:
         return []
     ordered = sorted(cands, key=lambda p: t[p])
     threshold = max(params.merge_window_s, 2.0 * float(frame_period))
-
     out: list[_Candidate] = []
     cluster = [ordered[0]]
     for prev, cur in pairwise(ordered):
@@ -236,23 +119,13 @@ def _merge_clusters(cands, mag, source, t, params: BallContactParams, *, frame_p
 
 
 def _representative(cluster, mag, source, t) -> _Candidate:
-    mags = [mag[p] for p in cluster]
-    if any(m > 0 for m in mags):
-        # velocity-break present: max magnitude, ties -> earliest
-        best = max(cluster, key=lambda p: (mag[p], -t[p]))
-    else:
-        # RDP-only cluster: earliest vertex
-        best = min(cluster, key=lambda p: t[p])
-    signals = {source[p] for p in cluster}
-    if "both" in signals or {"rdp", "velocity_break"} <= signals:
-        src = "both"
-    else:
-        src = next(iter(signals))
-    return _Candidate(frame_pos=best, time=float(t[best]), source=src, magnitude=float(mag[best]))
+    best = max(cluster, key=lambda p: (mag[p], -t[p]))
+    return _Candidate(frame_pos=best, time=float(t[best]), source=source[best], magnitude=float(mag[best]))
 
 
 CONTACT_SOURCE_VALUES: tuple[str, ...] = ("rdp", "velocity_break", "both", "unresolved")
-"""Closed vocabulary for ``contact_source`` / ``first_contact_source`` (category dtype)."""
+"""Closed vocabulary for ``contact_source`` / ``first_contact_source`` (category dtype). v2 emits only
+``"velocity_break"`` and ``"unresolved"``; ``"rdp"`` and ``"both"`` stay so the category set does not change."""
 
 _CONTACT_COLUMNS: tuple[str, ...] = (
     "period_id",
@@ -282,26 +155,32 @@ def _time_window(tt: np.ndarray, gp: int, span_s: float) -> tuple[int, int]:
     return lo, hi
 
 
-def _velocity_change_at(bx, by, tt, gp: int, span_s: float) -> float:
-    """|Δv| (m/s) of the ball's velocity VECTOR across ``gp``, over +/- ``span_s`` SECONDS.
-
-    A touch changes the ball's velocity vector (accel, decel, OR turn) well above passive drag
-    (<~1 m/s over 0.1 s); this is the single physical signal that separates a touch from flight
-    noise. The window is time-based (``_time_window``), so it spans the intended seconds on the
-    sparse post-dedup sampling. NaN if no sample lies within the window on a side, or a side has
-    zero duration.
-    """
-    lo, hi = _time_window(tt, gp, span_s)
-    i0, i1 = lo, hi - 1
-    if gp - i0 < 1 or i1 - gp < 1:
-        return float("nan")
-    dt_b = tt[gp] - tt[i0]
-    dt_a = tt[i1] - tt[gp]
-    if dt_b <= 0 or dt_a <= 0:
-        return float("nan")
-    vbx, vby = (bx[gp] - bx[i0]) / dt_b, (by[gp] - by[i0]) / dt_b
-    vax, vay = (bx[i1] - bx[gp]) / dt_a, (by[i1] - by[gp]) / dt_a
-    return float(np.hypot(vax - vbx, vay - vby))
+def _velocity_change_series(bx, by, tt, span_s: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """``(dv, speed_in, speed_out, turn)`` at every sample: |v_after - v_before| of the ball's velocity VECTOR, where
+    v_before / v_after are the mean velocities over the ``span_s`` seconds before / after the sample (window edges in
+    seconds via ``searchsorted``, with a 1e-9 s tolerance so a sample exactly ``span_s`` away is inside), the two mean
+    speeds, and the angle between the two velocities (rad, in [0, pi]; 0 when either speed is below 1e-9). NaN where a
+    side has no sample or zero duration. A touch changes the velocity vector (accel, decel or turn) well above
+    passive drag, which is what separates it from flight."""
+    n = len(tt)
+    nan = np.full(n, np.nan)
+    if n < 3:
+        return nan, nan.copy(), nan.copy(), nan.copy()
+    idx = np.arange(n)
+    lo = np.searchsorted(tt, tt - span_s - 1e-9, side="left")
+    hi = np.searchsorted(tt, tt + span_s + 1e-9, side="right") - 1
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dt_b = tt - tt[lo]
+        dt_a = tt[hi] - tt
+        ok = (idx - lo >= 1) & (hi - idx >= 1) & (dt_b > 0) & (dt_a > 0)
+        vbx, vby = (bx - bx[lo]) / dt_b, (by - by[lo]) / dt_b
+        vax, vay = (bx[hi] - bx) / dt_a, (by[hi] - by) / dt_a
+    dv = np.where(ok, np.hypot(vax - vbx, vay - vby), np.nan)
+    s_in, s_out = np.hypot(vbx, vby), np.hypot(vax, vay)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cos = np.clip((vbx * vax + vby * vay) / (s_in * s_out), -1.0, 1.0)
+    turn = np.where((s_in < 1e-9) | (s_out < 1e-9), 0.0, np.arccos(cos))
+    return dv, np.where(ok, s_in, np.nan), np.where(ok, s_out, np.nan), np.where(ok, turn, np.nan)
 
 
 def _confidence(
@@ -309,10 +188,8 @@ def _confidence(
 ) -> float:
     """Monotone, bounded ``[0, 1]`` ranking score for a candidate contact.
 
-    Increasing in the velocity-vector change ``|Δv|`` (via ``1 - exp(-|Δv| / dv_scale_ms)``, so a
-    flight-curvature candidate lands near 0 and a real touch near 1), in source agreement
-    (``both`` > a single signal), proximity, and detection quality. Weights sum to 1. This RANKS
-    candidates (the consumer picks an operating point); it never drops one.
+    Increasing in the velocity-vector change (via ``1 - exp(-|Δv| / dv_scale_ms)``), the source weight, the proximity
+    and the detection quality. Weights sum to 1. This RANKS candidates; it never drops one.
     """
     dv_norm = 1.0 - float(np.exp(-max(dv_ms, 0.0) / dv_scale_ms)) if dv_scale_ms > 0 else 0.0
     sw = min(max(source_weight, 0.0), 1.0)
@@ -357,143 +234,301 @@ def _segments(finite: np.ndarray) -> list[tuple[int, int]]:
     return segs
 
 
-def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _DEFAULT_PARAMS) -> pd.DataFrame:
-    """Detect candidate ball contacts from tracking frames (TF-79 primitive).
+def _nearest_players(players: pd.DataFrame | None, x: float, y: float, k: int) -> tuple[list, np.ndarray]:
+    """The ``k`` nearest players with a finite position, nearest first, as ``(player_ids, horizontal distances)``."""
+    if players is None or len(players) == 0:
+        return [], np.array([])
+    d = np.hypot(players["x"].to_numpy(dtype=np.float64) - x, players["y"].to_numpy(dtype=np.float64) - y)
+    idx = np.flatnonzero(np.isfinite(d))
+    order = idx[np.argsort(d[idx], kind="stable")][:k]
+    return [players["player_id"].iloc[i] for i in order], d[order]
 
-    Pure: does not mutate ``frames``. Returns one row per candidate contact with
-    columns ``period_id, frame_id, time_seconds, player_id, contact_x, contact_y,
-    confidence, is_aerial, contact_source``. "Unresolved" candidates (a motion
-    break with no playable player in range, or an undetected ball) are KEPT as
-    rows with ``player_id=<NA>``, ``confidence=NaN``, ``contact_source="unresolved"``
-    (E7 -- never a guess). ``is_aerial`` is ``<NA>`` where ``z`` is NaN.
-    """
-    from silly_kicks._frame_index import group_rows
-    from silly_kicks.id_compat import restore_id_dtype
+
+_PEAK_COLUMNS: tuple[str, ...] = (
+    "period_id",
+    "segment",
+    "frame_period",
+    "frame_id",
+    "prior_frame_id",
+    "time_seconds",
+    "contact_x",
+    "contact_y",
+    "z",
+    "z_source",
+    "dv",
+    "speed_in",
+    "speed_out",
+    "turn",
+    "nearest_player_id",
+    "nearest_dist",
+    "detection_quality",
+)
+
+
+def _option_columns(k_options: int) -> tuple[str, ...]:
+    """The per-peak option columns: the ``k_options`` nearest players (id, distance, approach) and the distance of
+    the next player beyond them (for the last option's gap)."""
+    cols: list[str] = []
+    for r in range(k_options):
+        cols += [f"opt{r}_player_id", f"opt{r}_dist", f"opt{r}_approach"]
+    return (*cols, f"opt{k_options}_dist") if k_options else ()
+
+
+def _ball_samples(
+    seg_df: pd.DataFrame, params: BallContactParams
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+    """One period's ball rows (sorted by ``frame_id``) -> ``(frame_id, time, x, y, keep, frame_period, span)``.
+
+    ``keep`` is the ADR-125 dedup: consecutive-duplicate ball positions collapse before differencing (the GS
+    sample-and-hold sawtooth), and a run longer than the velocity window is a ball at rest, kept whole (ADR-134), so a
+    kick from an exactly static ball has its "before" samples. ``span = max(kinematic_window_s, 2 * frame_period)``.
+    The single source of the deduped samples for the peak search and the contact scorer's control features."""
     from silly_kicks.tracking.preprocess._dedup import trajectory_dedup_mask
 
-    required = {"is_ball", "period_id", "frame_id", "time_seconds", "x", "y"}
-    missing = required - set(frames.columns)
-    if missing:
-        raise ValueError(f"detect_ball_contacts requires frame columns {sorted(missing)}")
+    fid = seg_df["frame_id"].to_numpy(dtype=np.int64, copy=True)
+    tt = seg_df["time_seconds"].to_numpy(dtype=np.float64, copy=True)
+    bx = seg_df["x"].to_numpy(dtype=np.float64, copy=True)
+    by = seg_df["y"].to_numpy(dtype=np.float64, copy=True)
+    fr = seg_df["frame_rate"].to_numpy(dtype=np.float64, copy=True) if "frame_rate" in seg_df else np.array([])
+    finite_fr = fr[np.isfinite(fr)] if len(fr) else np.array([])
+    if len(finite_fr) and finite_fr[0] > 0:
+        frame_period = 1.0 / float(finite_fr[0])
+    else:
+        dt = np.diff(tt[trajectory_dedup_mask(bx, by)])
+        dt = dt[np.isfinite(dt) & (dt > 0)]
+        frame_period = float(np.median(dt)) if len(dt) else 0.0
+    span = max(params.kinematic_window_s, 2.0 * frame_period)
+    keep = trajectory_dedup_mask(bx, by, t=tt, rest_s=span)
+    return fid, tt, bx, by, keep, frame_period, span
 
+
+def _candidate_peaks(
+    frames: pd.DataFrame, params: BallContactParams = _DEFAULT_PARAMS, *, k_options: int = 0
+) -> pd.DataFrame:
+    """The threshold-free kinematic peaks of the ball (detector spec section 4, items 1-2).
+
+    One row per local maximum of the velocity change whose incoming or outgoing speed reaches
+    ``min_candidate_speed_ms``, with its change ``dv``, the two mean speeds and the turn, its nearest player and
+    distance, and its detection quality. With ``k_options`` > 0 (the contact scorer, scorer spec section 2) each row
+    also carries the ``k_options`` nearest players with their distances and their approach (the distance now minus
+    the distance at the last frame at or before ``t - window``; 0 when the player has no such frame). It reads
+    ``kinematic_window_s`` and ``min_candidate_speed_ms`` only; the change threshold, the merge and the credit are
+    :func:`_merged_peaks` and :func:`_finalize_contacts`.
+    """
+    from silly_kicks._frame_index import group_rows
+    from silly_kicks.id_compat import canonical_id
+
+    columns = [*_PEAK_COLUMNS, *_option_columns(k_options)]
     ball = frames.loc[frames["is_ball"].to_numpy(dtype=bool)]
     players = frames.loc[~frames["is_ball"].to_numpy(dtype=bool)]
+    rows: list[dict] = []
     if len(ball) == 0:
-        return _empty_contacts(frames)
-
+        return pd.DataFrame(columns=columns)
     ball_by_period = group_rows(ball, "period_id")
     players_by_frame = group_rows(players, ("period_id", "frame_id"))
-
-    rows: list[dict] = []
     for pid in ball_by_period.keys():
         seg_df = ball_by_period.get(pid).sort_values("frame_id")
-        fid = seg_df["frame_id"].to_numpy(dtype=np.int64, copy=True)
-        tt = seg_df["time_seconds"].to_numpy(dtype=np.float64, copy=True)
-        bx = seg_df["x"].to_numpy(dtype=np.float64, copy=True)
-        by = seg_df["y"].to_numpy(dtype=np.float64, copy=True)
+        fid, tt, bx, by, keep, frame_period, span = _ball_samples(seg_df, params)
         bz = seg_df["z"].to_numpy(dtype=np.float64, copy=True) if "z" in seg_df else np.full(len(seg_df), np.nan)
-        # z_source (ADR-125): provenance of the ball z -- "measured" | "estimated" | "absent". FAIL-SAFE
-        # default "absent" when the column is missing (a legacy/synthetic caller) -> honest-NaN is_aerial,
-        # never a false boolean.
+        # z_source (ADR-125): FAIL-SAFE "absent" when the column is missing -> no height check, honest-NaN is_aerial.
         zsrc = (
             seg_df["z_source"].astype(object).to_numpy()
             if "z_source" in seg_df
             else np.full(len(seg_df), "absent", dtype=object)
         )
-        fr = seg_df["frame_rate"].to_numpy(dtype=np.float64, copy=True) if "frame_rate" in seg_df else np.array([])
-        # Collapse consecutive-duplicate ball positions before any consecutive-frame differencing:
-        # a duplicate frame gives velocity 0, so a run of duplicates makes a 0<->real velocity
-        # sawtooth that masks real breaks (the GS under-detection; provider-agnostic, harmless where
-        # there are no duplicates). Original frame_ids are preserved -> player attribution unchanged.
-        keep = trajectory_dedup_mask(bx, by)
+        fid_all, tt_all, bx_all, by_all = fid, tt, bx, by
         fid, tt, bx, by, bz, zsrc = fid[keep], tt[keep], bx[keep], by[keep], bz[keep], zsrc[keep]
-        finite_fr = fr[np.isfinite(fr)] if len(fr) else np.array([])
-        if len(finite_fr) and finite_fr[0] > 0:
-            frame_period = 1.0 / float(finite_fr[0])
-        else:
-            dt = np.diff(tt)
-            dt = dt[np.isfinite(dt) & (dt > 0)]
-            frame_period = float(np.median(dt)) if len(dt) else 0.0
-
         finite = np.isfinite(bx) & np.isfinite(by)
-        for lo, hi in _segments(finite):
-            if hi - lo < 2:
+        for seg, (lo, hi) in enumerate(_segments(finite)):
+            if hi - lo < 3:
                 continue
-            sxy = np.column_stack([bx[lo:hi], by[lo:hi]])
-            st = tt[lo:hi]
-            rdp_keep = _rdp(sxy, params.rdp_epsilon_m)
-            rdp_keep[0] = rdp_keep[-1] = False  # endpoints are not contacts
-            vmask, vmag = _velocity_breaks(sxy, st, params)
-
-            cand_local = sorted(set(np.where(rdp_keep)[0].tolist()) | set(np.where(vmask)[0].tolist()))
-            if not cand_local:
-                continue
-            mag = {}
-            source = {}
-            tmap = {}
-            for p in cand_local:
-                is_rdp = bool(rdp_keep[p])
-                is_vel = bool(vmask[p])
-                source[p] = "both" if (is_rdp and is_vel) else ("rdp" if is_rdp else "velocity_break")
-                mag[p] = float(vmag[p]) if is_vel else 0.0
-                tmap[p] = float(st[p])
-            merged = _merge_clusters(cand_local, mag, source, tmap, params, frame_period=frame_period)
-
-            for cand in merged:
-                gp = lo + cand.frame_pos
-                dv = _velocity_change_at(bx, by, tt, gp, 0.12)
-                # OPT-IN hard floor (default 0.0 -> never drops; preserves every candidate).
-                if np.isfinite(dv) and dv < params.min_velocity_change_ms:
-                    continue
-                players_here = players_by_frame.get(pid, int(fid[gp]))
-                attr_id, dist = _attribute(gp, bx, by, bz, players_here, params)
-                z_here = bz[gp]
-                # ADR-125: is_aerial is honest-NaN unless z is a trustworthy MEASUREMENT (z_source
-                # "measured"); "estimated" (SkillCorner) and "absent" (SB360) -> <NA>.
-                z_src_here = str(zsrc[gp])
-                if z_src_here != "measured" or np.isnan(z_here):
-                    is_aerial = pd.NA
-                else:
-                    is_aerial = bool(z_here > params.aerial_z_m)
+            dv, s_in, s_out, turn = _velocity_change_series(bx[lo:hi], by[lo:hi], tt[lo:hi], span)
+            d = np.where(np.isfinite(dv), dv, -np.inf)
+            prev = np.r_[-np.inf, d[:-1]]
+            nxt = np.r_[d[1:], -np.inf]
+            fast = np.fmax(s_in, s_out) >= params.min_candidate_speed_ms
+            for k in np.flatnonzero(np.isfinite(dv) & (d >= prev) & (d > nxt) & fast):
+                gp = lo + int(k)
+                here = players_by_frame.get(pid, int(fid[gp]))
+                ids, dists = _nearest_players(here, bx[gp], by[gp], max(k_options + 1, 1))
+                j = int(np.searchsorted(tt_all, tt[gp] - span + 1e-9, side="right")) - 1
+                prior_fid = int(fid_all[j]) if j >= 0 else -1
                 a, b = _time_window(tt, gp, 0.2)
-                detection_quality = float(finite[a:b].mean())
-                if pd.isna(attr_id):
-                    conf = float("nan")
-                    src = "unresolved"
-                else:
-                    proximity = 1.0 - (dist / params.contact_exist_radius_m)
-                    source_weight = 1.0 if cand.source == "both" else 0.5
-                    dv_for_conf = dv if np.isfinite(dv) else 0.0
-                    conf = _confidence(
-                        dv_for_conf, source_weight, proximity, detection_quality, dv_scale_ms=params.dv_scale_ms
-                    )
-                    src = cand.source
-                rows.append(
-                    {
-                        "period_id": int(pid),
-                        "frame_id": int(fid[gp]),
-                        "time_seconds": float(tt[gp]),
-                        "player_id": attr_id,
-                        "contact_x": float(bx[gp]),
-                        "contact_y": float(by[gp]),
-                        "velocity_change_ms": float(dv) if np.isfinite(dv) else float("nan"),
-                        "confidence": conf,
-                        "is_aerial": is_aerial,
-                        "aerial_source": z_src_here,
-                        "contact_source": src,
-                    }
-                )
+                row = {
+                    "period_id": int(pid),
+                    "segment": seg,
+                    "frame_period": frame_period,
+                    "frame_id": int(fid[gp]),
+                    "prior_frame_id": prior_fid,
+                    "time_seconds": float(tt[gp]),
+                    "contact_x": float(bx[gp]),
+                    "contact_y": float(by[gp]),
+                    "z": float(bz[gp]),
+                    "z_source": str(zsrc[gp]),
+                    "dv": float(dv[k]),
+                    "speed_in": float(s_in[k]),
+                    "speed_out": float(s_out[k]),
+                    "turn": float(turn[k]),
+                    "nearest_player_id": ids[0] if ids else pd.NA,
+                    "nearest_dist": float(dists[0]) if ids else float("nan"),
+                    "detection_quality": float(finite[a:b].mean()),
+                }
+                if k_options:
+                    prior: dict[str, tuple[float, float]] = {}
+                    pbx = pby = float("nan")
+                    if j >= 0:
+                        pbx, pby = float(bx_all[j]), float(by_all[j])
+                        before = players_by_frame.get(pid, prior_fid)
+                        if before is not None and len(before):
+                            prior = {
+                                str(canonical_id(p)): (float(px), float(py))
+                                for p, px, py in zip(before["player_id"], before["x"], before["y"], strict=True)
+                            }
+                    for r in range(k_options):
+                        has = r < len(ids)
+                        approach = float("nan")
+                        if has:
+                            xy = prior.get(str(canonical_id(ids[r])))
+                            back = float(np.hypot(xy[0] - pbx, xy[1] - pby)) if xy is not None else float("nan")
+                            approach = float(dists[r]) - back if np.isfinite(back) else 0.0
+                        row[f"opt{r}_player_id"] = ids[r] if has else pd.NA
+                        row[f"opt{r}_dist"] = float(dists[r]) if has else float("nan")
+                        row[f"opt{r}_approach"] = approach
+                    row[f"opt{k_options}_dist"] = float(dists[k_options]) if len(ids) > k_options else float("nan")
+                rows.append(row)
+    return pd.DataFrame(rows, columns=columns)
 
-    if not rows:
-        return _empty_contacts(frames)
 
-    out = pd.DataFrame(rows, columns=list(_CONTACT_COLUMNS))
+def _merged_peaks(peaks: pd.DataFrame, params: BallContactParams) -> pd.DataFrame:
+    """The change threshold (``dv >= min_velocity_change_ms``), then the merge within each segment (the larger change
+    wins; detector spec section 4 item 2). The surviving peak rows, chronological, with a ``peak_id``."""
+    p = peaks[peaks["dv"] >= params.min_velocity_change_ms]
+    keep: list[pd.DataFrame] = []
+    for (_period, _seg), g in p.groupby(["period_id", "segment"], sort=True):
+        g = g.reset_index(drop=True)
+        mag = dict(enumerate(g["dv"].to_numpy(dtype=np.float64)))
+        tmap = dict(enumerate(g["time_seconds"].to_numpy(dtype=np.float64)))
+        src = dict.fromkeys(range(len(g)), "velocity_break")
+        merged = _merge_clusters(
+            list(range(len(g))), mag, src, tmap, params, frame_period=float(g["frame_period"].iloc[0])
+        )
+        keep.append(g.iloc[[c.frame_pos for c in merged]])
+    out = pd.concat(keep, ignore_index=True) if keep else p.iloc[0:0].reset_index(drop=True)
     out = out.sort_values(["period_id", "frame_id"], kind="stable").reset_index(drop=True)
-    out["player_id"] = restore_id_dtype(out["player_id"].to_numpy(dtype=object), frames["player_id"].dtype)
+    out.insert(0, "peak_id", np.arange(len(out), dtype=np.int64))
+    return out
+
+
+def _finalize_contacts(
+    peaks: pd.DataFrame, params: BallContactParams, *, pid_dtype, scorer=None, frames: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """The contacts from the candidate peaks: :func:`_merged_peaks`, then the credit and the output values. With
+    ``scorer`` None, the reach gate (detector spec section 4 items 3-4); with a scorer, the scored options with their
+    control features from ``frames`` and the first-touch decoding (scorer spec r7 section 2; ``peaks`` must carry the
+    option columns). Returns the ``_CONTACT_COLUMNS`` schema."""
+    from silly_kicks.id_compat import restore_id_dtype
+
+    merged = _merged_peaks(peaks, params)
+    best: dict[int, tuple[object, float, bool]] = {}
+    if scorer is not None and len(merged):
+        from silly_kicks.tracking._contact_scorer import control_features, decide_options, option_rows
+
+        if frames is None:
+            raise ValueError("the contact scorer needs the frames (its control features read them)")
+        opts = control_features(option_rows(merged), frames, params)
+        if len(opts):
+            decided = decide_options(
+                opts, scorer.predict_proba(opts), params, decode_window_s=float(scorer.decode_window_s)
+            )
+            for rec in decided.to_dict("records"):
+                best[int(rec["peak_id"])] = (rec["player_id"], float(rec["prob"]), bool(rec["credited"]))
+    rows: list[dict] = []
+    records = cast("list[dict[str, Any]]", merged.to_dict("records"))
+    for rec in records:
+        r = SimpleNamespace(**rec)
+        measured = r.z_source == "measured" and np.isfinite(r.z)
+        playable = not (measured and r.z > params.contact_max_z_m)
+        if scorer is None:
+            dist = float(r.nearest_dist)
+            credited = playable and pd.notna(r.nearest_player_id) and dist <= params.contact_radius_m
+            player = r.nearest_player_id
+            conf = (
+                _confidence(
+                    float(r.dv),
+                    1.0,
+                    1.0 - dist / params.contact_radius_m,
+                    float(r.detection_quality),
+                    dv_scale_ms=params.dv_scale_ms,
+                )
+                if credited
+                else float("nan")
+            )
+        else:
+            # The one credit gate (decoding, threshold, height) is decide_options, shared with the scorer driver.
+            player, prob, credited = best.get(int(r.peak_id), (pd.NA, float("nan"), False))
+            conf = prob if credited else float("nan")
+        rows.append(
+            {
+                "period_id": int(r.period_id),
+                "frame_id": int(r.frame_id),
+                "time_seconds": float(r.time_seconds),
+                "player_id": player if credited else pd.NA,
+                "contact_x": float(r.contact_x),
+                "contact_y": float(r.contact_y),
+                "velocity_change_ms": float(r.dv),
+                "confidence": conf,
+                # ADR-125: is_aerial is honest-NaN unless z is a trustworthy MEASUREMENT.
+                "is_aerial": bool(r.z > params.aerial_z_m) if measured else pd.NA,
+                "aerial_source": r.z_source,
+                "contact_source": "velocity_break" if credited else "unresolved",
+            }
+        )
+    if not rows:
+        return _empty_contacts(pd.DataFrame({"player_id": pd.Series([], dtype=pid_dtype)}))
+    out = pd.DataFrame(rows, columns=list(_CONTACT_COLUMNS))
+    out["player_id"] = restore_id_dtype(out["player_id"].to_numpy(dtype=object), pid_dtype)
     out["is_aerial"] = out["is_aerial"].astype("boolean")
     out["aerial_source"] = pd.Categorical(out["aerial_source"], categories=Z_SOURCE_VALUES)
     out["contact_source"] = pd.Categorical(out["contact_source"], categories=CONTACT_SOURCE_VALUES)
     return out
+
+
+def detect_ball_contacts(frames: pd.DataFrame, *, params: BallContactParams = _DEFAULT_PARAMS) -> pd.DataFrame:
+    """Detect candidate ball contacts from tracking frames (TF-79 primitive, v2).
+
+    Pure: does not mutate ``frames``. Returns one row per contact with columns ``period_id, frame_id, time_seconds,
+    player_id, contact_x, contact_y, velocity_change_ms, confidence, is_aerial, aerial_source, contact_source``. A
+    kinematic peak nobody is credited for (or a measured ball above ``contact_max_z_m``) is KEPT as an
+    ``"unresolved"`` row with ``player_id=<NA>`` and ``confidence=NaN`` (E7 -- never a guess). ``velocity_change_ms``
+    is the peak's change. ``confidence`` is the reach gate's ranking score, or with ``contact_scorer`` the scorer's
+    probability for the credited player. ``is_aerial`` is ``<NA>`` unless the ball z is measured.
+
+    With ``contact_scorer``, a credit depends on the frames within about 0.7 s of its peak (the 0.4 s control
+    windows and the scorer's first-touch decoding window), so a slice of a match can credit differently near the
+    slice edges than the whole match. Pass whole matches (scorer spec r7 section 2.1).
+
+    Examples
+    --------
+    Contacts of a tracked match, then the first one after an action at 12.3 s in period 1::
+
+        contacts = detect_ball_contacts(frames)
+        first = first_contact_in_window(contacts, 1, 12.3, 15.0, exclude_player_id=passer_id)
+    """
+    required = {"is_ball", "period_id", "frame_id", "time_seconds", "x", "y"}
+    missing = required - set(frames.columns)
+    if missing:
+        raise ValueError(f"detect_ball_contacts requires frame columns {sorted(missing)}")
+    if not frames["is_ball"].to_numpy(dtype=bool).any():
+        return _empty_contacts(frames)
+    pid_dtype = frames["player_id"].dtype if "player_id" in frames else "Int64"
+    if params.contact_scorer is None:
+        return _finalize_contacts(_candidate_peaks(frames, params), params, pid_dtype=pid_dtype)
+    from silly_kicks.tracking import _contact_scorer as cs
+
+    scorer = cs.resolve_scorer(params.contact_scorer)
+    scorer.check_params(params)
+    peaks = _candidate_peaks(frames, params, k_options=cs.K_OPTIONS)
+    return _finalize_contacts(peaks, params, pid_dtype=pid_dtype, scorer=scorer, frames=frames)
 
 
 _FIRST_CONTACT_COLUMNS: tuple[str, ...] = (
@@ -509,12 +544,17 @@ _FIRST_CONTACT_COLUMNS: tuple[str, ...] = (
 )
 
 
-def first_contact_in_window(contacts: pd.DataFrame, period_id: int, t0: float, t1: float) -> pd.Series | None:
+def first_contact_in_window(
+    contacts: pd.DataFrame, period_id: int, t0: float, t1: float, *, exclude_player_id=None
+) -> pd.Series | None:
     """The earliest RESOLVED contact in ``period_id`` with ``t0 <= time_seconds < t1``.
 
-    Returns the contact row (a Series) or ``None`` when no resolved contact falls in
-    the window. The low-level query the TF-46 corner logic calls directly.
+    ``exclude_player_id`` (keyword-only, detector spec section 5) skips the contacts credited to that player, for a
+    caller that asks who touched the ball after an action: the actor's own release is not the next contact. The
+    compare is dtype-safe (``id_compat``, ADR-019). Returns the contact row (a Series) or ``None``.
     """
+    from silly_kicks.id_compat import ids_match
+
     if contacts is None or len(contacts) == 0:
         return None
     src = contacts["contact_source"].astype(object)
@@ -525,6 +565,8 @@ def first_contact_in_window(contacts: pd.DataFrame, period_id: int, t0: float, t
         & (contacts["time_seconds"] >= t0)
         & (contacts["time_seconds"] < t1)
     )
+    if exclude_player_id is not None and not pd.isna(exclude_player_id):
+        mask &= ~ids_match(contacts["player_id"], exclude_player_id).fillna(False).astype(bool)
     sub = contacts.loc[mask]
     if len(sub) == 0:
         return None
@@ -535,15 +577,23 @@ def first_contact_in_window(contacts: pd.DataFrame, period_id: int, t0: float, t
 def add_ball_contacts(
     actions: pd.DataFrame, frames: pd.DataFrame, *, params: BallContactParams = _DEFAULT_PARAMS
 ) -> pd.DataFrame:
-    """Additive action enricher: the first ball contact in each action's window.
+    """Additive action enricher: the first ball contact by another player in each action's window.
 
-    Pure: returns a copy of ``actions`` with the ``first_contact_*`` columns added
-    (all NaN/``<NA>`` where no resolved contact falls in the window). The window is
-    ``[action.time_seconds, next_action.time_seconds)`` within a period (the last
-    action runs to ``+inf``). ``frames`` is positional-or-keyword; ``params`` is
-    keyword-only (ADR-078). Fails loud if ``actions`` carries no time base.
+    Pure: returns a copy of ``actions`` with the ``first_contact_*`` columns added (all NaN/``<NA>`` where no resolved
+    contact falls in the window). The window is ``[action.time_seconds, next_action.time_seconds)`` within a period
+    (the last action runs to ``+inf``). When ``actions`` carries ``player_id``, the action's own player is skipped
+    (detector spec section 5; dtype-safe, ADR-019). ``frames`` is positional-or-keyword; ``params`` is keyword-only
+    (ADR-078). Fails loud if ``actions`` carries no time base. With ``contact_scorer``, pass the whole match's frames:
+    a credit reads the frames within about 0.7 s of its peak (see :func:`detect_ball_contacts`).
+
+    Examples
+    --------
+    The next touch after each action::
+
+        out = add_ball_contacts(actions, frames)
+        out[["time_seconds", "first_contact_time", "first_contact_player_id"]]
     """
-    from silly_kicks.id_compat import restore_id_dtype
+    from silly_kicks.id_compat import canonical_id, restore_id_dtype
 
     if "period_id" not in actions.columns:
         raise ValueError("add_ball_contacts requires 'period_id' in actions")
@@ -571,6 +621,11 @@ def add_ball_contacts(
     fsrc = np.empty(n, dtype=object)
     fsrc[:] = pd.NA
 
+    actor = (
+        np.array([None if pd.isna(v) else canonical_id(v) for v in out["player_id"]], dtype=object)
+        if "player_id" in out.columns
+        else np.full(n, None, dtype=object)
+    )
     if n and len(contacts):
         src = contacts["contact_source"].astype(object)
         res = contacts.loc[(src != "unresolved") & contacts["player_id"].notna()]
@@ -587,8 +642,11 @@ def add_ball_contacts(
             if len(cper) == 0:
                 continue
             c_t = cper["time_seconds"].to_numpy(dtype=np.float64)
+            c_pid = [canonical_id(v) for v in cper["player_id"]]
             for j, ai in enumerate(a_sorted):
-                pos = np.searchsorted(c_t, a_t[j], side="left")
+                pos = int(np.searchsorted(c_t, a_t[j], side="left"))
+                while pos < len(c_t) and c_t[pos] < a_end[j] and actor[ai] is not None and c_pid[pos] == actor[ai]:
+                    pos += 1  # the action's own player is not its next contact
                 if pos < len(c_t) and c_t[pos] < a_end[j]:
                     row = cper.iloc[pos]
                     ft[ai] = row["time_seconds"]

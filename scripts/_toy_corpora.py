@@ -278,6 +278,8 @@ def _game_actions(game: str, *, n_frames: int, home: int, away: int) -> pd.DataF
                 "bodypart_id": 0,
                 "shot_blocked": pd.NA,
                 "cross_blocked": pd.NA,
+                "cross_native": pd.NA,  # ADR-133 SPADL column
+                "time_source": "event",  # ADR-133 r8 SPADL column
             }
         )
     # The toy frames key games by string id; the actions keep the SAME key (game_id is not cast).
@@ -601,11 +603,19 @@ def xcross_game(game, *, episodes: int = 20, learnable: bool = True, provider: s
     actions = pd.DataFrame(
         {
             "game_id": [game] * len(cross_times),
+            "action_id": list(range(len(cross_times))),
             "period_id": [1] * len(cross_times),
             "team_id": [2] * len(cross_times),
             "time_seconds": cross_times,
             "type_id": [spadlconfig.actiontype_id["cross"]] * len(cross_times),
             "result_id": [spadlconfig.result_id["success"]] * len(cross_times),
+            # ADR-133 label v2: staged like a real corpus, with the tracking cross attempt precomputed (the toy
+            # frames are too sparse for add_cross_deliveries to judge a path). The carrier (player 21) crosses
+            # from the wide byline area, in SPADL LTR.
+            "player_id": [21] * len(cross_times),
+            "start_x": [97.0] * len(cross_times),
+            "start_y": [60.0] * len(cross_times),
+            "cross_attempt": pd.array([True] * len(cross_times), dtype="boolean"),
         }
     )
     return finalize_xcross_frames(rows, game, provider), actions
@@ -1062,6 +1072,93 @@ def scaffold_flat_toy(dataset: str) -> Callable[[pathlib.Path], pathlib.Path]:
     return build
 
 
+#: The toy GS games of the contact scorer: development ids (sha256 parity even) and one held-out id.
+_CONTACT_TOY_DEV = ("3816", "3819", "3820", "3822")
+_CONTACT_TOY_HOLDOUT = ("3812",)
+
+
+def _contact_toy_frames(game: str) -> pd.DataFrame:
+    """A 25 Hz pass scene: player 7 kicks the resting ball to player 9 (15 m/s) at 1.0 s, player 9 kicks it back at
+    3.0 s; players 11 and 12 (the other team) stand off the line. Integer ids, measured z."""
+    fps = 25.0
+    legs = [
+        (0.0, 1.0, (50.4, 34.0), (50.4, 34.0)),
+        (1.0, 1.96, (50.4, 34.0), (64.8, 34.0)),
+        (1.96, 3.0, (64.8, 34.0), (64.8, 34.0)),
+        (3.0, 3.96, (64.8, 34.0), (50.4, 34.0)),
+        (3.96, 5.0, (50.4, 34.0), (50.4, 34.0)),
+    ]
+    players = {7: (1, 50.0, 34.0), 9: (1, 65.2, 34.0), 11: (2, 58.0, 38.0), 12: (2, 56.0, 30.0)}
+    rows = []
+    for k in range(round(legs[-1][1] * fps) + 1):
+        t = k / fps
+        x = y = float("nan")
+        for t0, t1, (x0, y0), (x1, y1) in legs:
+            if t0 - 1e-9 <= t <= t1 + 1e-9:
+                f = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+                x, y = x0 + f * (x1 - x0), y0 + f * (y1 - y0)
+                break
+        base = {"game_id": int(game), "period_id": 1, "frame_id": k, "time_seconds": t, "frame_rate": fps}
+        rows.append(
+            {
+                **base,
+                "player_id": None,
+                "team_id": None,
+                "is_ball": True,
+                "x": x,
+                "y": y,
+                "z": 0.1,
+                "z_source": "measured",
+            }
+        )
+        for pid, (team, px, py) in players.items():
+            rows.append(
+                {
+                    **base,
+                    "player_id": pid,
+                    "team_id": team,
+                    "is_ball": False,
+                    "x": px,
+                    "y": py,
+                    "z": 0.0,
+                    "z_source": "absent",
+                }
+            )
+    out = pd.DataFrame(rows).assign(source_provider="gradientsports")
+    out["player_id"] = out["player_id"].astype("Int64")
+    out["team_id"] = out["team_id"].astype("Int64")
+    return out
+
+
+def contact_scorer_toy(dataset: str) -> Callable[[pathlib.Path], pathlib.Path]:
+    """The toy ``gs_contact_truth`` dataset of `build_contact_scorer`: pergame units ``gradientsports-<game>`` with
+    ``frames.parquet``, ``actions.parquet`` and ``sequences.parquet`` (the PFF sequences of the pass scene)."""
+    from scripts.hf_jobs.datasets import pergame_name
+
+    seq = pd.DataFrame(
+        {
+            "period_id": [1, 1, 1],
+            "t0": [0.0, 1.96, 3.96],
+            "t1": [1.0, 3.0, 5.0],
+            "player": ["7", "9", "7"],
+            "ptype": ["PA", "PA", "IT"],
+        }
+    )
+
+    def build(root: pathlib.Path) -> pathlib.Path:
+        for game in (*_CONTACT_TOY_DEV, *_CONTACT_TOY_HOLDOUT):
+            d = root / dataset / pergame_name("gradientsports", game)
+            d.mkdir(parents=True, exist_ok=True)
+            _contact_toy_frames(game).to_parquet(d / "frames.parquet", index=False)
+            pd.DataFrame({"game_id": [int(game)], "player_id": [7], "team_id": [1]}).to_parquet(
+                d / "actions.parquet", index=False
+            )
+            seq.to_parquet(d / "sequences.parquet", index=False)
+        return root
+
+    return build
+
+
 #: Module -> the CLI arguments its toy `--run-all` needs (Tasks 10-16 add one entry each).
 TOY_PARAMS: dict[str, tuple[str, ...]] = {
     "scripts.train_win_probability": ("--competition-id", "43", "--season-id", "106"),
@@ -1135,6 +1232,8 @@ TOY_PARAMS: dict[str, tuple[str, ...]] = {
         "--fit-fraction",
         "0.4",
     ),
+    "scripts.build_cross_definition": ("--dataset", "toyxc"),
+    "scripts.build_contact_scorer": ("--dataset", "toycontact_scorer", "--split", "dev"),
     # --- scaffold: toys above ---
 }
 
@@ -1150,6 +1249,8 @@ TOY_BUILDERS: dict[str, Callable[[pathlib.Path], pathlib.Path]] = {
     "scripts.train_xshot_occurrence": _xshot_toy,
     "scripts.train_xcross_attempt": _xcross_toy,
     "scripts.build_territory_ranking_census": _census_toy,
+    "scripts.build_cross_definition": _xcross_toy,
+    "scripts.build_contact_scorer": contact_scorer_toy("toycontact_scorer"),
     # --- scaffold: toy builders above ---
 }
 
