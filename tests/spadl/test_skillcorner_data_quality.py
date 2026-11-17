@@ -38,9 +38,11 @@ _COLS = dict(
 def _events(rows: list[dict]) -> pd.DataFrame:
     out = []
     for i, r in enumerate(rows):
-        d = dict(_COLS)
+        d: dict[str, object] = dict(_COLS)
         d.update(r)
         d.setdefault("event_id", f"e{i}")
+        # A zero-length possession unless a row says otherwise (ADR-133: the native row reads time_end).
+        d.setdefault("time_end", d.get("time_start"))
         out.append(d)
     return pd.DataFrame(out)
 

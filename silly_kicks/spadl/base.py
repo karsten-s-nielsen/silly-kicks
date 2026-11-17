@@ -5,9 +5,13 @@ SPADL format.
 
 """
 
+import numpy as np
 import pandas as pd  # type: ignore
 
+from silly_kicks.id_compat import ids_differ, ids_equal
+
 from . import config as spadlconfig
+from .utils import _SET_PIECE_RESTART_TYPE_NAMES
 
 # Type IDs for pass-class actions where the ball physically travels to a
 # different location.  Used by _derive_end_coordinates to overwrite
@@ -112,6 +116,145 @@ def _derive_end_coordinates(actions: pd.DataFrame, *, extra_type_ids: frozenset[
     actions.loc[mask, "end_x"] = next_start_x[mask].values
     actions.loc[mask, "end_y"] = next_start_y[mask].values
     return actions
+
+
+#: The advanced-start line of an open-play cross (ADR-133), in SPADL metres from the passer's own goal line. The
+#: pre-declared start-line measurement (``scripts/build_cross_definition.py``, ``docs/research/cross-definition/``)
+#: selected it: the highest equal-weight mean F1 against the StatsBomb and Gradient Sports native labels.
+CROSS_START_X: float = 75.0
+
+_DELIVERY_SKIP_TYPE_IDS: frozenset[int] = frozenset(
+    {spadlconfig.actiontype_id["non_action"], spadlconfig.actiontype_id["foul"]}
+)
+_RESTART_TYPE_IDS: frozenset[int] = frozenset(
+    spadlconfig.actiontype_id[t] for t in (*_SET_PIECE_RESTART_TYPE_NAMES, "shot_penalty", "shot_freekick")
+)
+_OPEN_PLAY_PASS_IDS = (spadlconfig.actiontype_id["pass"], spadlconfig.actiontype_id["cross"])
+_CORNER_IDS = (spadlconfig.actiontype_id["corner_crossed"], spadlconfig.actiontype_id["corner_short"])
+_FREEKICK_IDS = (spadlconfig.actiontype_id["freekick_crossed"], spadlconfig.actiontype_id["freekick_short"])
+_BOX_X: float = spadlconfig.field_length - spadlconfig.penalty_area_depth
+_BOX_Y_LO: float = spadlconfig.field_width / 2 - spadlconfig.penalty_area_half_width
+_BOX_Y_HI: float = spadlconfig.field_width / 2 + spadlconfig.penalty_area_half_width
+
+
+_DELIVERY_CLASS_IDS = (*_OPEN_PLAY_PASS_IDS, *_CORNER_IDS, *_FREEKICK_IDS)
+_CROSSED_IDS = (
+    spadlconfig.actiontype_id["cross"],
+    spadlconfig.actiontype_id["corner_crossed"],
+    spadlconfig.actiontype_id["freekick_crossed"],
+)
+
+
+def _native_cross_flag(type_id: pd.Series) -> "pd.arrays.BooleanArray":
+    """The provider's own "crossed" label, read from the converter's native typing (ADR-133 ``cross_native``).
+
+    Call it on the natively typed rows, just before :func:`classify_deliveries` re-types them. True on a native
+    ``cross`` / ``corner_crossed`` / ``freekick_crossed``, False on a native ``pass`` / ``corner_short`` /
+    ``freekick_short``, ``pd.NA`` on every other row.
+    """
+    t = np.asarray(type_id)
+    delivery = np.isin(t, _DELIVERY_CLASS_IDS)
+    crossed = np.isin(t, _CROSSED_IDS)
+    return pd.arrays.BooleanArray(crossed, ~delivery)
+
+
+def _synthesized_rows(actions: pd.DataFrame) -> np.ndarray:
+    """Rows a converter synthesized (Metrica/Sportec GK distribution: ``original_event_id`` ends ``_synth_*``).
+
+    They carry no provider label, so their ``cross_native`` is ``pd.NA`` (ADR-133; GS marks its own synthesized
+    rows the same way through ``is_synthetic``).
+    """
+    return actions["original_event_id"].astype(str).str.contains("_synth_", regex=False).to_numpy()
+
+
+def _in_box(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """The attacked penalty area in SPADL LTR coordinates (lines included). The same rule as
+    ``tracking._geometry.in_penalty_area_goal_relative_array`` (``gr_x = field_length - x``), which
+    ``test_geometry_box_predicate_parity`` pins."""
+    return (x >= _BOX_X) & (y >= _BOX_Y_LO) & (y <= _BOX_Y_HI)
+
+
+def _delivered(actions: pd.DataFrame) -> np.ndarray:
+    """Per row: the event-layer delivery condition of :func:`classify_deliveries` (ADR-133). True when the next
+    on-ball action in the same period starts inside the penalty area (mirrored into the passer's frame for an
+    opponent) and is not a restart (the event data has no delivery end there)."""
+    n = len(actions)
+    type_id = actions["type_id"].to_numpy()
+    on_ball = np.flatnonzero(~np.isin(type_id, list(_DELIVERY_SKIP_TYPE_IDS)))
+    nxt = np.full(n, -1, dtype=np.int64)
+    nxt[on_ball[:-1]] = on_ball[1:]
+    has_next = nxt >= 0
+    nidx = np.where(has_next, nxt, 0)
+
+    period = actions["period_id"].to_numpy()
+    team = actions["team_id"].reset_index(drop=True)
+    next_team = team.iloc[nidx].reset_index(drop=True)
+    same = ids_equal(team, next_team).to_numpy()
+    differ = ids_differ(team, next_team).to_numpy()
+
+    sx = actions["start_x"].to_numpy(dtype=np.float64, copy=True)
+    sy = actions["start_y"].to_numpy(dtype=np.float64, copy=True)
+    nx = np.where(differ, spadlconfig.field_length - sx[nidx], sx[nidx])
+    ny = np.where(differ, spadlconfig.field_width - sy[nidx], sy[nidx])
+    in_box = _in_box(nx, ny)
+    same_period_next = has_next & (period[nidx] == period)
+    next_restart = same_period_next & np.isin(type_id[nidx], list(_RESTART_TYPE_IDS))
+    return same_period_next & (same | differ) & ~next_restart & in_box
+
+
+def classify_deliveries(actions: pd.DataFrame, *, cross_start_x: float = CROSS_START_X) -> pd.DataFrame:
+    """Re-type open-play passes by one provider-neutral geometric rule (ADR-133).
+
+    An open-play pass-class row (``pass`` or ``cross``) is a ``cross`` when it starts wide (outside the
+    penalty-area width), at or beyond ``cross_start_x``, and the next on-ball action in the same period starts
+    inside the penalty area; otherwise it is a ``pass``. Set pieces and every other row and column are
+    unchanged.
+
+    The next on-ball action is the next row that is not ``non_action`` or ``foul``. It is mirrored into the
+    passer's frame when its team differs. A restart as the next action (the ball left play or the game
+    stopped) never delivers: the event data has no delivery end there. A row whose own or next team is
+    missing, or whose coordinates are NaN, never delivers.
+
+    Event-only limits: a blocked cross and a delivery that ends in a restart are typed ``pass``.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        Canonical SPADL LTR rows (after ``to_spadl_ltr``), in final chronological order, before
+        ``_add_dribbles``. Needs ``period_id``, ``team_id``, ``type_id``, ``start_x`` and ``start_y``.
+    cross_start_x : float
+        The advanced-start line of an open-play cross. Defaults to :data:`CROSS_START_X`.
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy with ``type_id`` re-typed.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from silly_kicks.spadl import config as spadlconfig
+    >>> pid = spadlconfig.actiontype_id
+    >>> a = pd.DataFrame({"period_id": [1, 1], "team_id": [1, 1], "type_id": [pid["pass"], pid["shot"]],
+    ...                   "start_x": [80.0, 95.0], "start_y": [5.0, 34.0]})
+    >>> [spadlconfig.actiontypes[t] for t in classify_deliveries(a)["type_id"]]
+    ['cross', 'shot']
+    """
+    out = actions.copy()
+    if len(out) == 0:
+        return out
+    type_id = out["type_id"].to_numpy()
+    sx = out["start_x"].to_numpy(dtype=np.float64, copy=True)
+    sy = out["start_y"].to_numpy(dtype=np.float64, copy=True)
+    delivered = _delivered(out)
+
+    is_open = np.isin(type_id, _OPEN_PLAY_PASS_IDS)
+    wide = (sy < _BOX_Y_LO) | (sy > _BOX_Y_HI)
+    is_cross = is_open & wide & (sx >= cross_start_x) & delivered
+    at = spadlconfig.actiontype_id
+    new_type = np.select([is_cross, is_open], [at["cross"], at["pass"]], default=type_id)
+    out["type_id"] = pd.Series(new_type, index=out.index, dtype=out["type_id"].dtype)
+    return out
 
 
 min_dribble_length: float = 3.0

@@ -106,7 +106,10 @@ class TestMetricaActionMapping:
         actions, _ = metrica_mod.convert_to_actions(
             _df_metrica("PASS", "CROSS"), home_team_id="Home", home_team_start_left=True
         )
-        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
+        # ADR-133: the CROSS subtype is kept in cross_native; a lone pass has no delivery into the box, so the
+        # geometric SPADL type is `pass`.
+        assert actions["cross_native"].iloc[0] == True  # noqa: E712
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_pass_goalkick(self):
         actions, _ = metrica_mod.convert_to_actions(

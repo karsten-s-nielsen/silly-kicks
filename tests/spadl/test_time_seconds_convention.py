@@ -6,14 +6,17 @@ contract (spec 2026-06-04 4.1 / ADR-017) into enforced behavior for the
 converters whose time arithmetic the library OWNS: a future refactor that
 emits absolute, continuous-across-periods time makes them fail.
 
-Scope: Opta + StatsBomb only. GradientSports time_seconds is a verbatim
-pass-through (gradientsports.py:416) originating upstream in the lakehouse, so
-it is guarded lakehouse-side (validate_time_base), not here. See ADR-017.
+Scope: Opta, StatsBomb and Gradient Sports. Since ADR-133 the Gradient
+Sports converter computes time_seconds itself, as the
+possession event's ``event_time`` minus its period's kickoff ``start_time``; it no
+longer passes the input ``startGameClock`` (a match clock) through. See ADR-017.
 """
 
 import pandas as pd
+import pytest
 
-from silly_kicks.spadl import opta, statsbomb
+from silly_kicks.spadl import gradientsports, opta, statsbomb
+from tests.spadl.test_gradientsports_event_time import _frame, _row
 
 
 def _opta_event(event_id, period_id, minute, second):
@@ -80,4 +83,24 @@ def test_statsbomb_time_seconds_is_period_relative():
     p2 = actions.loc[actions["period_id"] == 2, "time_seconds"].iloc[0]
     assert p1 == 134.0
     assert p2 == 60.0  # period-relative; an absolute clock would be ~2760s
+    assert p2 < p1
+
+
+def test_gradientsports_time_seconds_is_period_relative():
+    # Video times as the raw feed has them: P1 kickoff at 186.12 s, a pass 134 s later; P2 kickoff at 3042.68 s, a
+    # pass 120 s later. The input startGameClock (`clock`) is the match clock (2820 s in P2) and must not reach the
+    # output.
+    rows = [
+        _row(-1, 1, 186.12, ge="FIRSTKICKOFF", pe=None),
+        _row(1, 1, 186.12 + 134.0, clock=134.0),
+        _row(-2, 2, 3042.68, ge="SECONDKICKOFF", pe=None),
+        _row(2, 2, 3042.68 + 120.0, clock=2820.0),
+    ]
+    actions, _ = gradientsports.convert_to_actions(
+        _frame(rows), home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+    )
+    p1 = actions.loc[actions["period_id"] == 1, "time_seconds"].iloc[0]
+    p2 = actions.loc[actions["period_id"] == 2, "time_seconds"].iloc[0]
+    assert p1 == pytest.approx(134.0)
+    assert p2 == pytest.approx(120.0)  # period-relative; the input match clock would give 2820 s
     assert p2 < p1

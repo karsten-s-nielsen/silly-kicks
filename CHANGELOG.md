@@ -5,6 +5,70 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.144.0] — 2026-11-16 — one open-play cross definition for every provider, at the action's own time (ADR-133) (PR-S209)
+
+> **Why a minor release:** the SPADL output changes for every converter (the open-play `cross`/`pass` split and a
+> new column) and the Gradient Sports and SkillCorner action times move to the action's own moment. No bundled
+> weights change in this release; the models that read the changed type or times are owed a retrain (below).
+
+### Changed (Hyrum notice: every observable change)
+
+- **The open-play `cross` type is one geometric rule for every provider (ADR-133).** `spadl.base.classify_deliveries`
+  types an open-play pass-class row a `cross` when it starts wide (outside the penalty-area width), at or beyond
+  `CROSS_START_X`, and the next on-ball action in the same period starts inside the penalty area (mirrored for an
+  opponent; `non_action` and `foul` are skipped; a restart never delivers). Every other open-play pass-class row is
+  a `pass`. All eight converters call it after `to_spadl_ltr` and before `_add_dribbles`. Open-play `cross` and
+  `pass` counts change for every provider (xshot187 medians per match: SkillCorner about 101 to 17, Gradient Sports
+  about 26 to 14, IDSSE about 4 to 16), so every reader of `pass` alone shifts too (PPDA, build-up, progression,
+  territory, the VAEP cross features, the cross-defence credit rule; `docs/research/cross-definition/caller-sweep.md`).
+  Set-piece types do not change.
+- **SkillCorner's own zone rule `_is_cross` is deleted**; SkillCorner crosses come from the shared rule.
+- **SkillCorner rows move from the reception to the kick (native event timing, ADR-133).** A native row is the
+  on-ball action at the possession end: `time_seconds` from `time_end`, `start_x`/`start_y` from `x_end`/`y_end`
+  (new required inputs `time_end`, `x_end`, `y_end`; a missing `time_end` gives a NaN time and one `UserWarning`).
+  Start-type interceptions, recoveries and keeper saves stay at the possession start. Shots, fouls and non-actions
+  end at their start; a pass without a targeted receiver ends at the next possession's reception. Synthetic
+  carries from the reception to the kick appear.
+- **Gradient Sports `time_seconds` is the possession event's own time (native event timing, ADR-133):**
+  `event_time` minus its period's kickoff `start_time`, period-relative and equal to PFF's own frame
+  synchronisation within 0.067 s (new required inputs `event_time`, `start_time` and the kickoff rows). The input
+  `startGameClock` is no longer read, so a caller's own normalization of it no longer reaches the output. The
+  converter sorts by the new time.
+- **The pining loader's Gradient Sports frames are period-relative** (`periodElapsedTime`), the clock the actions use.
+- **Gradient Sports and SkillCorner `action_id` renumber** (the new time order; SkillCorner's new carries): an
+  ADR-065 cross-table migration for stored tables. Every time-based frame link on both providers reads a new frame.
+- **The kloppy and SkillCorner converters run `to_spadl_ltr` before `_add_dribbles`.** The kloppy output is
+  golden-identical apart from the typing (`tests/spadl/test_converter_reorder_regression.py`); the SkillCorner
+  output also changes with native timing (above).
+- **`cross_blocked` is keyed to the provider's own cross** (`cross_native` True on a pass-class row), not to the SPADL
+  type (amends ADR-046).
+- **TF-51 bravery counts an open-play cross faced by `cross_native`**, so on a provider with its own label the
+  open-play denominator does not move with the re-typing. In a game with no known open-play label (SkillCorner, a
+  kloppy dataset without `PassType` qualifiers) the open-play count is unknown: `n_open_play_crosses_faced` is
+  `<NA>` and `bravery_open_play_crosses` NaN (they were the zone-rule or kloppy crosses), and
+  `bravery_pct_known_domain` counts the shots only. Set-piece bravery does not change: set pieces are not re-typed,
+  so it still counts `corner_crossed`/`freekick_crossed` by type. `compute_bravery` and the atomic bravery adapter
+  raise when the SPADL has no `cross_native` (re-convert first).
+- **`validate_spadl` raises on SPADL stored by 4.143.0 or earlier**: it has no `cross_native` column (re-convert,
+  or add the column as `<NA>`).
+- **Gradient Sports `preserve_native` works**: on 4.143.0 every call with it raised `extra_columns missing from df`.
+
+### Added
+
+- **SPADL column `cross_native`** (nullable `boolean`): the provider's own "crossed" label. True or False on
+  open-play pass-class rows and on corner and free-kick rows where the provider labels deliveries; `<NA>` elsewhere,
+  on every SkillCorner row, on Metrica set pieces and on converter-synthesized goalkeeper rows. Atomic SPADL keeps it
+  only through `preserve_native`.
+- **`CROSS_START_X`** in `silly_kicks.spadl.base`, set by the pre-declared start-line measurement
+  (`scripts/build_cross_definition.py`, `docs/research/cross-definition/`).
+
+### Retrains owed
+
+xCross (its label reads the SPADL `cross` type), PassCompletionModel (trains on `pass` rows) and XSuccessModel (the
+action-type one-hot); xShot, the ghost-GK and ghost-outfield models, both xT-GK retention variants and the TF-46
+corner models (they train on Gradient Sports or SkillCorner action times or links). The bundled weights stay as
+they are until those refits land.
+
 ## [4.143.0] — 2026-11-13 — corpus widening: provenance split from raw redistributability, a two-arm ship rule, per-provider skill gates, size gates (ADR-132) (PR-S208)
 
 > **Why a minor release:** the wheel changes (`silly_kicks/tracking/_artifact_integrity.py` gains the two

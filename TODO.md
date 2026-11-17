@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.143.0: corpus widening (ADR-132).** Corpus provenance is split from raw redistributability (`RAW_REDISTRIBUTABLE` / `PUBLICLY_OBTAINABLE`: the 64 Gradient Sports World Cup 2022 games are publicly obtainable; 62 join the public arm and GS 10502/10503 stay a held-out probe). xShot/xCross have two arms (`public`, `sc_extended`) and one ship rule (`two_arm_ship`); `full` is retired for new artifacts. Two per-provider skill gates, a 5 MB artifact gate and an 80 MB dist gate. Datasets declare `raw` and `provenance`, and `datasets record` checks them. The bundled weights do not change: next are the `xshot187` restage, one refit and the adoption release. Detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.144.0: one open-play cross definition for every provider (ADR-133).** Every converter types an open-play `cross` by one geometric rule (`classify_deliveries`); the provider's own label is the new SPADL column `cross_native`; `cross_blocked` and open-play TF-51 bravery key to it (`<NA>` where a game has no label); set pieces keep their type, and set-piece bravery does not change. Gradient Sports and SkillCorner actions are timed at the action's own moment (native event timing). The bundled weights do not change: the models that read the changed type or times are owed a retrain (CHANGELOG). Detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

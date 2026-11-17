@@ -264,6 +264,8 @@ def _atomic_bravery_scene():
     a = pd.DataFrame(rows)
     a["shot_blocked"] = pd.array([True, pd.NA, pd.NA, pd.NA], dtype="boolean")
     a["cross_blocked"] = pd.array([pd.NA, False, pd.NA, pd.NA], dtype="boolean")
+    # ADR-133: the provider's own label, threaded through preserve_native like cross_blocked.
+    a["cross_native"] = pd.array([pd.NA, True, True, False], dtype="boolean")
     return a
 
 
@@ -278,6 +280,13 @@ def test_bravery_setpiece_is_honest_nan():
 def test_bravery_missing_cross_blocked_raises():
     a = _atomic_bravery_scene().drop(columns=["cross_blocked"])
     with pytest.raises(ValueError, match="cross_blocked"):
+        atf.compute_bravery(a)
+
+
+def test_bravery_missing_cross_native_raises_with_the_preserve_native_fix():
+    # ADR-133: an atomic SPADL without the provider's own label refuses and names the conversion that threads it.
+    a = _atomic_bravery_scene().drop(columns=["cross_native"])
+    with pytest.raises(ValueError, match=r"\['cross_native'\] absent.*preserve_native=.*'cross_native'"):
         atf.compute_bravery(a)
 
 

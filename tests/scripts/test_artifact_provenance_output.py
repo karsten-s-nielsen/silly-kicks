@@ -42,6 +42,13 @@ def _rel(p: pathlib.Path) -> str:
 #: Committed artifacts deliberately without canonical top-level provenance, each with a reason.
 #: An entry is a decision on the record; an omission is an untraceable number.
 _UNPROVENANCED: dict[str, str] = {
+    "docs/research/cross-definition/native-timing-metrics.json": (
+        "the native-timing evidence numbers of ADR-133 (native-timing.md), produced by read-only measurement "
+        "scripts kept OFF-repo with the author (named per number in native-timing.md) on the clean DGX tree at "
+        "library commit b12c0fd9 of feat/cross-definition, PR #306 (recorded as `library_commit`). "
+        "A top-level run_commit would claim the scripts are traceable in the repo; they are not, so the gap is "
+        "recorded here instead (ADR-133)."
+    ),
     "docs/research/tf24_stage2_refresh/invalidation.json": (
         "an ANNOTATION about a historical artifact, not a driver output (combined-cycle C2, "
         "owner-approved spec rev 3). It classifies the TF-24 Stage-2 report's DAS-derived fields "

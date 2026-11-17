@@ -240,20 +240,29 @@ class TestSportecActionMappingPassAndSetPieces:
 
     def test_pass_play_height_cross_maps_to_cross(self):
         actions, _ = sportec_mod.convert_to_actions(_df_pass_cross(), home_team_id="T-HOME", home_team_start_left=True)
-        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
+        # ADR-133: the DFL cross label is kept in cross_native; a lone pass has no delivery into the box, so the
+        # geometric SPADL type is `pass`.
+        assert actions["cross_native"].iloc[0] == True  # noqa: E712
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_pass_play_flat_cross_maps_to_cross(self):
         actions, _ = sportec_mod.convert_to_actions(
             _df_pass_flat_cross(), home_team_id="T-HOME", home_team_start_left=True
         )
-        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
+        # ADR-133: the DFL cross label is kept in cross_native; a lone pass has no delivery into the box, so the
+        # geometric SPADL type is `pass`.
+        assert actions["cross_native"].iloc[0] == True  # noqa: E712
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_pass_play_flat_cross_string_true_maps_to_cross(self):
         # DFL emits play_flat_cross as a string; "true" must map to cross.
         actions, _ = sportec_mod.convert_to_actions(
             _df_pass_flat_cross_str_true(), home_team_id="T-HOME", home_team_start_left=True
         )
-        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
+        # ADR-133: the DFL cross label is kept in cross_native; a lone pass has no delivery into the box, so the
+        # geometric SPADL type is `pass`.
+        assert actions["cross_native"].iloc[0] == True  # noqa: E712
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_pass_play_flat_cross_string_false_maps_to_pass(self):
         # Regression: pd.Series(["false"]).astype(bool) is True (non-empty string is
@@ -276,6 +285,8 @@ class TestSportecActionMappingPassAndSetPieces:
         actions, _ = sportec_mod.convert_to_actions(
             _df_freekick_cross(), home_team_id="T-HOME", home_team_start_left=True
         )
+        # ADR-133: a set piece keeps its type; the DFL crossed label is kept in cross_native.
+        assert actions["cross_native"].iloc[0] == True  # noqa: E712
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["freekick_crossed"]
 
     def test_corner_default_maps_to_corner_short(self):
@@ -286,6 +297,8 @@ class TestSportecActionMappingPassAndSetPieces:
         actions, _ = sportec_mod.convert_to_actions(
             _df_corner_crossed(), home_team_id="T-HOME", home_team_start_left=True
         )
+        # ADR-133: a set piece keeps its type; the DFL crossed label is kept in cross_native.
+        assert actions["cross_native"].iloc[0] == True  # noqa: E712
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_crossed"]
 
     def test_corner_real_dfl_high_maps_to_corner_crossed(self):
@@ -293,6 +306,8 @@ class TestSportecActionMappingPassAndSetPieces:
         actions, _ = sportec_mod.convert_to_actions(
             _df_corner_crossed_real_dfl(), home_team_id="T-HOME", home_team_start_left=True
         )
+        # ADR-133: a set piece keeps its type; the DFL crossed label is kept in cross_native.
+        assert actions["cross_native"].iloc[0] == True  # noqa: E712
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_crossed"]
 
     def test_corner_real_dfl_flat_short_maps_to_corner_short(self):
@@ -744,7 +759,10 @@ class TestSportecPlayEventRecognition:
 
     def test_play_cross_maps_to_cross(self):
         actions, _ = sportec_mod.convert_to_actions(_df_play_cross(), home_team_id="T-HOME", home_team_start_left=True)
-        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
+        # ADR-133: the DFL cross label is kept in cross_native; a lone pass has no delivery into the box, so the
+        # geometric SPADL type is `pass`.
+        assert actions["cross_native"].iloc[0] == True  # noqa: E712
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_play_head_uses_head_bodypart(self):
         actions, _ = sportec_mod.convert_to_actions(_df_play_head(), home_team_id="T-HOME", home_team_start_left=True)
@@ -1377,6 +1395,8 @@ class TestSportecCornerKickAlias:
         actions, _ = sportec_mod.convert_to_actions(
             _df_cornerkick_crossed_xml_tag(), home_team_id="T-HOME", home_team_start_left=True
         )
+        # ADR-133: a set piece keeps its type; the DFL crossed label is kept in cross_native.
+        assert actions["cross_native"].iloc[0] == True  # noqa: E712
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_crossed"]
 
     def test_cornerkick_not_in_unrecognized_counts(self):

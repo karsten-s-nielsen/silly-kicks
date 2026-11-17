@@ -103,3 +103,10 @@ StatsBomb bravery becomes cross-inclusive rather than shots-only -- a public-fun
 still no retrain.)
 Downstream consumers that added `cross_blocked` to a schema assuming a stable all-`pd.NA` column see a
 live-surface value change (see `docs/PRIVATE_CONSUMERS.md`).
+
+## Amendment (ADR-133, 2026-11-16)
+
+`cross_blocked` is keyed to the provider's own cross: it applies where `cross_native` is True on a pass-class row,
+not where the SPADL type is `cross`. ADR-133 re-types open-play passes by one geometric rule, so the SPADL type no
+longer carries the provider's label. Keying the column to `cross_native` keeps the block rate's meaning and its
+denominator on every provider with its own label. SkillCorner has no label, so its `cross_blocked` stays `<NA>`.

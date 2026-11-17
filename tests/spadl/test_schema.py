@@ -13,7 +13,7 @@ from silly_kicks.spadl.schema import (
 
 
 def test_spadl_columns_count():
-    assert len(SPADL_COLUMNS) == 16  # +2: shot_blocked / cross_blocked (TF-51 prereq)
+    assert len(SPADL_COLUMNS) == 17  # +2: shot_blocked / cross_blocked (TF-51 prereq); +1: cross_native (ADR-133)
 
 
 def test_atomic_spadl_columns_count():

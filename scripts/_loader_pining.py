@@ -1162,10 +1162,12 @@ def _gs_flatten_events(events_json: list[dict], roster: pd.DataFrame) -> pd.Data
             "event_id": ev["gameEventId"],
             "possession_event_id": ev.get("possessionEventId"),
             "period_id": ge.get("period"),
+            # The converter no longer reads time_seconds (ADR-133): it times each action as
+            # event_time minus its period's kickoff start_time. startGameClock stays in the flat frame.
             "time_seconds": ge.get("startGameClock"),
-            # Absolute event clock -- the order-insensitive basis for imputing a null-startGameClock
-            # FOUL's time_seconds (spadl.gradientsports Option D). Present on every real GS event.
+            # The game event's start video time: the kickoff anchor and the first sort tiebreak.
             "start_time": ev.get("startTime"),
+            # The possession event's own video time: the source of the action's time_seconds.
             "event_time": ev.get("eventTime"),
             "team_id": ge.get("teamId"),
             "player_id": ge.get("playerId"),
@@ -1321,7 +1323,9 @@ def _build_gradientsports(paths, tracking_limit=None, *, with_velocity: bool = T
             game_id=game_id,
             period_id=int(fr["period"]),
             frame_id=int(fr["frameNum"]),
-            time_seconds=float(fr.get("periodGameClockTime", 0.0)),
+            # Period-relative (ADR-017; tracking/gradientsports.py:70), the clock the GS events use
+            # (ADR-133). periodGameClockTime is the match clock: periodElapsedTime + 0/2700/5400/6300 s.
+            time_seconds=float(fr.get("periodElapsedTime", 0.0)),
             frame_rate=29.97,
             z=0.0,
             speed_native=float("nan"),
