@@ -617,6 +617,10 @@ def add_off_ball_run_values(actions, frames, xt, *, links=None, pitch_control_ca
     re-typed to standard ``bad_touch``: a genuine touch (so the resolver sees it) that is
     off-domain for TF-35 (so it never becomes a valued action itself).
 
+    An action with an unmeasured time (``time_source`` ``"placeholder"`` or ``"order_only"``) has no frame at
+    its time: :func:`~silly_kicks.tracking.run_tracking_features` blanks this family's columns on such rows, but
+    a direct call does not (R45, action-time repair spec section 5.3).
+
     Examples
     --------
     Enrich atomic actions with the off-ball run-value columns::
@@ -1127,6 +1131,10 @@ def add_actor_pre_window(
     pre_seconds: float = 0.5,
 ) -> pd.DataFrame:
     """Atomic-SPADL aggregator for TF-3 features.
+
+    An action with an unmeasured time (``time_source`` ``"placeholder"`` or ``"order_only"``) has no frame at
+    its time: :func:`~silly_kicks.tracking.run_tracking_features` blanks this family's columns on such rows, but
+    a direct call does not (R45, action-time repair spec section 5.3).
 
     Examples
     --------

@@ -232,8 +232,8 @@ def test_meta_every_known_spadl_column_declares_a_kind():
         f"columns without a declared reflection kind: {missing}. Under on_unknown='raise' "
         f"these RAISE in production, they do not pass through."
     )
-    # 35 = the measured 34 + cross_native (ADR-133).
-    assert len(known) == 35, f"expected the measured 35-column surface, got {len(known)}"
+    # 36 = the measured 34 + cross_native (ADR-133) + time_source (action-time repair spec section 4.1).
+    assert len(known) == 36, f"expected the measured 36-column surface, got {len(known)}"
 
 
 def test_meta_every_known_atomic_spadl_column_declares_a_kind():

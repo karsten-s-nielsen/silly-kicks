@@ -163,14 +163,17 @@ def extract_candidate_rows(
             winner = _trajectory_winner(teammates, release, reception, _LABEL_LANE_WIDTH_M)
             if winner is None:  # Q2: ambiguous -> DROP (never all-zero, never label-nearest-regardless)
                 continue
+        # R68: the ids come from the actions COLUMNS, not the `iterrows` row -- on an all-numeric table the row is
+        # one float Series, so an int game_id/action_id came back as 7.0 (and namespaced as "gs:7.0").
+        game_id, action_id = a["game_id"].iloc[p], a["action_id"].iloc[p]
         for _, cf in feats.iterrows():
             rows.append(
                 {
                     **{c: cf[c] for c in _feature_names(feature_set)},
                     "candidate_id": cf["candidate_id"],
                     "label": 1 if same_id(cf["candidate_id"], winner) else 0,
-                    "game_id": act["game_id"],
-                    "action_id": act["action_id"],
+                    "game_id": game_id,
+                    "action_id": action_id,
                     "n_candidates": len(feats),
                 }
             )

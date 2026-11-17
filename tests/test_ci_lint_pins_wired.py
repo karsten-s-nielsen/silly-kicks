@@ -118,7 +118,9 @@ def test_test_jobs_are_deliberately_NOT_pinned() -> None:
     """
     wf = yaml.safe_load(_CI.read_text(encoding="utf-8"))
     for name, job in wf["jobs"].items():
-        if name == "lint":
+        # `pandas-floor` pins the DECLARED floor on purpose: it is extra coverage beside the free matrix, not a pin of
+        # it (owner ruling 2026-11-19; its wiring is pinned by tests/test_ci_pandas_floor_wired.py).
+        if name in ("lint", "pandas-floor"):
             continue
         for step in job.get("steps", []):
             run = step.get("run", "")

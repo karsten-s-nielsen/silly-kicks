@@ -80,6 +80,20 @@ def test_goalkick_event_overrides_a_wrong_roster_starter():
     assert rep.n_conflict == 1
 
 
+def test_goalkick_override_reads_type_id_when_the_table_has_no_type_name():
+    # Converter output is canonical SPADL: `type_id`, no `type_name` until add_names. The roster path raised
+    # KeyError 'type_name' on it (tests/restdefense/test_e2e_method.py, since 4.106.0).
+    from silly_kicks.spadl import config as spadlconfig
+
+    acts = _actions(goalkick_taker=999, goalkick_team=20)
+    acts["type_id"] = acts["type_name"].map(spadlconfig.actiontype_id)
+    acts = acts.drop(columns=["type_name"])
+    m, rep = resolve_keeper_identities(acts, _frames(), identity="roster", roster={10: 901, 20: 902})
+    entry = m[(canonical_id(1), 1, canonical_id(20))]
+    assert entry.gk_id == 999 and entry.source == KEEPER_ID_SOURCE_EVENT
+    assert rep.n_conflict == 1
+
+
 def test_unresolved_team_is_NA_and_counted_not_fabricated():
     m, rep = resolve_keeper_identities(
         _actions(),

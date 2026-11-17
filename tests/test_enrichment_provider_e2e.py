@@ -26,6 +26,7 @@ import pytest
 
 import silly_kicks.atomic.spadl.utils as atomic_utils
 import silly_kicks.spadl.utils as std_utils
+from tests._idsse_fixtures import idsse_fixture_native, idsse_fixture_path, idsse_goalkeeper_ids
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -64,18 +65,15 @@ def _load_idsse_via_sportec() -> pd.DataFrame:
     """IDSSE bronze events → sportec converter → SPADL."""
     from silly_kicks.spadl import sportec
 
-    parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "sample_match.parquet"
-    if not parquet_path.exists():
-        pytest.skip(f"IDSSE fixture not found at {parquet_path}")
-    events = pd.read_parquet(parquet_path)
+    if not idsse_fixture_path("sample_match").exists():
+        pytest.skip(f"IDSSE fixture not found at {idsse_fixture_path('sample_match')}")
+    events = idsse_fixture_native("sample_match")  # R66: through shape_events_to_native
     # IDSSE bronze fixture's ``team`` column uses literal "home"/"away" labels
     # (not team_ids). Pass "home" so the converter mirrors only away-team rows
     # per the ABSOLUTE_FRAME_HOME_RIGHT contract. PR-S22 fixed the prior
     # ``events["team"].iloc[0]`` heuristic which picked "away" because the
     # first row in the fixture happens to be by the away team.
-    gk_ids: set[str] | None = None
-    if "play_goal_keeper_action" in events.columns:
-        gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
+    gk_ids = idsse_goalkeeper_ids(events)
     actions, _ = sportec.convert_to_actions(
         events, home_team_id="home", goalkeeper_ids=gk_ids, home_team_start_left=True
     )

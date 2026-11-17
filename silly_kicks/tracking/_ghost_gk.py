@@ -22,7 +22,7 @@ import os
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, overload
+from typing import Any, Literal, NamedTuple, cast, overload
 
 import numpy as np
 import pandas as pd
@@ -528,73 +528,67 @@ GHOST_GK_FEATURE_NAMES_POSITION_ONLY = [f for f in GHOST_GK_FEATURE_NAMES if f n
 # ---------------------------------------------------------------------------
 
 
-def _build_score_lookup(
-    actions: pd.DataFrame,
-    home_team_id: int | str,
-) -> Callable[[Any, float], float]:
-    """Build (game_id, time_seconds) -> score_diff callback (home perspective).
+_PERIOD_KEY_SCALE = 1.0e6  # a period-relative time is far below 1e6 s: period * scale + time orders by period first
 
-    Returns home_score - away_score at the queried time. The **caller**
-    must negate for away-team GKs.
 
-    Own goals (result_name == "owngoal") are attributed to the opponent
-    of the acting team.
+def _match_order_key(period: np.ndarray, time_s: np.ndarray) -> np.ndarray:
+    """One float per row that orders the rows of a match by ``(period_id, time_seconds)``."""
+    return np.asarray(period, dtype=np.float64) * _PERIOD_KEY_SCALE + np.asarray(time_s, dtype=np.float64)
 
-    Note: Uses str() comparison internally for team ID matching.
-    Assumes actions and frames share team ID type from the same provider
-    (always true in practice --- both come from the same kloppy/converter
-    pipeline). If actions have int team_id=1 and caller passes
-    home_team_id="001", str(1) != "001" would mismatch.
 
-    Examples
-    --------
-    Build the score-differential lookup for a match and query it::
+def _running_score_events(g: pd.DataFrame, home_team_id: int | str) -> tuple[np.ndarray, np.ndarray] | None:
+    """Score-change events of one SkillCorner match from the provider's running score (R56, spec section 4.15).
 
-        fn = _build_score_lookup(actions, home_team_id=1)
-        fn("100", 30.0)  # e.g. 1.0
+    Reads the native rows only (their team is the event team) and takes each value to the home or the away side
+    by ``ids_match``. Returns ``None`` when a side's score decreases or a value is missing: the match then uses the
+    goal rows. A new score takes effect at the row time of the native row AFTER the first native row whose score
+    is higher; a change on the last native row of the match takes no effect. A period-5 (shoot-out) row is not
+    read, as on the goal-row path (R52), so a period-5 frame takes the score at the end of period 4.
     """
+    nat = g[(g["action_provenance"] == "native").to_numpy() & (g["period_id"].to_numpy() != 5)]
+    nat = nat.sort_values(["period_id", "time_seconds", "action_id"], kind="mergesort")
+    if len(nat) == 0:
+        return None
+    ts = pd.to_numeric(nat["team_score"], errors="coerce").to_numpy(dtype=np.float64)
+    os_ = pd.to_numeric(nat["opponent_team_score"], errors="coerce").to_numpy(dtype=np.float64)
+    if not (np.isfinite(ts).all() and np.isfinite(os_).all()):
+        return None
+    is_home = ids_match(nat["team_id"], home_team_id).to_numpy()
+    home = np.where(is_home, ts, os_)
+    away = np.where(is_home, os_, ts)
+    if np.any(np.diff(home) < 0) or np.any(np.diff(away) < 0):
+        return None
+    keys = _match_order_key(nat["period_id"].to_numpy(), nat["time_seconds"].to_numpy())
+    ev_keys, ev_vals = [-1.0], [float(home[0] - away[0])]  # the score before the first row
+    changed = np.r_[False, (np.diff(home) != 0) | (np.diff(away) != 0)]
+    for i in np.where(changed)[0]:
+        if i + 1 < len(keys):
+            ev_keys.append(float(keys[i + 1]))
+            ev_vals.append(float(home[i] - away[i]))
+    # a period-5 frame takes the score at the end of period 4: the score the last native row before period 5 shows
+    # (a change on that row has no next row in its period to carry the effect)
+    if float(home[-1] - away[-1]) != ev_vals[-1]:
+        ev_keys.append(5 * _PERIOD_KEY_SCALE)
+        ev_vals.append(float(home[-1] - away[-1]))
+    return np.asarray(ev_keys), np.asarray(ev_vals)
 
-    # Resolve type/result columns (supports both ID and name DataFrames)
-    if "type_name" in actions.columns:
-        shots = actions[actions["type_name"] == "shot"].copy()
-    else:
-        shot_id = spadlconfig.actiontype_id["shot"]
-        shots = actions[actions["type_id"] == shot_id].copy()
 
-    if "result_name" in actions.columns:
-        goals = shots[shots["result_name"].isin(["success", "owngoal"])].copy()
-    else:
-        success_id = spadlconfig.result_id["success"]
-        owngoal_id = spadlconfig.result_id["owngoal"]
-        goals = shots[shots["result_id"].isin([success_id, owngoal_id])].copy()
+def _goal_row_events(g: pd.DataFrame, home_team_id: int | str, all_teams: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Score-change events of one match from the goal rows of the library rule (R52).
 
+    A period-5 (shoot-out) row is no goal. An own goal counts for the other team.
+    """
+    from silly_kicks.spadl._goals import goal_mask, owngoal_mask
+
+    is_goal = (goal_mask(g) | owngoal_mask(g)).to_numpy() & (g["period_id"].to_numpy() != 5)
+    goals = g[is_goal].sort_values(["period_id", "time_seconds"], kind="mergesort")
     if len(goals) == 0:
-
-        def _zero(_game_id: Any, _time_s: float) -> float:
-            return 0.0
-
-        return _zero
-
-    # Flip own-goal team attribution
-    if "result_name" in goals.columns:
-        is_own = goals["result_name"] == "owngoal"
-    else:
-        is_own = goals["result_id"] == spadlconfig.result_id["owngoal"]
-
-    # For own goals, the scoring team is the OPPONENT of the actor
-    goals = goals.copy()
-    goals["_scoring_team"] = goals["team_id"].copy()
-    if is_own.any():
-        all_teams = actions["team_id"].unique()
-        if len(all_teams) == 2:
-            team_a, team_b = all_teams[0], all_teams[1]
-            flip_map = {team_a: team_b, team_b: team_a}
-            goals.loc[is_own, "_scoring_team"] = goals.loc[is_own, "team_id"].map(flip_map)
-
-    goals = goals.sort_values(["game_id", "time_seconds"]).reset_index(drop=True)
-
-    # Build per-game cumulative score arrays.
-    #
+        return np.asarray([-1.0]), np.asarray([0.0])
+    scoring = goals["team_id"].copy()
+    own = owngoal_mask(goals).to_numpy()
+    if own.any() and len(all_teams) == 2:
+        flip = {all_teams[0]: all_teams[1], all_teams[1]: all_teams[0]}
+        scoring.loc[own] = goals.loc[own, "team_id"].map(flip)
     # `is_home` MUST route through the ADR-019 seam, not a naive `str(t) == str(home_team_id)`:
     # the latter renders a float-backed id as "366.0" against a scalar "366", so EVERY goal
     # falls to the away side. Measured on a 3-goal fixture (2 home, 1 away) with a float64
@@ -602,85 +596,112 @@ def _build_score_lookup(
     # ghost-GK features, so the error is a four-goal swing on a trained-model input rather than
     # a rounding nuisance. `ids_match` is vectorized, so this is also cheaper than the
     # per-element Python loop it replaces.
-    _lookup: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-    for gid, grp in goals.groupby("game_id"):
-        times = np.asarray(grp["time_seconds"].values, dtype=np.float64)
-        is_home = ids_match(grp["_scoring_team"], home_team_id).to_numpy()
-        home_cum = np.cumsum(is_home.astype(np.float64))
-        away_cum = np.cumsum((~is_home).astype(np.float64))
-        diffs = home_cum - away_cum
-        _lookup[str(gid)] = (times, diffs)
+    is_home = ids_match(scoring, home_team_id).to_numpy()
+    diffs = np.cumsum(is_home.astype(np.float64)) - np.cumsum((~is_home).astype(np.float64))
+    keys = _match_order_key(goals["period_id"].to_numpy(), goals["time_seconds"].to_numpy())
+    return np.r_[-1.0, keys], np.r_[0.0, diffs]
 
-    def _score(game_id: Any, time_s: float) -> float:
+
+def _build_score_lookup(
+    actions: pd.DataFrame,
+    home_team_id: int | str,
+) -> Callable[[Any, int, float], float]:
+    """Build the ``(game_id, period_id, time_seconds) -> score_diff`` callback (home perspective).
+
+    Returns home score minus away score at that moment of the match. A goal of an earlier period counts, a goal
+    of the same period counts from its time, and a goal of a later period does not (R51, action-time repair spec
+    section 4.11). The **caller** must negate for away-team GKs.
+
+    Two sources, never added (spec sections 4.12, 4.15):
+
+    - The SkillCorner running score (``team_score`` / ``opponent_team_score`` on the native rows). The new score
+      takes effect at the row time of the native row after the first native row whose score is higher. A match
+      whose score decreases on a side, or that misses a value, uses the goal rows.
+    - The goal rows of the library rule (``goal_mask`` / ``owngoal_mask``): a successful shot, penalty or direct
+      free kick, and an own goal of any type, counted for the other team. A shoot-out row (period 5) is no goal,
+      so a period-5 frame takes the score at the end of period 4.
+
+    Team ids match through ``ids_match`` (ADR-019), so a float-backed and a string id agree.
+
+    Examples
+    --------
+    Build the score-differential lookup for a match and query it::
+
+        fn = _build_score_lookup(actions, home_team_id=1)
+        fn("100", 2, 30.0)  # e.g. 1.0
+    """
+    has_running = {"team_score", "opponent_team_score", "action_provenance"} <= set(actions.columns)
+    all_teams = actions["team_id"].dropna().unique()
+    _lookup: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for gid, g in actions.groupby("game_id", sort=False):
+        events = _running_score_events(g, home_team_id) if has_running else None
+        _lookup[str(gid)] = events if events is not None else _goal_row_events(g, home_team_id, all_teams)
+
+    def _score(game_id: Any, period_id: int, time_s: float) -> float:
         key = str(game_id)
         if key not in _lookup:
             return 0.0
-        times, diffs = _lookup[key]
-        idx = int(np.searchsorted(times, time_s, side="right")) - 1
-        if idx < 0:
-            return 0.0
-        return float(diffs[idx])
+        keys, diffs = _lookup[key]
+        idx = int(np.searchsorted(keys, float(period_id) * _PERIOD_KEY_SCALE + float(time_s), side="right")) - 1
+        return float(diffs[idx]) if idx >= 0 else 0.0
 
     return _score
 
 
 def _build_phase_lookup(
     actions: pd.DataFrame,
-) -> Callable[[Any, float], int]:
-    """Build (game_id, time_seconds) -> phase callback.
+) -> Callable[[Any, int, float], int]:
+    """Build the ``(game_id, period_id, time_seconds) -> phase`` callback.
 
     Returns 0 (open_play), 1 (set_piece), or 2 (goal_kick).
-    A set-piece phase decays to open play after _SET_PIECE_DECAY_SECONDS.
+    A set-piece phase decays to open play after _SET_PIECE_DECAY_SECONDS, inside its own period only (R51).
     throw_in is excluded --- does not alter GK positioning expectations.
+    An ``"order_only"`` row (a restart with no first possession: its time keeps the row order only) opens no
+    window and ends none (R50, action-time repair spec section 5.2).
 
     Examples
     --------
     Build the phase lookup for a match and query it::
 
         fn = _build_phase_lookup(actions)
-        fn("100", 33.0)  # e.g. 1 (set_piece)
+        fn("100", 1, 33.0)  # e.g. 1 (set_piece)
     """
+    from silly_kicks.spadl.schema import is_order_only
 
     # Set-piece types (excluding throw_in per spec)
     _SP_TYPES = {"freekick_crossed", "freekick_short", "corner_crossed", "corner_short"}
     _GK_TYPE = "goalkick"
 
+    actions = actions[~is_order_only(actions)]
     # Resolve type column
     if "type_name" in actions.columns:
-        sp_mask = actions["type_name"].isin(_SP_TYPES | {_GK_TYPE})
-        sp = actions[sp_mask].copy()
-        if len(sp) > 0:
-            sp["_phase_code"] = sp["type_name"].apply(lambda t: 2 if t == _GK_TYPE else 1)
-        else:
-            sp["_phase_code"] = pd.Series(dtype=int)
+        sp = actions[actions["type_name"].isin(_SP_TYPES | {_GK_TYPE})].copy()
+        sp["_phase_code"] = np.where(sp["type_name"].to_numpy() == _GK_TYPE, 2, 1)
     else:
         sp_ids = {spadlconfig.actiontype_id[t] for t in _SP_TYPES if t in spadlconfig.actiontype_id}
         gk_id = spadlconfig.actiontype_id.get(_GK_TYPE)
         if gk_id is not None:
             sp_ids.add(gk_id)
         sp = actions[actions["type_id"].isin(sp_ids)].copy()
-        if len(sp) > 0:
-            sp["_phase_code"] = sp["type_id"].apply(lambda tid: 2 if tid == gk_id else 1)
-        else:
-            sp["_phase_code"] = pd.Series(dtype=int)
+        sp["_phase_code"] = np.where(sp["type_id"].to_numpy() == gk_id, 2, 1)
 
     if len(sp) == 0:
 
-        def _open(_game_id: Any, _time_s: float) -> int:
+        def _open(_game_id: Any, _period_id: int, _time_s: float) -> int:
             return 0
 
         return _open
 
-    sp = sp.sort_values(["game_id", "time_seconds"]).reset_index(drop=True)
+    sp = sp.sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort").reset_index(drop=True)
 
-    _lookup: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-    for gid, grp in sp.groupby("game_id"):
+    _lookup: dict[tuple[str, int], tuple[np.ndarray, np.ndarray]] = {}
+    for (gid, pid), grp in sp.groupby(["game_id", "period_id"], sort=False):
         times = np.asarray(grp["time_seconds"].values, dtype=np.float64)
         codes = np.asarray(grp["_phase_code"].values, dtype=np.int64)
-        _lookup[str(gid)] = (times, codes)
+        _lookup[(str(gid), int(cast(int, pid)))] = (times, codes)  # the groupby key's second level is the period
 
-    def _phase(game_id: Any, time_s: float) -> int:
-        key = str(game_id)
+    def _phase(game_id: Any, period_id: int, time_s: float) -> int:
+        key = (str(game_id), int(period_id))
         if key not in _lookup:
             return 0
         times, codes = _lookup[key]
@@ -933,8 +954,8 @@ def _extract_all_ghost_gk_features(
     *,
     home_team_id: str | int,
     carrier: pd.DataFrame | None = None,
-    score_at_time: Callable[[Any, float], float] | None = None,
-    phase_at_time: Callable[[Any, float], int] | None = None,
+    score_at_time: Callable[[Any, int, float], float] | None = None,
+    phase_at_time: Callable[[Any, int, float], int] | None = None,
     subsample_fps: float | None = None,
     link_frame_ids: set[int] | None = None,
     feature_set: GhostFeatureSet = "faithful",
@@ -955,9 +976,9 @@ def _extract_all_ghost_gk_features(
     carrier : pd.DataFrame | None
         Per-frame ball_carrier_team_id (from derive_team_in_possession).
     score_at_time : callable | None
-        (game_id, time_seconds) -> score_diff (home perspective).
+        (game_id, period_id, time_seconds) -> score_diff (home perspective).
     phase_at_time : callable | None
-        (game_id, time_seconds) -> int (0=open, 1=set_piece, 2=goal_kick).
+        (game_id, period_id, time_seconds) -> int (0=open, 1=set_piece, 2=goal_kick).
     subsample_fps : float | None
         Thin frames to target fps before extraction.
     link_frame_ids : set[int] | None, default None
@@ -1091,14 +1112,14 @@ def _extract_all_ghost_gk_features(
             if fid_linked:
                 # Score: callback returns home perspective, negate for away
                 if score_at_time is not None:
-                    sd = score_at_time(gid, time_s)
+                    sd = score_at_time(gid, int(cast(int, pid)), time_s)  # the groupby key's period level
                     if not same_id(gk_team, home_team_id):
                         sd = -sd
                 else:
                     sd = 0.0
 
                 # Phase
-                ph = phase_at_time(gid, time_s) if phase_at_time is not None else 0
+                ph = phase_at_time(gid, int(cast(int, pid)), time_s) if phase_at_time is not None else 0
 
                 # Carrier
                 carrier_team = None
@@ -1818,7 +1839,7 @@ def _feature_contract_block(feature_set: GhostFeatureSet = "faithful") -> dict:
     ``tests/tracking/test_declared_constant_values.py`` -- the enumeration gate only ever compared
     NAMES, which is how a 20.15 declaration survived against a 20.16 extractor.
     """
-    from silly_kicks.tracking._feature_contract import contract_probe_frame, feature_contract
+    from silly_kicks.tracking._feature_contract import REVISION_CONTRACT_KEYS, contract_probe_frame, feature_contract
 
     def _vec():
         return (
@@ -1846,6 +1867,7 @@ def _feature_contract_block(feature_set: GhostFeatureSet = "faithful") -> dict:
             # against a 20.16 extractor and every key-name gate stayed green.
             "penalty_area_half_width": float(spadlconfig.penalty_area_half_width),
             "penalty_area_depth": float(spadlconfig.penalty_area_depth),
+            "match_context_revision": REVISION_CONTRACT_KEYS["match_context_revision"],  # score and phase inputs (R55)
         },
     )
 

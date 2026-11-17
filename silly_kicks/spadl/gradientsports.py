@@ -612,6 +612,7 @@ def convert_to_actions(
             actions[col] = pd.array([], dtype="Int64")
         for col in preserve_native or ():
             actions[col] = events[col].reset_index(drop=True)  # empty, with the input dtype
+        actions["time_source"] = pd.Series([], dtype=object)
         actions = _finalize_output(actions, schema=GRADIENTSPORTS_SPADL_COLUMNS, extra_columns=preserve_native)
         report = ConversionReport(
             provider="gradientsports",
@@ -916,6 +917,8 @@ def convert_to_actions(
     # ------------------------------------------------------------------
     # Finalize
     # ------------------------------------------------------------------
+    # The provider's time on its own tracking clock; a synthetic row takes its source row's value (spec section 4.1).
+    actions["time_source"] = "tracking"
     actions = _finalize_output(
         actions,
         schema=GRADIENTSPORTS_SPADL_COLUMNS,

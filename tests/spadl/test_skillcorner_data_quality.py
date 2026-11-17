@@ -69,7 +69,7 @@ class TestPeriodRelativeTime:
 
 
 class TestGoalkickResult:
-    def test_goalkick_lost_to_opponent_is_fail(self):
+    def test_receivers_action_lost_to_opponent_is_fail(self):
         events = _events(
             [
                 dict(
@@ -85,8 +85,14 @@ class TestGoalkickResult:
             ]
         )
         actions, _ = convert_to_actions(events, _META)
+        # R30 (action-time repair spec section 4.2): the goal kick is its own derived row and gk1's possession is
+        # its first possession, so the goal kick reaches its own team; gk1's own action is lost to the opponent.
         gk = actions[actions["type_id"] == spadlconfig.actiontype_id["goalkick"]].iloc[0]
-        assert gk["result_id"] == spadlconfig.result_id["fail"]  # opponent next -> lost
+        assert gk["action_provenance"] == "derived"
+        assert gk["result_id"] == spadlconfig.result_id["success"]
+        receiver = actions[(actions["player_id"] == "gk1") & (actions["action_provenance"] == "native")].iloc[0]
+        assert receiver["type_id"] != spadlconfig.actiontype_id["goalkick"]
+        assert receiver["result_id"] == spadlconfig.result_id["fail"]  # opponent next -> lost
 
     def test_goalkick_retained_is_success(self):
         events = _events(

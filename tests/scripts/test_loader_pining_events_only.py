@@ -7,8 +7,11 @@ and PARSED every match's tracking (``tracking_limit`` caps frames only AFTER the
 (the DGX fit process died of OOM with no traceback). ``events_only=True`` never requests the tracking
 artifact and never builds frames, so the full corpus streams in minutes with bounded memory.
 
-The load-bearing property is BYTE-IDENTITY of the actions: an events-only build must produce exactly
-the actions the full build produces, or the xT surface would silently depend on which path fit it.
+The load-bearing property (action-time repair spec section 4.10): the events-only actions equal the full
+build's actions BEFORE the time step ``sync_action_times``, and the full build's actions are the step applied
+to them. The stable key between the two builds is ``(game_id, original_event_id, action_provenance,
+restart_kind(type_id))`` (spec section 4.18); a row with no ``original_event_id`` is identified by the previous
+keyed row and its offset after it.
 Each builder is proven against its full path on committed/real-shaped fixtures -- with the tracking
 artifact ABSENT from ``paths``, so any read of it would raise rather than pass unnoticed.
 """
@@ -330,3 +333,80 @@ def test_sb_shot_xg_column_extracts_nested_statsbomb_xg():
     assert xg.iloc[0] == pytest.approx(0.52)  # nested extra.shot.statsbomb_xg
     # non-shot / empty / non-dict -> missing (pandas coerces the mixed list to float64, so None -> NaN)
     assert pd.isna(xg.iloc[1]) and pd.isna(xg.iloc[2]) and pd.isna(xg.iloc[3])
+
+
+# --------------------------------------------------------------------------------------------------
+# The time step: full build = the step applied; the stable key (action-time repair spec 4.10, 4.18)
+# --------------------------------------------------------------------------------------------------
+
+
+def _stable_keys(actions: pd.DataFrame) -> list[tuple]:
+    """Spec section 4.18 key of each row; a keyless row takes the previous keyed key and its offset."""
+    from silly_kicks.spadl.schema import restart_kind
+
+    a = actions.sort_values(["game_id", "period_id", "time_seconds", "action_id"], kind="mergesort")
+    keys, last, offset = [], None, 0
+    for r in a.to_dict("records"):
+        if pd.isna(r["original_event_id"]):
+            offset += 1
+            keys.append((last, offset))
+        else:
+            kind = restart_kind(int(r["type_id"]))
+            last, offset = (r["game_id"], str(r["original_event_id"]), r["action_provenance"], kind), 0
+            keys.append((last, 0))
+    return sorted(keys, key=repr)
+
+
+def test_idsse_full_build_is_the_step_applied_and_aligns_rows():
+    from silly_kicks.tracking import sync_action_times
+
+    full_paths = {
+        "metadata": _IDSSE / "info.xml",
+        "events": _IDSSE / "events.xml",
+        "tracking": _IDSSE / "positions.xml",
+    }
+    pre, frames, _home = lp._build_idsse(full_paths, "DFL-MAT-J03WMX", None)
+    built = lp._build_match("idsse", "DFL-MAT-J03WMX", full_paths, None)[0]
+    pd.testing.assert_frame_equal(built, sync_action_times(pre, frames))
+    assert (built["time_source"] == "elastic").any()  # R32: the idsse branch runs the step
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")  # the pre-existing omitted output_convention (ADR-006)
+def test_gradientsports_build_match_leaves_its_rows_unchanged(tmp_path):
+    full_paths = _write_gs_match(tmp_path, et_flag=True)
+    pre, _frames, _home = lp._build_gradientsports(full_paths, None)
+    built = lp._build_match("gradientsports", "99999", full_paths, None)[0]
+    pd.testing.assert_frame_equal(built, pre)
+
+
+def test_skillcorner_stable_key_survives_the_step():
+    from silly_kicks.tracking import sync_action_times
+    from tests.spadl._sc_restart_scenes import convert, pp
+
+    # a shared possession (p1: first possession of a corner and `a` of an "after"-only penalty) and two
+    # keeper saves in a row (each a keyless derived row)
+    pre = convert(
+        pp("p0", 10, 14, "A", "a1", end=(50.0, -30.0), gia="corner_against"),
+        pp(
+            "p1",
+            30,
+            33,
+            "H",
+            "h1",
+            start=(49.0, 30.0),
+            end=(45.0, 0.0),
+            end_type="foul_suffered",
+            gib="corner_for",
+            gia="penalty_for",
+        ),
+        pp("p2", 120, 121, "A", "a2", end=(40.0, 0.0), end_type="shot"),
+        pp("p3", 125, 126, "H", "g1", start=(-50.0, 0.0), end=(-40.0, 0.0), start_type="recovery", end_type="pass"),
+        pp("p4", 130, 131, "A", "a3", end=(40.0, 0.0), end_type="shot"),
+        pp("p5", 135, 136, "H", "g1", start=(-50.0, 0.0), end=(-40.0, 0.0), start_type="recovery"),
+    )
+    frames = pd.DataFrame({"game_id": pre["game_id"].iloc[0], "period_id": 1, "frame_id": [0, 1],
+                           "time_seconds": [0.0, 0.1], "is_ball": True, "x": [50.0, 52.0], "y": [34.0, 34.0],
+                           "visibility": True, "source_provider": "skillcorner"})  # fmt: skip
+    full = sync_action_times(pre, frames)
+    assert (pre["original_event_id"].isna()).sum() >= 2  # non-vacuity: keyless rows are in the fixture
+    assert _stable_keys(full) == _stable_keys(pre)

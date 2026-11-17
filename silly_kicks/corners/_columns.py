@@ -30,7 +30,7 @@ CORNER_IDENTIFY_COLUMNS: dict[str, str] = {
     "game_id": "object",
     "corner_id": "int64",
     "period_id": "int64",
-    "t_kick": "float64",
+    "t_kick": "float64",  # the kick time; <NA> for a SkillCorner corner with no measured kick (spec 5.2)
     "attacking_team_id": "object",
     CORNER_SIDE: "category",
     "kick_x": "float64",

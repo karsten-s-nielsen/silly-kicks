@@ -10,27 +10,12 @@ import pandas as pd
 
 import silly_kicks.spadl.config as spadl
 from silly_kicks.id_compat import ids_differ, ids_equal, ids_match, same_id
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
+from silly_kicks.spadl.schema import is_order_only
 
-# Single-source goal/own-goal predicates (ADR-0NN). Extracted so the definition lives in ONE place
-# instead of being copy-pasted across the ~8 label functions (the copy-paste that hid the own-goal
-# undercount). Kept on `type_name` to preserve the label input contract, with an explicit shot-type
-# name-set rather than a fragile ``str.contains("shot")`` substring.
-_SHOT_TYPE_NAMES = frozenset({"shot", "shot_penalty", "shot_freekick"})
-
-
-def _is_goal(actions: pd.DataFrame) -> pd.Series:
-    """A goal is a successful shot-class action (shot / shot_penalty / shot_freekick)."""
-    return actions["type_name"].isin(_SHOT_TYPE_NAMES) & (actions["result_id"] == spadl.result_id["success"])
-
-
-def _is_owngoal(actions: pd.DataFrame) -> pd.Series:
-    """An own goal is unambiguous by RESULT (own goals are ``bad_touch``, not shots) — NO type gate.
-
-    This is the fix for the codebase-wide undercount: own goals (every converter emits them as
-    ``bad_touch``) never matched the former shot-type-substring gate, so they never registered in
-    scores/concedes/xG labels.
-    """
-    return actions["result_id"] == spadl.result_id["owngoal"]
+# The goal and own-goal predicates are the library's one goal rule (R52): silly_kicks.spadl._goals.
+_is_goal = goal_mask
+_is_owngoal = owngoal_mask
 
 
 def _warn_if_nr_actions_ignored(nr_actions: int, window: str) -> None:
@@ -374,14 +359,31 @@ def _concedes_possession(actions: pd.DataFrame, xg_column: str | None) -> pd.Dat
     )
 
 
+def _time_mode_labels(result: np.ndarray, order_only: np.ndarray, is_xg: bool) -> pd.Series | np.ndarray:
+    """The ``"time"`` mode label column: an ``"order_only"`` row is ``<NA>`` (NaN for xG), the dtype is fixed."""
+    if is_xg:
+        out = result.astype(float)
+        out[order_only] = np.nan
+        return out
+    labels = pd.array(result.astype(bool), dtype="boolean")
+    labels[order_only] = pd.NA
+    return pd.Series(labels)
+
+
 def _scores_time(
     actions: pd.DataFrame,
     window_seconds: float,
     xg_column: str | None,
 ) -> pd.DataFrame:
-    """Time-windowed scoring labels using searchsorted for strict inequality."""
-    goal = _is_goal(actions)
-    owngoal = _is_owngoal(actions)
+    """Time-windowed scoring labels using searchsorted for strict inequality.
+
+    An ``"order_only"`` row (action-time repair spec section 4.13) opens no window: its label is ``<NA>`` (NaN with
+    ``xg_column``), and it is no goal and no own goal for any other row. The label column is nullable ``boolean``
+    on every table (``float`` with ``xg_column``).
+    """
+    order_only = is_order_only(actions)
+    goal = _is_goal(actions) & ~order_only
+    owngoal = _is_owngoal(actions) & ~order_only
     team_id = np.asarray(actions["team_id"].values)
     time_s = np.asarray(actions["time_seconds"].values, dtype=np.float64)
 
@@ -448,7 +450,7 @@ def _scores_time(
                 else:
                     result[global_i] = True
 
-    return pd.DataFrame({"scores": result})
+    return pd.DataFrame({"scores": _time_mode_labels(result, order_only, bool(xg_column))})
 
 
 def _concedes_time(
@@ -456,9 +458,14 @@ def _concedes_time(
     window_seconds: float,
     xg_column: str | None,
 ) -> pd.DataFrame:
-    """Time-windowed conceding labels using searchsorted for strict inequality."""
-    goal = _is_goal(actions)
-    owngoal = _is_owngoal(actions)
+    """Time-windowed conceding labels using searchsorted for strict inequality.
+
+    An ``"order_only"`` row opens no window (``<NA>``; NaN with ``xg_column``) and is no goal and no own goal for
+    any other row (action-time repair spec section 4.13). The label column is nullable ``boolean`` on every table.
+    """
+    order_only = is_order_only(actions)
+    goal = _is_goal(actions) & ~order_only
+    owngoal = _is_owngoal(actions) & ~order_only
     team_id = np.asarray(actions["team_id"].values)
     time_s = np.asarray(actions["time_seconds"].values, dtype=np.float64)
 
@@ -521,7 +528,7 @@ def _concedes_time(
                 else:
                     result[global_i] = True
 
-    return pd.DataFrame({"concedes": result})
+    return pd.DataFrame({"concedes": _time_mode_labels(result, order_only, bool(xg_column))})
 
 
 def goal_from_shot(actions: pd.DataFrame) -> pd.DataFrame:

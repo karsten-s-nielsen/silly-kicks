@@ -245,11 +245,12 @@ def convert_to_frames(
     players["team_id"] = players["team_id"].astype(str)
 
     # --- ball rows (one per (frame, period); recover ball_z) ---
-    ball = (
-        src[["frame", "period", "timestamp", "ball_x", "ball_y", "ball_z"]]
-        .drop_duplicates(subset=["frame", "period"])
-        .copy()
-    )
+    # The optional `ball_is_detected` column carries the feed's ball `is_detected` (action-time repair spec
+    # section 4.4); without it the ball visibility stays null, as before.
+    ball_cols = ["frame", "period", "timestamp", "ball_x", "ball_y", "ball_z"]
+    if "ball_is_detected" in src.columns:
+        ball_cols.append("ball_is_detected")
+    ball = src[ball_cols].drop_duplicates(subset=["frame", "period"]).copy()
     ball = ball.rename(
         columns={
             "frame": "frame_id",
@@ -265,7 +266,11 @@ def convert_to_frames(
     ball["player_id"] = None
     ball["team_id"] = None
     ball["is_goalkeeper"] = False
-    ball["visibility"] = None
+    if "ball_is_detected" in ball.columns:
+        detected = ball.pop("ball_is_detected").astype(object)
+        ball["visibility"] = detected.mask(detected.isna(), None)  # a missing detection stays None (object dtype)
+    else:
+        ball["visibility"] = None
     ball["is_ball"] = True
 
     df = pd.concat([players, ball], ignore_index=True)

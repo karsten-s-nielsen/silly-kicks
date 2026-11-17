@@ -157,18 +157,67 @@ def test_the_campaign_mode_defaults_to_rematerialize_and_accepts_refit(tmp_path)
     assert C.load_campaign(_with_mode(tmp_path, "refit")).mode == "refit"
 
 
+def test_campaign_mode_accepts_retrain(tmp_path):
+    assert C.load_campaign(_with_mode(tmp_path, "retrain")).mode == "retrain"
+
+
+def _with_job_mode(tmp_path, mode: str) -> pathlib.Path:
+    p = tmp_path / "j.toml"
+    text = CYCLE1.read_text(encoding="utf-8").replace('job = "xsuccess"\n', f'job = "xsuccess"\nmode = "{mode}"\n', 1)
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def test_job_mode_defaults_to_the_campaign_mode(tmp_path):
+    assert {i.mode for i in C.instances(C.load_campaign(_with_mode(tmp_path, "refit")), "0" * 40)} == {"refit"}
+
+
+@pytest.mark.parametrize("mode", ["rematerialize", "refit", "retrain"])
+def test_job_mode_accepts_the_three_values(tmp_path, mode):
+    insts = C.instances(C.load_campaign(_with_job_mode(tmp_path, mode)), "0" * 40)
+    assert {(i.job == "xsuccess", i.mode) for i in insts} == {(True, mode), (False, "rematerialize")}
+
+
+def test_job_mode_refuses_another_value(tmp_path):
+    with pytest.raises(ValueError, match="mode"):
+        C.load_campaign(_with_job_mode(tmp_path, "nonsense"))
+
+
 def test_the_campaign_mode_refuses_any_other_value(tmp_path):
     with pytest.raises(ValueError, match="mode"):
-        C.load_campaign(_with_mode(tmp_path, "retrain"))
+        C.load_campaign(_with_mode(tmp_path, "nonsense"))
 
 
-def test_tf46_refit_holds_exactly_the_eight_refit_instances():
+def test_tf46_refit_holds_the_21_release_instances():
+    # The 4.144.0 release refit (delta spec 4.1): every instance with its verify mode. A ghost-GK job without
+    # `retrain` would pass on its absolute acceptance gates alone, so the mode is pinned per instance.
     c = C.load_campaign(REFIT)
-    got = {(i.job, i.tier, i.variant) for i in C.instances(c, "0" * 40)}
+    got = {(i.job, i.tier, i.variant): i.mode for i in C.instances(c, "0" * 40)}
     want = {
-        (job, tier, variant)
+        (job, tier, variant): "refit"
         for job in ("xshot_occurrence", "xcross_attempt")
         for tier in ("public", "sc_extended")
         for variant in ("default", "position_only")
     }
-    assert c.mode == "refit" and got == want and c.concurrency_cap == 8
+    want[("xsuccess", "public", "default")] = "retrain"
+    want[("pass_completion", "public", "default")] = "retrain"
+    for v in ("default", "position_only", "sweeper", "sweeper_position_only", "full"):
+        want[("ghost_gk", "owner", v)] = "retrain"
+    for v in ("default", "position_only"):
+        want[("ghost_outfield", "owner", v)] = "retrain"
+    want[("receiver_model", "owner", "default")] = "retrain"
+    for job in ("win_probability", "match_outcome_dependence", "build_territory_ranking_census"):
+        want[(job, "public", "default")] = "rematerialize"
+    assert len(want) == 21 and got == want
+    assert c.mode == "refit" and c.bucket == "karstenskyt/hf-refit-scratch"
+    assert c.storage_limit_bytes == 10**12 and c.jobs[0].job == "xsuccess"
+    cycle1 = C.load_campaign(CYCLE1)  # the sizing tables of cycle1.toml, the campaign that runs these jobs today
+    assert c.mount_cap_by_dataset == cycle1.mount_cap_by_dataset
+    assert c.peak_rss_by_stage == cycle1.peak_rss_by_stage
+    # action-time repair plan Task 14: the xShot study runs 2 units per job (the 2 h job limit); the rest as cycle1
+    assert c.units_per_job_by_stage == {**cycle1.units_per_job_by_stage, "xshot_occurrence/study": 2}
+    # R49 / R38 (spec 4.8): the two wheel jobs force the public arm; the Hub jobs keep the rule's choice
+    forced = {(j.job, j.tier): j.ship_variant for j in c.jobs if j.job in ("xshot_occurrence", "xcross_attempt")}
+    assert forced == {(job, tier): ("public" if tier == "public" else None) for job, tier in forced}
+    assert sorted(forced.values(), key=str) == [None, None, "public", "public"]  # 2 wheel + 2 Hub jobs
+    assert {j.dataset for j in c.jobs if j.job in ("xshot_occurrence", "xcross_attempt")} == {"xshot187"}

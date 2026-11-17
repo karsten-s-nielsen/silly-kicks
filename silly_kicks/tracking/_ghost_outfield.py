@@ -52,7 +52,7 @@ from silly_kicks.spadl import config as spadlconfig
 from . import _geometry as _geo
 from ._chirality import verify_chirality
 from ._defensive_line import select_back_line_players
-from ._feature_contract import verify_feature_contract
+from ._feature_contract import REVISION_CONTRACT_KEYS, verify_feature_contract
 from ._ghost_gk import (
     _build_phase_lookup,
     _build_score_lookup,
@@ -180,8 +180,8 @@ def _rows_for_team(
     *,
     home_team_id: int | str,
     gmap: GoalMap,
-    phase_at: Callable[[Any, float], int] | None,
-    score_at: Callable[[Any, float], float] | None,
+    phase_at: Callable[[Any, int, float], int] | None,
+    score_at: Callable[[Any, int, float], float] | None,
     has_vel: bool,
     n_rearguard: int,
     names: list[str],
@@ -249,9 +249,10 @@ def _rows_for_team(
 
     # --- context ---
     time_s = float(frame["time_seconds"].iloc[0]) if "time_seconds" in frame.columns else 0.0
-    phase_v = float(phase_at(gid, time_s)) if phase_at is not None else 0.0
+    period = int(frame["period_id"].iloc[0])
+    phase_v = float(phase_at(gid, period, time_s)) if phase_at is not None else 0.0
     if score_at is not None:
-        sd = score_at(gid, time_s)
+        sd = score_at(gid, period, time_s)
         if not same_id(t_team, home_team_id):
             sd = -sd
     else:
@@ -340,10 +341,10 @@ def _extract_all_ghost_outfield_features(
         return pd.DataFrame(columns=out_cols)
 
     gmap: GoalMap = goal_map if goal_map is not None else resolve_defended_goals(frames)
-    score_at: Callable[[Any, float], float] | None = (
+    score_at: Callable[[Any, int, float], float] | None = (
         _build_score_lookup(actions, home_team_id) if actions is not None and len(actions) else None
     )
-    phase_at: Callable[[Any, float], int] | None = (
+    phase_at: Callable[[Any, int, float], int] | None = (
         _build_phase_lookup(actions) if actions is not None and len(actions) else None
     )
     has_vel = "vx" in frames.columns and "vy" in frames.columns
@@ -567,7 +568,7 @@ def _outfield_feature_contract_block(feature_set: GhostOutfieldFeatureSet = "fai
         "version": "outfield-feature-contract-1",
         "probe_sha256": probe_sha,
         "fingerprint": [round(float(v), 10) for v in vec],
-        "constants": {},
+        "constants": {"match_context_revision": REVISION_CONTRACT_KEYS["match_context_revision"]},  # inputs (R55)
     }
 
 

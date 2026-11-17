@@ -120,3 +120,11 @@ def test_pure_does_not_mutate_inputs():
     pd.testing.assert_frame_equal(frames, fb)
     pd.testing.assert_frame_equal(contacts, kb)
     assert out is not corners
+
+
+def test_a_corner_with_no_kick_time_gets_no_window():
+    # action-time repair spec section 5.2: an unmeasured SkillCorner corner has t_kick <NA> -> no snapshot window
+    out = add_corner_windows(_corner(t_kick=float("nan")), _frames(), _contacts())
+    row = out.iloc[0]
+    assert pd.isna(row["t_init"]) and pd.isna(row["t_target"]) and pd.isna(row["t_outcome"])
+    assert pd.isna(row["target_snapshot_source"])

@@ -29,14 +29,10 @@ _PUBLIC_IDS = sorted([["gradientsports", "3812"], ["idsse", "DFL-MAT-J03WMX"], [
 
 @pytest.fixture
 def xshot187(tmp_path, monkeypatch):
-    """A fixture `xshot187` (declared + locked) beside the committed datasets."""
-    toml = D.DECLARED.read_text(encoding="utf-8") + (
-        '\n[datasets.xshot187]\nrepo = "silly-kicks/hf-refit-xshot187"\nkind = "flat_tc3"\nraw = "restricted"\n'
-        'provenance = "extended"\naccess = "mount"\nread_concurrency = 4\ndescription = "fixture"\n'
-    )
-    p = tmp_path / "datasets.toml"
-    p.write_text(toml, encoding="utf-8")
-    monkeypatch.setattr(D, "DECLARED", p)
+    """The committed `xshot187` declaration (ADR-132; the restage of 2026-11-13) with a FIXTURE lock entry: 4 units
+    whose two outcomes the tests below control."""
+    decl = D.declared()["xshot187"]
+    assert (decl.kind, decl.raw, decl.provenance) == ("flat_tc3", "restricted", "extended")
     lock = json.loads(D.LOCK.read_text(encoding="utf-8"))
     lock["xshot187"] = {
         "repo": "silly-kicks/hf-refit-xshot187",

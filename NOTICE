@@ -1047,11 +1047,14 @@ pipelines in CI.
 
 The IDSSE per-period orientation fixture
 (tests/datasets/idsse/per_period_match.parquet, PR-S23 / silly-kicks
-3.0.1) is derived from the DFL Bundesliga Match Tracking Data -- Open
-Match Data 2022/23, published by Bassek et al. (2025) under CC-BY 4.0.
-Match identifier: idsse_J03WMX (public DFL competition identifier --
-no PII). Citation: Bassek, M., Skinner, J., Niemann, J., et al. (2025).
-"An Open Bundesliga Match Tracking Dataset." DFL DataHub.
+3.0.1; rebuilt R64) is the bronze of match DFL-MAT-J03WMX (match_id
+J03WMX; public DFL competition identifier -- no PII), built by
+scripts/build_idsse_per_period_fixture.py with this library's parser
+from the raw public DFL files of: Bassek, M., Rein, R., Weber, H., &
+Memmert, D. (2025). "An integrated dataset of spatiotemporal and event
+data in elite soccer." Scientific Data, 12, 195.
+doi:10.1038/s41597-025-04505-y. Data set: figshare,
+doi:10.6084/m9.figshare.28196177 (CC BY 4.0).
 
 The Metrica per-period orientation fixture
 (tests/datasets/metrica/per_period_match.parquet, PR-S23 / silly-kicks
@@ -1062,9 +1065,13 @@ Coordinates rescaled at extraction time from Metrica's native 0-1
 normalised frame to the silly-kicks-input 0-105 / 0-68 frame.
 
 The existing IDSSE contract-test fixture
-(tests/datasets/idsse/sample_match.parquet) is from DFL DataHub
-free-sample data (non-commercial redistribution permitted). The
-existing Metrica contract-test fixture
+(tests/datasets/idsse/sample_match.parquet) is 308 events of match
+DFL-MAT-J03WMX, a subset of the public match, taken from the
+luxury-lakehouse bronze of 2026-04-29. The match is from: Bassek, M.,
+Rein, R., Weber, H., & Memmert, D. (2025). "An integrated dataset of
+spatiotemporal and event data in elite soccer." Scientific Data, 12,
+195. doi:10.1038/s41597-025-04505-y. Data set: figshare,
+doi:10.6084/m9.figshare.28196177 (CC BY 4.0). The existing Metrica contract-test fixture
 (tests/datasets/metrica/sample_match.parquet) is Sample Game 2 from
 metrica-sports/sample-data (CC-BY-NC-4.0).
 

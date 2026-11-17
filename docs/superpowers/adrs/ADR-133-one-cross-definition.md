@@ -104,3 +104,12 @@ on 86,067 possession events; the SkillCorner kick a median 0.86 m from the raw e
 - Set-piece types stay provider-dependent in this release: the rule re-types open play only.
 - The SkillCorner label rate stays 1.23 times the GS rate with native timing; the cause is not found.
 - Whether the ADR-132 per-provider gates pass needs the refit; this release does not show it.
+
+## Amendment (2026-11-18, ADR-135): the SkillCorner restart rows
+
+Decision 6 holds for a SkillCorner **native** row: it is the on-ball action at the possession end. It did not hold
+for a SkillCorner **restart**: 4.144.0 typed each restart onto the first possession after it and so moved the
+restart to the end of the receiver's possession, with the receiver's place and team (51,874 rows in 879 matches), and
+a restart whose first possession is the other side's gave no row (42 % of the corners). ADR-135 gives each restart
+and each penalty a derived row of its own, with a `time_source` that says whether its time is a measured kick, a
+placeholder or an order only.

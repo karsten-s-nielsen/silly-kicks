@@ -39,6 +39,11 @@ class CampaignJob:
     #: ``sc_extended``. Required on a gated job, refused on any other; ``instances`` restricts the dataset's
     #: ``compute_arms`` payload to it.
     arms: tuple[str, ...] | None = None
+    #: How `verify` judges this job's instances (one of `MODES`); None = the campaign's `mode` (R20, design X).
+    mode: str | None = None
+    #: The arm the trainer ships, overriding the paired verdict (``--ship-variant``; R38, R49, action-time repair spec
+    #: 4.8). Only on a trainer that takes the option, and one of the job's ``arms``. None = the paired rule decides.
+    ship_variant: str | None = None
 
     @property
     def datasets(self) -> tuple[str, ...]:
@@ -81,8 +86,9 @@ class Campaign:
     storage_limit_bytes: int = 100_000_000_000
     storage_headroom_bytes: int = 20_000_000_000
     #: How `verify` judges an instance (ADR-130): ``rematerialize`` (the fresh run must reproduce the committed
-    #: model: the `_integrity` check) or ``refit`` (new data replaces the model on purpose: each arm passes on its
-    #: own acceptance gates, and the comparison with the committed model is reported, not gated).
+    #: model: the `_integrity` check), ``refit`` (new data replaces the model on purpose: each arm passes on its
+    #: own acceptance gates, and the comparison with the committed model is reported, not gated) or ``retrain``
+    #: (the standing certification with the public CV parity one-sided, R20). A job may override it.
     mode: str = "rematerialize"
 
     def mount_cap_for(self, dataset: str) -> int:
@@ -100,6 +106,7 @@ class Instance:
     args: tuple[str, ...]
     datasets: tuple[Any, ...]  # launch.DatasetMount
     run_key: str
+    mode: str = "rematerialize"  # the job's mode, else the campaign's (read only by `verify`)
 
     @property
     def id(self) -> str:
@@ -126,6 +133,31 @@ def _job_arms(path: pathlib.Path, j: Mapping[str, Any]) -> tuple[str, ...] | Non
     return arms
 
 
+def _job_ship_variant(path: pathlib.Path, j: Mapping[str, Any], arms: tuple[str, ...] | None) -> str | None:
+    """A job's ``ship_variant`` (spec 4.8): only on a trainer that takes ``--ship-variant``, and one of its ``arms``."""
+    from scripts.hf_jobs.registry import DriverSpec, spec_for
+
+    if "ship_variant" not in j:
+        return None
+    value = str(j["ship_variant"])
+    spec = spec_for(j["job"])
+    if isinstance(spec, DriverSpec) or not spec.ship_variant_option:
+        raise ValueError(f"{path}: job {j['job']!r} declares ship_variant but its trainer takes no --ship-variant")
+    if arms is None or value not in arms:
+        raise ValueError(f"{path}: job {j['job']!r} ship_variant {value!r} is not one of its arms {list(arms or ())}")
+    return value
+
+
+#: The `verify` modes (ADR-130; R20): a campaign sets one, a job may override it.
+MODES = ("rematerialize", "refit", "retrain")
+
+
+def _mode(path: pathlib.Path, where: str, value: Any) -> str:
+    if str(value) not in MODES:
+        raise ValueError(f"{path}: {where} mode {value!r} is not one of {', '.join(MODES)}")
+    return str(value)
+
+
 def load_campaign(path: str | pathlib.Path) -> Campaign:
     from scripts._toml import load_toml
 
@@ -141,13 +173,13 @@ def load_campaign(path: str | pathlib.Path) -> Campaign:
             j.get("probe_dataset"),
             j.get("pool_dataset"),
             _job_arms(path, j),
+            None if "mode" not in j else _mode(path, f"job {j['job']!r}", j["mode"]),
+            _job_ship_variant(path, j, _job_arms(path, j)),
         )
         for j in raw.get("jobs", [])
     )
     defaults = Campaign.__dataclass_fields__
-    mode = str(c.get("mode", defaults["mode"].default))
-    if mode not in ("rematerialize", "refit"):
-        raise ValueError(f"{path}: campaign mode {mode!r} is not one of rematerialize, refit")
+    mode = _mode(path, "campaign", c.get("mode", defaults["mode"].default))
     return Campaign(
         name=c["name"],
         bucket=c["bucket"],
@@ -222,7 +254,7 @@ def instances(c: Campaign, commit: str, *, replica: int | None = None) -> list[I
         if isinstance(spec, DriverSpec):
             for v in j.variants:
                 args = (*spec.base_args, "--dataset", j.dataset)
-                out.append(Instance(j.job, j.tier, v, spec.module, args, mounts, rk))
+                out.append(Instance(j.job, j.tier, v, spec.module, args, mounts, rk, j.mode or c.mode))
             continue
         builds = {b.variant: b for b in spec.builds}
         for v in j.variants:
@@ -240,6 +272,8 @@ def instances(c: Campaign, commit: str, *, replica: int | None = None) -> list[I
                 units = staged_units(j.dataset)
                 payload = arm_policy.restrict_arms(arm_policy.compute_arms(units), j.arms, units)
                 args += ("--arms-json", json.dumps(payload, sort_keys=True))
+            if j.ship_variant is not None:  # R38/R49 (spec 4.8): the campaign forces the shipped arm
+                args += ("--ship-variant", j.ship_variant)
             if j.job == "receiver_model":  # decision P5: visibility is a parameter, never read in-job
                 args += (
                     "--corpus-visibility",
@@ -247,7 +281,7 @@ def instances(c: Campaign, commit: str, *, replica: int | None = None) -> list[I
                     "--corpus-n-matches",
                     str(locked(j.dataset)["n_units"]),
                 )
-            out.append(Instance(j.job, j.tier, v, spec.pipeline or spec.module, args, mounts, rk))
+            out.append(Instance(j.job, j.tier, v, spec.pipeline or spec.module, args, mounts, rk, j.mode or c.mode))
     return out
 
 

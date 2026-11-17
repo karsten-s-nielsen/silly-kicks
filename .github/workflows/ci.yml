@@ -224,6 +224,36 @@ jobs:
           name: combined-full-nodeids
           path: combined-full-nodeids.txt
 
+  # The declared pandas FLOOR (owner ruling 2026-11-19: "Fix the code, keep 2.1.1"). pyproject promises
+  # `pandas>=2.1.1`, but every `test` leg resolves the latest pandas, so floor-only failures shipped unseen
+  # (on pandas 2.1 an Int64 column with <NA> raises on `.to_numpy(dtype=float)`; 8 tracking families failed
+  # there). This job runs the matrix's `not e2e and not slow` selection on the floor version, sharded x6 on
+  # ubuntu-3.11. numpy<2 because pandas 2.1 wheels predate numpy 2. Pinned by tests/test_ci_pandas_floor_wired.py
+  # (the version equals the pyproject floor, the selection equals the matrix's, --splits matches the shards).
+  pandas-floor:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        floor-shard: [1, 2, 3, 4, 5, 6]
+    env:
+      SILLY_KICKS_ASSERT_INVARIANTS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+      # pyarrow>=26 requires numpy 2 (the first floor run resolved 26.0.1 and failed at collection); 25.0.1 is the newest
+      # release that loads under numpy<2 (checked: pandas 2.1.1 + numpy 1.26.4 parquet round-trip).
+      - run: uv pip install -e ".[kloppy,xgboost,test]" "pandas==2.1.1" "numpy<2" "pyarrow<26"
+      - name: The floor job tests the declared floor
+        run: python -c "import pandas; assert pandas.__version__ == '2.1.1', pandas.__version__"
+      - run: pytest tests/ -m "not e2e and not slow" --splits 6 --group ${{ matrix.floor-shard }} -p no:randomly --benchmark-skip --tb=short
+
   # Asserts what tests/test_ci_pandas_span_wired.py CANNOT see. That guard reads `ci.yml`, so it
   # catches a matrix edit -- but a span collapse caused by a DEPENDENCY constraint (adding
   # `pandas<3` to pyproject.toml) leaves `ci.yml` untouched and every leg on pandas 2. That is not

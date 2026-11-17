@@ -103,3 +103,76 @@ def test_tripwire_reverts_bad_imputed_corner_at_edge():
         out = add_restart_coordinates(a, frames=frames)
     assert out.loc[0, "start_coord_source"] == "tripwire_reverted"
     assert np.isnan(out.loc[0, "enriched_start_x"])  # type: ignore[arg-type]
+
+
+# ---- derived SkillCorner restart rows (action-time repair spec section 4.7) --------------------------------
+
+
+def _derived(type_name: str, start, src: str, prov: str = "derived"):
+    import pandas as pd
+
+    from silly_kicks.spadl import config as _c
+
+    return pd.DataFrame(
+        {
+            "game_id": ["g"], "period_id": [1], "action_id": [0], "time_seconds": [10.0], "team_id": ["H"],
+            "player_id": [pd.NA], "start_x": [start[0]], "start_y": [start[1]], "end_x": [100.0], "end_y": [30.0],
+            "type_id": [_c.actiontype_id[type_name]], "result_id": [1], "bodypart_id": [0],
+            "action_provenance": [prov], "time_source": [src],
+        }
+    )  # fmt: skip
+
+
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.mark.parametrize("src", ["placeholder", "order_only"])
+@_pytest.mark.parametrize(
+    ("type_name", "start"),
+    [("corner_crossed", (105.0, 68.0)), ("goalkick", (5.5, 34.0)), ("throw_in", (40.0, 0.0)),
+     ("shot_penalty", (94.0, 34.0))],
+)  # fmt: skip
+def test_derived_restart_with_an_unmeasured_time_reads_as_its_rule_point(type_name, start, src):
+    from silly_kicks.spadl import config as _c
+    from silly_kicks.tracking._gk_geometry import _PRIOR_CONF, resolve_restart_geometry
+
+    out = resolve_restart_geometry(_derived(type_name, start, src))
+    assert out["start_coord_source"].tolist() == ["restart_prior"]
+    assert (out["enriched_start_x"].iloc[0], out["enriched_start_y"].iloc[0]) == start
+    assert out["start_coord_confidence"].tolist() == [_PRIOR_CONF[_c.actiontype_id[type_name]]]
+
+
+def test_derived_free_kick_with_an_unmeasured_time_is_unresolved():
+    import math
+
+    from silly_kicks.tracking._gk_geometry import resolve_restart_geometry
+
+    out = resolve_restart_geometry(_derived("freekick_crossed", (60.0, 30.0), "placeholder"))
+    assert out["start_coord_source"].tolist() == ["unresolved"]
+    assert math.isnan(out["enriched_start_x"].iloc[0])
+
+
+def test_derived_restart_with_a_nan_start_is_unresolved():
+    import math
+
+    from silly_kicks.tracking._gk_geometry import resolve_restart_geometry
+
+    out = resolve_restart_geometry(_derived("corner_crossed", (105.0, float("nan")), "placeholder"))
+    assert out["start_coord_source"].tolist() == ["unresolved"]
+    assert math.isnan(out["enriched_start_y"].iloc[0])
+
+
+def test_derived_kick_row_reads_as_tracking_ball():
+    from silly_kicks.tracking._gk_geometry import _CONF_TRACKING_BALL, resolve_restart_geometry
+
+    out = resolve_restart_geometry(_derived("corner_short", (104.8, 0.3), "kick"))
+    assert out["start_coord_source"].tolist() == ["tracking_ball"]
+    assert out["start_coord_confidence"].tolist() == [_CONF_TRACKING_BALL]
+    assert (out["enriched_start_x"].iloc[0], out["enriched_start_y"].iloc[0]) == (104.8, 0.3)
+
+
+def test_a_native_corner_is_unchanged_by_the_derived_rule():
+    from silly_kicks.tracking._gk_geometry import resolve_restart_geometry
+
+    out = resolve_restart_geometry(_derived("corner_crossed", (105.0, 68.0), "tracking", prov="native"))
+    assert out["start_coord_source"].tolist() == ["native"]

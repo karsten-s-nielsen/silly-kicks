@@ -58,6 +58,13 @@ def compute_corner_chance_quality(
     for _, c in corners.iterrows():
         period = int(c["period_id"])
         t0 = float(c["t_kick"])
+        if not np.isfinite(t0):
+            # no measured kick -> no outcome window (action-time repair spec section 5.2): the counts are <NA>, never 0
+            rows.append(
+                {"game_id": c["game_id"], "corner_id": int(c["corner_id"]), CC_N_SHOTS: pd.NA, CC_N_GOALS: pd.NA,
+                 CC_SUM_XG: float("nan"), CC_SOURCE: xg_column}
+            )  # fmt: skip
+            continue
         t1 = float(c["t_outcome"]) if "t_outcome" in corners.columns and pd.notna(c["t_outcome"]) else t0 + 6.0
         in_win = (actions["period_id"] == period) & (actions["time_seconds"] >= t0) & (actions["time_seconds"] <= t1)
         shot_win = in_win & is_shot
@@ -85,7 +92,8 @@ def aggregate_chance_quality_by_feature(features: pd.DataFrame, chance_quality: 
     """Soft-weighted (by routine-feature coefficient) mean chance quality per routine feature.
 
     Descriptive aggregation -- NOT a ranking (which-routine-beats-which stays consumer-side, ADR-110).
-    One row per ``routine_feat_<k>`` with the coefficient-weighted mean of each chance metric.
+    One row per ``routine_feat_<k>`` with the coefficient-weighted mean of each chance metric. A corner with no
+    measured kick (missing counts: no outcome window) enters no mean; ``n_corners_without_window`` counts them.
 
     Examples
     --------
@@ -96,14 +104,16 @@ def aggregate_chance_quality_by_feature(features: pd.DataFrame, chance_quality: 
     feat_cols = [c for c in features.columns if c.startswith("routine_feat_")]
     joined = features.merge(chance_quality, on=CORNER_KEYS, how="inner")
     metrics = [CC_N_SHOTS, CC_N_GOALS, CC_SUM_XG]
+    no_window = joined[CC_N_SHOTS].isna().to_numpy()
     out_rows: list[dict] = []
     for fc in feat_cols:
         w = joined[fc].to_numpy(dtype=float)
-        valid = ~np.isnan(w)
+        valid = ~np.isnan(w) & ~no_window
         wsum = float(w[valid].sum())
-        row: dict = {"routine_feature": fc, "weight_sum": wsum}
+        row: dict = {"routine_feature": fc, "weight_sum": wsum, "n_corners_without_window": int(no_window.sum())}
         for m in metrics:
-            vals = joined[m].to_numpy(dtype=float)
+            vals = joined[m].to_numpy(dtype=float, na_value=np.nan)
             row[f"weighted_mean_{m}"] = float((w[valid] * vals[valid]).sum() / wsum) if wsum > 0 else np.nan
         out_rows.append(row)
-    return pd.DataFrame(out_rows, columns=["routine_feature", "weight_sum", *[f"weighted_mean_{m}" for m in metrics]])
+    cols = ["routine_feature", "weight_sum", "n_corners_without_window", *[f"weighted_mean_{m}" for m in metrics]]
+    return pd.DataFrame(out_rows, columns=cols)

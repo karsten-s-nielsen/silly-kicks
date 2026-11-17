@@ -28,6 +28,7 @@ from pathlib import Path
 import pandas as pd
 
 from scripts._sb_raw import flatten_events
+from tests._idsse_fixtures import idsse_fixture_native, idsse_goalkeeper_ids
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _KLOPPY_FIXTURES_DIR = _REPO_ROOT / "tests" / "datasets" / "kloppy"
@@ -200,8 +201,8 @@ def load_opta_2team_synthetic() -> LoaderResult:
 def load_sportec_native() -> LoaderResult:
     from silly_kicks.spadl import sportec
 
-    parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "sample_match.parquet"
-    events = pd.read_parquet(parquet_path)
+    # R66: the bronze fixture through shape_events_to_native, the converter's documented input
+    events = idsse_fixture_native("sample_match")
     # IDSSE bronze fixture uses literal "home"/"away" team labels in the team
     # column (not team_ids). Pass "home" so the converter mirrors only away-team
     # rows. NOTE: the existing _load_idsse_fixture in test_cross_provider_parity.py
@@ -209,9 +210,7 @@ def load_sportec_native() -> LoaderResult:
     # happens to be by the away team -- fine for keeper-action tests but wrong
     # for direction-of-play tests where home_team_id correctness is load-bearing.
     home_team_id = "home"
-    gk_ids: set[str] | None = None
-    if "play_goal_keeper_action" in events.columns:
-        gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
+    gk_ids = idsse_goalkeeper_ids(events)
     actions, _ = sportec.convert_to_actions(
         events,
         home_team_id=home_team_id,
@@ -283,12 +282,10 @@ def load_sportec_native_per_period() -> LoaderResult:
     """
     from silly_kicks.spadl import sportec
 
-    parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "per_period_match.parquet"
-    events = pd.read_parquet(parquet_path)
+    # R66: the bronze fixture through shape_events_to_native, the converter's documented input
+    events = idsse_fixture_native("per_period_match")
     home_team_id = "home"
-    gk_ids: set[str] | None = None
-    if "play_goal_keeper_action" in events.columns:
-        gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
+    gk_ids = idsse_goalkeeper_ids(events)
     actions, _ = sportec.convert_to_actions(
         events,
         home_team_id=home_team_id,

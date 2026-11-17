@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-11-12 |
-| **Status** | Accepted |
+| **Status** | Accepted; amended 2026-11-13 (item 10) |
 | **Deciders** | Karsten Nielsen (owner rulings 2026-11-12: Q-A to Q-E, r2, r3, r4, r7); reviewers A and B (spec r1 to r8, plan r1 to r3) |
 | **Supersedes / amends** | amends ADR-038 (the label and the public registry); amends ADR-131 (two per-provider acceptance gates); supersedes the combined-cycle D4 note (no separate non-inferiority gate) |
 | **Source spec** | `docs/superpowers/specs/2026-11-12-corpus-widening-design.md` (r8) |
@@ -44,7 +44,10 @@ that the public xCross `position_only` arm is underpowered at that size. Ten new
    while SkillCorner or IDSSE users get a model worse than the base rate. Two acceptance gates join the ADR-131 block:
    `provider_brier_skill_gt_0` and `provider_log_loss_skill_gt_0`. Each is True iff every provider with held-out rows
    has Brier (log-loss) skill strictly above 0 against that provider's OWN training-fold true rate (point estimates,
-   `SKILL_LOG_CLIP = 1e-15`, no bootstrap: a 7-match provider's cluster bound is too wide). The provider is the row's
+   `SKILL_LOG_CLIP = 1e-15`; no bootstrap GATE: a 7-match provider's cluster bound is too wide to gate on).
+   Amendment 2026-11-17 (owner R10): each provider entry also REPORTS a match-cluster `bootstrap` block (the pooled
+   constants and draw call, a fresh generator per provider; `n_matches` beside it); no gate reads it.
+   The provider is the row's
    `_provider` normalised by `_CONVERTER_TO_IDENTITY` (`sportec` -> `idsse`), never `groups` (bare game ids). The cv
    fold unit records `providers.npy` and `train_rate_by_provider`; an empty provider refuses the unit. A NaN skill or
    a missing `by_provider` fails (fail-closed). The integrity validator folds both gates into `calibration_ok`. A
@@ -69,14 +72,29 @@ that the public xCross `position_only` arm is underpowered at that size. Ten new
 9. **Size gates.** `artifact_size_lt_5mb` (5_000_000 bytes, the TF-16 value) fails a shipped xShot/xCross bundle
    closed. The release workflow checks the wheel and the sdist before upload and fails at 80_000_000 bytes or more
    (`scripts/check_dist_sizes.py`; ruling r4).
+10. **The expectation edit** (amendment 2026-11-13; owner ruling R4 of the `xshot187` refit plan,
+    `docs/superpowers/plans/2026-11-13-xshot187-refit-plan.md`). Item 8's order (read the run's
+    `shipped_variant`, write `shipped_arm` and the outcome fields, then `verify` and `adopt`) could not run: `adopt`
+    refused every dirty tree, and a commit after the campaign commit moves HEAD and the run keys. Now `adopt`
+    accepts ONE uncommitted change: `docs/artifacts/manifest.toml`, and in it only the fields `dataset`,
+    `shipped_arm`, `certification`, `corpus` and `expect` of the entries this campaign's instances produce
+    (matched on HEAD's manifest). It refuses any other path, field, entry, top-level table or change to the
+    artifact list; a removed field or `expect` key; an undeclared or unlocked `dataset`; and a value outside spec
+    7.1's domains. A tree with more than the manifest changed gets today's clean-tree refusal. A write-phase
+    failure restores the tree and keeps the edit. `verify.json` records `manifest_sha256` (the parsed manifest
+    without `training_commit`), and `adopt` refuses a `verify.json` without it or of another manifest, so the
+    expectations `adopt` commits are the ones `verify` checked.
 
 ## Alternatives considered
 
 - **Keep one flag.** Rejected: GS stays out of every public arm, and the public xCross arm stays underpowered.
 - **Three arms (`full` kept).** Rejected (Q-A): with GS obtainable, `full` equals `sc_extended`.
+- **Item 10: a third commit for the expectation edit, with a `--campaign-commit` flag on `retrieve`, `verify` and
+  `adopt`.** Rejected: more code and three commits for the same result.
 - **Reweight providers.** Not in this cycle (r7): the gate decides; the owner decides the next step with the reported
   numbers if a provider gate fails in the refit.
-- **A bootstrap bound per provider.** Rejected: over 7 IDSSE clusters the bound is too wide to be useful.
+- **A bootstrap bound per provider.** Rejected as a GATE: over 7 IDSSE clusters the bound is too wide to be useful.
+  Kept as a REPORT since 2026-11-17 (owner R10, item 5): the reader sees the real uncertainty of a thin provider.
 
 ## Consequences
 
@@ -93,3 +111,12 @@ that the public xCross `position_only` arm is underpowered at that size. Ten new
 - **Plans:** `docs/superpowers/plans/2026-11-12-corpus-widening-plan.md`
 - **ADRs:** amends ADR-038 and ADR-131; builds on ADR-116 (reversibility), ADR-123 Amendment B (visibility-blind
   trainers), ADR-128 (stage contract) and ADR-130 (refit mode).
+
+## Amendment (2026-11-18, ADR-135): the wheel ships the public arm
+
+Item 6 ("The wheel jobs get both arms and ship the rule's choice") changes for the xShot and xCross wheel jobs of the
+4.144.0 refit (owner rulings R38 and R49): they still train both arms and run the paired test, but ship the `public`
+arm, forced by the campaign's `ship_variant`. The rule's own verdict is recorded as `candidates.paired.rule_verdict`
+/ `rule_why` and reported in the adoption record where it differs from the shipped arm (bar A17). The forced arm
+passes the ADR-131/132 gates unchanged; a failed gate fails the run, with no fallback to the other arm. The Hub jobs
+are unchanged.

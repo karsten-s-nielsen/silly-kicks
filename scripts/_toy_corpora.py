@@ -279,6 +279,7 @@ def _game_actions(game: str, *, n_frames: int, home: int, away: int) -> pd.DataF
                 "shot_blocked": pd.NA,
                 "cross_blocked": pd.NA,
                 "cross_native": pd.NA,  # ADR-133 SPADL column
+                "time_source": "event",  # action-time repair SPADL column (spec 4.1)
             }
         )
     # The toy frames key games by string id; the actions keep the SAME key (game_id is not cast).

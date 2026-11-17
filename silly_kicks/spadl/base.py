@@ -301,6 +301,8 @@ def _add_dribbles(actions: pd.DataFrame) -> pd.DataFrame:
     dribbles["bodypart_id"] = spadlconfig.bodypart_id["foot"]
     dribbles["type_id"] = spadlconfig.actiontype_id["dribble"]
     dribbles["result_id"] = spadlconfig.result_id["success"]
+    if "time_source" in actions.columns:
+        dribbles["time_source"] = "derived"  # the midpoint of its neighbours (action-time repair spec section 4.1)
 
     actions = pd.concat([actions, dribbles], ignore_index=True, sort=False)
     actions = actions.sort_values(["game_id", "period_id", "action_id"]).reset_index(drop=True)  # type: ignore[reportAssignmentType]

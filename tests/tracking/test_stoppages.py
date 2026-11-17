@@ -49,19 +49,17 @@ def _pp(rows) -> pd.DataFrame:
 # ---- SkillCorner markers ------------------------------------------------------------------------------------
 
 
-def test_a_marker_pair_gives_a_dead_gap_and_an_unknown_taker():
+def test_a_marker_pair_gives_a_dead_gap_and_a_live_receiver():
+    # R44 (action-time repair spec section 4.9): the first possession b is the receiver's, in play -> live.
     sp = skillcorner_stoppage_spans(_pp([(10, 20, None, "throw_in_against"), (40, 50, "throw_in_for", None)]))
     assert sp.key == "frame_id"
-    assert sp.spans.to_dict("records") == [
-        {"start": 20, "end": 40, "state": "dead"},
-        {"start": 40, "end": 51, "state": "unknown"},
-    ]
+    assert sp.spans.to_dict("records") == [{"start": 20, "end": 40, "state": "dead"}]
 
 
 @pytest.mark.parametrize("after,before", [("goal_for", None), (None, "corner_for")])
-def test_one_marker_alone_gives_unknown_through_the_next_possession(after, before):
+def test_one_marker_alone_gives_unknown_to_the_next_possession(after, before):
     sp = skillcorner_stoppage_spans(_pp([(10, 20, None, after), (40, 50, before, None)]))
-    assert sp.spans.to_dict("records") == [{"start": 20, "end": 51, "state": "unknown"}]
+    assert sp.spans.to_dict("records") == [{"start": 20, "end": 40, "state": "unknown"}]
 
 
 def test_no_marker_gives_no_span_and_an_empty_table_gives_none():
@@ -71,7 +69,7 @@ def test_no_marker_gives_no_span_and_an_empty_table_gives_none():
 
 def test_possessions_pair_by_frame_order_not_by_row_order():
     sp = skillcorner_stoppage_spans(_pp([(40, 50, "throw_in_for", None), (10, 20, None, "throw_in_against")]))
-    assert sp.spans["state"].tolist() == ["dead", "unknown"]
+    assert sp.spans["state"].tolist() == ["dead"]
 
 
 # ---- Gradient Sports events --------------------------------------------------------------------------------
@@ -117,7 +115,8 @@ def test_the_event_spans_mark_the_frames():
     st = _state(
         fr, _sc_spans([(10, 20, None, "throw_in_against"), (40, 50, "throw_in_for", None), (55, 60, None, None)])
     )
-    assert st[15] == "live" and st[20] == "dead" and st[39] == "dead" and st[40] == "unknown" and st[50] == "unknown"
+    # R44 (action-time repair spec section 4.9): the receiver's first possession [40, 50] is live
+    assert st[15] == "live" and st[20] == "dead" and st[39] == "dead" and st[40] == "live" and st[50] == "live"
     assert st[51] == "live"
 
 
@@ -206,9 +205,9 @@ def test_unknown_wins_over_dead_and_dead_over_live():
 
 
 def test_a_ball_out_run_inside_an_unknown_span_leaves_it_unknown():
-    fr = _frames(range(0, 100), ball_xy={45: (110.0, 30.0)})
+    fr = _frames(range(0, 100), ball_xy={30: (110.0, 30.0)})
     st = _state(fr, _sc_spans([(0, 20, None, "throw_in_for"), (40, 50, None, None), (80, 99, None, None)]))
-    assert st[45] == "unknown"  # the one-marker span [20, 51) is unknown; the ball-out rule must not lower it
+    assert st[30] == "unknown"  # the one-marker span [20, 40) is unknown; the ball-out rule must not lower it
 
 
 def test_an_observed_provider_takes_ball_state():
@@ -296,3 +295,113 @@ def test_a_staged_match_passes_without_a_provider_lookup():
 def test_unstaged_frames_of_an_unclassified_provider_still_fail_closed():
     with pytest.raises(ValueError, match="unclassified provider 'synthetic'"):
         require_stoppage_state(pd.DataFrame({"ball_state": ["alive"]}), "synthetic")
+
+
+# ---- R44: the kick mapping (action-time repair spec section 4.9) ---------------------------------------------
+
+
+def _ppk(rows) -> pd.DataFrame:
+    """Possessions with event ids: (event_id, frame_start, frame_end, before marker, after marker)."""
+    return pd.DataFrame(
+        [
+            {"event_type": "player_possession", "event_id": eid, "frame_start": s, "frame_end": e,
+             "game_interruption_before": b, "game_interruption_after": a}
+            for eid, s, e, b, a in rows
+        ]
+    )  # fmt: skip
+
+
+def _records(sp):
+    return sp.spans.to_dict("records")
+
+
+def test_both_markers_before_kick_dead_to_the_kick_then_live():
+    ev = _ppk([("a", 10, 20, None, "corner_against"), ("b", 40, 50, "corner_for", None)])
+    sp = skillcorner_stoppage_spans(ev, kicks={("b", "corner"): (30, "before")})
+    assert _records(sp) == [{"start": 20, "end": 30, "state": "dead"}]
+
+
+def test_both_markers_after_kick_unknown_from_the_kick_to_b():
+    ev = _ppk([("a", 10, 20, None, "corner_for"), ("b", 40, 50, "throw_in_for", None)])
+    sp = skillcorner_stoppage_spans(ev, kicks={("b", "corner"): (30, "after")})
+    assert _records(sp) == [
+        {"start": 20, "end": 30, "state": "dead"},
+        {"start": 30, "end": 40, "state": "unknown"},
+    ]
+
+
+def test_both_markers_both_kicks():
+    ev = _ppk([("a", 10, 20, None, "corner_for"), ("b", 60, 70, "throw_in_for", None)])
+    sp = skillcorner_stoppage_spans(ev, kicks={("b", "corner"): (30, "after"), ("b", "throw_in"): (50, "before")})
+    assert _records(sp) == [
+        {"start": 20, "end": 30, "state": "dead"},
+        {"start": 30, "end": 50, "state": "unknown"},
+    ]
+
+
+def test_a_reversed_pair_drops_the_after_kick_and_counts_it():
+    ev = _ppk([("a", 10, 20, None, "corner_for"), ("b", 60, 70, "throw_in_for", None)])
+    sp = skillcorner_stoppage_spans(ev, kicks={("b", "corner"): (50, "after"), ("b", "throw_in"): (30, "before")})
+    assert _records(sp) == [{"start": 20, "end": 30, "state": "dead"}]
+    assert sp.dropped_kicks == 1
+
+
+def test_one_marker_before_kick_unknown_to_the_kick_then_live():
+    ev = _ppk([("a", 10, 20, None, None), ("b", 40, 50, "free_kick_for", None)])
+    sp = skillcorner_stoppage_spans(ev, kicks={("b", "free_kick"): (30, "before")})
+    assert _records(sp) == [{"start": 20, "end": 30, "state": "unknown"}]
+
+
+def test_one_marker_after_kick_unknown_to_b():
+    ev = _ppk([("a", 10, 20, None, "corner_for"), ("b", 40, 50, None, None)])
+    sp = skillcorner_stoppage_spans(ev, kicks={("b", "corner"): (30, "after")})
+    assert _records(sp) == [
+        {"start": 20, "end": 30, "state": "unknown"},
+        {"start": 30, "end": 40, "state": "unknown"},
+    ]
+
+
+def test_shared_possession_keeps_both_kicks_in_two_gaps():
+    # p1 is b of the corner gap (p0, p1) and a of the penalty gap (p1, p2)
+    ev = _ppk([
+        ("p0", 10, 20, None, "corner_against"),
+        ("p1", 40, 50, "corner_for", "penalty_for"),
+        ("p2", 90, 99, "goal_against", None),
+    ])  # fmt: skip
+    sp = skillcorner_stoppage_spans(ev, kicks={("p1", "corner"): (30, "before"), ("p2", "penalty"): (80, "after")})
+    assert _records(sp) == [
+        {"start": 20, "end": 30, "state": "dead"},
+        {"start": 50, "end": 80, "state": "dead"},
+        {"start": 80, "end": 90, "state": "unknown"},
+    ]
+
+
+def test_period_end_penalty_kick_is_unknown_to_the_period_end():
+    ev = _ppk([("a", 10, 20, None, "penalty_for"), ("n", 500, 510, None, None)])
+    ev["period"] = [1, 2]
+    sp = skillcorner_stoppage_spans(ev, kicks={("a", "penalty"): (30, "period_end")})
+    assert {"start": 30, "end": 500, "state": "unknown"} in _records(sp)
+
+
+def test_period_end_penalty_kick_is_unknown_to_its_period_last_frame():
+    # A07 (owner: code to the spec): the span ends at the penalty period's last frame, not at the next period's first
+    # possession, so the next period's opening frames keep their own state (spec 4.9)
+    ev = _ppk([("a", 10, 20, None, "penalty_for"), ("n", 500, 510, None, None)])
+    ev["period"] = [1, 2]
+    kicks = {("a", "penalty"): (30, "period_end")}
+    sp = skillcorner_stoppage_spans(ev, kicks=kicks, period_last_frame={1: 300, 2: 900})
+    assert {"start": 30, "end": 301, "state": "unknown"} in _records(sp)
+    assert not any(r["start"] <= 500 < r["end"] for r in _records(sp))
+
+
+def test_paired_penalty_whose_b_ends_its_period_keeps_live():
+    ev = _ppk([("a", 10, 20, None, "penalty_for"), ("b", 40, 50, "penalty_for", None)])
+    sp = skillcorner_stoppage_spans(ev, kicks={("b", "penalty"): (30, "before")})
+    assert _records(sp) == [{"start": 20, "end": 30, "state": "dead"}]
+
+
+def test_a_kick_with_no_pair_is_dropped_and_counted():
+    ev = _ppk([("a", 10, 20, None, None), ("b", 40, 50, None, None)])
+    sp = skillcorner_stoppage_spans(ev, kicks={("zz", "corner"): (30, "before")})
+    assert sp.spans.empty
+    assert sp.dropped_kicks == 1

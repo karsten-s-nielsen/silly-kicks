@@ -18,8 +18,16 @@ def _frames(n=10):
 
 
 def _actions():
+    # Every builder emits `time_source` (action-time repair spec 4.1); the loader's time step refuses a table without
+    # it. "tracking" on every provider: with no "event" row the step runs no ELASTIC on these toy frames (this test
+    # checks the stoppage columns, not the time step).
     ids = [spc.actiontype_id[t] for t in ("pass", "throw_in", "pass")]
-    return pd.DataFrame({"game_id": 1, "period_id": 1, "time_seconds": [1.0, 4.0, 8.0], "type_id": ids, "result_id": 1})
+    return pd.DataFrame(
+        {"game_id": 1, "original_event_id": ["e0", "e1", "e2"], "action_id": [0, 1, 2], "period_id": 1,
+         "time_seconds": [1.0, 4.0, 8.0], "team_id": 1, "player_id": 10, "start_x": 50.0, "start_y": 34.0,
+         "end_x": 55.0, "end_y": 34.0, "type_id": ids, "result_id": 1, "bodypart_id": 0,
+         "action_provenance": "native", "time_source": "tracking"}
+    )  # fmt: skip
 
 
 @pytest.mark.parametrize("provider", ["idsse", "skillcorner", "gradientsports"])
@@ -43,7 +51,30 @@ def test_build_match_adds_the_stoppage_columns(monkeypatch, provider):
     if provider == "idsse":
         assert set(state) == {"dead"} and source == {"ball_state"}
     elif provider == "skillcorner":
-        assert state[3] == "dead" and state[6] == "unknown" and state[9] == "dead"  # the marker pair; after the last
+        # the marker pair is dead; R44: the first possession after it (b, from frame 6) is live; after the last
+        assert state[3] == "dead" and state[6] == "live" and state[9] == "dead"
     else:
         assert state[2] == "dead" and state[5] == "live" and state[9] == "dead"  # [1 s, 4 s) dead by the restart
     assert set(frames["ball_state"]) == ({"dead"} if provider == "idsse" else {"alive"})
+
+
+def test_skillcorner_build_passes_each_period_last_frame_to_the_spans(monkeypatch):
+    # R71 / A07 wiring: the loader hands the spans each period's last frame (from the frames), so a period-end
+    # penalty's span stops at its period's end; without it the span runs on to the next period's first possession
+    import silly_kicks.tracking._stoppages as st
+
+    frames = pd.concat([_frames(), _frames().assign(period_id=2, frame_id=lambda f: f["frame_id"] + 100)])
+    monkeypatch.setattr(lp, "_build_skillcorner", lambda *a, **k: (_actions(), frames, 1, None))
+    events = pd.DataFrame({"event_type": ["player_possession"], "frame_start": [1], "frame_end": [2], "period": [1],
+                           "game_interruption_after": [None], "game_interruption_before": [None]})  # fmt: skip
+    monkeypatch.setattr(lp, "_read_skillcorner_events", lambda paths: events)
+    seen = {}
+    real = st.skillcorner_stoppage_spans
+
+    def spy(events, **kw):
+        seen.update(kw)
+        return real(events, **kw)
+
+    monkeypatch.setattr(st, "skillcorner_stoppage_spans", spy)
+    lp._build_match("skillcorner", "m", {}, None)
+    assert seen.get("period_last_frame") == {1: 9, 2: 109}

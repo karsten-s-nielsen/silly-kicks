@@ -345,6 +345,7 @@ def convert_to_actions(
     actions = classify_deliveries(actions)
     actions = _derive_end_coordinates(actions)
     actions["action_id"] = range(len(actions))
+    actions["time_source"] = "event"  # the provider's event clock (action-time repair spec section 4.1)
     actions = _add_dribbles(actions)
 
     actions = _finalize_output(actions, extra_columns=preserve_native)

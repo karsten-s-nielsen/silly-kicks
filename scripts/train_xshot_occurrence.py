@@ -506,6 +506,15 @@ _PARAMS = (
         help="'faithful' (velocity-bearing, 27 feats) or 'position_only' (velocity dropped, 26 feats) "
         "for a model that scores on velocity-less SB360 freeze frames.",
     ),
+    Param(
+        "ship_variant",
+        str,
+        None,
+        choices=("public", "sc_extended"),  # ADR-132: no `full` arm exists
+        help="Operator override (R49, action-time repair spec 4.8): force-ship THIS variant regardless of the "
+        "two-arm bundle-selection verdict (the paired test still runs; its verdict is recorded as rule_verdict / "
+        "rule_why). Requires the multi-candidate (run_paired) corpus. Default None = normal gate-selected ship.",
+    ),
 )
 
 #: What determines an extract shard's CONTENT (the legacy `_extract` token inputs, unchanged): the
@@ -648,6 +657,11 @@ def _prep_work(key, ctx):
     p = ctx.params
     armspec = parse_arms(p["arms_json"])
     refuse_retired_arms(armspec.arms)  # ADR-132: `full` is retired
+    if p.get("ship_variant") is not None and not is_paired(armspec.arms):
+        raise ValueError(
+            "--ship-variant requires the two-arm (run_paired) corpus (public + sc_extended; ADR-132) "
+            "so the variant masks exist."
+        )
     combined = ctx.upstream("extract")
     X = combined[_feature_names(p["feature_set"])]
     y = combined["_y"].to_numpy(int)
@@ -679,6 +693,7 @@ def _prep_work(key, ctx):
         "seed": p["seed"],
         "feature_set": p["feature_set"],
         "horizon_seconds": p["horizon_seconds"],
+        "ship_variant": p.get("ship_variant"),
         "run_paired": run_paired,
         "run_prov": {k: ctx.prov[k] for k in ("commit", "dirty", "tree_state")},
         "expect_variant": None,  # ADR-123 Amendment B: --expect-variant removed (pining-path preflight)
@@ -911,6 +926,12 @@ def _select_work(key, ctx) -> dict:
         )
         shipped, why = two_arm_ship(paired["sc_extended"]["nested"])
         print(f"Two-arm verdict: ship {shipped} -- {why}")
+        rule_verdict, rule_why = shipped, why  # bar A17: the paired verdict, kept as fields
+        ship_variant = cfg.get("ship_variant")
+        if ship_variant is not None:  # R49 (spec 4.8): the operator forces the shipped arm
+            why = f"operator --ship-variant override (two-arm rule verdict was: {shipped} -- {why})"
+            shipped = ship_variant
+            print(f"Ship-variant override: forcing ship {shipped}. {why}")
         check_shipped_variant(cfg.get("expect_variant"), shipped)
         ship_mask = cand_masks[shipped]
         candidates[shipped] = {
@@ -924,6 +945,8 @@ def _select_work(key, ctx) -> dict:
             "by_provider": paired["sc_extended"].get("by_provider", {}),  # ADR-132: reported, not deciding
             "shipped": shipped,
             "why": why,
+            "rule_verdict": rule_verdict,  # the paired rule's arm (bar A17), set aside by an override
+            "rule_why": rule_why,
         }
     else:
         # ADR-123 Amendment B: the shipped label is an arm NAME from the --arms parameter. Ship the BROADEST
@@ -1065,7 +1088,15 @@ PIPELINE = Pipeline(
             work=_prep_work,
             needs=("extract",),
             reduce=_prep_reduce,
-            params=("arms_json", "n_trials", "negative_subsample", "seed", "feature_set", "horizon_seconds"),
+            params=(
+                "arms_json",
+                "n_trials",
+                "negative_subsample",
+                "seed",
+                "feature_set",
+                "horizon_seconds",
+                "ship_variant",
+            ),
         ),
         Stage(
             name="study",

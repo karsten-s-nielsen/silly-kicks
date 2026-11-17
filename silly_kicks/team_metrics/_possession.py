@@ -71,14 +71,21 @@ def _owner_team_by_possession(actions_ctx: pd.DataFrame) -> pd.Series:
 
 
 def build_spells(actions_ctx: pd.DataFrame) -> pd.DataFrame:
-    """One row per ``(game_id, possession_id)`` with the derived spell fields (see module docstring)."""
+    """One row per ``(game_id, possession_id)`` with the derived spell fields (see module docstring).
+
+    ``start_time`` and ``end_time`` skip the spell's ``"order_only"`` rows (action-time repair spec section 4.13):
+    a spell of such rows only has ``start_time``, ``end_time`` and ``duration_s`` NaN and is not a recovery.
+    """
+    from silly_kicks.spadl.schema import is_order_only
+
+    timed = actions_ctx.assign(_t=actions_ctx["time_seconds"].where(~is_order_only(actions_ctx)))
     agg = (
-        actions_ctx.groupby(["game_id", "possession_id"], sort=True)
+        timed.groupby(["game_id", "possession_id"], sort=True)
         .agg(
             team_id=("team_in_possession", "first"),
             period_id=("period_id", "first"),
-            start_time=("time_seconds", "min"),
-            end_time=("time_seconds", "max"),
+            start_time=("_t", "min"),
+            end_time=("_t", "max"),
             n_actions=("time_seconds", "size"),
             first_type=("type_id", "first"),
             start_x_ltr=("start_x", "first"),
@@ -95,6 +102,7 @@ def build_spells(actions_ctx: pd.DataFrame) -> pd.DataFrame:
     # has prev = NA -> ids_differ = NA -> fillna(False) (not a recovery). .to_numpy() dodges the
     # fresh-RangeIndex alignment trap of ids_differ.
     spells["is_recovery"] = ids_differ(spells["team_id"], spells["prev_team_id"]).fillna(False).to_numpy()
+    spells["is_recovery"] &= spells["start_time"].notna().to_numpy()  # an all-"order_only" spell anchors no window
     return spells.drop(columns=["first_type"])
 
 

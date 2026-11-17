@@ -59,7 +59,7 @@ def icc_vs_permutation(
             between += len(v) * (v.mean() - grand) ** 2
         return float(between / total)
 
-    vals = sub[value_col].to_numpy(dtype=float)
+    vals = sub[value_col].to_numpy(dtype=float, na_value=np.nan)  # an Int64 count with <NA> (pandas 2.1 raises without)
     groups = sub[group_col].to_numpy()
     obs = _icc(vals, groups)
     rng = np.random.default_rng(seed)
@@ -227,7 +227,8 @@ def reduce_samples(samples: pd.DataFrame) -> dict:
     metrics = [m for m in _CHANCE_METRICS if m in samples.columns]
 
     def _mean(frame: pd.DataFrame, col: str) -> float:
-        vals = frame[col].to_numpy(dtype=float)
+        # <NA> counts (a corner with no window, spec 5.2) -> NaN, left out of the mean (pandas 2.1 needs na_value)
+        vals = frame[col].to_numpy(dtype=float, na_value=np.nan)
         # all-NaN is legitimate (e.g. SkillCorner sum_xg: no native shot xG) -> honest NaN, no warning
         return float(np.nanmean(vals)) if len(vals) and not bool(np.isnan(vals).all()) else float("nan")
 
@@ -325,6 +326,8 @@ def _divergence_rows(item, zone_model) -> pd.DataFrame:
     windowed = add_corner_windows(corners, item.frames, detect_ball_contacts(item.frames))
     rows: list[dict] = []
     for _, c in windowed.iterrows():
+        if pd.isna(c["corner_side"]):
+            continue  # no measured side to reflect by (never the text "None"); a missing time gives no frame below
         period, team, side = int(c["period_id"]), c["attacking_team_id"], str(c["corner_side"])
         init = _nearest_frame_xy(item.frames, period, float(c["t_init"]), team)
         kick = _nearest_frame_xy(item.frames, period, float(c["t_kick"]), team)

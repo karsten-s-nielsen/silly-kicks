@@ -100,3 +100,28 @@ def test_pure_does_not_mutate():
     compute_corner_chance_quality(corners, actions, xg_column="xg")
     pd.testing.assert_frame_equal(corners, cb)
     pd.testing.assert_frame_equal(actions, ab)
+
+
+def test_corner_with_no_window_has_missing_counts_not_zero():
+    # Supervisor C ruling (bar A3, as R45): a corner with no measured kick has no outcome window, so its counts are
+    # <NA> (the Int64 columns hold it) and sum_xg NaN -- never a fabricated 0
+    corners = _corners()
+    corners.loc[1, ["t_kick", "t_outcome"]] = np.nan
+    acts = _actions()
+    acts.loc[3, "type_id"] = _SHOT  # a shot right after the unmeasured corner's row time
+    out = compute_corner_chance_quality(corners, acts, xg_column="xg").set_index("corner_id")
+    assert pd.isna(out.loc[1, "n_shots"]) and pd.isna(out.loc[1, "n_goals"]) and np.isnan(out.loc[1, "sum_xg"])
+    assert out.loc[0, "n_shots"] == 2  # the measured corner is unchanged
+    assert str(out["n_shots"].dtype) == "Int64"
+
+
+def test_aggregate_leaves_a_corner_with_no_window_out_and_counts_it():
+    corners = _corners()
+    corners.loc[1, ["t_kick", "t_outcome"]] = np.nan
+    quality = compute_corner_chance_quality(corners, _actions(), xg_column="xg")
+    features = pd.DataFrame(
+        {"game_id": ["g1", "g1"], "corner_id": [0, 1], "routine_feat_0": [1.0, 1.0]}  # both weigh on feature 0
+    )
+    out = aggregate_chance_quality_by_feature(features, quality).iloc[0]
+    assert out["weighted_mean_n_shots"] == 2.0  # corner 1 is not counted as 0 shots
+    assert out["n_corners_without_window"] == 1

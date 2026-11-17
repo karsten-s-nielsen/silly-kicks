@@ -1,14 +1,18 @@
-# ADR-130: the xShot/xCross refit on the stoppage-gated datasets (xshot115, xshot17, xcross_probe; schema
-# tc3-frames-4). `verify` in refit mode passes each arm on its own acceptance gates and reports the comparison with
-# the committed model. Launched by the Part Deux session's launch 9, beside cycle1.toml (owner ruling 2026-11-11).
+# The 4.144.0 release refit (PR-S209; docs/superpowers/specs/2026-11-17-release-refit-delta-design.md): every model
+# that ADR-133 makes owed, on data staged from the release, in ONE campaign. The mode is set per job (R20, design X):
+#   refit         xShot/xCross: each arm passes on its own ADR-131/132 acceptance gates (ADR-130).
+#   retrain       xsuccess, pass_completion, ghost_gk, ghost_outfield, receiver_model: the standing certification,
+#                 with the public CV parity one-sided (R20; a `cv_tolerance` spec stays two-sided, R21).
+#   rematerialize win_probability, match_outcome_dependence (proof they do not move: IDENTICAL = not adopted) and the
+#                 territory census (rebaseline: a difference outside its tolerance stops for an owner ruling, R25).
+# The stages and the bucket live in the PRO user namespace karstenskyt/ (delta spec 4.2, owner 2026-11-17).
 #   .venv-hfjobs/Scripts/python -m scripts.hf_jobs campaign scripts/hf_jobs/campaigns/tf46_refit.toml <command>
 
 [campaign]
 name = "tf46_refit"
-# ADR-130: new training data replaces the committed models on purpose.
 mode = "refit"
-bucket = "silly-kicks/hf-refit-scratch"
-concurrency_cap = 8  # one job per instance at most
+bucket = "karstenskyt/hf-refit-scratch"
+concurrency_cap = 25
 attempts = 3
 # Resource-sharing overhaul (ADR-128 amendment 2026-11-03). Job-sizing (fix 1): few big jobs, not cap-many.
 units_per_job = 20
@@ -18,44 +22,124 @@ launch_batch = 16
 backoff_max_s = 300.0
 # Mount-fault outage budget (fix 3): transient sidecar 401s per dataset before it is reported an outage.
 mount_fault_budget = 12
-# Per-dataset concurrent-mount cap (fix 2). This campaign mounts xshot115, xshot17 and xcross_probe, never tc3.
+# Per-dataset concurrent-mount cap (fix 2); tc3 is capped below (as in cycle1.toml).
 mount_cap = 25
-# Preflight check 7 (HFU fit-units spec C3): the org's private storage (buckets + private datasets and models)
-# must leave the headroom under the limit. The limit is 100 GB, owner-verified 2026-11-10 (the HF billing page).
-# One campaign is about 7.5 GB: the headroom is two campaigns and 5 GB.
-storage_limit_bytes = 100000000000
+# Preflight check 7: the namespace's private storage (buckets + private datasets and models) must leave the
+# headroom under the limit. karstenskyt/ is a PRO user namespace with 1 TB of private storage (delta spec 4.2).
+storage_limit_bytes = 1000000000000
 storage_headroom_bytes = 20000000000
 
+# The sizing tables of cycle1.toml (:28-43), for the jobs that cycle1 runs today.
+[campaign.mount_cap_by_dataset]
+tc3 = 6
+
+# ghost_gk extract and cache OOM at 8 workers / 32 GB: size W down and escalate a residual over-cap unit solo.
+# One xsuccess fit unit is one xgboost fit on up to 8 M rows (HFU fit-units spec 3.4).
+[campaign.peak_rss_by_stage]
+"ghost_gk/extract" = 8589934592
+"ghost_gk/cache" = 8589934592
+"xsuccess/fit" = 8589934592
+
+# The 36 xsuccess fit units run 3 wide: 12 jobs of 3 run all of them at once.
+[campaign.units_per_job_by_stage]
+"xsuccess/fit" = 3
+# Action-time repair plan, Task 14: 2 xShot study units per job keep the worst job (2 x 2,780 s = 5,560 s) inside the
+# 2 h job limit (the timeout logs: a job runs its units mostly one after another; units_per_job 20 put 8-11 in one).
+"xshot_occurrence/study" = 2
+
+# xsuccess first (HFU spec 16.6): the long pole launches at once; a step launches in instance order.
+[[jobs]]
+job = "xsuccess"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+mode = "retrain"
+
 [[jobs]]
 job = "xshot_occurrence"
 tier = "public"
-dataset = "xshot17"
+dataset = "xshot187"
 variants = ["default", "position_only"]
-# ADR-132 / spec 5.5: the arms this job trains (the only arm xshot17 produces)
-arms = ["public"]
+# ADR-132 item 6: the wheel job trains both arms; R49 (owner): it ships the public arm, whatever the two-arm rule
+# chooses (the rule's verdict is recorded as rule_verdict and reported in the adoption record, bar A17)
+arms = ["public", "sc_extended"]
+ship_variant = "public"
 
 [[jobs]]
 job = "xshot_occurrence"
 tier = "sc_extended"
-dataset = "xshot115"
+dataset = "xshot187"
 variants = ["default", "position_only"]
-# ADR-132 / spec 5.5: the arms this job trains (today's ship_order[-1])
+# ADR-132 item 6: the Hub job trains sc_extended (a one-arm job covers every staged unit)
 arms = ["sc_extended"]
 
 [[jobs]]
 job = "xcross_attempt"
 tier = "public"
-dataset = "xshot17"
+dataset = "xshot187"
 probe_dataset = "xcross_probe"
 variants = ["default", "position_only"]
-# ADR-132 / spec 5.5: the arms this job trains (the only arm xshot17 produces)
-arms = ["public"]
+# ADR-132 item 6: the wheel job trains both arms; R38 (owner): it ships the public arm, whatever the two-arm rule
+# chooses (the rule's verdict is recorded as rule_verdict and reported in the adoption record, bar A17)
+arms = ["public", "sc_extended"]
+ship_variant = "public"
 
 [[jobs]]
 job = "xcross_attempt"
 tier = "sc_extended"
-dataset = "xshot115"
+dataset = "xshot187"
 probe_dataset = "xcross_probe"
 variants = ["default", "position_only"]
-# ADR-132 / spec 5.5: the arms this job trains (today's ship_order[-1])
+# ADR-132 item 6: the Hub job trains sc_extended (a one-arm job covers every staged unit)
 arms = ["sc_extended"]
+
+[[jobs]]
+job = "pass_completion"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+mode = "retrain"
+
+[[jobs]]
+job = "ghost_gk"
+tier = "owner"
+dataset = "tc3"
+variants = ["default", "position_only", "sweeper", "sweeper_position_only", "full"]
+mode = "retrain"
+
+[[jobs]]
+job = "ghost_outfield"
+tier = "owner"
+dataset = "tc3"
+variants = ["default", "position_only"]
+mode = "retrain"
+
+# R22: the receiver pools the Gradient Sports units of tc3, so the restage moves it.
+[[jobs]]
+job = "receiver_model"
+tier = "owner"
+dataset = "sb360"
+pool_dataset = "tc3"
+variants = ["default"]
+mode = "retrain"
+
+[[jobs]]
+job = "win_probability"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+mode = "rematerialize"
+
+[[jobs]]
+job = "match_outcome_dependence"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+mode = "rematerialize"
+
+[[jobs]]
+job = "build_territory_ranking_census"
+tier = "public"
+dataset = "sb_open"
+variants = ["default"]
+mode = "rematerialize"

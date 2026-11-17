@@ -91,8 +91,10 @@ def trajectory_weak_labels(
     frame_of = dict(zip(links["action_id"].to_numpy(), links["frame_id"].to_numpy(), strict=True))
     by_frame = {canonical_id(fid): g for fid, g in frames.groupby("frame_id")}
     rows = []
-    for _, act in actions.iterrows():
-        aid = act["action_id"]
+    action_ids = actions["action_id"]
+    for i, (_, act) in enumerate(actions.iterrows()):
+        # R68: the id comes from the actions COLUMN, not the `iterrows` row (an all-numeric row upcasts it to float)
+        aid = action_ids.iloc[i]
         if fmode.get(aid) != "intercepted":
             continue
         start = np.array([float(act["start_x"]), float(act["start_y"])], dtype=np.float64)

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks._pandas_compat import masked_to_numpy
 from silly_kicks.reflection import SPADL_REFLECTION_KINDS, reflect
 
 from . import config as spadlconfig
@@ -660,8 +661,8 @@ def add_pre_shot_gk_context(
         return sorted_actions
 
     type_id = sorted_actions["type_id"].to_numpy()
-    team_id = sorted_actions["team_id"].to_numpy()
-    player_id = sorted_actions["player_id"].to_numpy()
+    team_id = masked_to_numpy(sorted_actions["team_id"])  # pandas 2.2 semantics at the 2.1.1 floor (R80)
+    player_id = masked_to_numpy(sorted_actions["player_id"])  # player_id_is_object stays read from the dtype
     time_seconds_arr = sorted_actions["time_seconds"].to_numpy(dtype=np.float64)
     game_id = sorted_actions["game_id"].to_numpy()
     period_id = sorted_actions["period_id"].to_numpy()
@@ -893,7 +894,7 @@ def _compute_possession_boundaries(
 
     game_id = sorted_actions["game_id"].to_numpy()
     period_id = sorted_actions["period_id"].to_numpy()
-    team_id = sorted_actions["team_id"].to_numpy()
+    team_id = masked_to_numpy(sorted_actions["team_id"])  # pandas 2.2 semantics at the 2.1.1 floor (R79)
     time_seconds = sorted_actions["time_seconds"].to_numpy()
     type_id = sorted_actions["type_id"].to_numpy()
 
@@ -941,6 +942,11 @@ def _compute_possession_boundaries(
     if merge_brief_opposing_actions > 0 and brief_window_seconds > 0:
         suppress_at_i = np.zeros(n, dtype=bool)
         suppress_at_k = np.zeros(n, dtype=bool)
+        # No time test reads an "order_only" row at either end (i or i + k): such a pair is never a brief opposing
+        # action, so its boundary stays (action-time repair spec section 4.13).
+        from silly_kicks.spadl.schema import is_order_only
+
+        order_only = is_order_only(sorted_actions)
         for k in range(1, merge_brief_opposing_actions + 1):
             # Aligned look-ahead: index i sees row i+k; sentinels for last k positions.
             team_at_k = np.empty(n, dtype=team_id.dtype)
@@ -960,7 +966,10 @@ def _compute_possession_boundaries(
             period_at_k[n - k :] = -1
 
             same_game_period = (game_at_k == game_id) & (period_at_k == period_id)
-            within_time = (time_at_k - time_seconds) <= brief_window_seconds
+            oo_at_k = np.ones(n, dtype=bool)  # sentinel rows never match
+            if n > k:
+                oo_at_k[: n - k] = order_only[k:]
+            within_time = ((time_at_k - time_seconds) <= brief_window_seconds) & ~order_only & ~oo_at_k
             team_back = team_at_k == prev_team
             match = boundary & same_game_period & within_time & team_back
 
@@ -1722,6 +1731,17 @@ def _finalize_output(
             raise ValueError(
                 f"_finalize_output: extra_columns overlap with schema: {sorted(overlap)}. "
                 f"These names are already part of the canonical schema; remove them from extra_columns."
+            )
+
+    if "time_source" in schema and "time_source" in df.columns:
+        from .schema import TIME_SOURCE_VALUES
+
+        ts = df["time_source"]
+        bad = ts.isna() | ~ts.isin(TIME_SOURCE_VALUES)
+        if bool(bad.any()):
+            raise ValueError(
+                f"_finalize_output: time_source has values outside TIME_SOURCE_VALUES {TIME_SOURCE_VALUES}: "
+                f"{sorted(map(str, pd.unique(ts[bad])))}"
             )
 
     cols = [*schema.keys(), *extras]

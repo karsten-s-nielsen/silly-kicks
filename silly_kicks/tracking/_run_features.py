@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
-from typing import Literal
+from typing import Any, Literal
 
+import numpy as np
 import pandas as pd
 
 import silly_kicks.tracking as tracking
@@ -42,6 +43,7 @@ from silly_kicks.keeper_identity import (
     apply_keeper_identities_to_frames,
     resolve_keeper_identities,
 )
+from silly_kicks.spadl.schema import is_time_unmeasured
 
 from .pitch_control import PitchControlCache
 from .utils import link_actions_to_frames
@@ -118,6 +120,62 @@ def _default_families() -> tuple[str, ...]:
     joins the default run automatically.
     """
     return tuple(sorted(n for n in tracking.__all__ if n.startswith("add_") and n not in FAMILIES_EXCLUDED))
+
+
+def _drop_pointers(links: pd.DataFrame, action_ids: pd.Series) -> pd.DataFrame:
+    """A copy of ``links`` whose rows for ``action_ids`` point to no frame (R45, R50).
+
+    ``frame_id`` becomes ``<NA>`` (nullable ``Int64``, the link contract's unlinked value), ``time_offset_seconds``
+    and ``link_quality_score`` NaN, and ``n_candidate_frames`` 0: no candidate frame was offered.
+    """
+    out = links.copy()
+    hit = out["action_id"].isin(set(action_ids.tolist())).to_numpy()
+    if not hit.any():
+        return out
+    out["frame_id"] = out["frame_id"].astype("Int64")
+    out.loc[hit, "frame_id"] = pd.NA
+    for col in ("time_offset_seconds", "link_quality_score"):
+        if col in out.columns:
+            out[col] = out[col].astype("float64")
+            out.loc[hit, col] = float("nan")
+    if "n_candidate_frames" in out.columns:
+        out.loc[hit, "n_candidate_frames"] = 0
+    return out
+
+
+def _blank_unmeasured(enriched: pd.DataFrame, columns: list[str], unmeasured: np.ndarray) -> pd.DataFrame:
+    """Write the missing value of each column's dtype on the unmeasured rows (spec section 5.3).
+
+    The link-provenance columns are left as the dropped pointer made them. A family column whose dtype has no
+    missing value (numpy bool or integer) is refused: blanking it would need a dtype change (Hyrum), which the
+    spec makes a STOP for the plan.
+    """
+    out = enriched.copy()
+    for col in columns:
+        if col in _LINK_PROVENANCE_COLUMNS:
+            continue
+        dtype = out[col].dtype
+        if dtype.kind in "biu" and not isinstance(dtype, pd.api.extensions.ExtensionDtype):
+            raise TypeError(
+                f"run_tracking_features: family column {col!r} has dtype {dtype} with no missing value, so the "
+                "blank step for unmeasured rows cannot write one (action-time repair spec section 5.3)."
+            )
+        out.loc[unmeasured, col] = _missing_value(dtype)
+    return out
+
+
+def _missing_value(dtype: object) -> Any:
+    """The missing value of a column dtype: ``None`` (object), ``pd.NA`` (nullable extension), else NaN."""
+    if isinstance(dtype, pd.CategoricalDtype):
+        return np.nan
+    if isinstance(dtype, pd.api.extensions.ExtensionDtype):
+        return pd.NA
+    if getattr(dtype, "kind", "") == "O":
+        return None
+    return np.nan
+
+
+_LINK_PROVENANCE_COLUMNS = frozenset({"frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"})
 
 
 def _missing_model_reason(
@@ -284,6 +342,12 @@ def run_tracking_features(
         links, _link_report = link_actions_to_frames(work_actions, work_frames)
     if pitch_control_cache is None:
         pitch_control_cache = PitchControlCache()
+    # 2b. R45/R50 (action-time repair spec section 5.3): a "placeholder" or "order_only" row has no measured time,
+    #     so it takes no frame. Its pointer is dropped here; the blank step after the families covers the families
+    #     that slice frames by the action time instead of the pointer.
+    unmeasured = is_time_unmeasured(work_actions)
+    if unmeasured.any():
+        links = _drop_pointers(links, work_actions.loc[unmeasured, "action_id"])
 
     # 3/5. Resolve the family selection. De-dup a caller-supplied list (order-preserving) so a
     # duplicated family name cannot break the report's conservation invariant -- `family_status` is
@@ -326,6 +390,13 @@ def run_tracking_features(
             family_status[name] = "ran"
         except Exception as exc:  # a refusal on the given frames is a RECORDED result, not a crash
             family_status[name] = f"skipped: {type(exc).__name__}: {exc}"
+
+    # 4b. The blank step (spec section 5.3): every column a family added gets the missing value of its dtype on each
+    #     unmeasured row. The link-provenance columns already carry the dropped pointer (2b).
+    if unmeasured.any():
+        enriched = _blank_unmeasured(
+            enriched, [c for c in enriched.columns if c not in work_actions.columns], unmeasured
+        )
 
     n_run = sum(1 for status in family_status.values() if status == "ran")
     report = TrackingFeaturesReport(

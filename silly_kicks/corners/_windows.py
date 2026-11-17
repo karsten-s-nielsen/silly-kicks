@@ -80,6 +80,8 @@ def add_corner_windows(
     for i in range(n):
         t_kick = float(out["t_kick"].iloc[i])
         period = int(out["period_id"].iloc[i])
+        if not np.isfinite(t_kick):
+            continue  # no measured kick (action-time repair spec section 5.2): no snapshot, no outcome window
         t_init[i] = t_kick - params.init_lead_s
         t_outcome[i] = t_kick + params.outcome_window_s
         if gi_lookup:

@@ -56,3 +56,31 @@ def test_fit_models_stamps_training_commit(tmp_path):
     for sub in ("run_zone", "routine"):
         meta = json.loads((tmp_path / sub / "metadata.json").read_text(encoding="utf-8"))
         assert meta["training_commit"] == "deadbeef"
+
+
+def test_snapshot_rows_give_no_row_for_a_corner_with_no_window(monkeypatch):
+    # Supervisor C (bar A3): an unmeasured corner has no window; argmin of an all-NaN distance took the period's first
+    # frame for both snapshots, so the corner gave rows with start == target into the corner-model build
+    from types import SimpleNamespace
+
+    from scripts.build_corner_routines import _snapshot_rows
+    from tests.scripts._corner_no_window import frames, stub_corner_pipeline
+
+    stub_corner_pipeline(monkeypatch)
+    out = _snapshot_rows(SimpleNamespace(actions=pd.DataFrame(), frames=frames(), provider="skillcorner"))
+    assert set(out["corner_id"]) == {0}  # the measured corner keeps its rows (non-vacuity); corner 1 gives none
+    assert len(out) == 2
+
+
+def test_snapshot_rows_give_no_row_for_a_measured_corner_with_no_side(monkeypatch):
+    # a kick time but no corner_side: str(<NA>) is the text "None", which _reflect_y treated as a right-flag corner
+    from types import SimpleNamespace
+
+    from scripts.build_corner_routines import _snapshot_rows
+    from tests.scripts._corner_no_window import frames, stub_corner_pipeline, windowed_corners
+
+    table = windowed_corners()
+    table["corner_side"] = pd.Series([pd.NA, pd.NA], dtype="category")
+    stub_corner_pipeline(monkeypatch, table)
+    out = _snapshot_rows(SimpleNamespace(actions=pd.DataFrame(), frames=frames(), provider="skillcorner"))
+    assert len(out) == 0

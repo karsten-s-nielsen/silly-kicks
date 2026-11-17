@@ -24,6 +24,7 @@ import pandas as pd
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.id_compat import align_join_keys, ids_match
 from silly_kicks.spadl import config as _spc
+from silly_kicks.spadl.schema import is_time_unmeasured
 from silly_kicks.tracking import _geometry as _geo
 from silly_kicks.tracking._ball_carrier import (
     DEFAULT_CARRIER_PARAMS,
@@ -306,6 +307,9 @@ def build_xshot_labels(
     row's window --- NO linkage step (avoids the +/-tolerance link smear at the 1 s
     horizon). Robust to non-contiguous ``frame_id`` (uses time, not frame index).
 
+    A shot row with ``is_time_unmeasured`` (``"placeholder"`` / ``"order_only"``) is not counted: its time is not
+    the shot's moment (action-time repair spec section 5.4).
+
     The shot-type filter is applied HERE, by ``type_id`` (ADR-126), mirroring
     :func:`~silly_kicks.tracking._xcross_attempt.build_xcross_labels`. A caller may pass a
     full SPADL actions table; only rows whose ``type_id`` is a shot type are counted. This
@@ -336,7 +340,10 @@ def build_xshot_labels(
     # Filter to shot type_ids FIRST (ADR-126), then the shared occurrence helper (M-3). frames
     # carry the possessing team as `team_in_possession`; shots carry the acting team as `team_id`.
     type_ids = {_spc.actiontype_id[t] for t in shot_types}
-    shots_f = shots[shots["type_id"].isin(type_ids)][["game_id", "period_id", "team_id", "time_seconds"]]
+    # A shot row with an unmeasured time (a derived SkillCorner penalty with no kick) is not a labelled shot:
+    # its time is not the shot's moment (action-time repair spec section 5.4).
+    keep = shots["type_id"].isin(type_ids).to_numpy() & ~is_time_unmeasured(shots)
+    shots_f = shots[keep][["game_id", "period_id", "team_id", "time_seconds"]]
     y = _build_occurrence_labels(frames_index, shots_f, horizon=horizon_seconds, frame_team_col="team_in_possession")
     return pd.Series(y, index=frames_index.index)
 

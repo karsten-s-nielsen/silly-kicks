@@ -19,10 +19,11 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks.id_compat import same_id
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
 from ._chain import outcome_table
 from ._config import WinProbabilityParams
-from ._state import _FOUL, _OWNGOAL, _PERIOD_OFFSET_MIN, _RED, _SHOT_TYPE_IDS, _SUCCESS
+from ._state import _FOUL, _PERIOD_OFFSET_MIN, _RED
 
 _HAZARD_FEATURES = ("score_diff", "minutes_remaining", "base_strength", "home", "man_advantage")
 
@@ -51,8 +52,8 @@ class WinProbabilityIntegrityError(RuntimeError):
 def _team_goal_minutes(g: pd.DataFrame, teams: list) -> dict:
     """Absolute-minute goal timeline per team (id-based, ADR-018 own-goal-by-result)."""
     out: dict = {t: [] for t in teams}
-    is_scored = (g["type_id"].isin(_SHOT_TYPE_IDS) & (g["result_id"] == _SUCCESS)).to_numpy()
-    is_og = (g["result_id"] == _OWNGOAL).to_numpy()
+    is_scored = goal_mask(g).to_numpy()  # the library goal rule (R52)
+    is_og = owngoal_mask(g).to_numpy()
     team_col = g["team_id"].to_numpy()
     periods = g["period_id"].to_numpy()
     times = g["time_seconds"].to_numpy()

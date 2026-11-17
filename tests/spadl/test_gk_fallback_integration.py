@@ -18,6 +18,7 @@ from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.spadl.sportec import convert_to_actions
 from silly_kicks.spadl.utils import add_pre_shot_gk_context
 from silly_kicks.tracking.direction import compute_attacking_direction
+from tests._idsse_fixtures import idsse_fixture_native, idsse_goalkeeper_ids
 
 _IDSSE_DIR = Path(__file__).parent.parent / "datasets" / "idsse"
 _PAIRED_TRACKING = _IDSSE_DIR / "paired_tracking.parquet"
@@ -135,10 +136,8 @@ def paired_data():
     if not _PAIRED_TRACKING.exists():
         pytest.skip("Paired tracking fixture not available")
 
-    events = pd.read_parquet(_IDSSE_DIR / "per_period_match.parquet")
-    gk_ids: set[str] | None = None
-    if "play_goal_keeper_action" in events.columns:
-        gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
+    events = idsse_fixture_native("per_period_match")  # R66: through shape_events_to_native
+    gk_ids = idsse_goalkeeper_ids(events)
     actions, _report = convert_to_actions(
         events,
         home_team_id=_HOME_TEAM_ID,

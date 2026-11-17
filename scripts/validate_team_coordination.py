@@ -179,7 +179,7 @@ def liveness_block(tables: Mapping[str, pd.DataFrame]) -> dict:
                 columns[key] = {"live": False, "n_finite": 0, "n_unique": 0, "reason": "absent"}
                 dead.append(key)
                 continue
-            v = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=np.float64)
+            v = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=np.float64, na_value=np.nan)
             v = v[np.isfinite(v)]
             n_unique = int(np.unique(v).size)
             live = bool(v.size > 0 and n_unique > 1)

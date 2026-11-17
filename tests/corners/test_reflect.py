@@ -54,3 +54,15 @@ def test_kinds_map_declares_only_known_kinds():
         "vector_y",
         "invariant",
     }
+
+
+def test_a_corner_with_no_side_is_not_reflected():
+    # Supervisor C point g: an unmeasured corner has corner_side <NA>; `<NA> != "left"` selected it for the
+    # reflection, so any finite geometry on the row was flipped with no known side
+    from silly_kicks.corners import reflect_corners_to_canonical_side
+
+    df = pd.DataFrame({"corner_side": pd.Series([pd.NA, "right"], dtype="category"), "kick_x": [104.0, 104.0],
+                       "kick_y": [8.0, 8.0]})  # fmt: skip
+    out = reflect_corners_to_canonical_side(df)
+    assert out.loc[0, "kick_y"] == 8.0  # unknown side: left as it is
+    assert out.loc[1, "kick_y"] == 60.0  # non-vacuity: a right corner still reflects

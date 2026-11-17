@@ -22,6 +22,7 @@ columns, ``stoppage_state`` and ``stoppage_source``; ``ball_state`` is never wri
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -29,6 +30,8 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
+from silly_kicks.id_compat import canonical_id
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
 #: The rule set of this module; recorded in a trained model's metadata and ``metrics.json``.
 STOPPAGE_RULE_VERSION = 1
@@ -48,7 +51,6 @@ _RESTART_TYPES = (
     "shot_penalty",
     "shot_freekick",
 )
-_SHOT_TYPES = ("shot", "shot_penalty", "shot_freekick")
 
 
 @dataclass(frozen=True)
@@ -64,15 +66,40 @@ class StoppageSpans:
     key: Literal["frame_id", "time_seconds"]
     spans: pd.DataFrame
     anchors: pd.DataFrame
+    dropped_kicks: int = 0
 
 
-def skillcorner_stoppage_spans(events: pd.DataFrame) -> StoppageSpans:
-    """Spans from the game-interruption markers of a SkillCorner ``dynamic_events`` table.
+def skillcorner_stoppage_spans(
+    events: pd.DataFrame,
+    *,
+    kicks: Mapping[tuple[str, str], tuple[int, str]] | None = None,
+    period_last_frame: Mapping[int, int] | None = None,
+) -> StoppageSpans:
+    """Spans from the game-interruption markers of a SkillCorner ``dynamic_events`` table (R44).
 
-    For each possession ``a`` and the next possession ``b`` (frame order): when ``a`` has
-    ``game_interruption_after`` and ``b`` has ``game_interruption_before``, the frames ``[a.frame_end, b.frame_start)``
-    are ``dead`` and the taker's possession ``[b.frame_start, b.frame_end]`` is ``unknown``; when only one of the two
-    markers is set, ``[a.frame_end, b.frame_end]`` is ``unknown``.
+    For each possession ``a`` and the next possession ``b`` (frame order) with a marker on either side: before the
+    first kick of the pair the frames from ``a.frame_end`` are ``dead`` when both markers are set and ``unknown``
+    when one is; from an ``"after"`` kick (an "after"-only restart) they are ``unknown`` until the next kick or
+    ``b.frame_start``; from a ``"before"`` kick (the restart that ``b`` receives) they are live; with no
+    ``"before"`` kick, ``b`` (the receiver's first possession, in play) is live from ``b.frame_start``. Two kicks
+    in one pair need ``after < before``; otherwise the ``"after"`` kick is dropped and counted. A
+    ``"period_end"`` kick (a period-end penalty, keyed on ``a``) is ``unknown`` from the kick to its period's last
+    frame (``period_last_frame``; without it, or without an events ``period`` column, to the next possession's
+    start). A pair of different kinds with no kick stays ``dead``: that span
+    also holds the first restart's play (action-time repair spec section 4.9).
+
+    Parameters
+    ----------
+    events : pd.DataFrame
+        The match's dynamic events (``player_possession`` rows with ``frame_start``, ``frame_end``, the two
+        markers, and ``event_id`` when ``kicks`` is given).
+    kicks : Mapping[tuple[str, str], tuple[int, str]] or None
+        The measured kicks of the time step, keyed by ``(canonical event id, restart kind)`` (the key of spec
+        section 4.18: the id of ``b``, or of ``a`` for a period-end penalty), valued ``(kick frame, side)`` with
+        side ``"before"``, ``"after"`` or ``"period_end"``.
+    period_last_frame : Mapping[int, int] or None
+        The last frame id of each period, from the tracking (the loader passes it). A ``"period_end"`` span ends
+        there, so the next period's opening frames keep their own state.
 
     Examples
     --------
@@ -81,7 +108,7 @@ def skillcorner_stoppage_spans(events: pd.DataFrame) -> StoppageSpans:
     ...     "game_interruption_after": ["throw_in_against", None],
     ...     "game_interruption_before": [None, "throw_in_for"]})
     >>> skillcorner_stoppage_spans(ev).spans.to_dict("records")
-    [{'start': 20, 'end': 40, 'state': 'dead'}, {'start': 40, 'end': 51, 'state': 'unknown'}]
+    [{'start': 20, 'end': 40, 'state': 'dead'}]
     """
     if "event_type" not in events.columns:  # an empty table: no possession, no span
         empty = pd.DataFrame({"start": pd.Series(dtype="int64"), "end": pd.Series(dtype="int64")})
@@ -94,20 +121,47 @@ def skillcorner_stoppage_spans(events: pd.DataFrame) -> StoppageSpans:
     end = pp["frame_end"].to_numpy(dtype="int64") + 1  # half-open
     after = _marked(pp, "game_interruption_after")
     before = _marked(pp, "game_interruption_before")
-    a_end, b_start, b_end = end[:-1] - 1, start[1:], end[1:]
-    both = after[:-1] & before[1:]
-    one = after[:-1] ^ before[1:]
-    spans = pd.concat(
-        [
-            pd.DataFrame({"start": a_end[both], "end": b_start[both], "state": "dead"}),
-            pd.DataFrame({"start": b_start[both], "end": b_end[both], "state": "unknown"}),
-            pd.DataFrame({"start": a_end[one], "end": b_end[one], "state": "unknown"}),
-            lost,
-        ],
-        ignore_index=True,
-    )
+    ids = [canonical_id(v) for v in pp["event_id"].tolist()] if "event_id" in pp.columns else [None] * len(pp)
+    pos_of = {eid: k for k, eid in enumerate(ids) if eid is not None}
+    by_pair: dict[int, dict[str, int]] = {}  # index of a -> {side: kick frame}
+    period_end: dict[int, int] = {}
+    dropped = 0
+    for (eid, _kind), (frame, side) in (kicks or {}).items():
+        k = pos_of.get(canonical_id(eid))
+        if k is None:
+            dropped += 1
+        elif side == "period_end":
+            period_end[k] = int(frame)
+        elif k == 0 or side not in ("before", "after"):
+            dropped += 1
+        else:
+            by_pair.setdefault(k - 1, {})[side] = int(frame)
+    rows: list[dict] = []
+    for i in range(len(pp) - 1):
+        if not (after[i] or before[i + 1]):
+            continue
+        a_end, b_start = int(end[i] - 1), int(start[i + 1])
+        pair = by_pair.get(i, {})
+        k_after, k_before = pair.get("after"), pair.get("before")
+        if k_after is not None and k_before is not None and k_after >= k_before:
+            dropped += 1
+            k_after = None
+        state = "dead" if (after[i] and before[i + 1]) else "unknown"
+        first = min(k for k in (k_after, k_before, b_start) if k is not None)
+        rows.append({"start": a_end, "end": first, "state": state})
+        if k_after is not None:
+            rows.append({"start": k_after, "end": k_before if k_before is not None else b_start, "state": "unknown"})
+    periods = pp["period"].to_numpy() if "period" in pp.columns else None
+    for k, frame in period_end.items():
+        nxt = int(start[k + 1]) if k + 1 < len(pp) else frame + 1
+        last = (period_last_frame or {}).get(int(periods[k])) if periods is not None else None
+        stop = int(last) + 1 if last is not None else nxt  # half-open: the period's last frame is in the span
+        rows.append({"start": frame, "end": max(stop, frame + 1), "state": "unknown"})
+    marker_spans = pd.DataFrame(rows, columns=["start", "end", "state"])
+    marker_spans = marker_spans[marker_spans["end"] > marker_spans["start"]]
+    spans = pd.concat([marker_spans.astype({"start": "int64", "end": "int64"}), lost], ignore_index=True)
     spans = spans.sort_values(["start", "end"], kind="mergesort").reset_index(drop=True)
-    return StoppageSpans("frame_id", spans, pd.DataFrame({"start": start, "end": end}))
+    return StoppageSpans("frame_id", spans, pd.DataFrame({"start": start, "end": end}), dropped)
 
 
 def event_stoppage_spans(actions: pd.DataFrame) -> StoppageSpans:
@@ -128,18 +182,12 @@ def event_stoppage_spans(actions: pd.DataFrame) -> StoppageSpans:
     a = actions.sort_values(["period_id", "time_seconds"], kind="mergesort")
     per = a["period_id"].to_numpy()
     t = a["time_seconds"].to_numpy(dtype="float64")
-    type_id, result_id = a["type_id"].to_numpy(), a["result_id"].to_numpy()
+    type_id = a["type_id"].to_numpy()
     same_prev = np.r_[False, per[1:] == per[:-1]]
     same_next = np.r_[per[:-1] == per[1:], False]
     t_prev, t_next = np.r_[np.nan, t[:-1]], np.r_[t[1:], np.nan]
     restart = np.isin(type_id, [spadlconfig.actiontype_id[n] for n in _RESTART_TYPES]) & same_prev
-    goal = (
-        (
-            np.isin(type_id, [spadlconfig.actiontype_id[n] for n in _SHOT_TYPES])
-            & (result_id == spadlconfig.result_id["success"])
-        )
-        | (result_id == spadlconfig.result_id["owngoal"])
-    ) & same_next
+    goal = (goal_mask(a).to_numpy() | owngoal_mask(a).to_numpy()) & same_next  # the library goal rule (R52)
     spans = (
         pd.concat(
             [

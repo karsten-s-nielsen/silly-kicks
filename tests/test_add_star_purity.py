@@ -504,6 +504,12 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ("with_visible_area", _action_context_va_inputs, _action_context_va_invoke),
     ],
     "tracking:add_actor_pre_window": _one(_std_inputs, _std_invoke(F.add_actor_pre_window)),
+    # Not an add_*, but a public frame-consuming transform held to the same purity contract (action-time repair
+    # plan Task 6). A "tracking" time source skips ELASTIC; rules 2-4 (kick, dribble, sort + renumber) run.
+    "tracking:sync_action_times": _one(
+        lambda: [make_actions().assign(time_source="tracking"), make_frames()],
+        _std_invoke(tracking.sync_action_times),
+    ),
     # Branches on the action time base (time_seconds vs start_time), so a variant per branch.
     "tracking:add_ball_contacts": [
         ("time_seconds", _std_inputs, _std_invoke(F.add_ball_contacts)),
@@ -911,10 +917,21 @@ def test_meta_registration_complete_per_package():
         ("corners", CORNERS_REGISTERED),
     ):
         exported = _exported_add_surface(prefix)
+        registered_subset = {n for n in registered_subset if n.startswith("add_")}  # non-add_* checked below
         assert exported == registered_subset, (
             f"{prefix}: purity-gate surface != public add_* exports "
             f"(unwired: {exported - registered_subset}, stale: {registered_subset - exported})"
         )
+
+
+def test_meta_registered_non_add_entries_are_public():
+    """A registered non-``add_*`` transform (e.g. ``tracking:sync_action_times``) must be a public export of its
+    package, so an entry cannot outlive a rename or an unexport."""
+    for key in PURITY_ENTRIES:
+        prefix, name = key.split(":", 1)
+        if name.startswith("add_"):
+            continue
+        assert name in getattr(importlib.import_module(_PKG_MOD[prefix]), "__all__", ()), f"{key}: not exported"
 
 
 def test_meta_all_public_add_defs_are_exported():

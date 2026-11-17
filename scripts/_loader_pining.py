@@ -624,17 +624,34 @@ def _build_match(provider, match_id, paths, tracking_limit, *, with_velocity: bo
     # ADR-130: every tracking provider's frames leave here with `stoppage_state` / `stoppage_source`. IDSSE frames
     # record the dead ball (`ball_state`); SkillCorner and Gradient Sports frames do not, so their spans come from
     # the SkillCorner game-interruption markers and the Gradient Sports restart and goal actions.
+    # The action-time step (spec section 4.3) runs once per match with frames, after the frames are built and
+    # before the stoppage spans; the events-only load does not call it (spec section 4.10).
+    from silly_kicks.tracking import sync_action_times
     from silly_kicks.tracking._stoppages import event_stoppage_spans, skillcorner_stoppage_spans, with_stoppage_state
 
     if provider == "idsse":
         actions, frames, home = _build_idsse(paths, match_id, tracking_limit, with_velocity=with_velocity)
+        actions = sync_action_times(actions, frames)
         return actions, with_stoppage_state(frames, spans=None), home, None, None
     if provider == "skillcorner":
-        actions, frames, home, report = _build_skillcorner(paths, match_id, tracking_limit, with_velocity=with_velocity)
-        spans = skillcorner_stoppage_spans(_read_skillcorner_events(paths))
+        pre, frames, home, report = _build_skillcorner(paths, match_id, tracking_limit, with_velocity=with_velocity)
+        actions = sync_action_times(pre, frames)
+        kicks, outside = _skillcorner_kicks(pre, actions, frames)
+        if outside:
+            raise ValueError(
+                f"skillcorner match {match_id}: {len(outside)} kick row(s) outside their restart_gaps gap "
+                f"(a defect of the time step, spec section 4.9): {outside[:5]}"
+            )
+        # a period-end penalty's span ends at its period's last frame (spec section 4.9), known only to the frames
+        last = frames.groupby("period_id")["frame_id"].max()
+        period_last_frame = {int(cast(int, p)): int(f) for p, f in last.items()}
+        spans = skillcorner_stoppage_spans(
+            _read_skillcorner_events(paths), kicks=kicks, period_last_frame=period_last_frame
+        )
         return actions, with_stoppage_state(frames, spans=spans), home, None, report
     if provider == "gradientsports":
         actions, frames, home = _build_gradientsports(paths, tracking_limit, with_velocity=with_velocity)
+        actions = sync_action_times(actions, frames)
         return actions, with_stoppage_state(frames, spans=event_stoppage_spans(actions)), home, None, None
     if provider == "statsbomb":
         # SB360 freeze-frames carry no per-player temporal history, so `tracking_limit` (a frame
@@ -643,11 +660,48 @@ def _build_match(provider, match_id, paths, tracking_limit, *, with_velocity: bo
     raise ValueError(f"unknown pining provider {provider!r}")
 
 
+def _skillcorner_kicks(pre: pd.DataFrame, stepped: pd.DataFrame, frames: pd.DataFrame) -> tuple[dict, list]:
+    """The kick mapping of spec section 4.9 step 3, checked against ``restart_gaps`` of the PRE-step table.
+
+    Returns ``(kicks, outside)``: ``kicks`` maps ``(canonical original_event_id, restart kind)`` to
+    ``(kick frame_id, side)``, with side ``"before"`` (the row had ``"placeholder"``: a restart that ``b``
+    receives), ``"after"`` (``"order_only"``) or ``"period_end"`` (a period-end penalty); ``outside`` lists each
+    ``"kick"`` row whose kick lies outside its gap -- a defect that the caller refuses.
+    """
+    from silly_kicks.id_compat import canonical_id
+    from silly_kicks.spadl.schema import restart_kind
+    from silly_kicks.tracking import restart_gaps
+
+    gaps = restart_gaps(pre, frames)
+    gap_of = {(str(g["game_id"]), canonical_id(g["original_event_id"]), g["kind"]): g for g in gaps.to_dict("records")}
+    ball = frames[frames["is_ball"].astype(bool)] if len(frames) else frames
+    kicks: dict = {}
+    outside: list = []
+    rows = stepped[stepped["time_source"] == "kick"]
+    for r in rows.to_dict("records"):
+        key = (str(r["game_id"]), canonical_id(r["original_event_id"]), restart_kind(int(r["type_id"])))
+        g = gap_of.get(key)
+        t = float(r["time_seconds"])
+        if g is None or not (float(g["gap_start"]) <= t <= float(g["gap_end"])):
+            outside.append((key, t))
+            continue
+        hit = ball[(ball["period_id"] == r["period_id"]) & ((ball["time_seconds"] - t).abs() < 1e-6)]
+        if len(hit) == 0:
+            outside.append((key, t))
+            continue
+        side = "period_end" if g["period_end"] else ("before" if g["time_source"] == "placeholder" else "after")
+        kicks[key[1:]] = (int(hit["frame_id"].iloc[0]), side)
+    return kicks, outside
+
+
 def _build_match_actions(provider, match_id, paths):
     """Events-only provider dispatch: ``(actions, home_team_id)`` without touching ``paths["tracking"]``.
 
-    Each provider's ACTIONS half is the same function its full builder calls, so the events-only
-    actions are the full build's actions by construction (and test-pinned byte-identical).
+    Each provider's ACTIONS half is the same function its full builder calls. The events-only actions equal the
+    full build's actions BEFORE the time step ``sync_action_times``; the full build's actions are the step applied
+    to them (action-time repair spec section 4.10). The stable key between the two builds is
+    ``(game_id, original_event_id, action_provenance, restart_kind(type_id))`` (spec section 4.18); a row with no
+    ``original_event_id`` is identified by the previous keyed row and its offset after it.
     """
     if provider == "idsse":
         actions, match_info, _hsl, _hsl_et = _idsse_actions(paths, match_id)
@@ -858,7 +912,8 @@ def _skillcorner_bronze(raw_frames: list[dict], meta: dict, *, match_id: str) ->
 
     Replaces the kloppy gateway on the pining path (spec 3.3): kloppy hard-codes
     ``visibility=None`` (so ``is_detected`` -- which exists in the feed -- is lost), discards
-    ``ball_z``, and scales x on a pitch length that disagrees with our own events converter.
+    ``ball_z``, and scales x on a pitch length that disagrees with our own events converter. The ball's own
+    ``is_detected`` rides along as ``ball_is_detected`` (action-time repair spec section 4.4).
     """
     roster = {
         int(p["id"]): (
@@ -894,6 +949,7 @@ def _skillcorner_bronze(raw_frames: list[dict], meta: dict, *, match_id: str) ->
                     "ball_x": bd.get("x"),
                     "ball_y": bd.get("y"),
                     "ball_z": bd.get("z"),
+                    "ball_is_detected": bd.get("is_detected"),  # the ball row's visibility (spec section 4.4)
                     "is_visible": p.get("is_detected"),
                     "frame_rate": 10.0,  # SkillCorner V3 is exactly 10.000 fps (measured)
                     "pitch_length": float(meta["pitch_length"]),
@@ -998,7 +1054,11 @@ def _skillcorner_actions(paths):
     with open(paths["metadata"], encoding="utf-8") as fh:
         meta = json.load(fh)
     home_team_id = str(meta["home_team"]["id"])  # authoritative; matches native tracking team ids
-    actions, _evt_report = sk_spadl.convert_to_actions(_read_skillcorner_events(paths), meta)
+    events = _read_skillcorner_events(paths)
+    # R56 (spec section 4.15): the provider's running score rides on the native rows when the feed has it.
+    score_fields = [c for c in ("team_score", "opponent_team_score") if c in events.columns]
+    preserve = score_fields if len(score_fields) == 2 else False
+    actions, _evt_report = sk_spadl.convert_to_actions(events, meta, preserve_native=preserve)
     return actions, home_team_id
 
 

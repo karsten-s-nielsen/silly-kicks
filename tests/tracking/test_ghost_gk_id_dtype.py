@@ -154,7 +154,7 @@ def test_score_lookup_is_id_dtype_invariant(team_dtype, home_scalar):
     from silly_kicks.tracking._ghost_gk import _build_score_lookup
 
     fn = _build_score_lookup(_goal_actions(team_dtype), home_team_id=home_scalar)
-    assert fn(1, 40.0) == 1.0, f"score_diff wrong for column={team_dtype}, scalar={home_scalar!r}"
+    assert fn(1, 1, 40.0) == 1.0, f"score_diff wrong for column={team_dtype}, scalar={home_scalar!r}"
 
 
 def test_score_lookup_fixture_would_expose_an_all_away_classification():
@@ -166,6 +166,6 @@ def test_score_lookup_fixture_would_expose_an_all_away_classification():
     """
     from silly_kicks.tracking._ghost_gk import _build_score_lookup
 
-    correct = _build_score_lookup(_goal_actions("int64"), home_team_id=1)(1, 40.0)
+    correct = _build_score_lookup(_goal_actions("int64"), home_team_id=1)(1, 1, 40.0)
     assert correct == 1.0
     assert correct not in (-3.0, 3.0), "fixture cannot distinguish correct from degenerate"

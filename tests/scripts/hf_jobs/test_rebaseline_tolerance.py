@@ -191,3 +191,29 @@ def test_a_code_delta_rebaseline_within_tolerance_passes(tmp_path, monkeypatch):
     monkeypatch.setattr(A, "_code_delta", lambda *a, **k: ["scripts/_crossed_icc.py"])
     res = A._rebaseline(SPEC, _fresh(tmp_path), "0" * 40, run=lambda *a, **k: None)
     assert res["ok"] and res["within_tolerance"] and res["delta"] == "code" and not res["identical"]
+
+
+def test_an_environment_difference_outside_the_tolerance_is_not_ok(tmp_path, monkeypatch):
+    # R25 (owner 2026-11-17): only the tolerance decides; a difference with no changed input module still stops.
+    monkeypatch.setattr(A, "_code_delta", lambda *a, **k: [])
+
+    def far(doc):
+        doc["census"]["tier2"]["lo"] += 1.0
+
+    res = A._rebaseline(SPEC, _fresh(tmp_path, edit=far), "0" * 40, run=lambda *a, **k: None)
+    assert not res["ok"] and not res["within_tolerance"] and res["delta"] == "environment"
+
+
+def test_a_driver_without_a_baseline_entry_stops_without_an_exception(tmp_path, monkeypatch):
+    # R26: a rebaseline driver with no REBASELINE_FROM entry gets ok False on a difference, never a KeyError.
+    monkeypatch.setattr(A, "REBASELINE_FROM", {})
+    res = A._rebaseline(SPEC, _fresh(tmp_path), "0" * 40, run=lambda *a, **k: None)
+    assert res["ok"] is res["within_tolerance"] is True and res["delta"] is None
+    spec = DRIVERS["cross_definition"]
+    fresh = tmp_path / "xdef"
+    shutil.copytree(Path(spec.output_rel), fresh)
+    doc = json.loads((fresh / "cross_definition.json").read_text(encoding="utf-8"))
+    doc["selected_start_line"] += 1.0  # a measured field, never a provenance key
+    (fresh / "cross_definition.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    res = A._rebaseline(spec, fresh, "0" * 40, run=lambda *a, **k: None)
+    assert res["ok"] is False and res["delta"] is None

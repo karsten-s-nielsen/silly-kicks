@@ -5,6 +5,134 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — each action time is the action's moment, or the row says it is not (ADR-135) (PR-S209)
+
+> **Version:** set at commit prep by the version rule (ADR-079). 4.144.0 is released without this repair, so the
+> wheel changes. The pre-repair warnings below are written relative to 4.144.0, the last release without it.
+
+### Added
+
+- **`time_source`, a new SPADL column** (`object`, never missing; ADR-135): `"event"`, `"tracking"`, `"elastic"`,
+  `"kick"`, `"placeholder"`, `"order_only"` or `"derived"` (`spadl.schema.TIME_SOURCE_VALUES`), with the predicates
+  `is_order_only` and `is_time_unmeasured`. Every converter sets it; `_finalize_output` refuses a missing or unknown
+  value. Readers that select columns by name are unaffected (the StatsBomb-only trainers are checked).
+- **`tracking.sync_action_times` and `tracking.restart_gaps`**: the time step. ELASTIC aligns the idsse `"event"` rows
+  (`"elastic"`); the SkillCorner corner and penalty kick is measured from the ball's rest and release inside its gap
+  (`"kick"`); a dribble takes the midpoint; the rows are re-sorted and renumbered. The pining loader runs it on every
+  match it builds with frames; the events-only build is the full build before the step.
+- **`PredatesDeclaredConstantWarning`** and the contract constant `match_context_revision` (`REVISION_CONTRACT_KEYS`):
+  a ghost-GK, ghost-outfield or xCross artifact fitted with silly-kicks 4.144.0 or earlier loads with this warning.
+  The tag is bumped by hand. The gate `tests/tracking/test_match_context_revision_gate.py` pins the lookups' outputs
+  on a fixed probe per revision (R67), so a change of those rules fails CI until the tag and its pin move.
+- **`skillcorner.convert_to_actions(preserve_native=[...])`**: a list carries the named event fields (for example the
+  provider's running score `team_score`, `opponent_team_score`) on the native rows.
+- **`scripts/build_idsse_per_period_fixture.py`** builds `tests/datasets/idsse/per_period_match.parquet` from the raw
+  public DFL files through this library's parser; `scripts/extract_provider_fixtures.py` refuses its idsse
+  `per_period` path (that file no longer comes from Databricks).
+
+### Changed (Hyrum notice: every observable change)
+
+- **SkillCorner restarts and penalties are rows of their own** (ADR-135). Each corner, free kick, goal kick, throw-in
+  and penalty is a derived row (`action_provenance == "derived"`) for the side the marker names, with no player; its
+  place is the type's rule point, its end the first possession's start, its result whether that possession is the
+  taker's side, its time a measured kick (`"kick"`), the reception minus 0.02 s (`"placeholder"`) or an order only
+  (`"order_only"`). The first possession keeps the type of its own action (until 4.144.0 it took the restart's type
+  and was moved to its end). Row counts, types and `action_id` change: an ADR-065 cross-table migration.
+- **idsse action times are the tracking moment where ELASTIC aligns them** (`"elastic"`); unaligned rows keep the
+  event time (`"event"`). Matches without tracking keep `"event"`.
+- **The idsse `Penalty` is a `shot_penalty` row** (R57), typed from its nested shot, with the shooter as player.
+- **The DFL parser reads a penalty's outcome** (R63): the outcome under `Penalty > ShotAtGoal` fills
+  `shot_outcome_type` and `shot_outcome_*`. This changes the bronze of every caller of `parse_dfl_events`, the
+  luxury-lakehouse `bronze.idsse_events` among them, at its next upgrade: on a match with a penalty the frame gains
+  those values, its column order changes (it follows the first row with a key) and `shot_outcome_assist_fouled_player`
+  is `object` where it was an all-missing `string`. The parser now differs from the lakehouse parser at `0efac60` on
+  this element (ADR-031 amendment). The `ragnarok` working tree rewrites the same loop; its rebase must carry this rule.
+- **Stored bronze from a parser of 4.144.0 or earlier**: a `Penalty` with a nested shot and no outcome is excluded and
+  warns (`UserWarning`, naming the events, both causes and the repair: parse the raw file again). A caller that
+  converts stored bronze (the lakehouse `src/ingestion/spadl_conversion.py`) gets no penalty row until it re-parses.
+- **The ghost `score_diff`, `phase` and the xCross `score_differential` change on every provider** (R51, R52; not
+  byte-identical): the score and phase lookups take `(game_id, period_id, time_seconds)`, so a first-half goal or set
+  piece no longer reaches a second-half query at a smaller clock time; an `"order_only"` row opens no phase window.
+- **One goal rule** (R52, `spadl._goals`): the score counts every goal of the library's rule (a successful shot,
+  penalty or direct free kick, and an own goal on any type, for the other team). The former score lookup counted an
+  own goal only on a shot row and missed the `bad_touch` own goals the converters emit (a fix). A period-5 shoot-out
+  row is no goal of the score; the Gradient Sports shoot-out rows lie in period 4, after the last frame, so no frame
+  reads their score.
+- **The SkillCorner score comes from the running score** where the native rows carry it (R56): it takes effect at the
+  native row after the first higher one (a lag of a median 1.5 s after the kick-off reception); a decrease or a
+  missing value falls back to the goal rows.
+- **VAEP `scores` / `concedes` with `window="time"` return nullable `boolean`** on every table (`float` with
+  `xg_column`; that mode only). An `"order_only"` row's label is `<NA>`; on a table with none the values are today's.
+- **The action-window readers take no window at an `"order_only"` row** (R54): `retains` (NaN), the
+  `EmpiricalTurnoverValue` time window (no anchor), TF-49 `packing_secured` (`<NA>`), the team-metrics spells (times
+  skip such rows), the possession carve-out `brief_window_seconds` (SPADL and atomic), the coordination windows from
+  actions and their event intervals.
+- **The readers of a shot's time skip an unmeasured shot** (R58): the xShot label, the pre-shot keeper position and
+  angle, the shot goal-mouth, the causal treatment and outcome windows, TF-49 packing.
+- **`run_tracking_features` drops the frame pointer of a `"placeholder"` or `"order_only"` row and blanks every
+  family column on it** (R45, R50): `frame_id` `<NA>`, `time_offset_seconds` and `link_quality_score` NaN,
+  `n_candidate_frames` 0; a family column with no missing value raises `TypeError`. A direct `add_*` call is not covered.
+- **The SkillCorner stoppage spans** (R44): the first possession after a restart is `live` for the xShot and xCross
+  gates; the dead span ends at a measured kick.
+- **Corners**: a SkillCorner corner with no measured kick has `t_kick`, `kick_x`, `kick_y` and `corner_side` `<NA>`
+  and gets no window; the SkillCorner GI refinement joins on the row key, not the time.
+- **The restart enrichment** reads `time_source`: an unmeasured derived restart reads as its rule point
+  (`restart_prior`), a measured kick as `tracking_ball`.
+- **SkillCorner ball `visibility`** comes from the feed's `is_detected` (the bronze builder keeps it).
+- **The 4.144.0 refit campaign** forces the `public` arm on the xShot and xCross wheel jobs (`ship_variant`, R38/R49);
+  the paired rule's verdict is recorded as `rule_verdict` / `rule_why` and reported at adoption.
+
+### Fixed
+
+- **`skillcorner.convert_to_actions(preserve_native=True)` no longer raises** (R62): `original_event_id` is a schema
+  column, so `True` adds no column (it raised the extra-columns overlap `ValueError`).
+- **The declared pandas floor holds** (R75): `pandas>=2.1.1` was untested, and on pandas 2.1 an `Int64` column with
+  `<NA>` raises on `.to_numpy(dtype=float)`. `tracking._kernels.resolve_frame_ids_by_position` read the linked
+  `frame_id` that way, so `add_das`, `add_obso`, `add_packing`, `add_pausa`, `add_pitch_control`, `add_space_creation`,
+  `add_structural_pass` and `add_off_ball_run_values` raised on the floor; it now reads with `na_value=np.nan` (no
+  change on later pandas). CI gains a `pandas-floor` job (the matrix selection, sharded x6), pinned by
+  `tests/test_ci_pandas_floor_wired.py`, with three pins: `pandas==2.1.1` (the floor), `numpy<2` (pandas 2.1 wheels
+  predate numpy 2) and `pyarrow<26` (pyarrow 26 requires numpy 2, so at the floor the parquet engine must be an
+  earlier release; 25.0.1 is the newest that loads with numpy 1.x).
+- **The first full `pandas-floor` run found more floor failures; each is repaired with a test that is red on pandas
+  2.1.1** (R79, R80). None changes a value or a dtype on pandas 2.2.1 or later (`tests/test_pandas_floor_compat.py`).
+  - New private module `silly_kicks._pandas_compat`: the one constant `PANDAS_COMPARES_READ_ONLY_OBJECT` (pandas
+    2.2.1 is the first release whose object-dtype `Series == scalar` accepts a read-only buffer; measured: 2.1.1,
+    2.1.4 and 2.2.0 raise, 2.2.1 and later do not) and `masked_to_numpy`, which gives what pandas 2.2+ gives for
+    `.to_numpy()` of a nullable numeric column (float64 with NaN when an integer column holds NA).
+  - **The id helpers accept a read-only id array at the floor.** `PitchControlSurface` keeps its `player_ids` /
+    `player_team_ids` read-only, and on pandas before 2.2.1 every id lookup on a surface raised "buffer source array
+    is read-only". The GK-influence family caught that per frame, so `add_gk_influence` returned all-NaN
+    `gk_pitch_control_share_weighted` / `gk_reachable_area_m2` / `gk_closing_time_*` with a per-frame `UserWarning`,
+    `add_player_influence` gave `off_ball_xt_team` 0.0 where pandas 2.3 gives 138.8 on the same test input, and the `restdefense` danger lookup raised (the
+    `space_creation` and `off_ball_run_values` surface lookups take the same path). `id_compat`'s one input step now copies a read-only object input on pandas before 2.2.1 only (about 22
+    ids per surface lookup); the surface's own arrays stay read-only.
+  - **`add_possessions` (SPADL and atomic) accepts a nullable `team_id` with NA at the floor.** On pandas before 2.2,
+    `.to_numpy()` of such a column (Gradient Sports null-actor rows) gave `pd.NA` objects, and the team-change compare
+    raised "boolean value of NA is ambiguous". The read now uses `masked_to_numpy`.
+  - **`add_pre_shot_gk_context` (SPADL and atomic) accepts nullable `team_id` / `player_id` with NA at the floor**
+    (R80, found by reading the compare sites): a Gradient Sports null-actor row inside a shot's lookback window raised
+    the same error. Both reads use `masked_to_numpy`.
+  - `scripts/derive_coordination_params.weighted_quantile` runs on the declared `numpy>=1.26`: it writes out numpy 2's
+    weighted `inverted_cdf` (numpy 1.x has no `weights=`), bit-identical to `np.quantile(..., weights=)` on numpy 2.
+  - A named limit: the floor holds for every path the tests run and for the compare sites that were read. Two
+    searched lists were not read by the owner's ruling (R80): 51 compare sites on provider columns inside converters
+    and 122 float reads of a variable; the searches are in `docs/research/action-time-repair/pandas-floor/`.
+- **A corner with no measured kick feeds no corner reader** (spec §5.2, bar A3): `compute_corner_run_encoding` gives
+  no run vector (so no routine feature; the validate dominant routine is the -1 bucket) and `_nearest_frame_xy` no
+  frame for a missing time (the argmin of an all-NaN distance took the period's first frame);
+  `compute_corner_chance_quality` gives `<NA>` counts and NaN `sum_xg`, never 0; `aggregate_chance_quality_by_feature`
+  leaves such corners out of each mean and reports them in a new column `n_corners_without_window`;
+  `reflect_corners_to_canonical_side` does not reflect a corner with no `corner_side`; the corner drivers'
+  `_snapshot_rows` / `_divergence_rows` give no row for a corner with no window or no side.
+- **`resolve_keeper_identities(identity="roster")` no longer needs `type_name`** (R72): the goal-kick override reads
+  `type_id` when the actions table has no `type_name` (canonical converter output before `add_names`); it raised
+  `KeyError: 'type_name'`. When `type_name` is present it still wins.
+- **The receiver trainer keeps integer ids** (R68): `scripts/train_receiver_model.extract_candidate_rows` takes
+  `game_id` and `action_id` from the actions columns, not the `iterrows` row. On an all-numeric actions table the row
+  upcast them to float, so a namespaced id read `gs:7.0`. A table with an object column is unchanged.
+  `scripts/_receiver_validation.trajectory_weak_labels` takes `action_id` the same way.
+
 ## [4.144.0] — 2026-11-16 — one open-play cross definition for every provider, at the action's own time (ADR-133) (PR-S209)
 
 > **Why a minor release:** the SPADL output changes for every converter (the open-play `cross`/`pass` split and a

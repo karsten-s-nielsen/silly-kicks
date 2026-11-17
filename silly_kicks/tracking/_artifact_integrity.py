@@ -212,8 +212,9 @@ def provider_skill(
     are the row-aligned licensing identities; ``groups`` the bare match ids. Per provider: ``n_matches`` (distinct
     ``(provider, group)``), ``n_oof_rows``, ``n_positive``, ``row_share``, the point ``brier_skill`` and
     ``log_loss_skill`` (``SKILL_LOG_CLIP``; NaN on a NaN reference or a zero reference loss) and the within-fold
-    ``pr_auc_lift`` over the provider's rows (NaN allowed). No bootstrap: a 7-match provider's cluster bound is too
-    wide to be useful (spec 5.7).
+    ``pr_auc_lift`` over the provider's rows (NaN allowed), and a REPORT-ONLY ``bootstrap`` block (R10, 2026-11-17:
+    :func:`_provider_bound`). The gates stay on the point skills: over a few matches the cluster bound is too wide to
+    gate on (spec 5.7), so it is reported with ``n_matches`` beside it, never gated.
     """
     y = np.asarray(y).astype(np.int64)
     p = np.asarray(p, dtype=np.float64)
@@ -239,8 +240,31 @@ def provider_skill(
             "brier_skill": _point_skill((ys - ps) ** 2, (ys - rs) ** 2),
             "log_loss_skill": _point_skill(lm, lref),
             "pr_auc_lift": float(lift),
+            "bootstrap": _provider_bound((ys - rs) ** 2 - (ys - ps) ** 2, lref - lm, groups[sel]),
         }
     return out
+
+
+def _provider_bound(d_brier: np.ndarray, d_log_loss: np.ndarray, groups: np.ndarray) -> dict[str, Any]:
+    """The report-only match-cluster bound of one provider (R10): the pooled constants and draw call, a fresh
+    generator per provider, the provider's matches as clusters, per-match sums of the per-row gains."""
+    labels, inv = np.unique(groups, return_inverse=True)
+    n = len(labels)
+    rows, s_brier, s_ll = (np.bincount(inv, weights=x, minlength=n) for x in (np.ones(len(inv)), d_brier, d_log_loss))
+    rng = np.random.default_rng(SKILL_BOOTSTRAP_SEED)
+    counts = np.stack([np.bincount(rng.integers(0, n, n), minlength=n) for _ in range(SKILL_BOOTSTRAP_DRAWS)])
+    gain_b, gain_l = counts @ s_brier / (counts @ rows), counts @ s_ll / (counts @ rows)
+    q = SKILL_LOWER_PERCENTILE
+    return {
+        "unit": "match",
+        "draws": SKILL_BOOTSTRAP_DRAWS,
+        "seed": SKILL_BOOTSTRAP_SEED,
+        "level": SKILL_LEVEL,
+        "brier_gain_lb": float(np.percentile(gain_b, q)),
+        "log_loss_gain_lb": float(np.percentile(gain_l, q)),
+        "frac_brier_gain_le_0": float(np.mean(gain_b <= 0)),
+        "frac_log_loss_gain_le_0": float(np.mean(gain_l <= 0)),
+    }
 
 
 def _gt0(v: Any) -> bool:

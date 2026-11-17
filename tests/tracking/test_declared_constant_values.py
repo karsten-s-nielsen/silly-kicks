@@ -46,14 +46,36 @@ def _stamped(model: str) -> dict:
 
 def _built(model: str) -> dict:
     """What the CODE declares right now -- distinct from what is stamped on disk."""
-    from silly_kicks.tracking import _ghost_gk, _xcross_attempt, _xshot_occurrence
+    from silly_kicks.tracking import _ghost_gk, _ghost_outfield, _xcross_attempt, _xshot_occurrence
 
     builder = {
         "ghost": _ghost_gk._feature_contract_block,
+        "outfield": _ghost_outfield._outfield_feature_contract_block,
         "xshot": _xshot_occurrence._feature_contract_block,
         "xcross": _xcross_attempt._feature_contract_block,
     }[model]
     return builder()["constants"]
+
+
+# ---- the revision keys (R55): hand-bumped version tags, pinned by VALUE against REVISION_CONTRACT_KEYS ---------------
+
+
+@pytest.mark.parametrize("model", ["ghost", "outfield", "xshot", "xcross"])
+def test_built_revision_keys_equal_the_registry(model):
+    from silly_kicks.tracking._feature_contract import REVISION_CONTRACT_KEYS
+
+    built = _built(model)
+    declared = {k: v for k, v in built.items() if k in REVISION_CONTRACT_KEYS}
+    assert declared == ({} if model == "xshot" else dict(REVISION_CONTRACT_KEYS))
+
+
+@pytest.mark.parametrize("model", sorted(_WEIGHTS))
+def test_stamped_revision_keys_equal_the_registry(model):
+    from silly_kicks.tracking._feature_contract import REVISION_CONTRACT_KEYS
+
+    stamped = {k: v for k, v in _stamped(model).items() if k in REVISION_CONTRACT_KEYS}
+    for key, value in stamped.items():  # a pre-repair bundle stamps none (it warns at load, R55)
+        assert value == REVISION_CONTRACT_KEYS[key], (model, key, value)
 
 
 @pytest.mark.parametrize("model", sorted(_WEIGHTS))

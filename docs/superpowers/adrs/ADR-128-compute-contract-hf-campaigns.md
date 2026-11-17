@@ -224,7 +224,7 @@ P1 and P2 correct approved spec TEXT.
 | P12 | The ADR-052 resilience gate recognises `ItemStage` as `for_each` adoption. |
 | P13 | `for_each` gains checksum-verified resume (`<key>.sha256`; a `.checksummed` generation marker). |
 | P14 | Profile history is keyed by `(pipeline, stage, declared-params digest)`. |
-| P15 | The census certifies by `rebaseline` against the committed 4.120.0 (`dd7ed4f`) census: a numeric difference is an environment delta (adopted) or a code delta (`git log dd7ed4f..<commit>` over the `input_contract()` modules is non-empty), which stops for an owner ruling. |
+| P15 | The census certifies by `rebaseline` against the committed census (`REBASELINE_FROM`; 4.120.0 `dd7ed4f` until the 4.144.0 release refit). Amended 2026-11-17 (owner R25, R26): a numeric difference passes only inside the driver's declared `tolerance`; every other difference stops for an owner ruling, whatever its cause. The classification (environment delta, or code delta over the `input_contract()` modules) is reported as information for that ruling; a driver without a `REBASELINE_FROM` entry gets none. |
 | P16 | Each migration ran a one-off legacy-equivalence check (pre-migration CLI vs `--run-all`, byte-identical payload SHA-256 on a toy corpus in `.venv-hfjobs`). |
 | P17 | Removed: the per-trainer phase flags; receiver `--owner-rows`; census `--list-matches`. The receiver's live-pining inputs became staged-dataset parameters. |
 | P18 | `--replica N` gives a fresh store for the INV-1 same-commit re-run. |
@@ -738,6 +738,11 @@ an HF change is ranked by wall time per launch, by failed launches and by storag
     run keys of every commit other than HEAD; `prune --delete --i-have-owner-approval <commit7>` deletes the named
     commits' run keys. It refuses HEAD, a commit with a non-terminal job and a commit without a run key, and it
     touches only keys that are exactly a run key of a job of the campaign.
+    Amendment 2026-11-17 (owner; release-refit delta spec 4.2, PR-S209): check 7 measures the namespace of the
+    campaign's bucket (`campaign.py`, `c.bucket.split("/")[0]`). The release-refit stages and bucket live in the PRO
+    user namespace `karstenskyt/` (1 TB private storage): `tf46_refit.toml` sets that bucket and
+    `storage_limit_bytes = 1_000_000_000_000`, and `cycle1.toml` takes the same bucket and limit at the adoption
+    commit; the `silly-kicks` org keeps its 100 GB limit and its older repositories.
 43. **A result kept its marker and lost its files.** Over the limit the small `.fileset.json` marker landed and
     the members did not, so the plan read the unit as done. **Decision:** `plan()` counts a `FileSet` result as
     present only with every member listed: such a unit is `pending` and named in `lost_units`; a lost stage output

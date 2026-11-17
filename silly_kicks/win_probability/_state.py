@@ -12,12 +12,10 @@ import pandas as pd
 
 from silly_kicks.id_compat import same_id
 from silly_kicks.spadl import config as _spadl
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
 from ._config import WinProbabilityParams
 
-_SHOT_TYPE_IDS = [_spadl.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")]
-_SUCCESS = _spadl.result_id["success"]
-_OWNGOAL = _spadl.result_id["owngoal"]
 _RED = _spadl.result_id["red_card"]
 _YELLOW = _spadl.result_id["yellow_card"]
 _FOUL = _spadl.actiontype_id["foul"]
@@ -54,8 +52,8 @@ def derive_match_states(
         goals = {t: 0 for t in teams}
         reds = {t: 0 for t in teams}
         yellows: dict = {t: {} for t in teams}
-        scored_np = (g["type_id"].isin(_SHOT_TYPE_IDS) & (g["result_id"] == _SUCCESS)).to_numpy()
-        og_np = (g["result_id"] == _OWNGOAL).to_numpy()
+        scored_np = goal_mask(g).to_numpy()  # the library goal rule (R52)
+        og_np = owngoal_mask(g).to_numpy()
         period_np = g["period_id"].to_numpy()
         time_np = g["time_seconds"].to_numpy()
         last_period = int(period_np.max())

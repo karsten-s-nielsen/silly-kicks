@@ -390,6 +390,11 @@ def secured_reception(
     lx_arr = lx.to_numpy(dtype="float64")
     rp_arr = rp.to_numpy(dtype="object")
     poss_na = pd.isna(poss)  # NA possession never decides (execution-review D6, ADR-027 class)
+    from silly_kicks.spadl.schema import is_order_only, is_time_unmeasured
+
+    # A reception row with an "order_only" time (spec 4.13), or a shot row with an unmeasured time (spec 5.4), opens
+    # no secured window.
+    order_only = is_order_only(a) | (np.isin(typ, list(_SHOT_TYPES)) & is_time_unmeasured(a))
     window = params.secured_window_seconds
 
     labels = np.full(len(a), np.nan, dtype=float)  # 1.0 / 0.0 / NaN tri-state
@@ -418,6 +423,8 @@ def secured_reception(
             gi = idx[li]
             if not np.isfinite(lx_arr[gi]) or pd.isna(rp_arr[gi]) or pd.isna(team[gi]):
                 continue
+            if order_only[int(rp_arr[gi])]:
+                continue  # <NA>: the secured window would open at an "order_only" time
             r_pos = int(rp_arr[gi])
             lr_opt = rank.get(r_pos)
             if lr_opt is None:

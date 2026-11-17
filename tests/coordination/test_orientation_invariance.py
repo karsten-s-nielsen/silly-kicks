@@ -71,7 +71,7 @@ def _assert_metrics_equal(a: pd.DataFrame, b: pd.DataFrame, metrics, obj: str):
     for m in metrics:
         if m not in a.columns:
             continue
-        va, vb = a[m].to_numpy(dtype=float), b[m].to_numpy(dtype=float)
+        va, vb = a[m].to_numpy(dtype=float, na_value=np.nan), b[m].to_numpy(dtype=float, na_value=np.nan)
         both_nan = np.isnan(va) & np.isnan(vb)
         if m in _ANGULAR_MEAN:
             diff = np.abs(((va - vb + 180.0) % 360.0) - 180.0)
@@ -106,8 +106,8 @@ def test_identity_relabel_preserves_observed_metric_values():
         for m in metrics:
             if m not in ta.columns or _is_surrogate(m):
                 continue
-            va = np.sort(ta[m].to_numpy(dtype=float))
-            vb = np.sort(tb[m].to_numpy(dtype=float))
+            va = np.sort(ta[m].to_numpy(dtype=float, na_value=np.nan))
+            vb = np.sort(tb[m].to_numpy(dtype=float, na_value=np.nan))
             assert va.shape == vb.shape, f"{attr}.{m}: shape differs under relabel"
             both_nan = np.isnan(va) & np.isnan(vb)
             assert (both_nan | np.isclose(va, vb, rtol=1e-9, atol=1e-9, equal_nan=True)).all(), f"{attr}.{m} relabel"

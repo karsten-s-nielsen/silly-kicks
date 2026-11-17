@@ -988,6 +988,10 @@ def add_actor_pre_window(
 ) -> pd.DataFrame:
     """Enrich actions with 2 TF-3 movement columns + 4 linkage-provenance columns.
 
+    An action with an unmeasured time (``time_source`` ``"placeholder"`` or ``"order_only"``) has no frame at
+    its time: :func:`~silly_kicks.tracking.run_tracking_features` blanks this family's columns on such rows, but
+    a direct call does not (R45, action-time repair spec section 5.3).
+
     Returns
     -------
     pd.DataFrame
@@ -1855,6 +1859,10 @@ def add_off_ball_runs(
     For all 6 off-ball-run + line-break columns at once use
     :func:`add_off_ball_context`.
 
+    An action with an unmeasured time (``time_source`` ``"placeholder"`` or ``"order_only"``) has no frame at
+    its time: :func:`~silly_kicks.tracking.run_tracking_features` blanks this family's columns on such rows, but
+    a direct call does not (R45, action-time repair spec section 5.3).
+
     See NOTICE for full bibliographic citations.
 
     Examples
@@ -2228,6 +2236,10 @@ def add_off_ball_run_values(
     Idempotent provenance columns; accepts caller-supplied ``links`` and
     ``pitch_control_cache``. Returns a NEW frame (ADR-033). See NOTICE for full
     bibliographic citations.
+
+    An action with an unmeasured time (``time_source`` ``"placeholder"`` or ``"order_only"``) has no frame at
+    its time: :func:`~silly_kicks.tracking.run_tracking_features` blanks this family's columns on such rows, but
+    a direct call does not (R45, action-time repair spec section 5.3).
 
     Examples
     --------

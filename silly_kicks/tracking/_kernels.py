@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks.id_compat import align_join_keys, ids_differ, ids_equal
+from silly_kicks.spadl.schema import is_time_unmeasured
 
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
 from ._gk_resolve import GoalMap
@@ -290,7 +291,8 @@ def _pre_shot_gk_position(
     )
     if "type_id" not in actions.columns:
         return out
-    is_shot = actions["type_id"].isin(shot_type_ids).to_numpy()
+    # A shot row with an unmeasured time takes no frame: NaN (action-time repair spec section 5.4).
+    is_shot = actions["type_id"].isin(shot_type_ids).to_numpy() & ~is_time_unmeasured(actions)
     if not is_shot.any():
         return out
 
@@ -350,7 +352,8 @@ def _pre_shot_gk_angle(
     )
     if "type_id" not in actions.columns:
         return out
-    is_shot = actions["type_id"].isin(shot_type_ids).to_numpy()
+    # A shot row with an unmeasured time takes no frame: NaN (action-time repair spec section 5.4).
+    is_shot = actions["type_id"].isin(shot_type_ids).to_numpy() & ~is_time_unmeasured(actions)
     if not is_shot.any():
         return out
 
@@ -954,11 +957,12 @@ def resolve_frame_ids_by_position(
         # internal-link path below uses an int64 surrogate, so both paths are
         # dtype-consistent -- locked by test_resolve_frame_ids_by_position.
         fid = links.drop_duplicates("action_id").set_index("action_id")["frame_id"]
-        return fid.reindex(actions["action_id"].to_numpy()).to_numpy(dtype="float64")
+        # frame_id is Int64 with <NA> for an unlinked action: na_value keeps the declared pandas floor (2.1 raises)
+        return fid.reindex(actions["action_id"].to_numpy()).to_numpy(dtype="float64", na_value=np.nan)
     link_input = actions.copy()
     link_input["action_id"] = np.arange(n)  # unique positional surrogate
     pointers, _ = link_actions_to_frames(link_input, frames)
-    return pointers.set_index("action_id")["frame_id"].reindex(np.arange(n)).to_numpy(dtype="float64")
+    return pointers.set_index("action_id")["frame_id"].reindex(np.arange(n)).to_numpy(dtype="float64", na_value=np.nan)
 
 
 def _structural_pass_at_actions(

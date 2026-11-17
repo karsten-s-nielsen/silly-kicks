@@ -53,6 +53,7 @@ def _frame(n: int = 3) -> pd.DataFrame:
             "shot_blocked": pd.array([pd.NA, False, pd.NA][:n], dtype="boolean"),
             "cross_blocked": pd.array([False, pd.NA, pd.NA][:n], dtype="boolean"),
             "cross_native": pd.array([True, pd.NA, False][:n], dtype="boolean"),
+            "time_source": ["event"] * n,
         }
     )
 

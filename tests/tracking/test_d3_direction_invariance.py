@@ -100,8 +100,8 @@ def test_action_ltr_geometry_is_invariant_under_a_frame_mirror_with_home_id_held
 
     moved = {}
     for col in cols:
-        b = pd.to_numeric(base[col], errors="coerce").to_numpy(dtype=float)
-        m = pd.to_numeric(mirrored[col], errors="coerce").to_numpy(dtype=float)
+        b = pd.to_numeric(base[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+        m = pd.to_numeric(mirrored[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
         both = np.isfinite(b) & np.isfinite(m)
         assert both.any(), f"{name}.{col}: no comparable rows -- the test would be vacuous"
         delta = float(np.abs(b[both] - m[both]).max())

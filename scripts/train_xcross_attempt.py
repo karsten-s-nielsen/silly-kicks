@@ -1082,6 +1082,7 @@ def _select_work(key, ctx) -> dict:
         )
         shipped, why = two_arm_ship(paired["sc_extended"]["nested"])
         print(f"Two-arm verdict: ship {shipped} -- {why}")
+        rule_verdict, rule_why = shipped, why  # bar A17: the paired verdict, kept as fields
         ship_variant = cfg.get("ship_variant")
         if ship_variant is not None:
             why = f"operator --ship-variant override (two-arm rule verdict was: {shipped} -- {why})"
@@ -1100,6 +1101,8 @@ def _select_work(key, ctx) -> dict:
             "by_provider": paired["sc_extended"].get("by_provider", {}),  # ADR-132: reported, not deciding
             "shipped": shipped,
             "why": why,
+            "rule_verdict": rule_verdict,  # the paired rule's arm (bar A17), set aside by an override
+            "rule_why": rule_why,
         }
     else:
         # ADR-123 Amendment B: ship the BROADEST arm NAME present (ship_order is narrow->broad); an owner-tier

@@ -9,9 +9,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from silly_kicks.tracking import _artifact_integrity as ai
 from silly_kicks.tracking._artifact_integrity import forecast_skill, provider_skill, skill_gates
 
 _FIELDS = {"n_matches", "n_oof_rows", "n_positive", "row_share", "brier_skill", "log_loss_skill", "pr_auc_lift"}
+_FIELDS |= {"bootstrap"}  # R10: the report-only per-provider bound
+_GAINS = ("brier_gain_lb", "log_loss_gain_lb", "frac_brier_gain_le_0", "frac_log_loss_gain_le_0")
 
 
 def _corpus(seed: int = 0):
@@ -122,3 +125,38 @@ def test_by_provider_keys_are_the_given_identities():
     by = provider_skill(y, q, r_prov, providers, groups, fold)
     assert set(by) == set(providers)
     assert not set(by) & set(groups)
+
+
+def _inline_bound(y, p, r, groups):
+    """The R10 bound by hand: a fresh generator, the provider's matches as clusters, per-row draw weights."""
+    c = ai.SKILL_LOG_CLIP
+
+    def ll(f):
+        return -(y * np.log(np.clip(f, c, 1 - c)) + (1 - y) * np.log(1 - np.clip(f, c, 1 - c)))
+
+    d = [(y - r) ** 2 - (y - p) ** 2, ll(r) - ll(p)]
+    labels, inv = np.unique(groups, return_inverse=True)
+    rng, n = np.random.default_rng(ai.SKILL_BOOTSTRAP_SEED), len(labels)
+    w = [np.bincount(rng.integers(0, n, n), minlength=n)[inv] for _ in range(ai.SKILL_BOOTSTRAP_DRAWS)]
+    g = [np.array([(wi * dk).sum() / wi.sum() for wi in w]) for dk in d]
+    return (*(np.percentile(gk, ai.SKILL_LOWER_PERCENTILE) for gk in g), *(np.mean(gk <= 0) for gk in g))
+
+
+def test_provider_bootstrap_is_the_report_only_cluster_bound():
+    y, q, r_prov, _r_pool, providers, groups, fold = _corpus()
+    by = provider_skill(y, q, r_prov, providers, groups, fold)
+    for prov in ("idsse", "skillcorner"):
+        b, sel = by[prov]["bootstrap"], providers == prov
+        assert set(b) == {"unit", "draws", "seed", "level", *_GAINS}
+        assert (b["unit"], b["draws"], b["seed"], b["level"]) == ("match", ai.SKILL_BOOTSTRAP_DRAWS, 0, ai.SKILL_LEVEL)
+        want = _inline_bound(y[sel], q[sel], r_prov[sel], groups[sel])
+        assert tuple(b[k] for k in _GAINS) == pytest.approx(want, rel=1e-12, abs=1e-15)
+
+
+def test_skill_gates_ignore_the_provider_bootstrap():
+    y, q, r_prov, r_pool, providers, groups, fold = _corpus()
+    p = np.where(providers == "idsse", r_pool, q)
+    for preds in (q, p):
+        by = provider_skill(y, preds, r_prov, providers, groups, fold)
+        stripped = {k: {f: x for f, x in v.items() if f != "bootstrap"} for k, v in by.items()}
+        assert skill_gates(_metrics(by)) == skill_gates(_metrics(stripped))

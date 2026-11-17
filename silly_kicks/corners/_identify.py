@@ -14,6 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from silly_kicks.id_compat import canonical_id
 from silly_kicks.spadl import config as spadlconfig
 
 from ._columns import CORNER_IDENTIFY_COLUMNS
@@ -55,8 +56,9 @@ def identify_corners(
     actions: SPADL actions (one or more games).
     provider: the source provider; sets ``corner_source`` and whether ``gi`` refinement applies.
     params: window params (only ``short_corner_max_m`` consulted here; timing is in ``add_corner_windows``).
-    gi: optional SkillCorner first-possession tokens with columns ``game_id``, ``period_id``,
-        ``time_seconds`` (aligned to the corner action time), ``game_interruption_before``, ``start_type``.
+    gi: optional SkillCorner first-possession tokens with columns ``game_id``, ``event_id`` (the possession),
+        ``game_interruption_before``, ``start_type`` (and ``period_id``, ``time_seconds`` for the fallback join
+        when the actions carry no ``original_event_id``).
 
     Returns
     -------
@@ -77,20 +79,33 @@ def identify_corners(
     if not bool(is_corner.any()):
         return _empty()
 
-    c = actions.loc[is_corner, list(_REQUIRED)].copy()
+    extra = [col for col in ("original_event_id", "action_provenance", "time_source") if col in actions.columns]
+    c = actions.loc[is_corner, [*_REQUIRED, *extra]].copy()
     c = c.sort_values(["game_id", "period_id", "time_seconds"], kind="stable")
+    # A derived SkillCorner corner with no measured kick (``"placeholder"`` / ``"order_only"``): its time and
+    # its place are not the kick's, so ``t_kick``, ``kick_x``, ``kick_y`` and ``corner_side`` are <NA> and the
+    # corner gets no window (action-time repair spec section 5.2). It stays in the table with its kind.
+    unmeasured = np.zeros(len(c), dtype=bool)
+    if "time_source" in c.columns and "action_provenance" in c.columns:
+        unmeasured = (c["action_provenance"] == "derived") & c["time_source"].isin(("placeholder", "order_only"))
+        unmeasured = unmeasured.to_numpy()
 
     out = pd.DataFrame(index=c.index)
     out["game_id"] = c["game_id"].to_numpy()
     out["corner_id"] = c.groupby("game_id", sort=False).cumcount().to_numpy()
     out["period_id"] = c["period_id"].to_numpy()
-    out["t_kick"] = c["time_seconds"].astype("float64").to_numpy()
+    out["t_kick"] = np.where(unmeasured, np.nan, c["time_seconds"].astype("float64").to_numpy())
     out["attacking_team_id"] = c["team_id"].to_numpy()
 
     midline = float(spadlconfig.field_width) / 2.0
-    out["corner_side"] = np.where(c["start_y"].to_numpy() >= midline, "left", "right")
-    out["kick_x"] = c["start_x"].astype("float64").to_numpy()
-    out["kick_y"] = c["start_y"].astype("float64").to_numpy()
+    start_y = c["start_y"].astype("float64").to_numpy()
+    side = np.where(start_y >= midline, "left", "right").astype(object)
+    side[unmeasured | ~np.isfinite(start_y)] = None
+    out["corner_side"] = side
+    out["kick_x"] = np.where(unmeasured, np.nan, c["start_x"].astype("float64").to_numpy())
+    out["kick_y"] = np.where(unmeasured, np.nan, start_y)
+    if "original_event_id" in c.columns:
+        out["_row_event_id"] = c["original_event_id"].to_numpy()
 
     kind = np.where(c["type_id"].to_numpy() == _CORNER_SHORT_ID, "short", "direct")
     out["corner_kind"] = kind
@@ -104,10 +119,25 @@ def identify_corners(
 
 
 def _apply_gi_refinement(out: pd.DataFrame, gi: pd.DataFrame) -> pd.DataFrame:
-    """Mark a corner ``unclear`` when its GI first-possession start type does not confirm a reception."""
-    cols = ["game_id", "period_id", "time_seconds", "game_interruption_before", "start_type"]
-    g = gi.loc[:, cols].rename(columns={"time_seconds": "t_kick"})
-    merged = out.merge(g, on=["game_id", "period_id", "t_kick"], how="left")
+    """Mark a corner ``unclear`` when its GI first-possession start type does not confirm a reception.
+
+    The join is on the key of the action-time repair spec section 4.18 when both sides carry the event id: the
+    corner row's ``original_event_id`` is the id of ``b``, the possession after its gap, and the GI row is that
+    possession (``event_id``). One possession can be ``b`` of one gap and ``a`` of the next, so a time join or a
+    join on the first possession alone could take the wrong gap's GI data. Without ids it falls back to the
+    former ``(game_id, period_id, t_kick)`` join.
+    """
+    if "_row_event_id" in out.columns and "event_id" in gi.columns:
+        g = gi.loc[:, ["game_id", "event_id", "game_interruption_before", "start_type"]].copy()
+        g["_row_event_id"] = g.pop("event_id").map(canonical_id)
+        g = g.drop_duplicates(["game_id", "_row_event_id"])
+        keyed = out.assign(_row_event_id=out["_row_event_id"].map(canonical_id))
+        merged = keyed.merge(g, on=["game_id", "_row_event_id"], how="left")
+        merged.index = out.index
+    else:
+        cols = ["game_id", "period_id", "time_seconds", "game_interruption_before", "start_type"]
+        g = gi.loc[:, cols].rename(columns={"time_seconds": "t_kick"})
+        merged = out.merge(g, on=["game_id", "period_id", "t_kick"], how="left")
     unclear = (
         (merged["game_interruption_before"] == "corner_for")
         & merged["start_type"].notna()

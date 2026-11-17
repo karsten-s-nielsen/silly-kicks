@@ -91,12 +91,15 @@ def test_build_analyze_write_chain(tmp_path):
 
 @pytest.mark.e2e
 def test_run_with_fake_loader(tmp_path, monkeypatch):
-    # Inject a fake _loader_pining so run()'s `from _loader_pining import load_matches` picks it up
-    # (function-local-import mocking) -> exercises run()'s coverage/eligible-pool/write.
+    # Inject a fake _loader_pining so run()'s `from _loader_pining import pining_source, resolve_cache_dir` picks it
+    # up (function-local-import mocking) -> exercises run()'s coverage/eligible-pool/write. The fake follows the
+    # ADR-052 source seam the driver uses: `pining_source(...) -> (refs, load)`, `load(ref)` -> the match tuple.
     frames = _multi_spell_frames(80)
     acts = _synth_actions(frames)
+    ref = types.SimpleNamespace(key="skillcorner__m1", provider="skillcorner", match_id="m1")
     fake = types.ModuleType("_loader_pining")
-    fake.load_matches = lambda **kw: iter([("skillcorner", "m1", acts, frames, 5)])  # type: ignore[attr-defined]
+    fake.pining_source = lambda providers, **kw: ([ref], lambda r: ("skillcorner", "m1", acts, frames, 5))  # type: ignore[attr-defined]
+    fake.resolve_cache_dir = lambda cache_dir=None: tmp_path / "cache"  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "_loader_pining", fake)
     V = _driver()
     metrics = V.run(tmp_path, ["skillcorner"], 0.0, 0)

@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.spadl.schema import is_time_unmeasured
 
 _G = 9.81
 _FIELD_LENGTH = spadlconfig.field_length  # 105.0
@@ -760,7 +761,8 @@ def compute_shot_goalmouth(
     out["shot_z_profile"] = pd.array([pd.NA] * n, dtype="object")
     if n == 0 or "type_id" not in actions.columns:
         return out
-    is_shot = actions["type_id"].isin(shot_type_ids).to_numpy()
+    # A shot row with an unmeasured time takes no frames: NaN (action-time repair spec section 5.4).
+    is_shot = actions["type_id"].isin(shot_type_ids).to_numpy() & ~is_time_unmeasured(actions)
     if not is_shot.any():
         return out
 

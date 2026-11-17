@@ -162,8 +162,8 @@ def test_gate_a_mirror_invariance(name):
     for col, cls in entry.columns.items():
         if cls == "exempt":
             continue
-        b = pd.to_numeric(base[col], errors="coerce").to_numpy(dtype=float)[mask]
-        m = pd.to_numeric(mir[col], errors="coerce").to_numpy(dtype=float)[mask]
+        b = pd.to_numeric(base[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)[mask]
+        m = pd.to_numeric(mir[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)[mask]
         if cls == "mirrored_pitch_absolute":
             spec = entry.reflections[col]
             if isinstance(spec, dict):
@@ -311,9 +311,9 @@ def test_gate_b_home_team_id_invariance(name):
         if col in entry.gate_b_exempt:
             continue  # genuine ATTRIBUTION dependence, reason recorded on the entry
         considered += 1
-        r = pd.to_numeric(ref[col], errors="coerce").to_numpy(dtype=float)
+        r = pd.to_numeric(ref[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
         for label, out in variants.items():
-            v = pd.to_numeric(out[col], errors="coerce").to_numpy(dtype=float)
+            v = pd.to_numeric(out[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
             both = np.isfinite(r) & np.isfinite(v)
             if not both.any():
                 continue
@@ -396,8 +396,8 @@ def test_gate_c_goal_map_is_the_direction_source(name):
         assert entry.columns.get(col) == "invariant", (
             f"{name}: gate_c_must_move names {col!r}, which is not an invariant column"
         )
-        r = pd.to_numeric(ref[col], errors="coerce").to_numpy(dtype=float)
-        v = pd.to_numeric(alt[col], errors="coerce").to_numpy(dtype=float)
+        r = pd.to_numeric(ref[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+        v = pd.to_numeric(alt[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
         both = np.isfinite(r) & np.isfinite(v)
         # A column that goes all-NaN in ONE leg has also responded to the map -- but silently,
         # and a comparison over an empty overlap cannot say so. Treat it as "did not move".
@@ -654,8 +654,8 @@ def _observed_map_movers(entry, actions, frames):
     for col, kind in entry.columns.items():
         if kind != "invariant" or col not in ref.columns:
             continue
-        r = pd.to_numeric(ref[col], errors="coerce").to_numpy(dtype=float)
-        v = pd.to_numeric(alt[col], errors="coerce").to_numpy(dtype=float)
+        r = pd.to_numeric(ref[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+        v = pd.to_numeric(alt[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
         both = np.isfinite(r) & np.isfinite(v)
         if both.any() and float(np.abs(r[both] - v[both]).max()) > 1e-12:
             movers.append(col)
