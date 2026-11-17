@@ -53,9 +53,9 @@ label: a positive frame is one within 1.0 s before a cross) depends on the actio
 WC2022 matches) and a SkillCorner action at the reception, so the label
 marks frames before the crosser has the ball, and how many depends on the provider. The share of training frames
 with a positive label (`tracking._xcross_attempt.prepare_xcross_training_data` at commit `2a8e5ef`, label version
-1, horizon 1.0 s, 187 matches; a read-only probe outside the repository: rows 1 and 2 on the xshot187 stage from
-`main`, row 3 on the stage of `feat/cross-definition`, PR #306, until the measurement on the stage from this
-release's commit replaces it):
+1, horizon 1.0 s, 187 matches; a read-only measurement outside the repository: rows 1 and 2 on the xshot187 stage
+made by the `main` converters, row 3 on the stage made from this release's code commit `f5fc2e2b`, with its staged
+types as they are):
 
 | Converters | GS | IDSSE | SkillCorner | largest / smallest |
 |---|---|---|---|---|
@@ -79,8 +79,9 @@ both.
 ## Evidence
 
 `docs/research/cross-definition/` holds the start-line measurement (`cross_definition.json`: the F1 table per
-candidate line, the selected line, the per-provider medians and the ratio bar) and its memo, run on xshot187
-staged from this release's converters and the pinned StatsBomb open-data snapshot; and the native-timing evidence
+candidate line, the selected line 75.0, the per-provider medians and the ratio bar) and its memo `start-line.md`,
+run on xshot187 staged from this release's converters and the pinned StatsBomb open-data snapshot; and the
+native-timing evidence
 (`native-timing.md`, `native-timing-metrics.json`: GS events-only time equal to PFF's frame sync within 0.067 s
 on 86,067 possession events; the SkillCorner kick a median 0.86 m from the raw end point).
 

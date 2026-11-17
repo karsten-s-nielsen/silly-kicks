@@ -59,8 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   open-play pass-class rows and on corner and free-kick rows where the provider labels deliveries; `<NA>` elsewhere,
   on every SkillCorner row, on Metrica set pieces and on converter-synthesized goalkeeper rows. Atomic SPADL keeps it
   only through `preserve_native`.
-- **`CROSS_START_X`** in `silly_kicks.spadl.base`, set by the pre-declared start-line measurement
-  (`scripts/build_cross_definition.py`, `docs/research/cross-definition/`).
+- **`CROSS_START_X` = 75.0** in `silly_kicks.spadl.base`, selected by the pre-declared start-line measurement
+  (`scripts/build_cross_definition.py`; `docs/research/cross-definition/start-line.md`): the highest mean F1 against
+  the StatsBomb and Gradient Sports labels. At 75.0 the median open-play crosses per match are Gradient Sports 14,
+  IDSSE 16 and SkillCorner 17 (ratio 1.21; on 4.143.0: 26.5, 4 and 101).
 
 ### Retrains owed
 

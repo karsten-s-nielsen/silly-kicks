@@ -59,8 +59,9 @@ def test_wide_advanced_delivery_into_box_is_cross():
 
 
 def test_the_start_line_is_the_measured_value():
-    """ADR-133 decision 5: the pre-declared start-line measurement selected 75.0 among its candidate lines. Once the
-    measurement's report is committed, its selected line must equal the constant."""
+    """ADR-133 decision 5: the pre-declared start-line measurement selected 75.0 among its candidate lines. The
+    committed report (``docs/research/cross-definition/cross_definition.json``) must exist, and its selected line
+    must equal the constant."""
     import json
     from pathlib import Path
 
@@ -69,8 +70,7 @@ def test_the_start_line_is_the_measured_value():
     assert CROSS_START_X == 75.0
     assert CROSS_START_X in CANDIDATE_LINES
     report = Path(__file__).resolve().parents[2] / "docs" / "research" / "cross-definition" / "cross_definition.json"
-    if report.exists():
-        assert json.loads(report.read_text(encoding="utf-8"))["selected_start_line"] == CROSS_START_X
+    assert json.loads(report.read_text(encoding="utf-8"))["selected_start_line"] == CROSS_START_X
 
 
 def test_start_line_both_sides():

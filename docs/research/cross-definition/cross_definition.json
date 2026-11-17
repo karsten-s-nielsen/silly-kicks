@@ -1,0 +1,64 @@
+{
+  "candidate_lines": [
+    52.5,
+    60.0,
+    65.0,
+    70.0,
+    75.0,
+    80.0
+  ],
+  "f1_by_vendor": {
+    "gradientsports": {
+      "52.5": 0.43522935779816513,
+      "60.0": 0.4400742115027829,
+      "65.0": 0.4441947565543071,
+      "70.0": 0.44899507015547974,
+      "75.0": 0.4484754920879969,
+      "80.0": 0.4315452361889512
+    },
+    "idsse": {
+      "52.5": 0.12422360248447205,
+      "60.0": 0.13157894736842105,
+      "65.0": 0.13333333333333333,
+      "70.0": 0.136986301369863,
+      "75.0": 0.145985401459854,
+      "80.0": 0.16260162601626016
+    },
+    "statsbomb": {
+      "52.5": 0.5963815080737674,
+      "60.0": 0.6059293705590364,
+      "65.0": 0.6143104782355728,
+      "70.0": 0.626765562654525,
+      "75.0": 0.6314467789765916,
+      "80.0": 0.6019380153238421
+    }
+  },
+  "generation": "520c2a8ca76c88b6",
+  "median_crosses_per_match": {
+    "gradientsports": 14.0,
+    "idsse": 16.0,
+    "skillcorner": 17.0
+  },
+  "n_attempted": 187,
+  "n_counters_unrecorded": 0,
+  "n_excluded": 0,
+  "n_failed": 0,
+  "n_matches": {
+    "gradientsports": 62,
+    "idsse": 7,
+    "skillcorner": 118,
+    "statsbomb": 3961
+  },
+  "ratio_bar": {
+    "bar": 1.5,
+    "highest": "skillcorner",
+    "lowest": "gradientsports",
+    "passes": true,
+    "ratio": 1.2142857142857142
+  },
+  "reporting_line": 75.0,
+  "run_commit": "f5fc2e2b28faa06de95e4a9caebb101e7d5413e3",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "selected_start_line": 75.0
+}
