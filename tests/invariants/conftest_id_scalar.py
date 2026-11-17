@@ -574,6 +574,7 @@ def _converter_entries() -> list[IdScalarEntry]:
     import silly_kicks.tracking.skillcorner as sk_frames
     import silly_kicks.tracking.sportec as sportec_frames
     from silly_kicks.tracking import direction
+    from tests.spadl._gs_clock import with_event_clock
     from tests.spadl.test_gradientsports import _df_minimal_pass as gs_events_fixture
     from tests.spadl.test_metrica import _df_metrica_pass_by_gk
     from tests.spadl.test_opta import TestOptaPreserveNative
@@ -640,7 +641,10 @@ def _converter_entries() -> list[IdScalarEntry]:
         _e(
             "silly_kicks.spadl.gradientsports.convert_to_actions",
             lambda s: gs_events.convert_to_actions(
-                gs_events_fixture(), home_team_id=s, home_team_start_left=True, home_team_start_left_extratime=True
+                with_event_clock(gs_events_fixture()),  # kickoff + event_time (ADR-133)
+                home_team_id=s,
+                home_team_start_left=True,
+                home_team_start_left_extratime=True,
             ),
             matched=100,  # the gradientsports fixture's own home team
         ),

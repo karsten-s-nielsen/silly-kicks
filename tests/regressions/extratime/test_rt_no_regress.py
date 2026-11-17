@@ -40,6 +40,8 @@ def test_rt_only_output_value_identical_to_3_30_golden(case):
     # The TF-51-prereq block-detection columns (shot_blocked / cross_blocked) are ADDITIVE and
     # post-date the 3.30 golden; they are not part of this test's existing-value-invariance claim.
     current = current.drop(columns=["shot_blocked", "cross_blocked"], errors="ignore")
+    # ADR-133 (4.144.0) ADDED `cross_native` (the provider's own cross label); additive, post-dates the golden.
+    current = current.drop(columns=["cross_native"], errors="ignore")
     # ADR-125 (4.137.0) ADDED the `z_source` ball-z provenance column to the tracking-frame schema
     # (tracking cases only); it post-dates the 3.30 golden and is additive (declares provenance, changes
     # no existing value), so it is carved out exactly like the block-detection columns above.

@@ -14,6 +14,9 @@
   **raw `tracking.gradientsports.convert_to_frames` INPUT** carrying the **native** `is_goalkeeper`
   from the roster join — so `test_real_et_roundtrip.py` exercises the production GK anchor (TF-23b,
   ADR-035). No extra restricted fields beyond the adapter input contract are committed.
+- **Regenerated 2026-11-16** by the same script, now period-relative (`periodElapsedTime`, ADR-133): the
+  `time_seconds` values change, by exactly 5,400 s (period 3 starts at 0 s, not at the match clock's 90 min),
+  and the column order changes; no other value changes.
 
 | File | Rows | Notes |
 |---|---|---|

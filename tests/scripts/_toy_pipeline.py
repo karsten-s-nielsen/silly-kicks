@@ -128,5 +128,16 @@ PIPELINE = Pipeline(
     output="final",
 )
 
+#: The code identity every toy CLI process uses (see the ``__main__`` block).
+PINNED_CODE_IDENTITY = "toy-pinned-code-identity"
+
 if __name__ == "__main__":
+    # Hermetic code identity. The framework tests run this CLI in several processes and compare the stores they
+    # wrote. On a dirty tree the real identity is a hash of the tree content, so a concurrent suite or an editor
+    # save between two calls moved every generation token (the load-sensitive test_executor flake). These tests
+    # exercise the executor, not provenance; provenance has its own tests. ``main`` imports ``code_identity`` at
+    # call time, so the pin is in place before it runs. Workers receive the tokens through ctx.json.
+    import scripts._provenance as _provenance
+
+    _provenance.code_identity = lambda prov: PINNED_CODE_IDENTITY
     raise SystemExit(main(PIPELINE))

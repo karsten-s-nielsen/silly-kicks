@@ -206,4 +206,5 @@ def test_the_compliant_set_is_the_cycle1_migration():
         "train_pass_completion",
         "train_xsuccess",
         "build_territory_ranking_census",
+        "build_cross_definition",  # ADR-133: born ready (scaffolded)
     }

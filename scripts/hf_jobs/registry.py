@@ -350,6 +350,9 @@ DRIVERS: dict[str, DriverSpec] = {
             "fresh_zero": ("n_failed", "n_counters_unrecorded", "n_excluded"),
         },
     ),
+    "cross_definition": DriverSpec(
+        "cross_definition", "scripts.build_cross_definition", "rebaseline", "docs/research/cross-definition"
+    ),
     # --- scaffold: drivers above ---
 }
 

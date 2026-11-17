@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -15,9 +16,9 @@ _MOD = "tests.scripts._toy_pipeline"
 _VOLATILE = (".ledger.json", ".failed.json", "_profile.json")
 
 
-def _cli(store, *args, check=True):
+def _cli(store, *args, check=True, env=None):
     cmd = [sys.executable, "-m", _MOD, "--store", str(store), "--allow-dirty", *args]
-    p = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603 -- fixed argv
+    p = subprocess.run(cmd, capture_output=True, text=True, env=env)  # noqa: S603 -- fixed argv
     if check and p.returncode != 0:
         raise AssertionError(f"{cmd} rc={p.returncode}\n{p.stdout}\n{p.stderr}")
     return p
@@ -120,6 +121,20 @@ def test_w1n1_and_w2n2_are_byte_identical_and_non_vacuous(tmp_path):
         assert stored == _seq(inner, sorted(inner)), r["key"]
         differs |= _seq(inner, r["inner_completion"]) != _seq(inner, sorted(inner))
     assert differs
+
+
+def test_toy_cli_generations_do_not_move_with_the_working_tree(tmp_path):
+    """These tests compare stores that SEPARATE CLI processes wrote, so a generation token must not depend on the
+    working tree. On a dirty tree the code identity is a hash of the tree content; a concurrent suite or an editor
+    save between two calls moved it, and with it every token: the load-sensitive
+    ``test_a_killed_worker_is_relaunched_and_no_finished_unit_is_redone`` flake. No git (``GIT_DIR`` points at an
+    empty directory) is the extreme case: each process would draw a fresh ``unknown-<nonce>`` identity."""
+    env = {**os.environ, "GIT_DIR": str(tmp_path / "no-git")}
+    tokens = [
+        {s["name"]: s["token"] for s in json.loads(_cli(tmp_path / "s", "--plan", env=env).stdout)["stages"]}
+        for _ in range(2)
+    ]
+    assert tokens[0] == tokens[1]
 
 
 def test_workers_run_with_the_deterministic_environment(tmp_path):

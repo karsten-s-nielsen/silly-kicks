@@ -73,6 +73,19 @@ def test_array_form_agrees_with_scalar_everywhere():
     )
 
 
+def test_the_spadl_delivery_box_agrees_with_the_one_expression():
+    """ADR-133: ``spadl.base._in_box`` (the delivery rule's box, SPADL LTR) is the same rule. ``105 - x`` is exact
+    for x in [52.5, 210] (Sterbenz), so the frame change adds no rounding at the bounds."""
+    from silly_kicks.spadl.base import _in_box
+
+    gr_x, y = _grid()
+    x = spadlconfig.field_length - gr_x
+    want = in_penalty_area_goal_relative_array(spadlconfig.field_length - x, y)
+    bad = np.flatnonzero(_in_box(x, y) != want)
+    assert bad.size == 0, f"{bad.size} disagreements, first at x={x[bad[0]]!r} y={y[bad[0]]!r}"
+    assert want.any() and not want.all()
+
+
 def test_the_grid_is_not_vacuous():
     """A parity test over a grid that is all-True or all-False proves nothing."""
     gr_x, y = _grid()

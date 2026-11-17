@@ -123,9 +123,10 @@ _GS_ROSTER = [
 ]
 
 
-def _write_gs_match(tmp: Path, *, et_flag) -> dict[str, Path]:
+def _write_gs_match(tmp: Path, *, et_flag, frame_step: float = 0.5) -> dict[str, Path]:
     """A tiny but complete GS match: the committed synthetic events (periods 1-4, i.e. WITH extra
-    time) + metadata/roster + a small JSONL tracking file spanning the same four periods."""
+    time) + metadata/roster + a small JSONL tracking file spanning the same four periods. ``frame_step``
+    is the period-clock step between the 20 frames of each period (seconds)."""
     meta = [
         {
             "id": 99999,
@@ -157,7 +158,8 @@ def _write_gs_match(tmp: Path, *, et_flag) -> dict[str, Path]:
                     {
                         "period": period,
                         "frameNum": period * 1000 + f,
-                        "periodGameClockTime": f * 0.5,
+                        "periodElapsedTime": f * frame_step,
+                        "periodGameClockTime": {1: 0.0, 2: 2700.0, 3: 5400.0, 4: 6300.0}[period] + f * frame_step,
                         "homePlayers": home,
                         "awayPlayers": away,
                         "balls": [{"x": f * 0.2, "y": 0.0, "z": 0.1}],
@@ -191,6 +193,20 @@ def test_gradientsports_events_only_actions_are_byte_identical_to_the_full_build
     # non-vacuity on the ET branch: the fixture really carries extra time, and None really drops it.
     et_present = set(full_actions["period_id"].unique()) & {3, 4}
     assert bool(et_present) is (et_flag is not None)
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")  # the pre-existing omitted output_convention (ADR-006)
+def test_gradientsports_loader_frames_are_period_relative(tmp_path):
+    """ADR-017 / ADR-133: GS frames take periodElapsedTime (period-relative), the clock the GS actions
+    use. periodGameClockTime is the match clock (period 2 starts at 2700 s) and must not reach the frames."""
+    from silly_kicks.tracking.utils import validate_time_base
+
+    full_paths = _write_gs_match(tmp_path, et_flag=True, frame_step=150.0)  # 20 frames span 0-2850 s per period
+    actions, frames, _home = lp._build_gradientsports(full_paths, None)
+    starts = frames.groupby("period_id")["time_seconds"].min()
+    assert set(starts.index) >= {1, 2}  # non-vacuity: two periods of tracking
+    assert (starts < 60.0).all(), starts  # each period's clock restarts; the match clock would start P2 at 2700 s
+    validate_time_base(actions, frames, on_mismatch="raise")
 
 
 # --------------------------------------------------------------------------------------------------
