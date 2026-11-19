@@ -143,7 +143,7 @@ def test_xcross_ship_variant_drops_full():
 @pytest.mark.parametrize("module", TRAINERS)
 @pytest.mark.parametrize(("deltas", "want"), [(CLEARS, "sc_extended"), (FAILS, "public")])
 def test_the_rule_verdict_is_recorded_as_a_field(module, monkeypatch, deltas, want):
-    # R38/R49, bar A17 (action-time repair spec 4.8): the paired rule's arm and reason are fields, not only text
+    # Action-time repair spec 4.8: the paired rule's arm and reason are fields, not only text
     _mod, sel, _f, _s = _selection_world(module, monkeypatch, deltas)
     paired = sel["candidates"]["paired"]
     assert paired["rule_verdict"] == want == paired["shipped"]
@@ -152,7 +152,7 @@ def test_the_rule_verdict_is_recorded_as_a_field(module, monkeypatch, deltas, wa
 
 @pytest.mark.parametrize("module", TRAINERS)
 def test_ship_variant_overrides_and_keeps_the_rule_verdict(module, monkeypatch):
-    # the rule clears (sc_extended); the operator forces public (the wheel jobs of tf46_refit.toml, R38/R49)
+    # the rule clears (sc_extended); the operator forces public (the wheel jobs of tf46_refit.toml)
     _mod, sel, full_rows, _s = _selection_world(module, monkeypatch, CLEARS, ship_variant="public")
     assert sel["shipped"] == "public"
     assert sel["candidates"]["public"]["params"] == full_rows["public"]

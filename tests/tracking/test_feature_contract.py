@@ -261,7 +261,7 @@ def test_new_constant_keys_are_additive_and_removed_keys_warn():
     from silly_kicks.tracking import PredatesDeclaredConstantWarning, UnverifiableFeatureContractWarning
     from silly_kicks.tracking._feature_contract import verify_feature_contract
 
-    # A new key on the library side WARNS (R55): the artifact was fitted before the library declared it. It loads.
+    # A new key on the library side WARNS: the artifact was fitted before the library declared it. It loads.
     with pytest.warns(PredatesDeclaredConstantWarning, match="new_thing"):
         verify_feature_contract(
             _fc(constants={"penalty_area_half_width": 20.16, "new_thing": 1.0}),
@@ -371,7 +371,7 @@ def test_xcross_records_and_verifies_a_contract(tmp_path, monkeypatch):
         "penalty_area_half_width",
         "penalty_area_depth",
         "goal_width",
-        "match_context_revision",  # R55: the score input's revision tag (REVISION_CONTRACT_KEYS)
+        "match_context_revision",  # the score input's revision tag (REVISION_CONTRACT_KEYS)
     }
 
     XCrossAttemptModel.load(out)
@@ -529,7 +529,7 @@ def test_the_unverifiable_category_is_NOT_escalated():
 
 
 # --------------------------------------------------------------------------------------------
-# R55: an artifact fitted before the score and phase repairs (action-time repair spec section 4.14)
+# an artifact fitted before the score and phase repairs (action-time repair spec section 4.14)
 # --------------------------------------------------------------------------------------------
 
 

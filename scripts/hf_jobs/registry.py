@@ -61,7 +61,7 @@ class TrainerSpec:
     #: passed as the neutral ``--arms-json`` job parameter; the in-job trainer has NO public/private concept
     #: (ADR-123 Amendment B). Only xshot_occurrence + xcross_attempt.
     visibility_gated: bool = False
-    #: The trainer takes ``--ship-variant`` (R38, R49; action-time repair spec 4.8): a campaign job may force the
+    #: The trainer takes ``--ship-variant`` (action-time repair spec 4.8): a campaign job may force the
     #: shipped arm of a paired run, overriding the paired verdict (which the trainer records as ``rule_verdict``).
     #: Only xshot_occurrence + xcross_attempt.
     ship_variant_option: bool = False
@@ -114,7 +114,7 @@ class DriverSpec:
 # IDENTICALLY for both the committed and the fresh model on the SAME rows. Those rows lie inside both training
 # sets, so the head-to-head is IN-SAMPLE PARITY (the fresh model agrees with the committed one), not a
 # generalisation check; public certification adds CV parity on ``cv_metric`` (HFU spec 14.4; two-sided, one-sided
-# in a ``retrain`` job, R20).
+# in a ``retrain`` job).
 # The floor gates EVERY variant (no silent regression on a non-default variant). ``delta`` is the pinned
 # per-trainer tolerance; OWNER-RATIFIED, FAIL-CLOSED (missing/NaN blocks). A noisier trainer needs a LARGER
 # delta; tightened by the owner after the first head-to-head deltas, never loosened silently.
@@ -253,7 +253,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         extras=(),
         base_args=("--n-trials", "50"),
         visibility_gated=True,  # ships public/sc_extended/full; --arms policy computed off-HF (ADR-123 Amd B)
-        ship_variant_option=True,  # --ship-variant forces the shipped arm (R38/R49, spec 4.8)
+        ship_variant_option=True,  # --ship-variant forces the shipped arm (spec 4.8)
         # ADR-128: `--run-all --out` writes the bundle files directly (no xshot_occurrence_v1/ subdir); the
         # controller adds `--dataset` and `--arms-json` (the off-HF arm policy).
         builds=(
@@ -280,7 +280,7 @@ REGISTRY: dict[str, TrainerSpec] = {
         base_args=("--n-trials", "50"),
         probe=True,  # held-out TF-19 probe from a staged per-game probe dataset (ADR-123: --probe-data-dir, no pining)
         visibility_gated=True,  # ships public/sc_extended/full; --arms policy computed off-HF (ADR-123 Amd B)
-        ship_variant_option=True,  # --ship-variant forces the shipped arm (R38/R49, spec 4.8)
+        ship_variant_option=True,  # --ship-variant forces the shipped arm (spec 4.8)
         # ADR-128: `--run-all --out` writes the bundle files directly (no xcross_attempt_v1/ subdir); the
         # controller adds `--dataset`, `--probe-dataset` and `--arms-json` (the off-HF arm policy).
         builds=(

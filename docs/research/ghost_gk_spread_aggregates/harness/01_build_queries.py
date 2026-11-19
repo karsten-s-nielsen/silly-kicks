@@ -1,8 +1,8 @@
 """Build query feature vectors from EVERY real frame fixture we can find."""
 from __future__ import annotations
-import pathlib, sys, warnings
+import os, pathlib, sys, warnings
 import numpy as np, pandas as pd
-REPO = pathlib.Path(r"D:/Development/karstenskyt__silly-kicks_part-deux")
+REPO = pathlib.Path(os.environ["SK_REPO"])
 sys.path.insert(0, str(REPO))
 OUT = pathlib.Path(__file__).resolve().parent
 warnings.filterwarnings("ignore")

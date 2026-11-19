@@ -1,5 +1,5 @@
 """The loader's SkillCorner events build on a REAL match (pining). Two defects of this cycle passed every synthetic
-test and broke this path on every real match (R62 ``preserve_native=True``; the R56 running-score list against the
+test and broke this path on every real match (``preserve_native=True``; the running-score list against the
 inferred defensive rows). This e2e test runs the path the stage runs.
 
 Asserts: the build runs; the native rows carry the provider's running score (``team_score`` /
@@ -40,7 +40,7 @@ def test_skillcorner_events_build_carries_the_running_score_and_ends_at_the_fina
     actions, home = loaded.actions, str(loaded.home_team_id)
     assert len(actions) > 0
 
-    # the native rows carry the running score; a derived row has no event of its own, so NaN (R56)
+    # the native rows carry the running score; a derived row has no event of its own, so NaN
     assert {"team_score", "opponent_team_score"} <= set(actions.columns), "the feed's running score is not carried"
     native = actions[actions["action_provenance"] == "native"]
     derived = actions[actions["action_provenance"] == "derived"]

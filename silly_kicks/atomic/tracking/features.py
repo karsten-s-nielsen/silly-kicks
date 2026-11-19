@@ -619,7 +619,7 @@ def add_off_ball_run_values(actions, frames, xt, *, links=None, pitch_control_ca
 
     An action with an unmeasured time (``time_source`` ``"placeholder"`` or ``"order_only"``) has no frame at
     its time: :func:`~silly_kicks.tracking.run_tracking_features` blanks this family's columns on such rows, but
-    a direct call does not (R45, action-time repair spec section 5.3).
+    a direct call does not (action-time repair spec section 5.3).
 
     Examples
     --------
@@ -1134,7 +1134,7 @@ def add_actor_pre_window(
 
     An action with an unmeasured time (``time_source`` ``"placeholder"`` or ``"order_only"``) has no frame at
     its time: :func:`~silly_kicks.tracking.run_tracking_features` blanks this family's columns on such rows, but
-    a direct call does not (R45, action-time repair spec section 5.3).
+    a direct call does not (action-time repair spec section 5.3).
 
     Examples
     --------

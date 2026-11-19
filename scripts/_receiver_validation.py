@@ -93,7 +93,7 @@ def trajectory_weak_labels(
     rows = []
     action_ids = actions["action_id"]
     for i, (_, act) in enumerate(actions.iterrows()):
-        # R68: the id comes from the actions COLUMN, not the `iterrows` row (an all-numeric row upcasts it to float)
+        # the id comes from the actions COLUMN, not the `iterrows` row (an all-numeric row upcasts it to float)
         aid = action_ids.iloc[i]
         if fmode.get(aid) != "intercepted":
             continue

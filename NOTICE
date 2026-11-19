@@ -1047,7 +1047,7 @@ pipelines in CI.
 
 The IDSSE per-period orientation fixture
 (tests/datasets/idsse/per_period_match.parquet, PR-S23 / silly-kicks
-3.0.1; rebuilt R64) is the bronze of match DFL-MAT-J03WMX (match_id
+3.0.1; rebuilt from the raw public DFL files) is the bronze of match DFL-MAT-J03WMX (match_id
 J03WMX; public DFL competition identifier -- no PII), built by
 scripts/build_idsse_per_period_fixture.py with this library's parser
 from the raw public DFL files of: Bassek, M., Rein, R., Weber, H., &

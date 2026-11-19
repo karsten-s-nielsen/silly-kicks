@@ -51,7 +51,7 @@ def test_build_match_adds_the_stoppage_columns(monkeypatch, provider):
     if provider == "idsse":
         assert set(state) == {"dead"} and source == {"ball_state"}
     elif provider == "skillcorner":
-        # the marker pair is dead; R44: the first possession after it (b, from frame 6) is live; after the last
+        # the marker pair is dead; by the kick map the first possession (b, from frame 6) is live; after the last
         assert state[3] == "dead" and state[6] == "live" and state[9] == "dead"
     else:
         assert state[2] == "dead" and state[5] == "live" and state[9] == "dead"  # [1 s, 4 s) dead by the restart
@@ -59,7 +59,7 @@ def test_build_match_adds_the_stoppage_columns(monkeypatch, provider):
 
 
 def test_skillcorner_build_passes_each_period_last_frame_to_the_spans(monkeypatch):
-    # R71 / A07 wiring: the loader hands the spans each period's last frame (from the frames), so a period-end
+    # Period-end span wiring: the loader hands the spans each period's last frame (from the frames), so a period-end
     # penalty's span stops at its period's end; without it the span runs on to the next period's first possession
     import silly_kicks.tracking._stoppages as st
 

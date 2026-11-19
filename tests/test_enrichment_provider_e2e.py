@@ -67,7 +67,7 @@ def _load_idsse_via_sportec() -> pd.DataFrame:
 
     if not idsse_fixture_path("sample_match").exists():
         pytest.skip(f"IDSSE fixture not found at {idsse_fixture_path('sample_match')}")
-    events = idsse_fixture_native("sample_match")  # R66: through shape_events_to_native
+    events = idsse_fixture_native("sample_match")  # through shape_events_to_native
     # IDSSE bronze fixture's ``team`` column uses literal "home"/"away" labels
     # (not team_ids). Pass "home" so the converter mirrors only away-team rows
     # per the ABSOLUTE_FRAME_HOME_RIGHT contract. PR-S22 fixed the prior

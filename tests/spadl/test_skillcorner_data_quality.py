@@ -85,7 +85,7 @@ class TestGoalkickResult:
             ]
         )
         actions, _ = convert_to_actions(events, _META)
-        # R30 (action-time repair spec section 4.2): the goal kick is its own derived row and gk1's possession is
+        # Action-time repair spec section 4.2: the goal kick is its own derived row and gk1's possession is
         # its first possession, so the goal kick reaches its own team; gk1's own action is lost to the opponent.
         gk = actions[actions["type_id"] == spadlconfig.actiontype_id["goalkick"]].iloc[0]
         assert gk["action_provenance"] == "derived"

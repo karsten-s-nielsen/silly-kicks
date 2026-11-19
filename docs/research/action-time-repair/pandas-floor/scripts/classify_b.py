@@ -50,6 +50,6 @@ for w, n, t in buckets["AT_RISK"]:
     print(w, n, "|", t)
 print("--- SAFE column names (count)")
 print(collections.Counter(n for _, ns, _ in buckets["SAFE"] for n in ns).most_common(40))
-print("--- UNKNOWN (a variable subject: searched, not read; R80)")
+print("--- UNKNOWN (a variable subject: searched, not read)")
 for w, _, t in buckets["UNKNOWN"]:
     print(w, "|", t)

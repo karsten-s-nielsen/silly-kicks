@@ -10,7 +10,7 @@ Two extractors per provider, each with two variants (``--variant``):
    - ``--variant default`` -> ~200-400 representative rows including all
      keeper-relevant rows (``sample_match.parquet``; contract-test
      fixture).
-   - ``--variant per_period`` is REFUSED for idsse (R64): the full-match
+   - ``--variant per_period`` is REFUSED for idsse: the full-match
      fixture ``tests/datasets/idsse/per_period_match.parquet`` is built
      from the raw public DFL files by
      ``scripts/build_idsse_per_period_fixture.py``, never from Databricks.
@@ -46,7 +46,7 @@ Usage::
     python scripts/extract_provider_fixtures.py --provider idsse
 
     # Per-period invariant fixture, metrica (PR-S23 / silly-kicks 3.0.1). The idsse one is built by
-    # scripts/build_idsse_per_period_fixture.py from the raw public DFL files (R64).
+    # scripts/build_idsse_per_period_fixture.py from the raw public DFL files.
     python scripts/extract_provider_fixtures.py --provider metrica --variant per_period
 """
 
@@ -379,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         default="default",
         help=(
             "'default' produces the small ~300-row contract-test fixture "
-            "(sample_match.parquet); 'per_period' (metrica only; idsse is refused, R64) produces a full-match "
+            "(sample_match.parquet); 'per_period' (metrica only; idsse is refused) produces a full-match "
             "fixture (per_period_match.parquet) used by "
             "tests/invariants/test_direction_of_play.py for per-(team, "
             "period) orientation assertions (PR-S23 / silly-kicks 3.0.1)."
@@ -387,12 +387,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # R64: the idsse full-match fixture is built from the raw public DFL files, never from Databricks. Refused at the
+    # the idsse full-match fixture is built from the raw public DFL files, never from Databricks. Refused at the
     # argument check, before any work, so no run writes a file and then fails.
     if args.variant == "per_period" and args.provider in ("idsse", "all"):
         msg = (
             "ERROR: --variant per_period is not available for idsse: tests/datasets/idsse/per_period_match.parquet is "
-            "built from the raw public DFL files by scripts/build_idsse_per_period_fixture.py (R64)."
+            "built from the raw public DFL files by scripts/build_idsse_per_period_fixture.py."
         )
         if args.provider == "all":
             msg += " For metrica: python scripts/extract_provider_fixtures.py --provider metrica --variant per_period"

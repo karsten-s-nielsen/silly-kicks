@@ -3,7 +3,7 @@ leave-one-source-out, on the same loss, and re-score against the constant.
 Also LOSO the constant itself, so every predictor is judged on equal terms.
 """
 from __future__ import annotations
-import pathlib, sys, warnings
+import os, pathlib, sys, warnings
 import numpy as np
 
 D = pathlib.Path(__file__).resolve().parent
@@ -71,7 +71,7 @@ paired(p_fb_loso, p_const_loso, "FREE-b power law, LOSO (2 free params)")
 # and the zero-parameter oracle, which needs no fitting at all -> no LOSO needed
 from silly_kicks.tracking._ghost_gk import _GRID_X, _GRID_Y, GRID_NX, GRID_NY, GRID_RESOLUTION
 import sys as _s
-_s.path.insert(0, r"D:/Development/karstenskyt__silly-kicks_part-deux")
+_s.path.insert(0, os.environ["SK_REPO"])
 GXX, GYY = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")
 PTS = np.stack([GXX.ravel(), GYY.ravel()], 1); CELL = GRID_RESOLUTION**2
 mu = Z["mu"]; neff = Z["neff_true"]

@@ -368,7 +368,7 @@ def test_idsse_full_build_is_the_step_applied_and_aligns_rows():
     pre, frames, _home = lp._build_idsse(full_paths, "DFL-MAT-J03WMX", None)
     built = lp._build_match("idsse", "DFL-MAT-J03WMX", full_paths, None)[0]
     pd.testing.assert_frame_equal(built, sync_action_times(pre, frames))
-    assert (built["time_source"] == "elastic").any()  # R32: the idsse branch runs the step
+    assert (built["time_source"] == "elastic").any()  # the idsse branch runs the step
 
 
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")  # the pre-existing omitted output_convention (ADR-006)

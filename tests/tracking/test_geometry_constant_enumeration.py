@@ -164,7 +164,7 @@ def test_the_registry_and_the_built_contracts_agree(tmp_path):
         f"models stamp keys nothing accounts for: {sorted(unaccounted)}. EITHER add the owning "
         f"module constant to DECLARED_CONSTANT_SOURCES (if the extractor keeps a private copy), OR "
         f"add the key to CANONICAL_CONTRACT_KEYS (if it now reads spadlconfig directly), OR add it to "
-        f"REVISION_CONTRACT_KEYS (if it is a hand-bumped version tag of the model's inputs, R55)."
+        f"REVISION_CONTRACT_KEYS (if it is a hand-bumped version tag of the model's inputs)."
     )
 
 
@@ -184,7 +184,7 @@ def test_every_declared_constant_is_load_bearing_on_the_probe(tmp_path):
 
     built = _built_contract_constants(tmp_path)
     revision = set(REVISION_CONTRACT_KEYS)
-    # The geometry keys, net of the revision keys. A revision key (R55) is a hand-bumped version tag of the
+    # The geometry keys, net of the revision keys. A revision key is a hand-bumped version tag of the
     # model's inputs: no probe moves it, so it is outside this test's premise and is pinned by name below and by
     # value in test_declared_constant_values.py.
     assert built["xshot"] - revision == {"goal_width"}

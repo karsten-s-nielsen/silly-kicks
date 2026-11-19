@@ -1,4 +1,4 @@
-"""The idsse penalty row (R57, action-time repair spec §4.16).
+"""The idsse penalty row (action-time repair spec §4.16).
 
 The DFL ``<Penalty>`` event holds a nested ``<ShotAtGoal>``; the bronze parser flattens the nested shot into
 ``shot_*`` columns on the Penalty row. The converter types that row ``shot_penalty``; a Penalty with no nested shot
@@ -99,7 +99,7 @@ def test_penalty_player_is_nested_shooter():
 
 
 def test_penalty_with_a_nested_shot_but_no_outcome_warns_and_names_the_row():
-    # bar A23 point 7: bronze from a parser before R63 (or a provider file with no outcome tag) has the nested shot
+    # Bronze of a parser before the penalty-outcome change (or a provider file with no outcome tag) has the nested shot
     # (shot_player / shot_team) but no shot_outcome_type. The row cannot be typed, and the converter says so.
     with pytest.warns(UserWarning, match=r"p1.*nested shot.*no outcome.*parse_dfl_events"):
         actions, report = _convert(
@@ -123,7 +123,7 @@ def test_penalty_without_nested_shot_does_not_warn():
 
 
 def test_committed_fixture_penalty_through_native_shaping_is_the_home_teams_goal():
-    # R64 / bar A26 point 6: the fixture is the parser's bronze of J03WMX (scripts/build_idsse_per_period_fixture.py).
+    # The fixture is the parser's bronze of J03WMX (scripts/build_idsse_per_period_fixture.py).
     # Through shape_events_to_native the scored penalty (event 18226500001426) is a shot_penalty of the home team by
     # the nested shooter, at the attacked end.
     from tests._idsse_fixtures import idsse_fixture_native

@@ -71,7 +71,7 @@ def _build_statsbomb_raw_events_for_detector(match_id: int) -> pd.DataFrame:
 
 def _build_idsse_raw_events_for_detector() -> pd.DataFrame:
     """Build the per-row detector input from the IDSSE bronze parquet."""
-    events = idsse_fixture_native("sample_match")  # R66: the native frame (team resolved from the qualifiers)
+    events = idsse_fixture_native("sample_match")  # the native frame (team resolved from the qualifiers)
     df = pd.DataFrame(
         {
             "game_id": 1,

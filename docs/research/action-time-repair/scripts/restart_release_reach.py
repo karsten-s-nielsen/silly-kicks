@@ -1,5 +1,5 @@
-"""Supervisor C: how often does the SkillCorner ball track show the kick of a restart? All four restart types, both
-sides. Read-only: reads ~/refit144/corners/cache/skillcorner; writes nothing but stdout.
+"""How often does the SkillCorner ball track show the kick of a restart? All four restart types, both
+sides. Read-only: reads the raw provider cache (--cache-dir, SkillCorner); writes nothing but stdout.
 
 For each first possession after a restart (game_interruption_before = <type>_for or <type>_against), in the 15 s before
 its frame_start (not earlier than the end of the possession before it):
@@ -7,8 +7,8 @@ its frame_start (not earlier than the end of the possession before it):
 - release seen: the frame after that run is detected, and inside 1 s a detected frame is more than 2 m from the rest point.
 The release frame is the last frame of the rest run. A crude reach measure: it has no check against a true kick time.
 """
+import argparse
 import glob
-import json
 import os
 
 import numpy as np
@@ -16,7 +16,9 @@ import pandas as pd
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-ROOT = os.path.expanduser("~/refit144/corners/cache/skillcorner")
+ap = argparse.ArgumentParser(description="How often the SkillCorner ball track shows the kick of a restart.")
+ap.add_argument("--cache-dir", required=True, help="raw provider cache root (<provider>/<match>/)")
+ROOT = os.path.join(ap.parse_args().cache_dir, "skillcorner")
 KINDS = ("corner", "free_kick", "goal_kick", "throw_in")
 COLS = ["event_type", "frame_start", "frame_end", "game_interruption_before"]
 LOOK, RUN = 150, 5

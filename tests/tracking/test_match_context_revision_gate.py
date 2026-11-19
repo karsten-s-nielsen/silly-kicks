@@ -1,4 +1,4 @@
-"""R67 / bar A29: a gate for the hand-bumped tag ``match_context_revision``.
+"""A gate for the hand-bumped tag ``match_context_revision``.
 
 The fixed probe of ``tests/tracking/_match_context_probe.py`` runs the score lookup and the phase lookup (the two
 builders of every score and phase input of the ghost-GK, ghost-outfield and xCross models) on fixed tables and fixed

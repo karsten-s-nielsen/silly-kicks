@@ -1,28 +1,25 @@
-"""Reviewer B RTR-IMPL-03 (owner: measure it), 2026-11-19.
+"""The library kick rule against the measured rule, 2026-11-19.
 
 The library kick rule (`silly_kicks.tracking._action_time._find_kick`, corner, paired: first_run_rule=False) against
-the measured rule of `corner_kick_check.rest_release`, on the Gradient Sports corners of the f5fc2e2b stage (read
-only), each in the script's GS bracket [t - 2 s, t + 4 s] around the provider corner time t.
+the measured rule of `corner_kick_check.rest_release` (the script in this folder), on the Gradient Sports corners of a
+stage (--stage, read only), each in the script's GS bracket [t - 2 s, t + 4 s] around the provider corner time t.
 Reports: corners; the share each rule finds a kick; agreement where both find one (|dt| <= 0.1 s, <= 0.5 s); each
 rule's accuracy against the provider time (|kick - t| <= 0.5 s, of the corners it finds a kick for) and median.
 Output: stdout.
 """
 
+import argparse
 import glob
 import os
-import sys
 from multiprocessing import Pool
 
+import corner_kick_check as K  # the script in this folder (the folder of this script is on sys.path)
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.expanduser("~/refit144"))
-sys.path.insert(0, os.path.expanduser("~/refit144/sk"))
-import corner_kick_check as K  # noqa: E402  (the research script, copied next to this one)
+from silly_kicks.tracking._action_time import _find_kick
 
-from silly_kicks.tracking._action_time import _find_kick  # noqa: E402
-
-ROOT = os.path.expanduser("~/cross-def/xshot187-f5fc2e2b/out")
+ROOT = ""  # set from the arguments (the workers fork after that)
 
 
 def one(pa):
@@ -45,8 +42,13 @@ def one(pa):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="The library kick rule against the measured rule (GS corners).")
+    ap.add_argument("--stage", required=True, help="stage root (holds _actions/ and shards/)")
+    ap.add_argument("--workers", type=int, default=8)
+    args = ap.parse_args()
+    ROOT = args.stage
     files = sorted(glob.glob(f"{ROOT}/_actions/gradientsports__*.parquet"))
-    with Pool(8) as pool:
+    with Pool(args.workers) as pool:
         d = pd.concat(pool.map(one, files), ignore_index=True)
     n = len(d)
     fs, fl = d["t_script"].notna(), d["t_lib"].notna()

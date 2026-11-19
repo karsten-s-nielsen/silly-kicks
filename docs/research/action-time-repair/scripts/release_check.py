@@ -1,9 +1,9 @@
-"""Read-only measure for supervisor items 3 and 4 (2026-11-18).
+"""Read-only measure: the ball's release after an on-ball action, 2026-11-18.
 
-Stage: ~/cross-def/xshot187-f5fc2e2b/out (read only). Output: ~/refit144/release_check/<match>.parquet + summary.
+Input (read only): a stage root (--stage). Output: <--out>/<match>.parquet + summary.
 
-Per on-ball action (families as in ~/dl-review-xdef/action_time_check.py):
-- yard_off: the supervisor's yardstick, copied unchanged. Release = a frame with the ball within 2 m of the actor,
+Per on-ball action (the families of FAM below):
+- yard_off: the release yardstick. Release = a frame with the ball within 2 m of the actor,
   then more than 3 m away inside the next second; the release nearest to t in [t-4, t+4]. Offset = release - t.
 - tf79_off: TF-79 detect_ball_contacts (default params) on the match frames; the RESOLVED contact attributed to the
   actor nearest to t in [t-4, t+4]. Offset = contact - t.
@@ -11,9 +11,9 @@ Per on-ball action (families as in ~/dl-review-xdef/action_time_check.py):
 Workers: one match per task, K processes, one output generation.
 """
 
+import argparse
 import glob
 import os
-import sys
 from multiprocessing import Pool
 
 import numpy as np
@@ -21,8 +21,7 @@ import pandas as pd
 
 from silly_kicks.tracking._ball_contact import detect_ball_contacts
 
-ROOT = os.path.expanduser("~/cross-def/xshot187-f5fc2e2b/out")
-OUT = os.path.expanduser("~/refit144/release_check")
+ROOT = OUT = ""  # set from the arguments (the workers fork after that)
 FAM = {0: "pass", 1: "cross", 2: "throw_in", 3: "freekick", 4: "freekick", 5: "corner", 6: "corner", 11: "shot",
        12: "shot", 13: "shot", 18: "clearance", 22: "goalkick"}
 FRAME_COLS = ["period_id", "frame_id", "time_seconds", "frame_rate", "is_ball", "player_id", "x", "y", "z", "z_source"]
@@ -113,9 +112,16 @@ def one_match(pa):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="The ball's release after an on-ball action.")
+    ap.add_argument("--stage", required=True, help="stage root (holds _actions/ and shards/)")
+    ap.add_argument("--out", required=True, help="output folder")
+    ap.add_argument("--providers", required=True, help="comma-separated, e.g. skillcorner,idsse")
+    ap.add_argument("--workers", type=int, required=True)
+    args = ap.parse_args()
+    ROOT, OUT = args.stage, args.out
     os.makedirs(OUT, exist_ok=True)
-    provs = sys.argv[1].split(",")
-    k = int(sys.argv[2])
+    provs = args.providers.split(",")
+    k = args.workers
     files = []
     for p in provs:
         files += sorted(glob.glob(f"{ROOT}/_actions/{p}__*.parquet"))

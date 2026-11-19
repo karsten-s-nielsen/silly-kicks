@@ -374,7 +374,7 @@ def convert_to_actions(
     same_team_next = (pp["team_id"] == next_team).fillna(False)
 
     # --- Vectorized dispatch ---
-    # The first possession after a restart takes its type from its own end_type (R30): the restart itself is a
+    # The first possession after a restart takes its type from its own end_type: the restart itself is a
     # derived row (infer_restarts below), never the receiver's possession.
     is_shot = end_type == "shot"
     is_pass = end_type == "pass"
@@ -557,7 +557,7 @@ def convert_to_actions(
             _derived["result_source"] = "native"
 
     # Merge all actions. A derived row has no event of its own, so the native fields of a `preserve_native` list
-    # (R56: the running score) are NaN on it; any other missing column still raises.
+    # (the running score) are NaN on it; any other missing column still raises.
     def _as_actions(derived: pd.DataFrame) -> pd.DataFrame:
         return derived.assign(**{c: np.nan for c in native_fields if c not in derived.columns})[actions.columns]
 
@@ -666,7 +666,7 @@ def convert_to_actions(
     # tiers) -> all pd.NA. Set AFTER the derived-actions pd.concat above to avoid the
     # `defensive[actions.columns]` reindex KeyError on frames that lack these columns.
     # ``preserve_native=True`` adds no column: ``original_event_id``, its former extra column, is a schema column
-    # now, so naming it again raised the extra-columns overlap ValueError (R62).
+    # now, so naming it again raised the extra-columns overlap ValueError.
     extra: list[str] | None = native_fields or None
     actions["shot_blocked"] = _blocked_flag(len(actions))
     actions["cross_blocked"] = _blocked_flag(len(actions))

@@ -15,10 +15,10 @@ except the oracle which is additionally handed exact neff):
   3  FREE-b power law   a*det(S_b)^b, 2 free params (upper bound on the family)
 """
 from __future__ import annotations
-import pathlib, sys, warnings
+import os, pathlib, sys, warnings
 import numpy as np, pandas as pd
 
-REPO = pathlib.Path(r"D:/Development/karstenskyt__silly-kicks_part-deux")
+REPO = pathlib.Path(os.environ["SK_REPO"])
 sys.path.insert(0, str(REPO))
 D = pathlib.Path(__file__).resolve().parent
 AGG = D.parent / "agg"

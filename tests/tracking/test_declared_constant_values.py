@@ -57,7 +57,7 @@ def _built(model: str) -> dict:
     return builder()["constants"]
 
 
-# ---- the revision keys (R55): hand-bumped version tags, pinned by VALUE against REVISION_CONTRACT_KEYS ---------------
+# ---- the revision keys: hand-bumped version tags, pinned by VALUE against REVISION_CONTRACT_KEYS ---------------
 
 
 @pytest.mark.parametrize("model", ["ghost", "outfield", "xshot", "xcross"])
@@ -74,7 +74,7 @@ def test_stamped_revision_keys_equal_the_registry(model):
     from silly_kicks.tracking._feature_contract import REVISION_CONTRACT_KEYS
 
     stamped = {k: v for k, v in _stamped(model).items() if k in REVISION_CONTRACT_KEYS}
-    for key, value in stamped.items():  # a pre-repair bundle stamps none (it warns at load, R55)
+    for key, value in stamped.items():  # a pre-repair bundle stamps none (it warns at load)
         assert value == REVISION_CONTRACT_KEYS[key], (model, key, value)
 
 

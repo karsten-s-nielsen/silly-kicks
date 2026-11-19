@@ -56,8 +56,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One goal rule** (R52, `spadl._goals`): the score counts every goal of the library's rule (a successful shot,
   penalty or direct free kick, and an own goal on any type, for the other team). The former score lookup counted an
   own goal only on a shot row and missed the `bad_touch` own goals the converters emit (a fix). A period-5 shoot-out
-  row is no goal of the score; the Gradient Sports shoot-out rows lie in period 4, after the last frame, so no frame
-  reads their score.
+  row is no goal of the score; the Gradient Sports converter puts the shoot-out in period 5, with no location.
+- **`add_game_state` reads the library's goal rule**: a penalty or direct free-kick goal now counts, an own goal
+  counts for the other team, and a shoot-out row (period 5) changes no state. On the 187-match corpus as staged by
+  the previous build (its Gradient Sports shoot-out still in period 4), 13,721 of 297,706 rows (4.61 %, 34 matches)
+  change their `game_state`; the rebuilt corpus gives the final count. A row with a missing result or period is no
+  goal. Team ids compare dtype-safely: a team id that differs only in dtype (`1` and `"1"`) is one team.
+- **The VAEP `goalscore` feature (standard and atomic) counts an own goal for the other team and no shoot-out goal**:
+  on the same input 1,166 rows (0.39 %, 2 matches) change; refit a VAEP model that uses it. The VAEP formula takes a previous own
+  goal as a goal.
+- **ELASTIC inserts its goal termination after every goal** (the idsse event-to-tracking sync): its goal check read
+  `result_name`, which converter output does not carry, so it never fired; it now reads the library's goal rule (a
+  goal or an own goal). On the 7 idsse stage matches no action time changes; `add_elastic_sync` now fills
+  `elastic_receive_frame_id`, `elastic_receive_confidence` and `elastic_receive_error_seconds` for a goal shot
+  (missing before). A row with a missing result is no goal.
 - **The SkillCorner score comes from the running score** where the native rows carry it (R56): it takes effect at the
   native row after the first higher one (a lag of a median 1.5 s after the kick-off reception); a decrease or a
   missing value falls back to the goal rows.

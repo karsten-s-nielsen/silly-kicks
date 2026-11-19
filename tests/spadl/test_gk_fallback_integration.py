@@ -136,7 +136,7 @@ def paired_data():
     if not _PAIRED_TRACKING.exists():
         pytest.skip("Paired tracking fixture not available")
 
-    events = idsse_fixture_native("per_period_match")  # R66: through shape_events_to_native
+    events = idsse_fixture_native("per_period_match")  # through shape_events_to_native
     gk_ids = idsse_goalkeeper_ids(events)
     actions, _report = convert_to_actions(
         events,

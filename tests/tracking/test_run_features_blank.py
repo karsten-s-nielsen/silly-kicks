@@ -1,4 +1,4 @@
-"""The producer's pointer drop (R45, R50) and blank step (action-time repair spec section 5.3).
+"""The producer's pointer drop and blank step (action-time repair spec section 5.3).
 
 ``run_tracking_features`` takes no frame for a ``"placeholder"`` or ``"order_only"`` row: it drops the row's frame
 pointer before the families run, and after they run it writes the missing value of each family-added column's dtype

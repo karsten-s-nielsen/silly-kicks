@@ -1055,7 +1055,7 @@ def _skillcorner_actions(paths):
         meta = json.load(fh)
     home_team_id = str(meta["home_team"]["id"])  # authoritative; matches native tracking team ids
     events = _read_skillcorner_events(paths)
-    # R56 (spec section 4.15): the provider's running score rides on the native rows when the feed has it.
+    # The provider's (spec section 4.15): running score rides on the native rows when the feed has it.
     score_fields = [c for c in ("team_score", "opponent_team_score") if c in events.columns]
     preserve = score_fields if len(score_fields) == 2 else False
     actions, _evt_report = sk_spadl.convert_to_actions(events, meta, preserve_native=preserve)

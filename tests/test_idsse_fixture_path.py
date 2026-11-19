@@ -1,4 +1,4 @@
-"""R66 / bar A28: the idsse fixtures reach the converter through ``shape_events_to_native``, read in one place.
+"""The idsse fixtures reach the converter through ``shape_events_to_native``, read in one place.
 
 No test file other than ``tests/_idsse_fixtures.py`` may build a path to ``per_period_match.parquet`` or
 ``sample_match.parquet`` under ``tests/datasets/idsse``, so the short bronze-to-converter path cannot come back.
@@ -46,7 +46,7 @@ def test_the_helper_gives_the_native_frame():
 
 @pytest.mark.parametrize("loader", ["load_sportec_native", "load_sportec_native_per_period"])
 def test_through_native_shaping_every_action_has_a_team_and_a_player(loader):
-    # What R66 makes true (on the short bronze path, 17 / 116 actions had team "unknown" and 17 / 115 no player)
+    # What one helper makes true (on the short bronze path, 17 / 116 actions had team "unknown" and 17 / 115 no player)
     from tests.invariants import _loaders
 
     actions, _home = getattr(_loaders, loader)()

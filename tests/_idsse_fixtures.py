@@ -1,4 +1,4 @@
-"""The single reader of the committed idsse fixtures (R66, bar A28).
+"""The single reader of the committed idsse fixtures.
 
 ``tests/datasets/idsse/per_period_match.parquet`` and ``sample_match.parquet`` are BRONZE (the parser's output). The
 documented path to SPADL is ``parse -> shape_events_to_native -> convert_to_actions``; the native shaping resolves the

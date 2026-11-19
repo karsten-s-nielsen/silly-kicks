@@ -5,8 +5,9 @@ possession)]. In it: every rest-and-release run (>= 0.5 s of detected ball frame
 a frame > 2 m away within 1 s after), with its distance to the nearest corner flag. Per corner: the follower kind (b's
 "before" marker kind, or "goal" / "none"), the number of flag runs (first point <= 2 m of a flag) and whether a
 rest-and-release run of any place starts after the first flag run's release.
-Output: ~/refit144/order_only_corner_check.out (stdout) and .parquet.
+Input (read only): the raw provider cache (--cache-dir, SkillCorner). Output: stdout and <--out> (a parquet file).
 """
+import argparse
 import glob
 import os
 from multiprocessing import Pool
@@ -14,7 +15,7 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 
-CACHE = os.path.expanduser("~/refit144/corners/cache/skillcorner")
+CACHE = ""  # set from the arguments (the workers fork after that)
 FLAGS = np.array([[0.0, 0.0], [0.0, 68.0], [105.0, 0.0], [105.0, 68.0]])
 KINDS = ("corner", "free_kick", "goal_kick", "throw_in")
 
@@ -90,10 +91,16 @@ def one(m):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="The rest runs in the gaps of the order-only SkillCorner corners.")
+    ap.add_argument("--cache-dir", required=True, help="raw provider cache root (<provider>/<match>/)")
+    ap.add_argument("--out", required=True, help="output parquet file")
+    ap.add_argument("--workers", type=int, default=16)
+    args = ap.parse_args()
+    CACHE = os.path.join(args.cache_dir, "skillcorner")
     ms = sorted(os.listdir(CACHE))
-    with Pool(16) as p:
+    with Pool(args.workers) as p:
         d = pd.DataFrame([r for rs in p.map(one, ms) for r in rs])
-    d.to_parquet(os.path.expanduser("~/refit144/order_only_corner_check.parquet"))
+    d.to_parquet(args.out)
     print("order-only corners with tracking:", len(d))
     d["flag_class"] = np.select([d.n_flag == 0, d.n_flag == 1, d.n_flag >= 2], ["0", "1", "2+"], default="?")
     print(pd.crosstab(d.follower, d.flag_class, margins=True))

@@ -1,8 +1,13 @@
-"""The library's one goal rule (R52, action-time repair spec section 4.12).
+"""The library's one goal rule (ADR-135).
 
 A goal is a successful row of a shot type (``shot``, ``shot_penalty``, ``shot_freekick``). An own goal is a row
-with the ``owngoal`` result, on any type: converters emit own goals as ``bad_touch``, not as shots (ADR-018). The
-VAEP labels, the win-probability state and the ghost score lookup read these two masks; no module keeps a copy.
+with the ``owngoal`` result, on any type: converters emit own goals as ``bad_touch``, not as shots (ADR-018).
+
+Each place that decides "this row changes the score" reads these two masks and keeps no copy: the VAEP labels,
+the ``goalscore`` feature, the VAEP formula, ``add_game_state``, the win-probability state and model, the ghost
+score lookup, the stoppage spans, the coordination event windows, the ELASTIC goal termination, the atomic
+conversion and the match-outcome census. A shot measure that reads the result of a shot by its own definition
+(shot stopping, corner effectiveness, the defensive credit of a shot, the xT grid) is not such a place.
 """
 
 from __future__ import annotations

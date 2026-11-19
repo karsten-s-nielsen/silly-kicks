@@ -511,7 +511,7 @@ _PARAMS = (
         str,
         None,
         choices=("public", "sc_extended"),  # ADR-132: no `full` arm exists
-        help="Operator override (R49, action-time repair spec 4.8): force-ship THIS variant regardless of the "
+        help="Operator override (action-time repair spec 4.8): force-ship THIS variant regardless of the "
         "two-arm bundle-selection verdict (the paired test still runs; its verdict is recorded as rule_verdict / "
         "rule_why). Requires the multi-candidate (run_paired) corpus. Default None = normal gate-selected ship.",
     ),
@@ -926,9 +926,9 @@ def _select_work(key, ctx) -> dict:
         )
         shipped, why = two_arm_ship(paired["sc_extended"]["nested"])
         print(f"Two-arm verdict: ship {shipped} -- {why}")
-        rule_verdict, rule_why = shipped, why  # bar A17: the paired verdict, kept as fields
+        rule_verdict, rule_why = shipped, why  # the paired verdict, kept as fields
         ship_variant = cfg.get("ship_variant")
-        if ship_variant is not None:  # R49 (spec 4.8): the operator forces the shipped arm
+        if ship_variant is not None:  # the operator forces the shipped arm
             why = f"operator --ship-variant override (two-arm rule verdict was: {shipped} -- {why})"
             shipped = ship_variant
             print(f"Ship-variant override: forcing ship {shipped}. {why}")
@@ -945,7 +945,7 @@ def _select_work(key, ctx) -> dict:
             "by_provider": paired["sc_extended"].get("by_provider", {}),  # ADR-132: reported, not deciding
             "shipped": shipped,
             "why": why,
-            "rule_verdict": rule_verdict,  # the paired rule's arm (bar A17), set aside by an override
+            "rule_verdict": rule_verdict,  # the paired rule's arm, set aside by an override
             "rule_why": rule_why,
         }
     else:

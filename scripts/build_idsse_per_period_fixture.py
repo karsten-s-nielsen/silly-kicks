@@ -1,4 +1,4 @@
-"""Build ``tests/datasets/idsse/per_period_match.parquet`` from the raw public DFL files (R64, bar A26).
+"""Build ``tests/datasets/idsse/per_period_match.parquet`` from the raw public DFL files.
 
 The fixture is the bronze of match ``DFL-MAT-J03WMX`` as THIS library's parser gives it:
 ``parse_dfl_match_info`` + ``parse_dfl_events`` on the raw DFL match-information and event XML files. It reads no

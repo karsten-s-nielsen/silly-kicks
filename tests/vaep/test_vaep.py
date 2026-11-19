@@ -100,3 +100,33 @@ def test_predict_with_missing_features(sb_worldcup_data: pd.HDFStore, vaep_model
     del X["period_id_a0"]
     with pytest.raises(ValueError):
         vaep_model.rate(game, actions, X)
+
+
+def _after_own_goal() -> pd.DataFrame:
+    """An own goal of team 1 (a bad_touch row with the owngoal result), then the kickoff of team 2."""
+    from silly_kicks.spadl import config
+
+    return pd.DataFrame(
+        {
+            "team_id": [1, 2],
+            "type_name": ["bad_touch", "pass"],
+            "type_id": [config.actiontype_id["bad_touch"], config.actiontype_id["pass"]],
+            "result_name": ["owngoal", "success"],
+            "result_id": [config.result_id["owngoal"], config.result_id["success"]],
+            "time_seconds": [10.0, 12.0],  # inside the same phase: only the goal rule sets the odds to 0
+        }
+    )
+
+
+def test_offensive_value_takes_a_previous_own_goal_as_a_goal() -> None:
+    from silly_kicks.vaep.formula import offensive_value
+
+    ov = offensive_value(_after_own_goal(), pd.Series([0.3, 0.5]), pd.Series([0.1, 0.2]))
+    assert ov.iloc[1] == pytest.approx(0.5)  # the scoring odds before the kickoff are 0
+
+
+def test_defensive_value_takes_a_previous_own_goal_as_a_goal() -> None:
+    from silly_kicks.vaep.formula import defensive_value
+
+    dv = defensive_value(_after_own_goal(), pd.Series([0.3, 0.5]), pd.Series([0.1, 0.2]))
+    assert dv.iloc[1] == pytest.approx(-0.2)  # the conceding odds before the kickoff are 0

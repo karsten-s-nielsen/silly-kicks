@@ -117,7 +117,7 @@ def weighted_quantile(values: np.ndarray, q: float, weights: np.ndarray) -> floa
     """The ONE quantile definition every reducer uses: the weighted ``inverted_cdf`` quantile.
 
     It is numpy 2's ``np.quantile(values, q, weights=weights, method="inverted_cdf")``, written out so
-    it runs on the declared ``numpy>=1.26`` floor too (numpy 1.x has no ``weights=``; R79). The steps
+    it runs on the declared ``numpy>=1.26`` floor too (numpy 1.x has no ``weights=``). The steps
     are numpy's own: a stable sort, the normalised cumulative weight ``cdf``, leading zero weights set
     to -1 so ``q=0`` takes the first positive weight, then the first index with ``q <= cdf`` (clipped
     to the last value). A NaN value gives NaN; a negative weight raises, as in numpy.

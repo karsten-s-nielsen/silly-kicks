@@ -275,7 +275,7 @@ _NOT_A_DRIVER: dict[str, str] = {
         "dirty tree carrying that change."
     ),
     "build_idsse_per_period_fixture": (
-        "writes the committed idsse per-period FIXTURE (tests/datasets/idsse/per_period_match.parquet, R64) from "
+        "writes the committed idsse per-period FIXTURE (tests/datasets/idsse/per_period_match.parquet) from "
         "the raw public DFL files through the library's parser. Output is a test input, not a cited number; its "
         "provenance (raw and built sha256) is in the fixture README, and it is rebuilt exactly when the parser it "
         "exercises changes, so it must run on the dirty tree carrying that change."

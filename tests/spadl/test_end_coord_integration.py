@@ -24,7 +24,7 @@ class TestSportecEndCoordinates:
     def actions(self) -> pd.DataFrame:
         from silly_kicks.spadl.sportec import convert_to_actions
 
-        events = idsse_fixture_native("per_period_match")  # R66: through shape_events_to_native
+        events = idsse_fixture_native("per_period_match")  # through shape_events_to_native
         gk_ids = idsse_goalkeeper_ids(events)
         actions, _report = convert_to_actions(
             events,

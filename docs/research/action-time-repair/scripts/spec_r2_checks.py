@@ -1,21 +1,22 @@
-"""Read-only measures for the spec revision (supervisor points 1, 3, 6, 8), 2026-11-18.
+"""Read-only measures for the spec revision (points 1, 3, 6, 8 of the review of revision 1), 2026-11-18.
 
-1. The restart count rule with the "after" markers: raw GI events of the cache (889 matches).
-3. The kick rule and the engines against the gradientsports provider corner time (~/refit144/corner_kick_check rows).
-6. The 18 order inversions after the idsse retime: which order does the tracking support? (re-runs the retime on 7 idsse)
+1. The restart count rule with the "after" markers: raw GI events of the cache (--cache-dir; 889 matches).
+3. The kick rule and the engines against the gradientsports provider corner time (--corner-rows: the output folder of
+   corner_kick_check.py).
+6. The 18 order inversions after the idsse retime: which order does the tracking support? (re-runs the retime on 7 idsse;
+   --elastic-rows: the output folder of elastic_check.py)
 8. The size of the SkillCorner stoppage change: frames of the restart flight after a measured kick and of the first
    possession, against the frames each stage match has (98 SkillCorner stage matches with cached raw events).
 """
 
+import argparse
 import glob
 import os
-import sys
 
 import numpy as np
 import pandas as pd
 
-CACHE = os.path.expanduser("~/refit144/corners/cache/skillcorner")
-ROOT = os.path.expanduser("~/cross-def/xshot187-f5fc2e2b/out")
+CACHE = ROOT = CORNER_ROWS = ELASTIC_ROWS = ""  # set from the arguments
 KINDS = ("corner", "free_kick", "goal_kick", "throw_in")
 
 
@@ -68,7 +69,7 @@ def point1():
 
 
 def point3():
-    D = pd.concat([pd.read_parquet(p) for p in glob.glob(os.path.expanduser("~/refit144/corner_kick_check/gradientsports__*.parquet"))])
+    D = pd.concat([pd.read_parquet(p) for p in glob.glob(f"{CORNER_ROWS}/gradientsports__*.parquet")])
     D = D[D["bracket_state"] == "ok"]
     print(f"== 3. gradientsports corners {len(D)}: each source against the provider corner time t (reference)")
     for col in ("t_rest", "t_tf79", "t_tf79r", "t_elastic"):
@@ -82,10 +83,10 @@ def point3():
 
 def point6():
     from silly_kicks.spadl import config as spadlconfig
-    from silly_kicks.tracking._elastic_sync import _map_category, align_events_to_frames
+    from silly_kicks.tracking._elastic_sync import align_events_to_frames
 
     names = list(spadlconfig.actiontypes)
-    yard = pd.concat([pd.read_parquet(p) for p in glob.glob(os.path.expanduser("~/refit144/elastic_check/idsse__*.parquet"))])
+    yard = pd.concat([pd.read_parquet(p) for p in glob.glob(f"{ELASTIC_ROWS}/idsse__*.parquet")])
     yard = yard.set_index(["match", "action_id"])["yard_off"]
     rows = []
     for pa in sorted(glob.glob(f"{ROOT}/_actions/idsse__*.parquet")):
@@ -139,7 +140,7 @@ def point8():
         fr = fr[fr["is_ball"]]
         n_frames = fr["frame_id"].nunique()
         n_live = int((fr["stoppage_state"] == "live").sum())
-        ck = pd.read_parquet(os.path.expanduser(f"~/refit144/corner_kick_check/skillcorner__{mid}.parquet"))
+        ck = pd.read_parquet(f"{CORNER_ROWS}/skillcorner__{mid}.parquet")
         gib = pp["game_interruption_before"].map(lambda m: split(m)[0])
         recv = 0
         for i in np.flatnonzero(gib.notna().to_numpy()):
@@ -154,6 +155,15 @@ def point8():
 
 
 if __name__ == "__main__":
-    for p in sys.argv[1:]:
+    ap = argparse.ArgumentParser(description="Measures for the spec revision (points 1, 3, 6, 8).")
+    ap.add_argument("points", nargs="+", choices=("1", "3", "6", "8"))
+    ap.add_argument("--stage", required=True, help="stage root (holds _actions/ and shards/)")
+    ap.add_argument("--cache-dir", required=True, help="raw provider cache root (<provider>/<match>/)")
+    ap.add_argument("--corner-rows", default="", help="output folder of corner_kick_check.py (needed by points 3, 8)")
+    ap.add_argument("--elastic-rows", default="", help="output folder of elastic_check.py (needed by point 6)")
+    args = ap.parse_args()
+    ROOT, CACHE = args.stage, os.path.join(args.cache_dir, "skillcorner")
+    CORNER_ROWS, ELASTIC_ROWS = args.corner_rows, args.elastic_rows
+    for p in args.points:
         globals()[f"point{p}"]()
     print("DONE")

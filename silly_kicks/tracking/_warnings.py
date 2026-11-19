@@ -162,7 +162,7 @@ class PredatesDeclaredConstantWarning(UserWarning):
 
     The artifact still loads (it is older, not known-bad), and the message names the constant and what changed
     since. Emitted, for example, for a ghost-GK, ghost-outfield or xCross bundle fitted before the score and phase
-    repairs (``match_context_revision``; action-time repair spec section 4.14, R55).
+    repairs (``match_context_revision``; action-time repair spec section 4.14).
 
     SEPARATE from :class:`MissingFeatureContractWarning` and :class:`UnverifiableFeatureContractWarning`, and not
     a subclass of either: a consumer that escalates one of them must not escalate this one by accident.

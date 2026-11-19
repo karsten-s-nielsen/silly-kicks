@@ -52,7 +52,7 @@ class WinProbabilityIntegrityError(RuntimeError):
 def _team_goal_minutes(g: pd.DataFrame, teams: list) -> dict:
     """Absolute-minute goal timeline per team (id-based, ADR-018 own-goal-by-result)."""
     out: dict = {t: [] for t in teams}
-    is_scored = goal_mask(g).to_numpy()  # the library goal rule (R52)
+    is_scored = goal_mask(g).to_numpy()  # the library goal rule
     is_og = owngoal_mask(g).to_numpy()
     team_col = g["team_id"].to_numpy()
     periods = g["period_id"].to_numpy()

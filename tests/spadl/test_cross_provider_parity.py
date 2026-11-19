@@ -41,7 +41,7 @@ def _load_idsse_fixture():
 
     if not idsse_fixture_path("sample_match").exists():
         pytest.fail(f"IDSSE fixture not found at {idsse_fixture_path('sample_match')}.")
-    events = idsse_fixture_native("sample_match")  # R66: through shape_events_to_native
+    events = idsse_fixture_native("sample_match")  # through shape_events_to_native
     # IDSSE bronze ``team`` column uses literal "home"/"away" labels (not team_ids).
     # Pass "home" so the converter mirrors only away-team rows per the
     # ABSOLUTE_FRAME_HOME_RIGHT contract. PR-S22 fixed the prior
@@ -234,7 +234,7 @@ def _input_team_values_for(provider: str) -> set[str]:
     output team_id values must be a subset of this set.
     """
     if provider == "sportec":
-        events = idsse_fixture_native("sample_match")  # R66: the converter's documented input
+        events = idsse_fixture_native("sample_match")  # the converter's documented input
         return set(events["team"].dropna().astype(str).tolist())
     if provider == "metrica":
         parquet_path = _REPO_ROOT / "tests" / "datasets" / "metrica" / "sample_match.parquet"
@@ -298,7 +298,7 @@ class TestSportecAdrContractOnProductionFixture:
     def _load_actions():
         from silly_kicks.spadl import sportec
 
-        events = idsse_fixture_native("sample_match")  # R66: through shape_events_to_native
+        events = idsse_fixture_native("sample_match")  # through shape_events_to_native
 
         # The IDSSE bronze fixture already uses literal "home"/"away" labels in
         # the team column (verified empirically; PR-S22). Earlier versions of

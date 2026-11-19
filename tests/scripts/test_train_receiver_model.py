@@ -430,7 +430,7 @@ def test_main_labels_the_bundle_from_the_declared_visibility(tmp_path, vis, want
 
 @pytest.mark.parametrize("strategy", ["trajectory", "id"])
 def test_candidate_rows_keep_the_actions_id_dtype_on_an_all_numeric_table(strategy):
-    # R68: `iterrows` on an all-numeric actions table upcast int game_id/action_id to float, so the namespaced id
+    # `iterrows` on an all-numeric actions table upcast int game_id/action_id to float, so the namespaced id
     # read "gs:7.0". The candidate rows take the ids with the dtype and value of the actions table.
     from scripts.train_receiver_model import _namespace_game_ids, extract_candidate_rows
 

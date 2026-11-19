@@ -1,9 +1,9 @@
-"""The fixed probe of the score and phase inputs (R67, bar A29).
+"""The fixed probe of the score and phase inputs.
 
-Each rule that ``match_context_revision`` names is exercised: the period key (R51), the goal rule with a penalty, a
-direct free kick, an own goal and a shoot-out row (R52), the SkillCorner running score with its effect rule, a derived
-row and its fallback (R56), a penalty row (R57, R58), and the phase codes, the 10 s window and an ``"order_only"`` row
-(R50). Home is team 1.
+Each rule that ``match_context_revision`` names is exercised: the period key, the goal rule with a penalty, a
+direct free kick, an own goal and a shoot-out row, the SkillCorner running score with its effect rule, a derived
+row and its fallback, a penalty row, and the phase codes, the 10 s window and an ``"order_only"`` row
+. Home is team 1.
 """
 
 from __future__ import annotations
@@ -35,9 +35,9 @@ def _rows(rows: list[tuple]) -> pd.DataFrame:
 def goal_rows_table() -> pd.DataFrame:
     return _rows([
         (1, 100.0, 1, "shot", "success"),            # home goal, first half
-        (1, 900.0, 2, "shot_penalty", "success"),     # away penalty goal (R57/R58)
+        (1, 900.0, 2, "shot_penalty", "success"),     # away penalty goal
         (1, 2000.0, 1, "pass", "success"),
-        (2, 50.0, 2, "bad_touch", "owngoal"),        # away own goal -> home goal (R52)
+        (2, 50.0, 2, "bad_touch", "owngoal"),        # away own goal -> home goal
         (2, 600.0, 2, "shot_freekick", "success"),    # away direct free-kick goal
         (2, 700.0, 1, "shot", "fail"),
         (3, 30.0, 1, "shot", "success"),             # extra time
@@ -58,7 +58,7 @@ def running_score_table(*, decrease: bool = False) -> pd.DataFrame:
         (1, 90.0, 2, "native", 0, 1),  # the next native row: the effect is here
         (2, 30.0, 1, "native", 1, 0),
         (2, 80.0, 2, "native", 1, 1 if not decrease else 0),  # decrease variant: the away side drops 1 -> 0
-        (5, 10.0, 1, "native", 2, 1),  # shoot-out (R52): a period-5 row is not read; the score stays 1-1
+        (5, 10.0, 1, "native", 2, 1),  # shoot-out: a period-5 row is not read; the score stays 1-1
         (5, 30.0, 2, "native", 1, 2),  # carries the effect of the row before it, if it were read
     ]
     out = []
@@ -78,14 +78,14 @@ def phase_table() -> pd.DataFrame:
     return _rows([
         (1, 100.0, 1, "freekick_crossed", "success", "placeholder", "derived"),
         (1, 200.0, 2, "goalkick", "success", "kick", "derived"),
-        (1, 205.0, 2, "corner_crossed", "fail", "order_only", "derived"),  # opens no window, ends none (R50)
+        (1, 205.0, 2, "corner_crossed", "fail", "order_only", "derived"),  # opens no window, ends none
         (1, 300.0, 1, "throw_in", "success", "placeholder", "derived"),     # not a set piece of the phase
         (1, 400.0, 1, "corner_short", "success", "kick", "derived"),
         (2, 50.0, 2, "freekick_short", "success", "event", "native"),
     ])  # fmt: skip
 
 
-# the last two sit AT the time of a set-piece row (the kick frame): the phase starts at its own row (R67 V27)
+# the last two sit AT the time of a set-piece row (the kick frame): the phase starts at its own row
 PHASE_QUERIES = [(1, 99.0), (1, 105.0), (1, 110.0), (1, 111.0), (1, 203.0), (1, 207.0), (1, 212.0), (1, 302.0),
                  (1, 405.0), (2, 55.0), (2, 105.0), (1, 55.0), (1, 100.0), (1, 200.0)]  # fmt: skip
 

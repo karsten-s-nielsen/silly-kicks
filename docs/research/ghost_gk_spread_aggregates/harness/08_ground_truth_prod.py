@@ -14,7 +14,7 @@ import multiprocessing as mp
 import numpy as np
 import pandas as pd
 
-REPO = pathlib.Path(os.environ.get("SK_REPO", "/home/karsten/Development/silly-kicks"))
+REPO = pathlib.Path(os.environ["SK_REPO"])
 sys.path.insert(0, str(REPO))
 D = pathlib.Path(__file__).resolve().parent
 MODEL_DIR = pathlib.Path(os.environ["SK_MODEL"])

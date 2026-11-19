@@ -8,9 +8,9 @@ Queries       : real feature vectors extracted by _serve_positions_core from rea
 Predictor     : per-(tree,leaf) moment aggregates {n,Sx,Sy,Sxx,Sxy,Syy} ONLY.
 """
 from __future__ import annotations
-import pathlib, sys, time, json, warnings
+import os, pathlib, sys, time, json, warnings
 import numpy as np, pandas as pd
-REPO = pathlib.Path(r"D:/Development/karstenskyt__silly-kicks_part-deux"); sys.path.insert(0,str(REPO))
+REPO = pathlib.Path(os.environ["SK_REPO"]); sys.path.insert(0,str(REPO))
 D = pathlib.Path(__file__).resolve().parent
 warnings.filterwarnings("ignore")
 from silly_kicks.tracking._ghost_gk import (

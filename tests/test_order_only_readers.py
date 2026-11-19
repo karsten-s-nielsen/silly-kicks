@@ -1,4 +1,4 @@
-"""The action-window readers and an ``"order_only"`` row (R54, R60; action-time repair spec section 4.13).
+"""The action-window readers and an ``"order_only"`` row (action-time repair spec section 4.13).
 
 Each reader takes no window at an ``"order_only"`` row (a restart with no first possession: its time keeps the row
 order only). On a table with no such row, or without ``time_source``, each gives today's values.

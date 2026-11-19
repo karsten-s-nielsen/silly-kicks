@@ -103,7 +103,7 @@ def test_pure_does_not_mutate():
 
 
 def test_corner_with_no_window_has_missing_counts_not_zero():
-    # Supervisor C ruling (bar A3, as R45): a corner with no measured kick has no outcome window, so its counts are
+    # A corner with no measured kick has no outcome window, so its counts are
     # <NA> (the Int64 columns hold it) and sum_xg NaN -- never a fabricated 0
     corners = _corners()
     corners.loc[1, ["t_kick", "t_outcome"]] = np.nan

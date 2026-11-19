@@ -155,7 +155,7 @@ _MAPPED_EVENT_TYPES: frozenset[str] = frozenset(
         # rather than silently mapping to non_action.
         "ShotAtGoal",
         # A DFL <Penalty> holds its shot as a nested <ShotAtGoal>, which the bronze parser flattens into shot_*
-        # columns on the Penalty row; that row is the shot_penalty (R57, action-time repair spec section 4.16).
+        # columns on the Penalty row; that row is the shot_penalty (action-time repair spec section 4.16).
         # A Penalty with no nested shot is excluded by name in convert_to_actions.
         "Penalty",
         "TacklingGame",
@@ -624,8 +624,8 @@ def convert_to_actions(
         events = events.copy()
         events["event_type"] = events["event_type"].replace(_EVENT_TYPE_ALIASES)
 
-    # R57: a Penalty row is typed from the outcome of its nested shot (shot_outcome_type, parse.py R63). A Penalty
-    # with no outcome is no action and is excluded by name. Two cases are told apart (bar A23 point 7):
+    # a Penalty row is typed from the outcome of its nested shot (shot_outcome_type, read by parse.py). A Penalty
+    # with no outcome is no action and is excluded by name. Two cases are told apart:
     # - no nested shot at all (no shot_* qualifier): excluded silently, as any non-action event;
     # - a nested shot (shot_player / shot_team) with no outcome: bronze from a parser of silly-kicks 4.144.0 or
     #   earlier, or a provider file with no outcome tag. Excluded too, but never silently: a warning names the rows.
@@ -653,7 +653,7 @@ def convert_to_actions(
     event_type_counts = Counter(events.loc[~penalty_without_shot, "event_type"])
     if n_penalty_without_shot:
         events = events.loc[~penalty_without_shot].reset_index(drop=True)
-    # R57 (spec 4.16, point 3): the parsed Penalty row has no player of its own; its shooter is the nested
+    # Spec 4.16, point 3: the parsed Penalty row has no player of its own; its shooter is the nested
     # ShotAtGoal's Player (`shot_player`). Only an EMPTY player_id is filled -- a caller's id is never overridden
     # (ADR-001).
     if "shot_player" in events.columns and (events["event_type"] == "Penalty").any():
@@ -990,7 +990,7 @@ def _build_raw_actions(
     _warn_unexpected_play_eval(play_eval[is_pass_or_setpiece])
 
     # --- Shot ---
-    is_shot = (et == "ShotAtGoal") | (et == "Penalty")  # a mapped Penalty row carries its nested shot (R57)
+    is_shot = (et == "ShotAtGoal") | (et == "Penalty")  # a mapped Penalty row carries its nested shot
     after_fk = _opt("shot_after_free_kick", "").fillna("").astype(str).str.lower().eq("true").to_numpy()
     has_penalty = (_opt("penalty_team", None).notna() | _opt("penalty_causing_player", None).notna()).to_numpy()
     is_shot_penalty = is_shot & has_penalty

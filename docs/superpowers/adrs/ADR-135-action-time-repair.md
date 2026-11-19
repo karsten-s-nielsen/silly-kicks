@@ -44,7 +44,10 @@ the action, and that nothing in a row said so:
    An `"order_only"` row opens no phase window and ends none (R50).
 5. **One goal rule** (R52), `spadl._goals.goal_mask` / `owngoal_mask`: a successful shot, penalty or direct free
    kick, and an own goal on any type (for the other team). The VAEP labels, the win-probability state and the score
-   lookup read it; a shoot-out row (period 5) is no goal of the score.
+   lookup read it; a shoot-out row (period 5) is no goal of the score. The amended commit 2 (R83, R88, R92, R95) extends the readers:
+   `add_game_state`, the `goalscore` feature and its atomic twin, the VAEP formula, the coordination event windows, the ELASTIC goal termination (R98),
+   the atomic conversion and the match-outcome census. The Gradient Sports converter puts the shoot-out in period 5,
+   with no location (R89, R93).
 6. **The SkillCorner running score** (R56): where the provider's `team_score` / `opponent_team_score` are on the
    native rows (the converter's `preserve_native` list), the score lookup reads them, with the new score in effect
    from the native row after the first higher one; a decrease or a missing value falls back to the goal rows.

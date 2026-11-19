@@ -57,7 +57,7 @@ def test_kinds_map_declares_only_known_kinds():
 
 
 def test_a_corner_with_no_side_is_not_reflected():
-    # Supervisor C point g: an unmeasured corner has corner_side <NA>; `<NA> != "left"` selected it for the
+    # An unmeasured corner has corner_side <NA>; `<NA> != "left"` selected it for the
     # reflection, so any finite geometry on the row was flipped with no known side
     from silly_kicks.corners import reflect_corners_to_canonical_side
 

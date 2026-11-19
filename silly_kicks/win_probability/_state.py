@@ -52,7 +52,7 @@ def derive_match_states(
         goals = {t: 0 for t in teams}
         reds = {t: 0 for t in teams}
         yellows: dict = {t: {} for t in teams}
-        scored_np = goal_mask(g).to_numpy()  # the library goal rule (R52)
+        scored_np = goal_mask(g).to_numpy()  # the library goal rule
         og_np = owngoal_mask(g).to_numpy()
         period_np = g["period_id"].to_numpy()
         time_np = g["time_seconds"].to_numpy()

@@ -6,8 +6,9 @@
 # A mounted dataset declares `read_concurrency` (the job-wide whole-file read cap; see tc3).
 
 [datasets.tc3]
-# The 4.144.0 restage in the PRO user namespace (release-refit delta spec 4.2, owner 2026-11-17).
-repo = "karstenskyt/hf-refit-tc3"
+# The stage of commit 26a2c33b (the action-time repair, ADR-135) in the PRO user namespace; a new repository, so
+# the 4.144.0 restage in karstenskyt/hf-refit-tc3 stays as it is.
+repo = "karstenskyt/hf-refit-tc3-26a2c33"
 kind = "flat_tc3"
 raw = "restricted"
 provenance = "extended"
@@ -38,8 +39,9 @@ read_concurrency = 4  # the tc3 measurement (same mount type)
 description = "115-match idsse + SkillCorner corpus: the Hub sc_extended xShot and xCross artifacts"
 
 [datasets.xshot187]
-# The f5fc2e2b stage, made by the 4.144.0 release code (delta spec 4.2, owner 2026-11-17).
-repo = "karstenskyt/hf-refit-xshot187"
+# The stage of commit 26a2c33b (the action-time repair, ADR-135); a new repository, so the f5fc2e2b stage in
+# karstenskyt/hf-refit-xshot187 stays as it is (both stages have the shard generation 3836f5993b9c5a9f).
+repo = "karstenskyt/hf-refit-xshot187-26a2c33"
 kind = "flat_tc3"
 raw = "restricted"
 provenance = "extended"
@@ -48,7 +50,7 @@ read_concurrency = 4  # the tc3 measurement (same mount type)
 description = "187-match idsse + SkillCorner + Gradient Sports corpus (ADR-132): both xShot/xCross arms"
 
 [datasets.xcross_probe]
-repo = "karstenskyt/hf-refit-xcross-probe"  # delta spec 4.2 (owner 2026-11-17): the 4.144.0 restage
+repo = "karstenskyt/hf-refit-xcross-probe-26a2c33"  # the stage of commit 26a2c33b (ADR-135); a new repository
 kind = "pergame"
 raw = "restricted"
 provenance = "public"

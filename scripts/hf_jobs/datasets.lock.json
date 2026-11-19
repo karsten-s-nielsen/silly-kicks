@@ -857,9 +857,9 @@
         "2017461"
       ]
     ],
-    "recorded_at": "2026-11-17T21:42:35+00:00",
-    "repo": "karstenskyt/hf-refit-tc3",
-    "revision": "37188bba7cef7cbb1a786911eaca52779b41a6b2",
+    "recorded_at": "2026-11-19T19:02:30+00:00",
+    "repo": "karstenskyt/hf-refit-tc3-26a2c33",
+    "revision": "8df00381b2ce3c6e656efb06c5579e520e911dbf",
     "units": [
       {
         "game": "10502",
@@ -1777,9 +1777,9 @@
       "gradientsports": "int"
     },
     "public_ids": null,
-    "recorded_at": "2026-11-17T21:44:22+00:00",
-    "repo": "karstenskyt/hf-refit-xcross-probe",
-    "revision": "b8c2400b36a2440f04d8276ac77e5c451492107d",
+    "recorded_at": "2026-11-19T19:04:24+00:00",
+    "repo": "karstenskyt/hf-refit-xcross-probe-26a2c33",
+    "revision": "94c623b207752d7f5e0479786443e578d9db10f7",
     "units": [
       {
         "game": "gradientsports-10502",
@@ -2952,9 +2952,9 @@
         "2017461"
       ]
     ],
-    "recorded_at": "2026-11-17T21:33:03+00:00",
-    "repo": "karstenskyt/hf-refit-xshot187",
-    "revision": "b6013d0f0749fb511379724d2e276f1dc29135e4",
+    "recorded_at": "2026-11-19T18:59:58+00:00",
+    "repo": "karstenskyt/hf-refit-xshot187-26a2c33",
+    "revision": "badb21541b9a4b4e96b48b800659788eb35d7d55",
     "units": [
       {
         "game": "10504",

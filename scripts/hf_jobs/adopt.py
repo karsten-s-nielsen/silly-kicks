@@ -524,12 +524,12 @@ def _integrity(
 
 
 def _rebaseline(spec: Any, fresh: pathlib.Path, commit: str, *, run: Callable[..., Any]) -> dict:
-    """A rebaseline driver (decisions P3, P15; R25, owner 2026-11-17): its output vs the committed one, provenance
+    """A rebaseline driver (decisions P3, P15; owner 2026-11-17): its output vs the committed one, provenance
     removed. A difference passes ONLY when the driver declares a ``tolerance`` and every difference is within it
     (:func:`_within_tolerance`, HFU spec 17.4); every other difference STOPS for an owner ruling, whatever its
     cause. For that ruling the difference is classified by the code of the driver's declared input modules at its
     ``REBASELINE_FROM`` commit and at the campaign commit (:func:`_code_delta`, docstrings removed: ``code`` or
-    ``environment``); a driver without a ``REBASELINE_FROM`` entry gets no classification (R26)."""
+    ``environment``); a driver without a ``REBASELINE_FROM`` entry gets no classification."""
     from importlib import import_module
 
     from scripts.hf_jobs.identity import artifact_identity, compare
@@ -544,7 +544,7 @@ def _rebaseline(spec: Any, fresh: pathlib.Path, commit: str, *, run: Callable[..
     if not diffs:
         return {"ok": True, "basis": "rebaseline", "identical": True, "diffs": []}
     out: dict[str, Any] = {"ok": False, "basis": "rebaseline", "identical": False, "diffs": diffs, "delta": None}
-    if spec.name in REBASELINE_FROM:  # the classification is information for the owner's ruling (R25, R26)
+    if spec.name in REBASELINE_FROM:  # the classification is information for the owner's ruling
         contract = import_module(spec.module).input_contract()
         modules = sorted({*contract.get("extractors", []), *contract.get("models", [])})
         paths = [m.replace(".", "/") + ".py" for m in modules]
@@ -699,7 +699,7 @@ def _certify(
 ) -> dict:
     """Step 3 (`floor.certify`, the registry policy): ``public`` -> the head-to-head CLI against the
     committed wheel bundle; ``owner`` -> CV parity on the registry ``cv_metric``. Missing inputs FAIL.
-    ``one_sided`` (a ``retrain`` job, R20): the public CV parity fails only a worsening beyond its band."""
+    ``one_sided`` (a ``retrain`` job): the public CV parity fails only a worsening beyond its band."""
     from scripts.hf_jobs import floor
 
     arm = mf.effective_shipped_arm(ref)  # ADR-132 (spec 7.1): certify what the entry expects to have shipped
@@ -1133,7 +1133,7 @@ def _sibling_cards(man: mf.Manifest, adopted: Iterable[str]) -> set[str]:
 
 
 def _rule_notes(staging: pathlib.Path, rep: Mapping[str, Any]) -> dict[str, dict[str, str]]:
-    """Per adopted artifact, the paired verdict its training run recorded (bar A17, action-time repair spec 4.8).
+    """Per adopted artifact, the paired verdict its training run recorded.
 
     Read from ``<staging>/<instance>/metrics.json`` -- the fresh training report, the file in which each trainer
     writes ``candidates`` -- at ``candidates.paired``: ``rule_verdict`` (the paired rule's arm), ``rule_why`` and
@@ -1169,7 +1169,7 @@ def _changelog_draft(
             f"shipped arm `{mf.effective_shipped_arm(a)}`."
         )
         note = (rule_notes or {}).get(aid)
-        if note and note["rule_verdict"] != note["shipped"]:  # bar A17: the set-aside verdict is reported
+        if note and note["rule_verdict"] != note["shipped"]:  # the set-aside verdict is reported
             line += (
                 f" The paired rule chose `{note['rule_verdict']}` ({note['rule_why']}); the run shipped "
                 f"`{note['shipped']}` by the campaign's `ship_variant`."
@@ -1281,7 +1281,7 @@ def _write_phase(
         fresh = _artifact_dir(staging, inst_id)
         cert = row.get("certification") or {}
         if cert.get("basis") == "rebaseline":
-            if not cert.get("identical"):  # a difference inside the tolerance (R25): the fresh output is adopted
+            if not cert.get("identical"):  # a difference inside the tolerance: the fresh output is adopted
                 rk = inst_id.split("/")[0]
                 names = [n for n in drivers if f"-{n}-" in rk]
                 if len(names) != 1:

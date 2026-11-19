@@ -216,7 +216,7 @@ def test_tf46_refit_holds_the_21_release_instances():
     assert c.peak_rss_by_stage == cycle1.peak_rss_by_stage
     # action-time repair plan Task 14: the xShot study runs 2 units per job (the 2 h job limit); the rest as cycle1
     assert c.units_per_job_by_stage == {**cycle1.units_per_job_by_stage, "xshot_occurrence/study": 2}
-    # R49 / R38 (spec 4.8): the two wheel jobs force the public arm; the Hub jobs keep the rule's choice
+    # the two wheel jobs force the public arm; the Hub jobs keep the rule's choice
     forced = {(j.job, j.tier): j.ship_variant for j in c.jobs if j.job in ("xshot_occurrence", "xcross_attempt")}
     assert forced == {(job, tier): ("public" if tier == "public" else None) for job, tier in forced}
     assert sorted(forced.values(), key=str) == [None, None, "public", "public"]  # 2 wheel + 2 Hub jobs

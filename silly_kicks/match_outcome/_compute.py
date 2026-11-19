@@ -14,6 +14,7 @@ import pandas as pd
 from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import canonical_id_series, ids_match
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.spadl._goals import owngoal_mask
 
 from ._columns import MATCH_OUTCOME_COLUMNS
 from ._config import MatchOutcomeParams
@@ -21,7 +22,6 @@ from ._pmf import goal_count_pmf, match_outcome_probabilities
 from ._report import MatchOutcomeReport
 
 _SHOT_TYPE_IDS = [spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")]
-_OWNGOAL = spadlconfig.result_id["owngoal"]
 _DEFAULT_PARAMS = MatchOutcomeParams.default()
 
 
@@ -137,7 +137,7 @@ def _census(a_scored: pd.DataFrame, xg_column: str) -> tuple[int, int, int, int]
     is_shot = a_scored["type_id"].isin(_SHOT_TYPE_IDS).to_numpy()
     n_shots = int(is_shot.sum())
     with_xg = int((is_shot & a_scored[xg_column].notna().to_numpy()).sum()) if xg_column in a_scored.columns else 0
-    n_own = int((a_scored["result_id"] == _OWNGOAL).sum())
+    n_own = int(owngoal_mask(a_scored).sum())
     return n_shots, with_xg, n_shots - with_xg, n_own
 
 

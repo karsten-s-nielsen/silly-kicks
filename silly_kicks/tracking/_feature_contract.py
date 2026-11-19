@@ -96,9 +96,9 @@ DECLARED_CONSTANT_SOURCES: dict[str, str] = {
     "_GOAL_HALF_WIDTH_M": "goal_width",
 }
 
-#: The form of the score and phase inputs of the ghost-GK, ghost-outfield and xCross features (R55, action-time
-#: repair spec section 4.14): per period (R51), the full goal rule (R52), the SkillCorner running score (R56) and
-#: the penalty rows (R57, R58). One constant covers all of them; a later change of those inputs bumps it, and a
+#: The form of the score and phase inputs of the ghost-GK, ghost-outfield and xCross features (action-time
+#: repair spec section 4.14): per period, the full goal rule, the SkillCorner running score and
+#: the penalty rows. One constant covers all of them; a later change of those inputs bumps it, and a
 #: stored value that differs then raises by the declared-constant rule (ADR-050).
 MATCH_CONTEXT_REVISION = 1.0
 
@@ -107,7 +107,7 @@ MATCH_CONTEXT_REVISION = 1.0
 #: (probe-movable geometry module constants) and ``CANONICAL_CONTRACT_KEYS`` (``spadlconfig`` values); their gate is
 #: the value pin in ``tests/tracking/test_declared_constant_values.py``. The contract blocks stamp from here.
 #:
-#: The tag is bumped by hand. Its gate (R67): ``tests/tracking/test_match_context_revision_gate.py`` runs the score
+#: The tag is bumped by hand. Its gate: ``tests/tracking/test_match_context_revision_gate.py`` runs the score
 #: and phase lookups on a fixed probe and fails when their outputs differ from the pin of the current revision.
 #: LIMIT, in plain words: a change that the probe does not exercise is not detected.
 REVISION_CONTRACT_KEYS: dict[str, float] = {"match_context_revision": MATCH_CONTEXT_REVISION}
@@ -268,7 +268,7 @@ def verify_feature_contract(
             stacklevel=2,
         )
     # A constant the library declares and the artifact lacks: the artifact was fitted before the library declared
-    # it (R55, action-time repair spec section 4.14). It loads, and the warning names what changed since.
+    # it (action-time repair spec section 4.14). It loads, and the warning names what changed since.
     predates = sorted(set(rec_c) - set(sto_c))
     if predates:
         meanings = "; ".join(f"{k}: {DECLARED_CONSTANT_MEANINGS.get(k, 'no meaning recorded')}" for k in predates)

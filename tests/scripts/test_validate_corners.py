@@ -313,7 +313,7 @@ def test_divergence_rows_give_no_row_for_a_measured_corner_with_no_side(monkeypa
 
 
 def test_reduce_samples_takes_missing_counts_of_corners_with_no_window():
-    # Supervisor C ruling b: a corner with no measured kick has <NA> chance counts (Int64). The reduce must leave
+    # A corner with no measured kick has <NA> chance counts (Int64). The reduce must leave
     # them out of each mean and still count the corner. At the pandas floor (2.1.1) `Int64.to_numpy(dtype=float)`
     # with a missing value raises ValueError, so the reads take na_value=np.nan.
     from scripts.validate_corners import reduce_samples

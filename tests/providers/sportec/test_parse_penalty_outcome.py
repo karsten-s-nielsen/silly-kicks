@@ -1,4 +1,4 @@
-"""R63 / bar A25: the parser reads the outcome tag under ``Penalty > ShotAtGoal`` with the rule it applies one level
+"""The parser reads the outcome tag under ``Penalty > ShotAtGoal`` with the rule it applies one level
 up for a ``ShotAtGoal`` event (``shot_outcome_type`` + the outcome tag's attributes as ``shot_outcome_*``)."""
 
 from __future__ import annotations

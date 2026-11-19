@@ -75,7 +75,7 @@ def skillcorner_stoppage_spans(
     kicks: Mapping[tuple[str, str], tuple[int, str]] | None = None,
     period_last_frame: Mapping[int, int] | None = None,
 ) -> StoppageSpans:
-    """Spans from the game-interruption markers of a SkillCorner ``dynamic_events`` table (R44).
+    """Spans from the game-interruption markers of a SkillCorner ``dynamic_events`` table.
 
     For each possession ``a`` and the next possession ``b`` (frame order) with a marker on either side: before the
     first kick of the pair the frames from ``a.frame_end`` are ``dead`` when both markers are set and ``unknown``
@@ -187,7 +187,7 @@ def event_stoppage_spans(actions: pd.DataFrame) -> StoppageSpans:
     same_next = np.r_[per[:-1] == per[1:], False]
     t_prev, t_next = np.r_[np.nan, t[:-1]], np.r_[t[1:], np.nan]
     restart = np.isin(type_id, [spadlconfig.actiontype_id[n] for n in _RESTART_TYPES]) & same_prev
-    goal = (goal_mask(a).to_numpy() | owngoal_mask(a).to_numpy()) & same_next  # the library goal rule (R52)
+    goal = (goal_mask(a).to_numpy() | owngoal_mask(a).to_numpy()) & same_next  # the library goal rule
     spans = (
         pd.concat(
             [

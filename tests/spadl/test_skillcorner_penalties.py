@@ -1,4 +1,4 @@
-"""SkillCorner derived penalty rows (R58; action-time repair spec §4.17, §4.18 key)."""
+"""SkillCorner derived penalty rows (action-time repair spec §4.17, §4.18 key)."""
 
 from __future__ import annotations
 

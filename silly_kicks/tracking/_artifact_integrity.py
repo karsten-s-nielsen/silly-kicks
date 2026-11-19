@@ -212,7 +212,7 @@ def provider_skill(
     are the row-aligned licensing identities; ``groups`` the bare match ids. Per provider: ``n_matches`` (distinct
     ``(provider, group)``), ``n_oof_rows``, ``n_positive``, ``row_share``, the point ``brier_skill`` and
     ``log_loss_skill`` (``SKILL_LOG_CLIP``; NaN on a NaN reference or a zero reference loss) and the within-fold
-    ``pr_auc_lift`` over the provider's rows (NaN allowed), and a REPORT-ONLY ``bootstrap`` block (R10, 2026-11-17:
+    ``pr_auc_lift`` over the provider's rows (NaN allowed), and a REPORT-ONLY ``bootstrap`` block (2026-11-17:
     :func:`_provider_bound`). The gates stay on the point skills: over a few matches the cluster bound is too wide to
     gate on (spec 5.7), so it is reported with ``n_matches`` beside it, never gated.
     """
@@ -246,7 +246,7 @@ def provider_skill(
 
 
 def _provider_bound(d_brier: np.ndarray, d_log_loss: np.ndarray, groups: np.ndarray) -> dict[str, Any]:
-    """The report-only match-cluster bound of one provider (R10): the pooled constants and draw call, a fresh
+    """The report-only match-cluster bound of one provider: the pooled constants and draw call, a fresh
     generator per provider, the provider's matches as clusters, per-match sums of the per-row gains."""
     labels, inv = np.unique(groups, return_inverse=True)
     n = len(labels)

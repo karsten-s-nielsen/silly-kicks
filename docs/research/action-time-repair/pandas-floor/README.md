@@ -1,4 +1,4 @@
-# The declared pandas floor (R75, R79, R80)
+# The declared pandas floor
 
 The library declares `pandas>=2.1.1` and `numpy>=1.26.0`. The first full run of the `pandas-floor` CI job (pandas
 2.1.1, numpy 1.26.4, pyarrow 25.0.1; run 44524339397 on `2901fa5c`) failed 57 tests in 16 files; 13,270 passed.
@@ -17,19 +17,22 @@ C covers E: with `ids_match` patched in memory to copy a read-only object input,
 0 failed at the floor. `readonly_compare_probe.py` measured the gate (`PANDAS_COMPARES_READ_ONLY_OBJECT` = pandas
 >= 2.2.1).
 
-## The searches (R79 bar A31, point 1)
+## The searches
 
-At `2901fa5c` (tree `527bf49c`), one search per form, in `silly_kicks/` and `scripts/`:
+At `2901fa5c` (tree `527bf49c`), one search per form, in `silly_kicks/` and `scripts/`, run from the repository
+root:
 
-- `search-c.md`: the read-only array origins (18; two are object arrays, both in `PitchControlSurface`) and their
-  consumers.
-- `search-d.md`: 85 compare sites on a dtype-less `.to_numpy()` / `.values` feeding `&` / `|` / `~`
-  (`scripts/search_d.py`): 34 with a literal subject, 51 with a non-literal subject.
-- `search-b.md`: 336 `.to_numpy(dtype=float)` reads with no `na_value`, classified by `scripts/classify_b.py`: 160 safe
-  by column, 54 on `x` / `y` / `ball_*` / `frame_rate` (masked only in the Sportec bronze dtype maps,
-  `providers/sportec/parse.py`; the canonical tracking schema declares `float32`), 122 with a variable subject.
+- Read-only array origins: 18, two of them object arrays, both in `PitchControlSurface`.
+  `rg -n "writeable = False|setflags\(write=False|broadcast_to\(|frombuffer\(" silly_kicks scripts`
+- Compare sites on a dtype-less `.to_numpy()` / `.values` feeding `&` / `|` / `~`: 85, of which 34 have a literal
+  subject and 51 a non-literal subject. `python docs/research/action-time-repair/pandas-floor/scripts/search_d.py .`
+- `.to_numpy(dtype=float)` reads with no `na_value`: 336. 160 are safe by column, 54 read `x` / `y` / `ball_*` /
+  `frame_rate` (masked only in the Sportec bronze dtype maps, `providers/sportec/parse.py`; the canonical tracking
+  schema declares `float32`), and 122 have a variable subject.
+  `rg -nP '\.to_numpy\((?![^)]*na_value)[^)]*dtype\s*=\s*(float|"float64"|np\.float64)\b' silly_kicks scripts`,
+  then `python docs/research/action-time-repair/pandas-floor/scripts/classify_b.py . <the rg output>`.
 
-## The 34 literal-subject compare sites, read (R80)
+## The 34 literal-subject compare sites, read
 
 Line numbers are at `2901fa5c`. Contract sources: `SPADL_COLUMNS` / `ATOMIC_SPADL_COLUMNS` declare `game_id`,
 `period_id`, `team_id`, `player_id`, `type_id`, `result_id` as `int64` and `time_seconds` as `float64`;
@@ -86,22 +89,23 @@ lookback window, `team_id[win] != shooter_team` on `pd.NA` objects feeds `&` and
 `test_atomic_add_pre_shot_gk_context_with_a_null_actor_row_in_the_window_at_pandas_floor_2_1_1` fail with
 `TypeError: boolean value of NA is ambiguous`. Both pass on pandas 2.3.3 with numpy 1.26.4 and with numpy 2.2.6.
 
-**Repair (applied, R80):** `team_id = masked_to_numpy(...)` and `player_id = masked_to_numpy(...)` at
+**Repair (applied):** `team_id = masked_to_numpy(...)` and `player_id = masked_to_numpy(...)` at
 the reads in both functions (`spadl/utils.py:663-664`, `atomic/spadl/utils.py:932-933` at `2901fa5c`), the same helper as
 the proven sites. `player_id_is_object` is read from the column dtype (`:650` / `:919`), not from the array,
 so its value is unchanged. On pandas 2.2 and later the arrays are identical, so no output changes.
 
-The four sites in `add_pre_shot_gk_context` are repaired with `masked_to_numpy` (R80), with the red tests
+The four sites in `add_pre_shot_gk_context` are repaired with `masked_to_numpy`, with the red tests
 `test_add_pre_shot_gk_context_with_a_null_actor_row_in_the_window_at_pandas_floor_2_1_1` and its atomic twin.
 
-## The named limit (R80)
+## The named limit
 
 The floor holds for every path the tests run and for the 34 compare sites that were read. By the owner's ruling,
 two searched lists were **not read**: the 51 compare sites with a non-literal subject (provider columns inside the
-converters, `search-d.md`) and the 122 float reads with a variable subject (`search-b.md`, `UNKNOWN`). A floor
+converters, the second search above) and the 122 float reads with a variable subject (the third search, class
+`UNKNOWN`). A floor
 failure on one of those paths is possible and is not excluded by this work.
 
-## The two raw id compares (R80, checked, no change)
+## The two raw id compares (checked, no change)
 
 `tracking/pitch_control/_surface.py` `player_share` (`self.player_team_ids == team_id`) and `tracking/_gk_influence.py`
 (`surface.player_team_ids == defending_team_id`) are raw numpy compares, not the pandas path, so they do not fail

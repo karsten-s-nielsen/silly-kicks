@@ -624,7 +624,7 @@ def _feature_contract_block(feature_set: XCrossFeatureSet = "faithful") -> dict:
             "penalty_area_half_width": _BOX_HALF_WIDTH_M,
             "penalty_area_depth": _BOX_DEPTH_M,
             "goal_width": _GOAL_HALF_WIDTH_M * 2.0,
-            "match_context_revision": REVISION_CONTRACT_KEYS["match_context_revision"],  # the score input (R55)
+            "match_context_revision": REVISION_CONTRACT_KEYS["match_context_revision"],  # the score input
         },
     )
 

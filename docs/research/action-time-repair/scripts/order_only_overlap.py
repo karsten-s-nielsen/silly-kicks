@@ -1,8 +1,9 @@
 """Read-only: for each "after"-only restart row B (order-only time), does the window of an earlier opener reach past B's time
 if B is skipped by the phase reader (option i)? Openers: derived corner / free-kick / goal-kick rows with a first possession
 (paired or "before"-only). Times on the frame clock (frame_start / 10), same period only. 10 s window, ended by the next opener.
-Output: stdout.
+Input (read only): the raw provider cache (--cache-dir, SkillCorner). Output: stdout.
 """
+import argparse
 import glob
 import os
 from multiprocessing import Pool
@@ -10,7 +11,7 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 
-CACHE = os.path.expanduser("~/refit144/corners/cache/skillcorner")
+CACHE = ""  # set from the arguments (the workers fork after that)
 SP = ("corner", "free_kick", "goal_kick")
 ALL = SP + ("throw_in",)
 W = 10.0
@@ -73,8 +74,13 @@ def one(m):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="The order-only SkillCorner rows and the phase windows.")
+    ap.add_argument("--cache-dir", required=True, help="raw provider cache root (<provider>/<match>/)")
+    ap.add_argument("--workers", type=int, default=16)
+    args = ap.parse_args()
+    CACHE = os.path.join(args.cache_dir, "skillcorner")
     ms = sorted(os.listdir(CACHE))
-    with Pool(16) as pl:
+    with Pool(args.workers) as pl:
         rs = [r for r in pl.map(one, ms) if r]
     gaps = np.concatenate([np.asarray(r.pop("gaps", []), dtype=float) for r in rs])
     print("gap from the previous opener to the order-only time: n", len(gaps), "min", gaps.min(), "q01", np.quantile(gaps, 0.01), "median", np.median(gaps), "share < 10 s", (gaps < 10).mean())

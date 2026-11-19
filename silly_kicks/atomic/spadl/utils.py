@@ -461,7 +461,7 @@ def _compute_possessions(
     n = len(sorted_actions)
     game_id = sorted_actions["game_id"].to_numpy()
     period_id = sorted_actions["period_id"].to_numpy()
-    team_id = masked_to_numpy(sorted_actions["team_id"])  # pandas 2.2 semantics at the 2.1.1 floor (R79)
+    team_id = masked_to_numpy(sorted_actions["team_id"])  # pandas 2.2 semantics at the 2.1.1 floor
     time_seconds = sorted_actions["time_seconds"].to_numpy()
     type_id = sorted_actions["type_id"].to_numpy()
 
@@ -930,7 +930,7 @@ def add_pre_shot_gk_context(
         return sorted_actions
 
     type_id = sorted_actions["type_id"].to_numpy()
-    team_id = masked_to_numpy(sorted_actions["team_id"])  # pandas 2.2 semantics at the 2.1.1 floor (R80)
+    team_id = masked_to_numpy(sorted_actions["team_id"])  # pandas 2.2 semantics at the 2.1.1 floor
     player_id = masked_to_numpy(sorted_actions["player_id"])  # player_id_is_object stays read from the dtype
     time_seconds_arr = sorted_actions["time_seconds"].to_numpy(dtype=np.float64)
     game_id = sorted_actions["game_id"].to_numpy()

@@ -1,4 +1,4 @@
-"""SkillCorner derived restart rows (R30, R35; action-time repair spec §4.2, §4.15 carrier, §4.18 key)."""
+"""SkillCorner derived restart rows (action-time repair spec §4.2, §4.15 carrier, §4.18 key)."""
 
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ def test_default_output_has_no_running_score_columns():
 
 
 def test_preserve_native_true_returns_the_schema_columns_and_does_not_raise():
-    # R62: `original_event_id` is a schema column, so True adds no extra column (it raised the
+    # `original_event_id` is a schema column, so True adds no extra column (it raised the
     # `_finalize_output: extra_columns overlap with schema` ValueError before)
     from silly_kicks.spadl.skillcorner import SKILLCORNER_SPADL_COLUMNS
 
@@ -168,7 +168,7 @@ def test_preserve_native_true_returns_the_schema_columns_and_does_not_raise():
 
 
 def test_preserve_native_list_with_inferred_defensive_and_keeper_rows():
-    # Task 15 finding: every staged SkillCorner match has inferred defensive rows; with the R56 list the native rows
+    # Task 15 finding: every staged SkillCorner match has inferred defensive rows; with the score list the native rows
     # carry the running score and the derived rows must carry NaN there (not raise a KeyError on the concat)
     a = convert(
         pp("p0", 10, 14, "H", "h1", end=(50.0, 20.0), team_score=0, opponent_team_score=0),
@@ -185,7 +185,7 @@ def test_preserve_native_list_with_inferred_defensive_and_keeper_rows():
 
 @pytest.mark.parametrize("kind", ["corner", "throw_in"])
 def test_previous_end_missing_gives_an_unknown_side(kind):
-    # RTR-IMPL A03: spec 4.2 defines the unknown side as a NaN start_y; `NaN < 34` is False, so a missing end of `a`
+    # Spec 4.2 defines the unknown side as a NaN start_y; `NaN < 34` is False, so a missing end of `a`
     # put the corner on the y = 68 flag and the throw-in on the y = 68 touchline with no source
     a = convert(
         pp("p0", 10, 14, "A", "a1", end=(np.nan, np.nan), gia=f"{kind}_against"),
@@ -197,7 +197,7 @@ def test_previous_end_missing_gives_an_unknown_side(kind):
 
 
 def test_metadata_without_away_team_takes_the_other_team_from_the_events():
-    # RTR-IMPL A08: the away team fell back to "" when the metadata had no away_team, so a restart "against" the home
+    # The away team fell back to "" when the metadata had no away_team, so a restart "against" the home
     # team got team "". The other team id of the events is the away team.
     from tests.spadl._sc_restart_scenes import META
 

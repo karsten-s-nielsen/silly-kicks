@@ -673,7 +673,7 @@ def test_expectation_edit_refuses_a_verify_report_without_a_digest(tmp_path):
 
 
 def test_expectation_edit_refuses_a_clean_root_verified_on_another_manifest(tmp_path):
-    """Rule 11 on the CLEAN path (review A C1-IMPL-01): verify ran on another manifest, the root is clean."""
+    """Rule 11 on the CLEAN path: verify ran on another manifest, the root is clean."""
     root, staging = _toy_repo(tmp_path)
     rep = json.loads((staging / "verify.json").read_text(encoding="utf-8"))
     other = _manifest_text(root).replace('certification = "owner"', 'certification = "public"', 1)
@@ -685,7 +685,7 @@ def test_expectation_edit_refuses_a_clean_root_verified_on_another_manifest(tmp_
 
 
 def test_expectation_edit_refuses_a_declared_dataset_without_a_record(tmp_path, monkeypatch):
-    """Rule 10's "locked" half (reviews A C1-IMPL-02, B XS187-C1-01): declared is not enough. ``unrecorded`` is
+    """Rule 10's "locked" half: declared is not enough. ``unrecorded`` is
     declared (beside the committed datasets) and has no lock entry."""
     real = A._declared
     monkeypatch.setattr(A, "_declared", lambda: {**real(), "unrecorded": object()})
@@ -700,7 +700,7 @@ def test_expectation_edit_refuses_a_declared_dataset_without_a_record(tmp_path, 
 
 
 def test_expectation_edit_checks_every_present_value_not_only_the_changed_ones(tmp_path):
-    """Rule 10 reads every present value of a campaign entry (reviews A C1-IMPL-02, B XS187-C1-02): a value outside
+    """Rule 10 reads every present value of a campaign entry: a value outside
     its domain at HEAD is refused even when the edit leaves it unchanged."""
     root, staging = _toy_repo(tmp_path)
     _edit_entry(root, "toy_wheel", 'certification = "owner"', 'certification = "legacy"')
@@ -1882,7 +1882,7 @@ def test_verify_reads_the_instance_mode(tmp_path, monkeypatch):
     ("mode", "ok", "form"), [("retrain", True, "one_sided"), ("rematerialize", False, "two_sided")]
 )
 def test_verify_one_certifies_a_retrain_public_cv_parity_one_sided(tmp_path, monkeypatch, mode, ok, form):
-    # R20 wiring end to end: _verify_one -> _certify -> floor.certify. A fresh CV ECE far better than the committed
+    # Retrain parity: _verify_one -> _certify -> floor.certify. A fresh CV ECE far better than the committed
     # one passes only under `retrain`; under `rematerialize` the two-sided band still refuses it.
     from scripts.hf_jobs import campaign as Camp
 
@@ -1909,7 +1909,7 @@ def test_verify_one_certifies_a_retrain_public_cv_parity_one_sided(tmp_path, mon
     assert row["ok"] is ok and row["certification"]["ok"] is ok and cv["form"] == form
 
 
-# ---- the paired verdict that a ship_variant override set aside (bar A17; action-time repair spec 4.8) --------------
+# ---- the paired verdict that a ship_variant override set aside (action-time repair spec 4.8) --------------
 
 
 def _paired_metrics(staging: Path, inst_id: str, *, rule_verdict: str, shipped: str) -> None:

@@ -13,7 +13,7 @@ from silly_kicks.tracking import _artifact_integrity as ai
 from silly_kicks.tracking._artifact_integrity import forecast_skill, provider_skill, skill_gates
 
 _FIELDS = {"n_matches", "n_oof_rows", "n_positive", "row_share", "brier_skill", "log_loss_skill", "pr_auc_lift"}
-_FIELDS |= {"bootstrap"}  # R10: the report-only per-provider bound
+_FIELDS |= {"bootstrap"}  # the report-only per-provider bound
 _GAINS = ("brier_gain_lb", "log_loss_gain_lb", "frac_brier_gain_le_0", "frac_log_loss_gain_le_0")
 
 
@@ -128,7 +128,7 @@ def test_by_provider_keys_are_the_given_identities():
 
 
 def _inline_bound(y, p, r, groups):
-    """The R10 bound by hand: a fresh generator, the provider's matches as clusters, per-row draw weights."""
+    """The report-only bound by hand: a fresh generator, the provider's matches as clusters, per-row draw weights."""
     c = ai.SKILL_LOG_CLIP
 
     def ll(f):

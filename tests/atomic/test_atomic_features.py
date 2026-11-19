@@ -51,3 +51,17 @@ def test_same_index(atomic_spadl_actions: pd.DataFrame) -> None:
     for fn in xfns:
         features = fn(gamestates)
         tm.assert_index_equal(features.index, atomic_spadl_actions.index)
+
+
+def test_goalscore_counts_no_goal_of_the_shootout() -> None:
+    # Period 5 is the penalty shoot-out: each of its rows holds the score at the end of period 4.
+    actions = pd.DataFrame(
+        {
+            "team_id": [1, 2, 1],
+            "type_name": ["goal", "goal", "pass"],
+            "period_id": [1, 5, 5],
+        }
+    )
+    out = fs.goalscore([actions])
+    assert out["goalscore_team"].tolist() == [0, 0, 1]
+    assert out["goalscore_opponent"].tolist() == [0, 1, 0]

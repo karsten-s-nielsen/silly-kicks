@@ -1,4 +1,4 @@
-"""The library holds at its declared pandas floor, pandas 2.1.1 (R75, R79).
+"""The library holds at its declared pandas floor, pandas 2.1.1.
 
 The pandas-floor CI job (pandas 2.1.1, numpy<2) found two library failures that no job had run
 before. Each test here is red on pandas 2.1.1 at the code of ``2901fa5c`` and green on 2.1.1 and
@@ -220,7 +220,7 @@ def test_atomic_add_possessions_with_a_nullable_team_id_holding_na_at_pandas_flo
     assert nullable["possession_id"].tolist() == floats["possession_id"].tolist() == [0, 1, 2, 3]
 
 
-# --------------------------------------------------------------------------- D, read under R80: pre-shot GK context
+# ---------------------------------------------------------------- D, the read compare sites: pre-shot GK context
 
 _GK_CONTEXT_COLUMNS = ["gk_was_engaged", "gk_was_distributing", "gk_actions_in_possession", "defending_gk_player_id"]
 
@@ -244,7 +244,7 @@ def _assert_gk_context_equal_and_engaged(nullable: pd.DataFrame, floats: pd.Data
 
 
 def test_add_pre_shot_gk_context_with_a_null_actor_row_in_the_window_at_pandas_floor_2_1_1():
-    """Red on pandas 2.1.1: ``team_id[win] != shooter_team`` on ``pd.NA`` objects fed ``&`` (R80 read).
+    """Red on pandas 2.1.1: ``team_id[win] != shooter_team`` on ``pd.NA`` objects fed ``&`` (a read compare site).
 
     Gradient Sports emits ``team_id`` / ``player_id`` as ``Int64`` with NA on the null-actor duel and foul
     events (``GRADIENTSPORTS_SPADL_COLUMNS``). The result equals the float64-NaN encoding, which is what
@@ -259,7 +259,7 @@ def test_add_pre_shot_gk_context_with_a_null_actor_row_in_the_window_at_pandas_f
 
 
 def test_atomic_add_pre_shot_gk_context_with_a_null_actor_row_in_the_window_at_pandas_floor_2_1_1():
-    """Red on pandas 2.1.1 at ``atomic/spadl/utils.py`` (the same compare on ``pd.NA``; R80 read)."""
+    """Red on pandas 2.1.1 at ``atomic/spadl/utils.py`` (the same compare on ``pd.NA``; a read compare site)."""
     from silly_kicks.atomic.spadl import config as atomicconfig
     from silly_kicks.atomic.spadl.utils import add_pre_shot_gk_context
     from tests.atomic._atomic_test_fixtures import _make_atomic_action

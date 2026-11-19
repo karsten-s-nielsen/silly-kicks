@@ -194,7 +194,7 @@ def test_a_code_delta_rebaseline_within_tolerance_passes(tmp_path, monkeypatch):
 
 
 def test_an_environment_difference_outside_the_tolerance_is_not_ok(tmp_path, monkeypatch):
-    # R25 (owner 2026-11-17): only the tolerance decides; a difference with no changed input module still stops.
+    # The owner's rule (2026-11-17): only the tolerance decides; a difference with no changed input module still stops.
     monkeypatch.setattr(A, "_code_delta", lambda *a, **k: [])
 
     def far(doc):
@@ -205,7 +205,7 @@ def test_an_environment_difference_outside_the_tolerance_is_not_ok(tmp_path, mon
 
 
 def test_a_driver_without_a_baseline_entry_stops_without_an_exception(tmp_path, monkeypatch):
-    # R26: a rebaseline driver with no REBASELINE_FROM entry gets ok False on a difference, never a KeyError.
+    # a rebaseline driver with no REBASELINE_FROM entry gets ok False on a difference, never a KeyError.
     monkeypatch.setattr(A, "REBASELINE_FROM", {})
     res = A._rebaseline(SPEC, _fresh(tmp_path), "0" * 40, run=lambda *a, **k: None)
     assert res["ok"] is res["within_tolerance"] is True and res["delta"] is None

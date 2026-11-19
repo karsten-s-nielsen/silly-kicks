@@ -50,7 +50,7 @@ def _pp(rows) -> pd.DataFrame:
 
 
 def test_a_marker_pair_gives_a_dead_gap_and_a_live_receiver():
-    # R44 (action-time repair spec section 4.9): the first possession b is the receiver's, in play -> live.
+    # Action-time repair spec section 4.9: the first possession b is the receiver's, in play -> live.
     sp = skillcorner_stoppage_spans(_pp([(10, 20, None, "throw_in_against"), (40, 50, "throw_in_for", None)]))
     assert sp.key == "frame_id"
     assert sp.spans.to_dict("records") == [{"start": 20, "end": 40, "state": "dead"}]
@@ -115,7 +115,7 @@ def test_the_event_spans_mark_the_frames():
     st = _state(
         fr, _sc_spans([(10, 20, None, "throw_in_against"), (40, 50, "throw_in_for", None), (55, 60, None, None)])
     )
-    # R44 (action-time repair spec section 4.9): the receiver's first possession [40, 50] is live
+    # Action-time repair spec section 4.9: the receiver's first possession [40, 50] is live
     assert st[15] == "live" and st[20] == "dead" and st[39] == "dead" and st[40] == "live" and st[50] == "live"
     assert st[51] == "live"
 
@@ -297,7 +297,7 @@ def test_unstaged_frames_of_an_unclassified_provider_still_fail_closed():
         require_stoppage_state(pd.DataFrame({"ball_state": ["alive"]}), "synthetic")
 
 
-# ---- R44: the kick mapping (action-time repair spec section 4.9) ---------------------------------------------
+# ---- the kick mapping (action-time repair spec section 4.9) --------------------------------------------------
 
 
 def _ppk(rows) -> pd.DataFrame:
@@ -384,7 +384,7 @@ def test_period_end_penalty_kick_is_unknown_to_the_period_end():
 
 
 def test_period_end_penalty_kick_is_unknown_to_its_period_last_frame():
-    # A07 (owner: code to the spec): the span ends at the penalty period's last frame, not at the next period's first
+    # Code to the spec (owner): the span ends at the penalty period's last frame, not at the next period's first
     # possession, so the next period's opening frames keep their own state (spec 4.9)
     ev = _ppk([("a", 10, 20, None, "penalty_for"), ("n", 500, 510, None, None)])
     ev["period"] = [1, 2]

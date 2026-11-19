@@ -125,7 +125,7 @@ def test_corner_kick_found_in_the_gap():
 
 
 def test_kick_found_with_float_actions_game_id_and_int_frames_game_id():
-    # RTR-IMPL A02 (ADR-019): a float-backed game id on the actions (7.0) and an int one on the frames (7) are the
+    # ADR-019: a float-backed game id on the actions (7.0) and an int one on the frames (7) are the
     # same match; a str() join renders "7.0" against "7" and silently loses the kick
     acts, frames = _corner_scene()
     acts["game_id"] = 7.0
@@ -136,7 +136,7 @@ def test_kick_found_with_float_actions_game_id_and_int_frames_game_id():
 
 
 def test_kick_found_with_int_actions_game_id_and_float_frames_game_id():
-    # RTR-IMPL-05 (B r2) / A r2 R3: the reverse mix -- int on the actions (7), float on the frames (7.0). The round-1
+    # The reverse mix -- int on the actions (7), float on the frames (7.0). The earlier
     # str() ball filter rendered the frames as "7.0" against "7" and lost the kick; float actions with int frames
     # alone did not show it
     acts, frames = _corner_scene()
@@ -194,7 +194,7 @@ def test_all_null_visibility_gives_no_kick():
 
 
 def test_object_visibility_with_missing_values_raises_no_future_warning():
-    # Supervisor note: `vis.fillna(False).astype(bool)` on an object column with missing values raises pandas'
+    # `vis.fillna(False).astype(bool)` on an object column with missing values raises pandas'
     # "Downcasting object dtype arrays on .fillna" FutureWarning on every real SkillCorner match
     import warnings
 
@@ -299,7 +299,7 @@ def test_penalty_kick_at_the_mark_last_run():
 
 
 def test_period_end_penalty_gap_runs_to_the_period_last_frame():
-    # RTR-IMPL A04(a): no non-derived row follows the penalty in its period -> gap_end is the period's last frame
+    # No non-derived row follows the penalty in its period -> gap_end is the period's last frame
     # and period_end is True (spec 4.4, 4.17)
     acts = _actions(
         _row(0, 20.0, "pass", "H", oid="a"),
@@ -314,7 +314,7 @@ def test_period_end_penalty_gap_runs_to_the_period_last_frame():
 
 
 def test_paired_penalty_rest_inside_b_is_not_a_kick():
-    # RTR-IMPL A04(b): the bracket ends at b's reception (RTR-SPEC-12); a rest at the mark inside b is no kick
+    # The bracket ends at b's reception; a rest at the mark inside b is no kick
     acts = _actions(
         _row(0, 20.0, "pass", "H", oid="a"),
         _row(1, 40.0 - 0.02, "shot_penalty", "H", src="placeholder", prov="derived", oid="b", start=(94.0, 34.0),

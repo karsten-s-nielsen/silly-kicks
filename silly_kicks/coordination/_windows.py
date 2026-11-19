@@ -21,6 +21,7 @@ from silly_kicks.coordination._columns import COORD_WINDOW_COLUMNS, COORD_WINDOW
 from silly_kicks.coordination._config import CoordinationParams
 from silly_kicks.coordination._report import CoordinationCoverageWarning
 from silly_kicks.id_compat import canonical_id, same_id
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 from silly_kicks.tracking._provider_visibility import dead_ball_observed
 
 RESTART_TYPES = (
@@ -485,7 +486,6 @@ def _event_intervals(actions: pd.DataFrame, max_stoppage_s: float) -> dict[tuple
     from silly_kicks.spadl.schema import is_order_only, is_time_unmeasured
 
     types = spadlconfig.actiontypes
-    results = spadlconfig.results
     out: dict[tuple[object, object], np.ndarray] = {}
     from silly_kicks.spadl.base import sort_actions_chronologically
 
@@ -495,7 +495,7 @@ def _event_intervals(actions: pd.DataFrame, max_stoppage_s: float) -> dict[tuple
         grp = sort_actions_chronologically(grp, tiebreak=("action_id",)).reset_index(drop=True)
         t = grp["time_seconds"].to_numpy(dtype=np.float64)
         name = [types[_i(x)] for x in grp["type_id"]]
-        res = [results[_i(x)] for x in grp["result_id"]]
+        scored = (goal_mask(grp) | owngoal_mask(grp)).to_numpy()  # the library's goal rule
         # No "order_only" row is an interval end, and a goal at a row with an unmeasured time opens no interval
         # (action-time repair spec section 4.13). On a table with neither, prev/next are i - 1 / i + 1 as before.
         oo = is_order_only(grp)
@@ -510,8 +510,7 @@ def _event_intervals(actions: pd.DataFrame, max_stoppage_s: float) -> dict[tuple
                     raw.append((float(t[prev_rows[-1]]), float(t[i])))
                 elif len(next_rows):
                     raw.append((float(t[prev_rows[-1]]), float(t[next_rows[0]])))
-            is_goal = (name[i] in SHOT_TYPES and res[i] == "success") or res[i] == "owngoal"
-            if is_goal and not unmeasured[i] and len(next_rows):
+            if scored[i] and not unmeasured[i] and len(next_rows):
                 raw.append((float(t[i]), float(t[next_rows[0]])))
         kept = _runs_longer_than(raw, max_stoppage_s)
         if len(kept):

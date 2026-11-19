@@ -1,4 +1,4 @@
-"""The ghost score and phase lookups (R50, R51, R52, R56; action-time repair spec §4.11, §4.12, §4.15, §5.2)."""
+"""The ghost score and phase lookups (action-time repair spec §4.11, §4.12, §4.15, §5.2)."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def _rows(rows: list[tuple]) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
-# ---- R51: the period ------------------------------------------------------------------------------------------
+# ---- the period -----------------------------------------------------------------------------------------------
 
 
 def test_phase_window_stays_in_its_period():
@@ -60,7 +60,7 @@ def test_score_extra_time_counts_periods_one_to_three_at_period_four():
     assert fn("100", 4, 10.0) == 2.0
 
 
-# ---- R52: the goal rule -------------------------------------------------------------------------------------
+# ---- the goal rule ------------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -78,7 +78,7 @@ def test_a_shoot_out_row_is_not_a_goal():
     assert fn("100", 5, 100.0) == 1.0  # a period-5 frame takes the score at the end of period 4
 
 
-# ---- R50: an order-only row opens no window and ends none ----------------------------------------------------
+# ---- an order-only row -------- opens no window and ends none ----------------------------------------------------
 
 
 @pytest.mark.parametrize("follower", ["throw_in", "pass", "shot_penalty"])
@@ -104,7 +104,7 @@ def test_table_without_time_source_gives_todays_phase():
     assert fn("100", 1, 55.0) == 1
 
 
-# ---- R56: the SkillCorner running score ------------------------------------------------------------------
+# ---- the SkillCorner running score ------------------------------------------------------------------------
 
 
 def _sc(rows: list[tuple]) -> pd.DataFrame:
@@ -141,7 +141,7 @@ def test_running_score_takes_effect_at_the_next_native_row():
 
 
 def test_running_score_period_5_frame_takes_the_score_at_the_end_of_period_4():
-    # RTR-IMPL-01 (A01/B01): the R52 shoot-out rule applies to both paths (spec 4.12, 4.15); a period-5 native row
+    # The shoot-out rule of the goal rule applies to both paths (spec 4.12, 4.15); a period-5 native row
     # whose running score rises is a shoot-out kick, not a goal of the score
     acts = _sc([
         (4, 10, "363", "native", 1, 1),
@@ -183,7 +183,7 @@ def test_running_score_ignores_derived_rows():
 @pytest.mark.parametrize("second", [(0, 0), (None, 0)], ids=["decrease", "partial-na"])
 def test_an_inconsistent_running_score_falls_back_to_the_goal_rows(second):
     acts = _sc([(1, 10, "363", "native", 1, 0), (1, 20, "363", "native", *second), (1, 30, "400", "native", 0, 0)])
-    acts.loc[0, "type_id"] = _T["shot"]  # one goal row by the R52 rule
+    acts.loc[0, "type_id"] = _T["shot"]  # one goal row by the library's goal rule
     fn = _build_score_lookup(acts, home_team_id="363")
     assert fn("100", 1, 40.0) == 1.0  # the goal row, not the running score
 

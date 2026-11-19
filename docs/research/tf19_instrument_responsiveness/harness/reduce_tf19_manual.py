@@ -8,7 +8,7 @@ byte-identical to the driver's reduce; only the frame re-enumeration is skipped.
 stamped so the artifact is honest about how it was produced.
 
 Usage (run from the repo root so git provenance reads the repo tree):
-  cd ~/Development/sk-part-deux-phaseb && PYTHONPATH=. python <this> <shard_gen_dir> <out_dir> <keeper_names_json>
+  cd <repo> && PYTHONPATH=. python <this> <shard_gen_dir> <out_dir> <keeper_names_json>
 """
 
 from __future__ import annotations

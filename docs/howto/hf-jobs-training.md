@@ -175,7 +175,7 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    commit = campaign commit; recorded dataset revision = the pin; corpus digest + n = the record; shipped
    variant = the entry's `shipped_arm`, else its tier; ADR-132), certifies per the registry (`public`: the head-to-head as in-sample parity AND two-sided CV parity on
    `cv_metric` within 5 % (one-sided in a `retrain` job, except a `cv_tolerance` spec), from the committed `metrics.json` or its manifest `cv_reference`; `owner`: CV
-   parity on `cv_metric`; `rebaseline`: identity comparison, decision P15 as amended by R25: a difference passes
+   parity on `cv_metric`; `rebaseline`: identity comparison, decision P15 as amended by the owner (2026-11-17): a difference passes
    only inside the driver's `tolerance`, every other one stops for an owner ruling; the code/environment
    classification over the input modules is reported for that ruling) and runs the ADR-126 integrity gate for xShot/xCross. A build with `in_sample_gate=False`
    (the xCross default: no parameter match) certifies on CV parity and records the head-to-head. A driver with a

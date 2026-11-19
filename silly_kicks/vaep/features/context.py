@@ -8,6 +8,7 @@ Three transformers: ``team`` (same-team-as-actor mask per gamestate slot),
 import pandas as pd  # type: ignore
 
 import silly_kicks.spadl.config as spadlcfg
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
 from .core import Actions, Features, GameStates, simple
 
@@ -108,8 +109,11 @@ def goalscore(gamestates: GameStates) -> Features:
     """
     actions = gamestates[0]
     teamA = actions["team_id"].values[0]
-    goals = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadlcfg.result_id["success"])
-    owngoals = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadlcfg.result_id["owngoal"])
+    # The library's goal rule; a shoot-out (period 5) row scores for neither team, so each period-5 row holds the
+    # score at the end of period 4.
+    in_match = actions["period_id"] != 5
+    goals = goal_mask(actions) & in_match
+    owngoals = owngoal_mask(actions) & in_match
     teamisA = actions["team_id"] == teamA
     teamisB = ~teamisA
     goalsteamA = (goals & teamisA) | (owngoals & teamisB)

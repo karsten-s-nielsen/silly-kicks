@@ -62,7 +62,7 @@ def test_no_kick_rows_map_nothing(src):
 
 
 def test_a_period_end_penalty_kick_has_the_period_end_side():
-    # RTR-IMPL A04(a): a penalty row with no non-derived row after it in its period (spec 4.17) has the gap
+    # A penalty row with no non-derived row after it in its period (spec 4.17) has the gap
     # [a.frame_end, the period's last frame] and the side "period_end" (spec 4.9 step 3)
     def table(t, src):
         return pd.DataFrame(

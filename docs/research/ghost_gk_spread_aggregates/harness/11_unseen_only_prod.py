@@ -3,10 +3,10 @@ whose full leaf vector collides with a training row). Same predictors, same
 source-stratified paired block bootstrap as the 36k scorer.
 """
 from __future__ import annotations
-import pathlib, sys, warnings
+import os, pathlib, sys, warnings
 import numpy as np
 
-REPO = pathlib.Path("/home/karsten/Development/silly-kicks")
+REPO = pathlib.Path(os.environ["SK_REPO"])
 sys.path.insert(0, str(REPO))
 D = pathlib.Path(__file__).resolve().parent
 OUT = D / "out"

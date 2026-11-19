@@ -139,7 +139,7 @@ def test_pure_does_not_mutate():
 
 
 def test_direct_corner_with_no_window_gets_no_encoding():
-    # Supervisor C (bar A3, spec 5.2): an unmeasured corner has t_init/t_target NaN and corner_side <NA>; argmin of
+    # An unmeasured corner has t_init/t_target NaN and corner_side <NA>; argmin of
     # an all-NaN distance is 0, so it was encoded from the period's first frame
     corners = _corners()
     corners.loc[0, ["t_init", "t_target"]] = np.nan

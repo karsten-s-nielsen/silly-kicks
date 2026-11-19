@@ -1,7 +1,7 @@
 from __future__ import annotations
-import pathlib, sys, time, warnings
+import os, pathlib, sys, time, warnings
 import numpy as np, pandas as pd
-REPO = pathlib.Path(r"D:/Development/karstenskyt__silly-kicks_part-deux"); sys.path.insert(0,str(REPO))
+REPO = pathlib.Path(os.environ["SK_REPO"]); sys.path.insert(0,str(REPO))
 D = pathlib.Path(__file__).resolve().parent; warnings.filterwarnings("ignore")
 from silly_kicks.tracking._ghost_gk import GhostGkModel, GHOST_GK_FEATURE_NAMES
 m = GhostGkModel.load(REPO/"silly_kicks/tracking/_ghost_gk_weights/default")

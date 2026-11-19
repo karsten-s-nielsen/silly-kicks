@@ -112,7 +112,7 @@ def test_committed_campaigns_keep_todays_arms(name):
     c = C.load_campaign(_CAMPAIGNS / name)
     gated = [i for i in C.instances(c, SHA) if "--arms-json" in i.args]
     assert gated
-    if name == "tf46_refit.toml":  # ADR-132 / the xshot187 refit plan (owner R2): every gated job reads xshot187
+    if name == "tf46_refit.toml":  # ADR-132 / the xshot187 refit plan: every gated job reads xshot187
         assert {j.dataset for j in c.jobs if j.arms is not None} == {"xshot187"}
     for inst in gated:
         job = next(j for j in c.jobs if j.job == inst.job and j.tier == inst.tier)
@@ -137,7 +137,7 @@ def test_committed_campaigns_keep_todays_arms(name):
             }
 
 
-# ---- ship_variant: a campaign forces the shipped arm of a paired gated job (R38, R49; spec 4.8) ----
+# ---- ship_variant: a campaign forces the shipped arm of a paired gated job (spec 4.8) ----
 
 _PAIRED = (
     'job = "xshot_occurrence"\ntier = "public"\ndataset = "tc3"\nvariants = ["default"]\n'

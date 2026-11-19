@@ -1,11 +1,12 @@
-"""Read-only (D12 option A3): the lag of the running-score rule on rows only.
+"""Read-only (spec section 4.15): the lag of the running-score rule on rows only.
 
 Rule: the new score takes effect at the row time (frame_end) of the possession AFTER the first possession whose
 running score (team_score + opponent_team_score, side-free) is higher. Per goal with a goal marker on the scoring
 possession s ("goal_" in game_interruption_after): K = s + 1 (the kick-off possession). Reported: the effect time E
-minus frame_end(s) (the goal proxy; < 0 would break the bar), and the live lag E - frame_start(K). Same period only.
-Output: stdout.
+minus frame_end(s) (the goal proxy; < 0 would show a score before its goal), and the live lag E - frame_start(K). Same period only.
+Input (read only): the raw provider cache (--cache-dir, SkillCorner). Output: stdout.
 """
+import argparse
 import glob
 import os
 from multiprocessing import Pool
@@ -13,7 +14,7 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 
-CACHE = os.path.expanduser("~/refit144/corners/cache/skillcorner")
+CACHE = ""  # set from the arguments (the workers fork after that)
 
 
 def one(m):
@@ -47,7 +48,12 @@ def one(m):
 
 
 if __name__ == "__main__":
-    with Pool(16) as p:
+    ap = argparse.ArgumentParser(description="The lag of the SkillCorner running-score rule.")
+    ap.add_argument("--cache-dir", required=True, help="raw provider cache root (<provider>/<match>/)")
+    ap.add_argument("--workers", type=int, default=16)
+    args = ap.parse_args()
+    CACHE = os.path.join(args.cache_dir, "skillcorner")
+    with Pool(args.workers) as p:
         d = pd.DataFrame([r for rs in p.map(one, sorted(os.listdir(CACHE))) for r in rs])
     print("decreasing matches:", int(d.get("decreasing", pd.Series(dtype=bool)).fillna(False).sum()))
     g = d[d.get("found") == True]  # noqa: E712

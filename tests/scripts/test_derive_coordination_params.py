@@ -92,7 +92,7 @@ def test_weighted_quantile_weights_shift_the_result():
 
 # The reference values below are numpy 2.2.6's ``np.quantile(v, q, weights=w, method="inverted_cdf")``.
 # They hold on BOTH numpy majors: the declared floor is numpy 1.26, which has no ``weights=`` keyword
-# (the pandas-floor CI job found the script raising "unexpected keyword argument 'weights'", R79).
+# (the pandas-floor CI job found the script raising "unexpected keyword argument 'weights'").
 _NUMPY2_WEIGHTED_REFERENCE = [
     ([3.0, 1.0, 2.0, 4.0], [1, 1, 1, 1], 0.5, 2.0),
     ([3.0, 1.0, 2.0, 4.0], [1, 2, 3, 4], 0.25, 2.0),

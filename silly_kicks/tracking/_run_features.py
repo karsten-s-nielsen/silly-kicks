@@ -123,7 +123,7 @@ def _default_families() -> tuple[str, ...]:
 
 
 def _drop_pointers(links: pd.DataFrame, action_ids: pd.Series) -> pd.DataFrame:
-    """A copy of ``links`` whose rows for ``action_ids`` point to no frame (R45, R50).
+    """A copy of ``links`` whose rows for ``action_ids`` point to no frame.
 
     ``frame_id`` becomes ``<NA>`` (nullable ``Int64``, the link contract's unlinked value), ``time_offset_seconds``
     and ``link_quality_score`` NaN, and ``n_candidate_frames`` 0: no candidate frame was offered.
@@ -342,7 +342,7 @@ def run_tracking_features(
         links, _link_report = link_actions_to_frames(work_actions, work_frames)
     if pitch_control_cache is None:
         pitch_control_cache = PitchControlCache()
-    # 2b. R45/R50 (action-time repair spec section 5.3): a "placeholder" or "order_only" row has no measured time,
+    # 2b. Action-time repair spec section 5.3: a "placeholder" or "order_only" row has no measured time,
     #     so it takes no frame. Its pointer is dropped here; the blank step after the families covers the families
     #     that slice frames by the action time instead of the pointer.
     unmeasured = is_time_unmeasured(work_actions)

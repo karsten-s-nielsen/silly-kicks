@@ -59,7 +59,7 @@ def test_fit_models_stamps_training_commit(tmp_path):
 
 
 def test_snapshot_rows_give_no_row_for_a_corner_with_no_window(monkeypatch):
-    # Supervisor C (bar A3): an unmeasured corner has no window; argmin of an all-NaN distance took the period's first
+    # An unmeasured corner has no window; argmin of an all-NaN distance took the period's first
     # frame for both snapshots, so the corner gave rows with start == target into the corner-model build
     from types import SimpleNamespace
 

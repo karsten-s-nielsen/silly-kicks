@@ -1,4 +1,4 @@
-"""The readers of a shot row's time skip a row with ``is_time_unmeasured`` (R58; action-time repair spec section 5.4).
+"""The readers of a shot row's time skip a row with ``is_time_unmeasured`` (action-time repair spec section 5.4).
 
 A derived SkillCorner penalty row with ``"placeholder"`` or ``"order_only"`` time has no measured kick: its time is not
 the shot's moment, so no reader takes the frames at it, labels a frame from it, or opens a window at it.

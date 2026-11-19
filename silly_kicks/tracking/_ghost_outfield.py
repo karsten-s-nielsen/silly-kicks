@@ -568,7 +568,7 @@ def _outfield_feature_contract_block(feature_set: GhostOutfieldFeatureSet = "fai
         "version": "outfield-feature-contract-1",
         "probe_sha256": probe_sha,
         "fingerprint": [round(float(v), 10) for v in vec],
-        "constants": {"match_context_revision": REVISION_CONTRACT_KEYS["match_context_revision"]},  # inputs (R55)
+        "constants": {"match_context_revision": REVISION_CONTRACT_KEYS["match_context_revision"]},  # inputs
     }
 
 

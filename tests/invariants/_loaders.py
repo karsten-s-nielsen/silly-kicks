@@ -201,7 +201,7 @@ def load_opta_2team_synthetic() -> LoaderResult:
 def load_sportec_native() -> LoaderResult:
     from silly_kicks.spadl import sportec
 
-    # R66: the bronze fixture through shape_events_to_native, the converter's documented input
+    # the bronze fixture through shape_events_to_native, the converter's documented input
     events = idsse_fixture_native("sample_match")
     # IDSSE bronze fixture uses literal "home"/"away" team labels in the team
     # column (not team_ids). Pass "home" so the converter mirrors only away-team
@@ -282,7 +282,7 @@ def load_sportec_native_per_period() -> LoaderResult:
     """
     from silly_kicks.spadl import sportec
 
-    # R66: the bronze fixture through shape_events_to_native, the converter's documented input
+    # the bronze fixture through shape_events_to_native, the converter's documented input
     events = idsse_fixture_native("per_period_match")
     home_team_id = "home"
     gk_ids = idsse_goalkeeper_ids(events)

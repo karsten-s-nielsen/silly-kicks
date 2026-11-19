@@ -1,8 +1,8 @@
-"""Read-only measure for the action-time spec (bars A1, A12, R34), 2026-11-18.
+"""Read-only measure for the action-time spec (the corner kick time, sections 4.4 to 4.6), 2026-11-18.
 
-Corner kick time from library engines, checked against the ball-at-rest rule. Stage ~/cross-def/xshot187-f5fc2e2b/out
-(read only); SkillCorner raw events + tracking from ~/refit144/corners/cache/skillcorner (read only).
-Output: ~/refit144/corner_kick_check/<match>.parquet (one row per corner).
+Corner kick time from library engines, checked against the ball-at-rest rule. Inputs (read only): a stage root
+(--stage) and the raw provider cache (--cache-dir, SkillCorner events and tracking).
+Output: <--out>/<match>.parquet (one row per corner).
 
 Bracket: SkillCorner = [frame_end of the possession before the restart, frame_start of the first possession]
 (the GI frame ids are the tracking frame ids); GS / idsse = [t - 2 s, t + 4 s] around the corner row time t.
@@ -10,15 +10,15 @@ Engines (each: the LAST candidate in the bracket whose ball position is within 3
 - tf79: detect_ball_contacts (default params), any contact_source (resolved or unresolved).
 - tf79r: the same, resolved contacts only (gives the attributed player).
 - elastic: ELASTIC _detect_candidate_frames (default ElasticSyncParams), candidates with a feasible player.
-Check (the ball at rest at the corner, then it leaves; the rule of directive A1, ported as a rule):
+Check (the ball at rest at the corner, then it leaves; the ball-at-rest rule of spec section 4.4):
 - rest: the last run of >= 0.5 s of ball frames that stay within 0.5 m of the run's first point, with the run's first
   point within 2 m of a flag; release seen: within 1 s after the run a ball frame is more than 2 m from the rest point.
   t_rest = time of the last frame of the run. SkillCorner: only raw-detected ball frames count (is_detected).
 """
 
+import argparse
 import glob
 import os
-import sys
 from multiprocessing import Pool
 
 import numpy as np
@@ -27,9 +27,7 @@ import pandas as pd
 from silly_kicks.tracking._ball_contact import detect_ball_contacts
 from silly_kicks.tracking._elastic_sync import ElasticSyncParams, _detect_candidate_frames
 
-ROOT = os.path.expanduser("~/cross-def/xshot187-f5fc2e2b/out")
-CACHE = os.path.expanduser("~/refit144/corners/cache/skillcorner")
-OUT = os.path.expanduser("~/refit144/corner_kick_check")
+ROOT = CACHE = OUT = ""  # set from the arguments (the workers fork after that)
 FLAGS = np.array([[0.0, 0.0], [0.0, 68.0], [105.0, 0.0], [105.0, 68.0]])
 CORNER_IDS = (5, 6)
 
@@ -181,11 +179,18 @@ def one_match(pa):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="Corner kick time from the library engines against the rest rule.")
+    ap.add_argument("--stage", required=True, help="stage root (holds _actions/ and shards/)")
+    ap.add_argument("--cache-dir", required=True, help="raw provider cache root (<provider>/<match>/)")
+    ap.add_argument("--out", required=True, help="output folder")
+    ap.add_argument("--workers", type=int, required=True)
+    args = ap.parse_args()
+    ROOT, CACHE, OUT = args.stage, os.path.join(args.cache_dir, "skillcorner"), args.out
     os.makedirs(OUT, exist_ok=True)
     files = (sorted(glob.glob(f"{ROOT}/_actions/skillcorner__*.parquet")) + sorted(glob.glob(f"{ROOT}/_actions/gradientsports__*.parquet"))
              + sorted(glob.glob(f"{ROOT}/_actions/idsse__*.parquet")))
     todo = [f for f in files if not os.path.exists(f"{OUT}/{os.path.basename(f)}")]
-    with Pool(int(sys.argv[1])) as pool:
+    with Pool(args.workers) as pool:
         for r in pool.imap_unordered(one_match, todo):
             print(*r, flush=True)
     print("DONE", flush=True)

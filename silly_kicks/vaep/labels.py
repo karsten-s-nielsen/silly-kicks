@@ -13,7 +13,7 @@ from silly_kicks.id_compat import ids_differ, ids_equal, ids_match, same_id
 from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 from silly_kicks.spadl.schema import is_order_only
 
-# The goal and own-goal predicates are the library's one goal rule (R52): silly_kicks.spadl._goals.
+# The goal and own-goal predicates are the library's one goal rule: silly_kicks.spadl._goals.
 _is_goal = goal_mask
 _is_owngoal = owngoal_mask
 

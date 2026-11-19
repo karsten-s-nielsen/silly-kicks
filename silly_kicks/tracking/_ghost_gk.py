@@ -537,13 +537,13 @@ def _match_order_key(period: np.ndarray, time_s: np.ndarray) -> np.ndarray:
 
 
 def _running_score_events(g: pd.DataFrame, home_team_id: int | str) -> tuple[np.ndarray, np.ndarray] | None:
-    """Score-change events of one SkillCorner match from the provider's running score (R56, spec section 4.15).
+    """Score-change events of one SkillCorner match from the provider's running score (spec section 4.15).
 
     Reads the native rows only (their team is the event team) and takes each value to the home or the away side
     by ``ids_match``. Returns ``None`` when a side's score decreases or a value is missing: the match then uses the
     goal rows. A new score takes effect at the row time of the native row AFTER the first native row whose score
     is higher; a change on the last native row of the match takes no effect. A period-5 (shoot-out) row is not
-    read, as on the goal-row path (R52), so a period-5 frame takes the score at the end of period 4.
+    read, as on the goal-row path, so a period-5 frame takes the score at the end of period 4.
     """
     nat = g[(g["action_provenance"] == "native").to_numpy() & (g["period_id"].to_numpy() != 5)]
     nat = nat.sort_values(["period_id", "time_seconds", "action_id"], kind="mergesort")
@@ -574,7 +574,7 @@ def _running_score_events(g: pd.DataFrame, home_team_id: int | str) -> tuple[np.
 
 
 def _goal_row_events(g: pd.DataFrame, home_team_id: int | str, all_teams: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Score-change events of one match from the goal rows of the library rule (R52).
+    """Score-change events of one match from the goal rows of the library rule.
 
     A period-5 (shoot-out) row is no goal. An own goal counts for the other team.
     """
@@ -609,7 +609,7 @@ def _build_score_lookup(
     """Build the ``(game_id, period_id, time_seconds) -> score_diff`` callback (home perspective).
 
     Returns home score minus away score at that moment of the match. A goal of an earlier period counts, a goal
-    of the same period counts from its time, and a goal of a later period does not (R51, action-time repair spec
+    of the same period counts from its time, and a goal of a later period does not (action-time repair spec
     section 4.11). The **caller** must negate for away-team GKs.
 
     Two sources, never added (spec sections 4.12, 4.15):
@@ -654,10 +654,10 @@ def _build_phase_lookup(
     """Build the ``(game_id, period_id, time_seconds) -> phase`` callback.
 
     Returns 0 (open_play), 1 (set_piece), or 2 (goal_kick).
-    A set-piece phase decays to open play after _SET_PIECE_DECAY_SECONDS, inside its own period only (R51).
+    A set-piece phase decays to open play after _SET_PIECE_DECAY_SECONDS, inside its own period only.
     throw_in is excluded --- does not alter GK positioning expectations.
     An ``"order_only"`` row (a restart with no first possession: its time keeps the row order only) opens no
-    window and ends none (R50, action-time repair spec section 5.2).
+    window and ends none (action-time repair spec section 5.2).
 
     Examples
     --------
@@ -1867,7 +1867,7 @@ def _feature_contract_block(feature_set: GhostFeatureSet = "faithful") -> dict:
             # against a 20.16 extractor and every key-name gate stayed green.
             "penalty_area_half_width": float(spadlconfig.penalty_area_half_width),
             "penalty_area_depth": float(spadlconfig.penalty_area_depth),
-            "match_context_revision": REVISION_CONTRACT_KEYS["match_context_revision"],  # score and phase inputs (R55)
+            "match_context_revision": REVISION_CONTRACT_KEYS["match_context_revision"],  # score and phase inputs
         },
     )
 

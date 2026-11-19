@@ -1,17 +1,17 @@
-"""Read-only measure for supervisor item 3a/3b (R32, 2026-11-18).
+"""Read-only measure: ELASTIC alignment of the event times, 2026-11-18.
 
-Stage ~/cross-def/xshot187-f5fc2e2b/out (read only); idsse raw events from ~/refit144/corners/cache/idsse (read only).
-Matches: all 7 idsse, first 6 gradientsports (sorted; the supervisor's pick). Output ~/refit144/elastic_check/.
-Per on-ball action (families of ~/dl-review-xdef/action_time_check.py), offsets are (time - action time t):
+Inputs (read only): a stage root (--stage) and the raw provider cache (--cache-dir, idsse events).
+Matches: all idsse, the first 6 gradientsports (sorted). Output: <--out>/<match>.parquet.
+Per on-ball action (the families of FAM below), offsets are (time - action time t):
 - el_off: ELASTIC align_events_to_frames (default params) elastic_frame_id -> its frame time; el_conf, el_err.
 - tf79_off: TF-79 detect_ball_contacts (default params), the actor's resolved contact nearest to t in [t-4, t+4].
-- yard_off: the supervisor's release yardstick (copied unchanged).
+- yard_off: the release yardstick of release_check.py (the same rule).
 - cf_off (idsse only): the frame time of the DFL CalculatedFrame of the action's event.
 """
 
+import argparse
 import glob
 import os
-import sys
 import time
 from multiprocessing import Pool
 
@@ -21,9 +21,7 @@ import pandas as pd
 from silly_kicks.tracking._ball_contact import detect_ball_contacts
 from silly_kicks.tracking._elastic_sync import align_events_to_frames
 
-ROOT = os.path.expanduser("~/cross-def/xshot187-f5fc2e2b/out")
-CACHE = os.path.expanduser("~/refit144/corners/cache/idsse")
-OUT = os.path.expanduser("~/refit144/elastic_check")
+ROOT = CACHE = OUT = ""  # set from the arguments (the workers fork after that)
 FAM = {0: "pass", 1: "cross", 2: "throw_in", 3: "freekick", 4: "freekick", 5: "corner", 6: "corner", 11: "shot",
        12: "shot", 13: "shot", 18: "clearance", 22: "goalkick"}
 
@@ -42,7 +40,7 @@ def nearest(times, t, span=4.0):
 
 
 def yardstick(a, f):
-    """The supervisor's release measure, unchanged. Returns {action_id: offset}."""
+    """The release measure of release_check.py, unchanged. Returns {action_id: offset}."""
     res = {}
     f = f[f["x"].notna()]
     isb = f["is_ball"].astype(bool)
@@ -134,9 +132,16 @@ def one_match(pa):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="ELASTIC alignment of the event times (idsse, 6 gradientsports).")
+    ap.add_argument("--stage", required=True, help="stage root (holds _actions/ and shards/)")
+    ap.add_argument("--cache-dir", required=True, help="raw provider cache root (<provider>/<match>/)")
+    ap.add_argument("--out", required=True, help="output folder")
+    ap.add_argument("--workers", type=int, required=True)
+    args = ap.parse_args()
+    ROOT, CACHE, OUT = args.stage, os.path.join(args.cache_dir, "idsse"), args.out
     os.makedirs(OUT, exist_ok=True)
     files = sorted(glob.glob(f"{ROOT}/_actions/idsse__*.parquet")) + sorted(glob.glob(f"{ROOT}/_actions/gradientsports__*.parquet"))[:6]
-    with Pool(int(sys.argv[1])) as pool:
+    with Pool(args.workers) as pool:
         for r in pool.imap_unordered(one_match, files):
             print("match %s actions %d aligned %d elastic_s %.1f tf79_s %.1f" % r, flush=True)
     print("DONE", flush=True)

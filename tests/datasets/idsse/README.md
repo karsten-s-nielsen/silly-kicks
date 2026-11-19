@@ -1,6 +1,6 @@
 # IDSSE (Sportec/DFL) production-shape fixture
 
-> **How the tests read these files (R66).** `sample_match.parquet` and `per_period_match.parquet` are **bronze**
+> **How the tests read these files.** `sample_match.parquet` and `per_period_match.parquet` are **bronze**
 > (the DFL parser's output). The tests read them only through `tests/_idsse_fixtures.py`, which takes them through
 > `shape_events_to_native`, the converter's documented input (it resolves the team and player of the set-piece and
 > foul rows from the qualifiers); `tests/test_idsse_fixture_path.py` pins that no other test file reads them. The
@@ -14,7 +14,7 @@ retained at the bronze schema level (no aggregation, no enrichment).
 
 - Source: the public match J03WMX of Bassek, M., Rein, R., Weber, H. & Memmert, D. (2025). "An integrated dataset of spatiotemporal and event data in elite soccer". Scientific Data 12, 195. doi:10.1038/s41597-025-04505-y. Data set: figshare, doi:10.6084/m9.figshare.28196177, CC BY 4.0. The file is 308 events of that match (a subset), parsed by
   the luxury-lakehouse ingestion pipeline into `soccer_analytics.bronze.idsse_events` and taken from that bronze on
-  2026-04-29. It is not built again (R65): against this library's parse of the public file its cells are equal,
+  2026-04-29. It is not built again: against this library's parse of the public file its cells are equal,
   except `_ingested_at` (a lakehouse column) and `period` / `timestamp_seconds` on 6 `BallClaiming` rows, which hold
   the old parser's period and time and change no action.
 - Source match_id: `idsse_J03WMX` (Bundesliga; full match_id is a public
@@ -46,14 +46,14 @@ uv run python scripts/extract_provider_fixtures.py --provider idsse
 
 ---
 
-## `per_period_match.parquet` (PR-S23 / silly-kicks 3.0.1; rebuilt R64)
+## `per_period_match.parquet` (PR-S23 / silly-kicks 3.0.1; rebuilt from the raw public DFL files)
 
 Full match J03WMX at the bronze schema level, exactly as THIS library's DFL parser gives it. It exists to exercise
 the per-(team, period) direction-of-play invariant
 (`tests/invariants/test_direction_of_play.py::test_per_team_per_period_shots_attack_high_x`) that the 2-shot
-`sample_match.parquet` fixture cannot physically support, and the idsse penalty row (R57/R63).
+`sample_match.parquet` fixture cannot physically support, and the idsse penalty row.
 
-### Provenance (R64, bar A26)
+### Provenance
 
 - Built by `scripts/build_idsse_per_period_fixture.py` from the two raw public DFL files of match `DFL-MAT-J03WMX`
   through `parse_dfl_match_info` + `parse_dfl_events`. No Databricks and no lakehouse table is read, and no column
@@ -72,12 +72,12 @@ the per-(team, period) direction-of-play invariant
   `idsse_DFL-MAT-J03WMX_metadata.xml` and `idsse_DFL-MAT-J03WMX_events.xml`. Their size and md5 equal the public
   figshare files above, so the files from figshare give the same build.
 - Built file (sha256): `b6360284669b30b06ccbee0c89aaba222ee5ace566d5e2fe1cc56700e8e5cb55`; 1,715 events, 246 columns.
-- Before R64 this file was the luxury-lakehouse production bronze, pulled through Databricks by
+- Before the rebuild this file was the luxury-lakehouse production bronze, pulled through Databricks by
   `scripts/extract_provider_fixtures.py` (2026-04-29). That source is retired for this file (the script refuses its
   idsse `per_period` path). The rebuild differs from the old file in: `match_id` (`J03WMX`, was `idsse_J03WMX`) on
   every row; the lakehouse column `_ingested_at` (gone); the row order; 25 columns `string` where they were `object`;
   27 events in period 1 with positive times where the old file had them in period 2 with negative times (the
-  parser's period hardening); and the 5 outcome cells of the scored penalty 18226500001426 (R63).
+  parser's period hardening); and the 5 outcome cells of the scored penalty 18226500001426.
 - Per-period orientation signature (raw, pre-conversion): home attacks LEFT in P1 -> `home_team_start_left=False`.
 
 ### Regenerating

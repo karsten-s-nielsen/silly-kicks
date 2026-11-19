@@ -1,4 +1,4 @@
-"""One goal predicate for the library (R52, action-time repair spec §4.12)."""
+"""One goal predicate for the library (action-time repair spec §4.12)."""
 
 from __future__ import annotations
 

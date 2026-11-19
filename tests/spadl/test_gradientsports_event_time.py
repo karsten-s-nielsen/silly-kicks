@@ -97,6 +97,86 @@ def test_shootout_period_5_anchors_at_first_event():
     assert _time_of(a, 51) == pytest.approx(50.0)
 
 
+def _end(period, t):
+    return _row(-10 - period, period, t, ge="END", pe=None)
+
+
+def _penalty(eid, period, t, outcome="G"):
+    return _row(eid, period, t, pe="SH", set_piece_type="P", shot_outcome_type=outcome)
+
+
+def test_rows_after_the_period_4_end_are_the_shootout():
+    # The feed stores the shoot-out in period 4, after the END game event of period 4.
+    rows = [_kick(4), _row(1, 4, 7200.0), _end(4, 7300.0), _penalty(50, 4, 9000.0), _penalty(51, 4, 9050.0, "S")]
+    a = _convert(rows)
+    period = a.set_index("original_event_id")["period_id"]
+    assert (period[1], period[50], period[51]) == (4, 5, 5)
+    assert _time_of(a, 50) == pytest.approx(0.0)  # the shoot-out clock counts from its first event
+    assert _time_of(a, 51) == pytest.approx(50.0)
+
+
+def _shootout_rows(x=10.0, y=5.0, x2=None, y2=None):
+    """The period-4 END, then one kick of each team; the feed repeats one stopped ball position on each row."""
+    second = _penalty(51, 4, 9050.0, "S")
+    second.update(team_id=200, ball_x=x if x2 is None else x2, ball_y=y if y2 is None else y2)
+    first = _penalty(50, 4, 9000.0)
+    first.update(ball_x=x, ball_y=y)
+    return [_kick(4), _row(1, 4, 7200.0), _end(4, 7300.0), first, second]
+
+
+def test_shootout_rows_have_no_location():
+    # The stopped ball position on a shoot-out row is not the kick's location and cannot tell the goal end.
+    a = _convert(_shootout_rows())
+    so = a[a["original_event_id"].isin([50, 51])]
+    assert so[["start_x", "start_y", "end_x", "end_y"]].isna().all().all()
+
+
+def test_more_than_one_shootout_position_warns():
+    with pytest.warns(UserWarning, match="shoot-out"):
+        a = _convert(_shootout_rows(x2=-10.0, y2=-5.0))
+    so = a[a["original_event_id"].isin([50, 51])]
+    assert so[["start_x", "start_y", "end_x", "end_y"]].isna().all().all()
+
+
+def test_a_penalty_before_the_period_4_end_stays_in_period_4():
+    rows = [_kick(4), _penalty(40, 4, 7200.0), _end(4, 7300.0)]
+    rows[1].update(ball_x=40.0, ball_y=0.5)
+    a = _convert(rows)
+    pen = a[a["original_event_id"] == 40].iloc[0]
+    assert int(pen["period_id"]) == 4
+    assert _time_of(a, 40) == pytest.approx(100.0)
+    assert pd.notna(pen["start_x"]) and pd.notna(pen["start_y"])  # an in-match penalty keeps its location
+
+
+def test_no_period_4_end_moves_no_row():
+    # Without the END marker the converter does not guess where the shoot-out starts.
+    a = _convert([_kick(4), _penalty(50, 4, 9000.0)])
+    assert int(a.loc[a["original_event_id"] == 50, "period_id"].iloc[0]) == 4
+    assert _time_of(a, 50) == pytest.approx(1900.0)
+    assert pd.notna(a.loc[a["original_event_id"] == 50, "start_x"].iloc[0])
+
+
+def test_rows_after_the_period_4_end_without_a_penalty_stay():
+    # On-ball rows can follow an END with no shoot-out; only a penalty kick after the END marks one.
+    rows = [_kick(4), _row(1, 4, 7200.0), _end(4, 7300.0), _row(2, 4, 7310.0)]
+    rows[3].update(ball_x=5.0, ball_y=2.0)
+    a = _convert(rows)
+    row = a[a["original_event_id"] == 2].iloc[0]
+    assert int(row["period_id"]) == 4
+    assert pd.notna(row["start_x"]) and pd.notna(row["start_y"])
+
+
+def test_an_input_period_5_keeps_its_period_and_time_but_no_location():
+    # A caller's own period 5 is the shoot-out too: its rows get no location (no direction from team identity).
+    first = _penalty(50, 5, 9000.0)
+    first.update(ball_x=10.0, ball_y=5.0)
+    a = _convert([_kick(1), _row(1, 1, 150.0), first, _penalty(51, 5, 9050.0, "S")])
+    so = a[a["original_event_id"].isin([50, 51])]
+    assert so["period_id"].tolist() == [5, 5]
+    assert _time_of(a, 50) == pytest.approx(0.0) and _time_of(a, 51) == pytest.approx(50.0)
+    assert so[["start_x", "start_y", "end_x", "end_y"]].isna().all().all()
+
+
 def test_period_without_actions_needs_no_anchor():
     marker = _row(99, 0, 50.0, ge="G", pe=None)  # a period-0 game marker, excluded by the converter
     a = _convert([marker, _kick(1), _row(1, 1, 110.0)])

@@ -1,4 +1,4 @@
-"""What the library needs to behave the same on its declared pandas floor as on a later pandas (R75, R79).
+"""What the library needs to behave the same on its declared pandas floor as on a later pandas.
 
 The declared floor is ``pandas>=2.1.1`` (``pyproject.toml``); the ``pandas-floor`` CI job runs the suite
 there. Two pandas changes after 2.1.1 reach library code paths, and this module holds the one answer

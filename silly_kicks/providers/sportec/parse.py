@@ -873,7 +873,7 @@ def _build_event_row(
         # Disambiguator for ShotAtGoal's six mutually-exclusive outcome tags.
         if event_type == "ShotAtGoal" and nested_child.tag in _SHOT_OUTCOME_NAMES:
             row["shot_outcome_type"] = _SHOT_OUTCOME_NAMES[nested_child.tag]
-        # R63 (bar A25): a Penalty nests its shot one level deeper (Penalty > ShotAtGoal > outcome). Its outcome tag
+        # A Penalty nests its shot one level deeper (Penalty > ShotAtGoal > outcome). Its outcome tag
         # gets the rule above: attributes as `shot_outcome_*` and the `shot_outcome_type` disambiguator.
         if event_type == "Penalty" and nested_child.tag == "ShotAtGoal":
             for outcome in nested_child:

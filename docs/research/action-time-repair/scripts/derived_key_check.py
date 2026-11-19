@@ -1,18 +1,18 @@
 """Read-only (spec r11, the derived-row key).
 
-(1) On the f5fc2e2b stage: are the SkillCorner derived rows unique on (game_id, original_event_id, type_id)?
-(2) On the 889 cached matches (keys on b; a period-end "after" marker keys on a): a gap (a, b) between two possessions holds at most one derived restart or penalty row
+(1) On a stage (--stage): are the SkillCorner derived rows unique on (game_id, original_event_id, type_id)?
+(2) On the cached matches (--cache-dir; 889 on 2026-11-18) (keys on b; a period-end "after" marker keys on a): a gap (a, b) between two possessions holds at most one derived restart or penalty row
 per kind; count the "before" markers on the first possession of a period (no a).
 Output: stdout.
 """
+import argparse
 import glob
 import os
 from multiprocessing import Pool
 
 import pandas as pd
 
-STAGE = os.path.expanduser("~/cross-def/xshot187-f5fc2e2b/out/_actions")
-CACHE = os.path.expanduser("~/refit144/corners/cache/skillcorner")
+STAGE = CACHE = ""  # set from the arguments (the workers fork after that)
 KINDS = ("corner", "free_kick", "goal_kick", "throw_in", "penalty")
 
 
@@ -57,6 +57,12 @@ def one(m):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="The key of a derived SkillCorner row.")
+    ap.add_argument("--stage", required=True, help="stage root (holds _actions/)")
+    ap.add_argument("--cache-dir", required=True, help="raw provider cache root (<provider>/<match>/)")
+    ap.add_argument("--workers", type=int, default=16)
+    args = ap.parse_args()
+    STAGE, CACHE = os.path.join(args.stage, "_actions"), os.path.join(args.cache_dir, "skillcorner")
     n = d = 0
     for f in sorted(glob.glob(f"{STAGE}/skillcorner__*.parquet")):
         a = pd.read_parquet(f)
@@ -66,7 +72,7 @@ if __name__ == "__main__":
         n += len(x)
         d += int(x.duplicated(["game_id", "original_event_id", "type_id"]).sum())
     print("stage derived rows:", n, "| duplicates on (game_id, original_event_id, type_id):", d)
-    with Pool(16) as p:
+    with Pool(args.workers) as p:
         r = pd.DataFrame([x for x in p.map(one, sorted(os.listdir(CACHE))) if x])
     print("cache matches:", len(r), "| before markers on a period first possession:", int(r.no_a_before.sum()),
           "| gaps with two derived rows of one kind:", int(r.dup_kind_in_gap.sum()))

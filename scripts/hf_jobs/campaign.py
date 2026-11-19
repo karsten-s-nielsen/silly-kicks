@@ -39,9 +39,9 @@ class CampaignJob:
     #: ``sc_extended``. Required on a gated job, refused on any other; ``instances`` restricts the dataset's
     #: ``compute_arms`` payload to it.
     arms: tuple[str, ...] | None = None
-    #: How `verify` judges this job's instances (one of `MODES`); None = the campaign's `mode` (R20, design X).
+    #: How `verify` judges this job's instances (one of `MODES`); None = the campaign's `mode` (design X).
     mode: str | None = None
-    #: The arm the trainer ships, overriding the paired verdict (``--ship-variant``; R38, R49, action-time repair spec
+    #: The arm the trainer ships, overriding the paired verdict (``--ship-variant``; action-time repair spec
     #: 4.8). Only on a trainer that takes the option, and one of the job's ``arms``. None = the paired rule decides.
     ship_variant: str | None = None
 
@@ -88,7 +88,7 @@ class Campaign:
     #: How `verify` judges an instance (ADR-130): ``rematerialize`` (the fresh run must reproduce the committed
     #: model: the `_integrity` check), ``refit`` (new data replaces the model on purpose: each arm passes on its
     #: own acceptance gates, and the comparison with the committed model is reported, not gated) or ``retrain``
-    #: (the standing certification with the public CV parity one-sided, R20). A job may override it.
+    #: (the standing certification with the public CV parity one-sided). A job may override it.
     mode: str = "rematerialize"
 
     def mount_cap_for(self, dataset: str) -> int:
@@ -148,7 +148,7 @@ def _job_ship_variant(path: pathlib.Path, j: Mapping[str, Any], arms: tuple[str,
     return value
 
 
-#: The `verify` modes (ADR-130; R20): a campaign sets one, a job may override it.
+#: The `verify` modes (ADR-130): a campaign sets one, a job may override it.
 MODES = ("rematerialize", "refit", "retrain")
 
 
@@ -272,7 +272,7 @@ def instances(c: Campaign, commit: str, *, replica: int | None = None) -> list[I
                 units = staged_units(j.dataset)
                 payload = arm_policy.restrict_arms(arm_policy.compute_arms(units), j.arms, units)
                 args += ("--arms-json", json.dumps(payload, sort_keys=True))
-            if j.ship_variant is not None:  # R38/R49 (spec 4.8): the campaign forces the shipped arm
+            if j.ship_variant is not None:  # the campaign forces the shipped arm
                 args += ("--ship-variant", j.ship_variant)
             if j.job == "receiver_model":  # decision P5: visibility is a parameter, never read in-job
                 args += (

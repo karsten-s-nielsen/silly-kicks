@@ -1,5 +1,5 @@
 """A windowed corner table with one unmeasured direct corner (no kick time, no window, no side) for the corner
-drivers' tests (supervisor C, bar A3, action-time repair spec section 5.2)."""
+drivers' tests (action-time repair spec section 5.2)."""
 
 from __future__ import annotations
 

@@ -1,14 +1,18 @@
-"""Bar A23 (R57/R63): idsse penalties on the 7 raw stage matches -> shot_penalty rows; goal rows by the R52 rule."""
-import sys
+"""The idsse penalties of the raw stage matches -> shot_penalty rows; goal rows by the shared goal rule.
+
+Input (read only): the raw provider cache (--cache-dir, idsse). Run from a clone root with PYTHONPATH=. (it imports
+scripts._loader_pining)."""
+import argparse
 import xml.etree.ElementTree as ET
 from pathlib import Path
-sys.path.insert(0, str(Path.home() / "refit144" / "sk"))
-import pandas as pd
+
 from scripts import _loader_pining as lp
 from silly_kicks.spadl import config as c
 from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
-root = Path.home() / "refit144" / "corners" / "cache" / "idsse"
+ap = argparse.ArgumentParser(description="The idsse penalty rows and goal rows.")
+ap.add_argument("--cache-dir", required=True, help="raw provider cache root (<provider>/<match>/)")
+root = Path(ap.parse_args().cache_dir) / "idsse"
 tot_goals = 0
 for d in sorted(root.iterdir()):
     mid = d.name
@@ -24,5 +28,5 @@ for d in sorted(root.iterdir()):
               r["time_source"], "raw_shooters", raw_shooters)
     if len(pen) == 0:
         print(mid, "no shot_penalty; raw Penalty>ShotAtGoal shooters:", raw_shooters)
-    print(mid, "goal rows (R52):", n_goal)
-print("TOTAL goal rows (R52, idsse stage, events-only):", tot_goals)
+    print(mid, "goal rows (the shared goal rule):", n_goal)
+print("TOTAL goal rows (the shared goal rule, idsse stage, events-only):", tot_goals)

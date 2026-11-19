@@ -1,4 +1,4 @@
-"""R64 / bar A26: the idsse full-match fixture is built from the raw public DFL files by this library's parser.
+"""The idsse full-match fixture is built from the raw public DFL files by this library's parser.
 
 - ``scripts/build_idsse_per_period_fixture.py`` writes the parser's bronze as it is (hermetic test on the committed
   slice ``tests/datasets/sportec/idsse_slice/``).

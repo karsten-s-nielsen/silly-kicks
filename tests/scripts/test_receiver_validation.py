@@ -131,7 +131,7 @@ def test_failed_pass_accuracy_survives_ball_less_frame():
 
 
 def test_trajectory_weak_labels_keep_the_actions_id_dtype_on_an_all_numeric_table():
-    # R68: `iterrows` on an all-numeric actions table upcast an int action_id to float in the weak-label frame
+    # `iterrows` on an all-numeric actions table upcast an int action_id to float in the weak-label frame
     a = _actions()
     assert all(pd.api.types.is_numeric_dtype(d) for d in a.dtypes)  # precondition: the all-numeric scene
     assert pd.api.types.is_integer_dtype(a["action_id"])
