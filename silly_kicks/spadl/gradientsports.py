@@ -365,14 +365,58 @@ def _resolve_team_ids(events: pd.DataFrame) -> pd.arrays.IntegerArray:
 
 #: The kickoff game event of each period, whose ``start_time`` anchors that period's clock (ADR-133).
 _KICKOFF_GAME_EVENT = {1: "FIRSTKICKOFF", 2: "SECONDKICKOFF", 3: "THIRDKICKOFF", 4: "FOURTHKICKOFF"}
-#: The penalty-shootout period. It has no kickoff, so a caller that splits it out anchors it at its first event.
+#: The penalty-shootout period. It has no kickoff, so its clock counts from its first event.
 _SHOOTOUT_PERIOD = 5
+
+
+def _split_shootout(events: pd.DataFrame) -> pd.DataFrame:
+    """Put the penalty shoot-out in period 5, with no location.
+
+    The feed stores the shoot-out in period 4, after the ``END`` game event of period 4. When a penalty kick
+    (``SH`` with set piece ``P``) follows that ``END``, each period-4 row with a later ``start_time`` gets period 5.
+    Rows after the ``END`` with no penalty kick stay in period 4, and an input with no ``END`` of period 4 moves no
+    row: the converter does not guess where a shoot-out starts. An input that already holds a period 5 keeps it.
+
+    No period-5 row keeps a ball position, so its start and end are NaN for both teams (a period-5 direction from
+    team identity would mirror one team, ADR-051). The feed has no tracking in the shoot-out: a shoot-out row
+    holds either no position or one stopped ball position that the feed repeats on each row, which is not the
+    location of the kick and cannot tell the goal end. A caller that wants the point of the Laws reads
+    ``add_restart_coordinates`` (the penalty mark, in its own columns). If the period-5 rows hold more than one
+    distinct position, the feed may carry real positions: the converter warns and still gives none.
+    """
+    period = events["period_id"].to_numpy()
+    moved = np.zeros(len(events), dtype=bool)
+    if not (period == _SHOOTOUT_PERIOD).any():
+        start = events["start_time"].to_numpy(dtype="float64")
+        end_of_4 = (period == 4) & (events["game_event_type"].fillna("").to_numpy() == "END") & np.isfinite(start)
+        if end_of_4.any():
+            after = (period == 4) & (start > start[end_of_4].max())
+            penalty = (events["possession_event_type"].fillna("").to_numpy() == "SH") & (
+                events["set_piece_type"].fillna("").to_numpy() == "P"
+            )
+            if (after & penalty).any():
+                moved = after
+    shootout = (period == _SHOOTOUT_PERIOD) | moved
+    if not shootout.any():
+        return events
+    positions = events.loc[shootout, ["ball_x", "ball_y"]].dropna().drop_duplicates()
+    if len(positions) > 1:
+        warnings.warn(
+            f"gradientsports: the shoot-out rows hold {len(positions)} distinct ball positions; the feed may carry "
+            "real kick positions, but the shoot-out rows still get no location.",
+            UserWarning,
+            stacklevel=3,
+        )
+    out = events.copy()
+    out.loc[out.index[moved], "period_id"] = _SHOOTOUT_PERIOD
+    out.loc[out.index[shootout], ["ball_x", "ball_y"]] = np.nan
+    return out
 
 
 def _period_anchors(events: pd.DataFrame) -> dict[int, float]:
     """Per period, the video time its clock counts from (ADR-133).
 
-    Periods 1-4: the ``start_time`` of the period's kickoff game event. Period 5 (a caller's split-out shootout):
+    Periods 1-4: the ``start_time`` of the period's kickoff game event. Period 5 (the shoot-out, ``_split_shootout``):
     the first ``start_time`` of its rows. Read on the full input, before the exclusion filter drops the kickoffs.
     """
     ge = events["game_event_type"].fillna("").to_numpy()
@@ -469,6 +513,11 @@ def convert_to_actions(
     Deliveries follow :func:`silly_kicks.spadl.base.classify_deliveries` and its event-only limits (ADR-133).
     Gradient Sports' own label (``CR``) is kept in ``cross_native``.
 
+    The penalty shoot-out is period 5. The feed stores it in period 4, after the ``END`` game event of period 4;
+    when a penalty kick follows that ``END``, the converter gives those rows period 5, with the time from the first
+    shoot-out event. A period-5 row has no location (NaN start and end): the feed has no reliable position for a
+    shoot-out kick. The penalty mark is in the columns of ``add_restart_coordinates``.
+
     Examples
     --------
     Convert a single match's events to SPADL::
@@ -485,6 +534,7 @@ def convert_to_actions(
     _validate_preserve_native(events, preserve_native, provider="gradientsports", schema=GRADIENTSPORTS_SPADL_COLUMNS)
 
     total_events_input = len(events)
+    events = _split_shootout(events)
 
     # PR-S23 / silly-kicks 3.0.1: validator re-enabled after TF-22 detector
     # hardening. Gradient Sports events ship PER_PERIOD_ABSOLUTE; the detector now
@@ -612,6 +662,7 @@ def convert_to_actions(
             actions[col] = pd.array([], dtype="Int64")
         for col in preserve_native or ():
             actions[col] = events[col].reset_index(drop=True)  # empty, with the input dtype
+        actions["time_source"] = pd.Series([], dtype=object)
         actions = _finalize_output(actions, schema=GRADIENTSPORTS_SPADL_COLUMNS, extra_columns=preserve_native)
         report = ConversionReport(
             provider="gradientsports",
@@ -916,6 +967,8 @@ def convert_to_actions(
     # ------------------------------------------------------------------
     # Finalize
     # ------------------------------------------------------------------
+    # The provider's time on its own tracking clock; a synthetic row takes its source row's value (spec section 4.1).
+    actions["time_source"] = "tracking"
     actions = _finalize_output(
         actions,
         schema=GRADIENTSPORTS_SPADL_COLUMNS,

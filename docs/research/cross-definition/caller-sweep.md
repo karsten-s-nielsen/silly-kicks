@@ -90,7 +90,7 @@ median 0.5 s earlier at the link).
 | `tracking/_ghost_outfield_weights` (2 variants) | shots and the set-piece union | yes (GS + SkillCorner + Sportec); goal times set `score_diff` | **owed** |
 | `xtgk/_retention_weights/default` | the move union | yes (GS, 64 games): the release pressure is a time-based frame link at the action | **owed** |
 | `xtgk/_retention_weights/skillcorner` | the move union | yes (SkillCorner, 108 games): goal-kick and distribution starts move to the kick | **owed** |
-| `corners/_routine_weights`, `corners/_run_zone_weights` | set pieces (unchanged types) | yes (SkillCorner + IDSSE + SB360): SkillCorner corner start and time move to the kick | **owed** |
+| `corners/_routine_weights`, `corners/_run_zone_weights` | set pieces (unchanged types) | yes (SkillCorner + IDSSE + SB360): a SkillCorner corner is its own derived row (ADR-135), at the measured kick where the tracking shows it (`time_source` `"kick"`), else with no kick time (`t_kick` `<NA>`, no window) | **owed** |
 | `tracking/_receiver_weights` | completed `pass` ∪ `cross` | no (StatsBomb) | not owed |
 | `match_outcome/weights`, `win_probability/weights` | shot types only | no (StatsBomb open data) | not owed |
 | VAEP | no bundled weights | — | none (users refit) |

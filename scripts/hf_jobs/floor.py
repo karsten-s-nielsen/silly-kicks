@@ -3,7 +3,8 @@ re-fit must not silently lower the bar. Fail-closed: a missing or NaN value BLOC
 
 ADR-128 (spec 5.5): `certify` applies the tier's certification policy single-sourced in the registry --
 ``public`` = in-sample parity (the head-to-head pair) AND two-sided CV parity on the registry ``cv_metric``
-(HFU spec 14.4); ``owner`` = one-sided CV parity with the registry ``delta``.
+(HFU spec 14.4; one-sided in a ``retrain`` job, except a ``cv_tolerance`` spec); ``owner`` = one-sided
+CV parity with the registry ``delta``.
 """
 
 from __future__ import annotations
@@ -53,21 +54,30 @@ def evaluate_spec(spec, run_metrics: dict) -> tuple[bool, dict]:
 
 
 #: Public CV parity: ``|fresh - committed| <= PUBLIC_CV_REL_TOL * |committed|`` (the ADR-126
-#: ``rel_tol``). A trainer whose CV metric is a fitted parameter sets ``cv_tolerance``, an absolute bound.
+#: ``rel_tol``); in a ``retrain`` job only a worsening beyond that band fails. A trainer whose CV metric is a
+#: fitted parameter sets ``cv_tolerance``, an absolute bound that stays two-sided in every mode.
 PUBLIC_CV_REL_TOL = 0.05
 
 
-def cv_parity(spec, *, fresh_metrics: Mapping[str, Any], committed_metrics: Mapping[str, Any]) -> tuple[bool, dict]:
-    """Two-sided public CV parity on the registry ``cv_metric`` (HFU spec 14.4): relative
-    ``PUBLIC_CV_REL_TOL``, or the absolute ``spec.cv_tolerance``. Fail-closed: a missing value raises
-    KeyError, a NaN fails."""
+def cv_parity(
+    spec, *, fresh_metrics: Mapping[str, Any], committed_metrics: Mapping[str, Any], one_sided: bool = False
+) -> tuple[bool, dict]:
+    """Public CV parity on the registry ``cv_metric`` (HFU spec 14.4): two-sided, relative
+    ``PUBLIC_CV_REL_TOL``, or the absolute ``spec.cv_tolerance``. ``one_sided`` (a retrain): the same
+    relative band, but only a worsening in the registry direction fails (:func:`regression_check`); a spec with
+    ``cv_tolerance`` (a fitted parameter, no better direction) stays two-sided. Fail-closed: a missing value
+    raises KeyError, a NaN fails."""
     if not spec.cv_metric:
         raise ValueError(f"{spec.name}: public certification needs a registry cv_metric")
     committed, fresh = _dotted(committed_metrics, spec.cv_metric), _dotted(fresh_metrics, spec.cv_metric)
     bound = spec.cv_tolerance if spec.cv_tolerance is not None else PUBLIC_CV_REL_TOL * abs(committed)
-    ok = not (math.isnan(committed) or math.isnan(fresh)) and abs(fresh - committed) <= bound
+    form = "one_sided" if one_sided and spec.cv_tolerance is None else "two_sided"
+    if form == "one_sided":
+        ok, _ = regression_check(committed, fresh, direction=spec.metric_direction, delta=bound)
+    else:
+        ok = not (math.isnan(committed) or math.isnan(fresh)) and abs(fresh - committed) <= bound
     tol = {"abs_tol": spec.cv_tolerance} if spec.cv_tolerance is not None else {"rel_tol": PUBLIC_CV_REL_TOL}
-    return ok, {"metric": spec.cv_metric, "committed": committed, "fresh": fresh, **tol, "ok": ok}
+    return ok, {"metric": spec.cv_metric, "committed": committed, "fresh": fresh, **tol, "form": form, "ok": ok}
 
 
 def _dotted(metrics: Mapping[str, Any], path: str) -> float:
@@ -87,12 +97,14 @@ def certify(
     committed_metrics: Mapping[str, Any],
     headtohead: Mapping[str, Any] | None = None,
     in_sample_gate: bool = True,
+    cv_one_sided: bool = False,
 ) -> tuple[bool, dict]:
     """Certify a fresh artifact under the tier's policy (ADR-128 spec 5.5, single-sourced in the registry).
 
     ``public``: in-sample parity, the head-to-head pair (`evaluate_spec`; KeyError when absent), AND
     :func:`cv_parity`; the detail holds both. ``in_sample_gate=False`` (a build without a parameter match, HFU
     spec 17.3): the head-to-head is recorded with ``"gated": false`` and only CV parity decides.
+    ``cv_one_sided`` (a ``retrain`` job): the public CV parity is one-sided (:func:`cv_parity`).
     ``owner``: CV parity -- the registry ``cv_metric`` read from BOTH ``metrics.json`` files, with the
     registry ``delta`` and direction (the head-to-head is a diagnostic only). ``rebaseline`` is the identity
     comparison of `scripts.hf_jobs.identity` (decisions P3, P15), not a quality floor, so it is refused here.
@@ -100,7 +112,9 @@ def certify(
     basis = spec.certification_for(tier)
     if basis == "public":
         ok_h, h2h = evaluate_spec(spec, dict(headtohead or {}))
-        ok_cv, cv = cv_parity(spec, fresh_metrics=fresh_metrics, committed_metrics=committed_metrics)
+        ok_cv, cv = cv_parity(
+            spec, fresh_metrics=fresh_metrics, committed_metrics=committed_metrics, one_sided=cv_one_sided
+        )
         in_sample = {**h2h, "basis": "in_sample_parity", "gated": in_sample_gate}
         detail = {"basis": "public", "in_sample_parity": in_sample, "cv_parity": cv}
         return (ok_h or not in_sample_gate) and ok_cv, detail

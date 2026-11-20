@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from silly_kicks.spadl import config
 from silly_kicks.spadl.utils import add_game_state
@@ -239,3 +240,121 @@ class TestAddGameState:
         result = add_game_state(actions)
         assert "game_state" in result.columns
         assert len(result) == 0
+
+
+class TestAddGameStateGoalRule:
+    """add_game_state reads the library's goal rule (silly_kicks.spadl._goals)."""
+
+    def test_penalty_goal_counts(self):
+        actions = _make_actions(
+            [
+                ("A", "shot_penalty", "success", 1, 10.0),
+                ("B", "pass", "success", 1, 20.0),
+            ]
+        )
+        result = add_game_state(actions)
+        assert result["game_state"].tolist() == ["winning", "losing"]
+
+    def test_direct_free_kick_goal_counts(self):
+        actions = _make_actions(
+            [
+                ("A", "shot_freekick", "success", 2, 10.0),
+                ("B", "pass", "success", 2, 20.0),
+            ]
+        )
+        result = add_game_state(actions)
+        assert result["game_state"].tolist() == ["winning", "losing"]
+
+    def test_own_goal_counts_for_the_other_team(self):
+        # Converters emit an own goal as a bad_touch row with the owngoal result (ADR-018).
+        actions = _make_actions(
+            [
+                ("A", "bad_touch", "owngoal", 1, 10.0),
+                ("A", "pass", "success", 1, 20.0),
+                ("B", "pass", "success", 1, 30.0),
+            ]
+        )
+        result = add_game_state(actions)
+        assert result["game_state"].tolist() == ["losing", "losing", "winning"]
+
+    @pytest.mark.parametrize("kick_type", ["shot_penalty", "shot"])
+    def test_shootout_kick_does_not_change_the_state(self, kick_type):
+        # Period 5 is the penalty shoot-out: its kicks decide no score of the match, whatever shot type a
+        # converter gives the kick.
+        actions = _make_actions(
+            [
+                ("A", "shot", "success", 1, 10.0),
+                ("B", "shot", "success", 2, 10.0),
+                ("A", kick_type, "success", 5, 1.0),
+                ("B", "pass", "success", 5, 2.0),
+            ]
+        )
+        result = add_game_state(actions)
+        assert result["game_state"].tolist() == ["winning", "drawing", "drawing", "drawing"]
+
+    def test_goal_row_with_a_missing_team_id_scores_for_neither_team(self):
+        # A nullable id column (Int64) with a missing team on a goal row: dtype-safe id compares (ADR-019) give
+        # False, so the goal counts for neither team and the state stays drawing.
+        actions = _make_actions(
+            [
+                ("A", "pass", "success", 1, 10.0),
+                ("A", "shot", "success", 1, 20.0),
+                ("B", "pass", "success", 1, 30.0),
+            ]
+        )
+        actions["team_id"] = pd.array([1, pd.NA, 2], dtype="Int64")
+        result = add_game_state(actions)
+        assert result["game_state"].tolist() == ["drawing", "drawing", "drawing"]
+
+    def test_a_missing_result_is_no_goal(self):
+        # A nullable result_id (Int64) with a missing value on a row that is no goal row: each row still gets the
+        # state of the score, and the missing result counts as no goal.
+        actions = _make_actions(
+            [
+                ("A", "shot", "success", 1, 10.0),
+                ("B", "pass", "success", 1, 20.0),
+                ("A", "pass", "success", 1, 30.0),
+            ]
+        )
+        actions["result_id"] = pd.array(
+            [config.result_id["success"], pd.NA, config.result_id["success"]], dtype="Int64"
+        )
+        actions = actions.drop(columns=["result_name"])
+        result = add_game_state(actions)
+        assert result["game_state"].tolist() == ["winning", "losing", "winning"]
+
+    @pytest.mark.parametrize(
+        ("team_ids", "expected"),
+        [
+            ([1, 2, "1", 2], ["winning", "losing", "winning", "losing"]),
+            ([1, "1", 2, 2], ["winning", "winning", "losing", "losing"]),
+            (["1", 1, 2, 2], ["winning", "winning", "losing", "losing"]),
+        ],
+    )
+    def test_a_team_id_that_differs_only_in_dtype_is_one_team(self, team_ids, expected):
+        # Dtype-safe ids (ADR-019): 1 and "1" in an object team_id column name the same team, in any row order.
+        actions = _make_actions(
+            [
+                ("A", "shot", "success", 1, 10.0),
+                ("B", "pass", "success", 1, 20.0),
+                ("A", "pass", "success", 1, 30.0),
+                ("B", "pass", "success", 1, 40.0),
+            ]
+        )
+        actions["team_id"] = pd.Series(team_ids, dtype=object)
+        result = add_game_state(actions)
+        assert result["game_state"].tolist() == expected
+
+    @pytest.mark.parametrize("dtype", ["float64", "object", "Int64"])
+    def test_a_goal_row_with_a_missing_period_is_no_goal(self, dtype):
+        # A missing period on a goal row is no goal, whatever the dtype of period_id.
+        actions = _make_actions(
+            [
+                ("A", "shot", "success", 1, 10.0),
+                ("B", "pass", "success", 1, 20.0),
+            ]
+        )
+        missing = np.nan if dtype == "float64" else (None if dtype == "object" else pd.NA)
+        actions["period_id"] = pd.Series([missing, 1], dtype=dtype)
+        result = add_game_state(actions)
+        assert set(result["game_state"]) == {"drawing"}

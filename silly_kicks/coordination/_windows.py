@@ -21,6 +21,7 @@ from silly_kicks.coordination._columns import COORD_WINDOW_COLUMNS, COORD_WINDOW
 from silly_kicks.coordination._config import CoordinationParams
 from silly_kicks.coordination._report import CoordinationCoverageWarning
 from silly_kicks.id_compat import canonical_id, same_id
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 from silly_kicks.tracking._provider_visibility import dead_ball_observed
 
 RESTART_TYPES = (
@@ -219,6 +220,10 @@ def possession_windows_from_actions(
 ) -> pd.DataFrame:
     """Possession windows from event data: one window per possession, ending at the event that ends it.
 
+    A window does not start or end at an ``"order_only"`` row (a restart whose time keeps the row order only): it
+    takes the time of the possession's next or previous other row, and a possession of such rows only opens no
+    window (action-time repair spec section 4.13).
+
     Examples
     --------
     Possession-scoped windows from SPADL actions + frames (needs a real match)::
@@ -228,6 +233,7 @@ def possession_windows_from_actions(
     """
     from silly_kicks.spadl import add_possessions
     from silly_kicks.spadl.base import sort_actions_chronologically
+    from silly_kicks.spadl.schema import is_order_only
 
     check_n_phases(n_phases, where="possession_windows_from_actions")
     actions, skipped = _actions_with_tracking(actions, frames)
@@ -255,7 +261,9 @@ def possession_windows_from_actions(
                 key = _frame_key(ctx.at[pos, "game_id"], ctx.at[pos, "period_id"], fid)
                 if key in time_of:
                     times[pos] = time_of[key]
-    ctx = ctx.assign(_t=times)
+    # An "order_only" row keeps the row order only (action-time repair spec section 4.13): a window does not start
+    # or end at it, so its time is not read; a possession of such rows only opens no window.
+    ctx = ctx.assign(_t=times, _oo=is_order_only(ctx))
 
     bounds = _period_bounds(frames).itertuples(index=False)
     period_end = {_period_key(b.game_id, b.period_id): _f(b.end) for b in bounds}
@@ -266,15 +274,18 @@ def possession_windows_from_actions(
     # alone, which would merge possession k of every game. Rows keep ctx's chronological order within each group; each
     # value is read per COLUMN (an `iloc` row of a mixed-dtype frame upcasts an int game_id to float).
     for _key, grp in ctx.groupby(["game_id", "possession_id"], sort=False, observed=True):
+        timed = grp[~grp["_oo"].to_numpy(dtype=bool)]
+        if timed.empty:
+            continue  # a possession of "order_only" rows only opens no window
         summary.append(
             {
                 "game_id": grp["game_id"].iloc[0],
                 "period_id": _i(grp["period_id"].iloc[0]),
                 "att_team": grp["team_id"].iloc[0],
-                "start": _f(grp["_t"].iloc[0]),
+                "start": _f(timed["_t"].iloc[0]),
                 "first_type": types[_i(grp["type_id"].iloc[0])],
-                "last_type": types[_i(grp["type_id"].iloc[-1])],
-                "last_t": _f(grp["_t"].iloc[-1]),
+                "last_type": types[_i(timed["type_id"].iloc[-1])],
+                "last_t": _f(timed["_t"].iloc[-1]),
             }
         )
     summary.sort(key=lambda s: (*_period_key(s["game_id"], s["period_id"]), s["start"]))
@@ -472,8 +483,9 @@ def _ball_state_intervals(frames: pd.DataFrame, max_stoppage_s: float) -> dict[t
 
 
 def _event_intervals(actions: pd.DataFrame, max_stoppage_s: float) -> dict[tuple[object, object], np.ndarray]:
+    from silly_kicks.spadl.schema import is_order_only, is_time_unmeasured
+
     types = spadlconfig.actiontypes
-    results = spadlconfig.results
     out: dict[tuple[object, object], np.ndarray] = {}
     from silly_kicks.spadl.base import sort_actions_chronologically
 
@@ -483,14 +495,23 @@ def _event_intervals(actions: pd.DataFrame, max_stoppage_s: float) -> dict[tuple
         grp = sort_actions_chronologically(grp, tiebreak=("action_id",)).reset_index(drop=True)
         t = grp["time_seconds"].to_numpy(dtype=np.float64)
         name = [types[_i(x)] for x in grp["type_id"]]
-        res = [results[_i(x)] for x in grp["result_id"]]
+        scored = (goal_mask(grp) | owngoal_mask(grp)).to_numpy()  # the library's goal rule
+        # No "order_only" row is an interval end, and a goal at a row with an unmeasured time opens no interval
+        # (action-time repair spec section 4.13). On a table with neither, prev/next are i - 1 / i + 1 as before.
+        oo = is_order_only(grp)
+        unmeasured = is_time_unmeasured(grp)
+        timed = np.flatnonzero(~oo)
         raw: list[tuple[float, float]] = []
         for i in range(len(grp)):
-            if name[i] in RESTART_TYPES and i > 0:
-                raw.append((float(t[i - 1]), float(t[i])))
-            is_goal = (name[i] in SHOT_TYPES and res[i] == "success") or res[i] == "owngoal"
-            if is_goal and i + 1 < len(grp):
-                raw.append((float(t[i]), float(t[i + 1])))
+            prev_rows = timed[timed < i]
+            next_rows = timed[timed > i]
+            if name[i] in RESTART_TYPES and len(prev_rows):
+                if not oo[i]:
+                    raw.append((float(t[prev_rows[-1]]), float(t[i])))
+                elif len(next_rows):
+                    raw.append((float(t[prev_rows[-1]]), float(t[next_rows[0]])))
+            if scored[i] and not unmeasured[i] and len(next_rows):
+                raw.append((float(t[i]), float(t[next_rows[0]])))
         kept = _runs_longer_than(raw, max_stoppage_s)
         if len(kept):
             out[(game, period)] = kept

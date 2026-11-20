@@ -154,6 +154,10 @@ _MAPPED_EVENT_TYPES: frozenset[str] = frozenset(
         # makes legacy callers' rows surface in unrecognized_counts (loud)
         # rather than silently mapping to non_action.
         "ShotAtGoal",
+        # A DFL <Penalty> holds its shot as a nested <ShotAtGoal>, which the bronze parser flattens into shot_*
+        # columns on the Penalty row; that row is the shot_penalty (action-time repair spec section 4.16).
+        # A Penalty with no nested shot is excluded by name in convert_to_actions.
+        "Penalty",
         "TacklingGame",
         "Foul",
         "FreeKick",
@@ -620,7 +624,44 @@ def convert_to_actions(
         events = events.copy()
         events["event_type"] = events["event_type"].replace(_EVENT_TYPE_ALIASES)
 
-    event_type_counts = Counter(events["event_type"])
+    # a Penalty row is typed from the outcome of its nested shot (shot_outcome_type, read by parse.py). A Penalty
+    # with no outcome is no action and is excluded by name. Two cases are told apart:
+    # - no nested shot at all (no shot_* qualifier): excluded silently, as any non-action event;
+    # - a nested shot (shot_player / shot_team) with no outcome: bronze from a parser of silly-kicks 4.144.0 or
+    #   earlier, or a provider file with no outcome tag. Excluded too, but never silently: a warning names the rows.
+    def _filled(col: str) -> pd.Series:
+        if col not in events.columns:
+            return pd.Series(False, index=events.index)
+        return events[col].notna() & (events[col].astype(str).str.len() > 0)
+
+    has_outcome = _filled("shot_outcome_type")
+    is_penalty = events["event_type"] == "Penalty"
+    penalty_without_shot = is_penalty & ~has_outcome
+    stale = penalty_without_shot & (_filled("shot_player") | _filled("shot_team"))
+    if stale.any():
+        ids = ", ".join(map(str, events.loc[stale, "event_id"].tolist()))
+        warnings.warn(
+            f"sportec convert_to_actions: Penalty event(s) {ids} carry a nested shot but no outcome "
+            "(shot_outcome_type), so no shot_penalty row is emitted for them. The bronze is either from a parser "
+            "of silly-kicks 4.144.0 or earlier, which did not read the outcome under Penalty > ShotAtGoal, or from a "
+            "provider file with no outcome tag. Repair: parse the raw DFL event file again with "
+            "silly_kicks.providers.sportec.parse_dfl_events.",
+            UserWarning,
+            stacklevel=2,
+        )
+    n_penalty_without_shot = int(penalty_without_shot.sum())
+    event_type_counts = Counter(events.loc[~penalty_without_shot, "event_type"])
+    if n_penalty_without_shot:
+        events = events.loc[~penalty_without_shot].reset_index(drop=True)
+    # Spec 4.16, point 3: the parsed Penalty row has no player of its own; its shooter is the nested
+    # ShotAtGoal's Player (`shot_player`). Only an EMPTY player_id is filled -- a caller's id is never overridden
+    # (ADR-001).
+    if "shot_player" in events.columns and (events["event_type"] == "Penalty").any():
+        empty_player = events["player_id"].isna() | (events["player_id"].astype(str) == "")
+        fill = (events["event_type"] == "Penalty") & empty_player & events["shot_player"].notna()
+        if fill.any():
+            events = events.copy()
+            events.loc[fill, "player_id"] = events.loc[fill, "shot_player"]
 
     # PR-S23 / silly-kicks 3.0.1: native Sportec/DFL bronze events ship
     # PER_PERIOD_ABSOLUTE (teams switch ends after halftime; verified
@@ -640,7 +681,7 @@ def convert_to_actions(
     # absolute-frame data). Strict mode under SILLY_KICKS_ASSERT_INVARIANTS=1.
     _detector_input = events.assign(
         _sk_match_id=events["match_id"] if "match_id" in events.columns else 0,
-        _sk_is_shot=(events["event_type"] == "ShotAtGoal"),
+        _sk_is_shot=events["event_type"].isin(("ShotAtGoal", "Penalty")),
     )
     _x_col = "x_source_position" if "x_source_position" in events.columns else "x_position_from_tracking"
     _period_col = "period" if "period" in events.columns else "period_id"
@@ -682,6 +723,7 @@ def convert_to_actions(
         actions.loc[_synthesized_rows(actions), "cross_native"] = pd.NA  # a synthesized GK row has no DFL label
         actions = classify_deliveries(actions)
         actions["action_id"] = range(len(actions))
+        actions["time_source"] = "event"  # the provider's event clock (action-time repair spec section 4.1)
         actions = _add_dribbles(actions)
 
         # Clamp coords to SPADL pitch frame (consistent with 1.6.0 kloppy converter).
@@ -692,6 +734,8 @@ def convert_to_actions(
     else:
         actions = raw_actions
 
+    if "time_source" not in actions.columns:
+        actions["time_source"] = "event"
     extras = list(preserve_native) if preserve_native else None
     actions = _finalize_output(actions, schema=SPORTEC_SPADL_COLUMNS, extra_columns=extras)
 
@@ -706,6 +750,8 @@ def convert_to_actions(
             excluded_counts[label] = count
         else:
             unrecognized_counts[label] = count
+    if n_penalty_without_shot:
+        excluded_counts["Penalty"] = excluded_counts.get("Penalty", 0) + n_penalty_without_shot
     if unrecognized_counts:
         warnings.warn(
             f"Sportec: {sum(unrecognized_counts.values())} unrecognized event types "
@@ -714,7 +760,7 @@ def convert_to_actions(
         )
     report = ConversionReport(
         provider="Sportec",
-        total_events=sum(event_type_counts.values()),
+        total_events=sum(event_type_counts.values()) + n_penalty_without_shot,
         total_actions=len(actions),
         mapped_counts=mapped_counts,
         excluded_counts=excluded_counts,
@@ -944,7 +990,7 @@ def _build_raw_actions(
     _warn_unexpected_play_eval(play_eval[is_pass_or_setpiece])
 
     # --- Shot ---
-    is_shot = et == "ShotAtGoal"
+    is_shot = (et == "ShotAtGoal") | (et == "Penalty")  # a mapped Penalty row carries its nested shot
     after_fk = _opt("shot_after_free_kick", "").fillna("").astype(str).str.lower().eq("true").to_numpy()
     has_penalty = (_opt("penalty_team", None).notna() | _opt("penalty_causing_player", None).notna()).to_numpy()
     is_shot_penalty = is_shot & has_penalty

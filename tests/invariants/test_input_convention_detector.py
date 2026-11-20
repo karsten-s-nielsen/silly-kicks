@@ -34,6 +34,7 @@ from silly_kicks.spadl.orientation import (
     detect_input_convention,
     validate_input_convention,
 )
+from tests._idsse_fixtures import idsse_fixture_native
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -70,8 +71,7 @@ def _build_statsbomb_raw_events_for_detector(match_id: int) -> pd.DataFrame:
 
 def _build_idsse_raw_events_for_detector() -> pd.DataFrame:
     """Build the per-row detector input from the IDSSE bronze parquet."""
-    parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "sample_match.parquet"
-    events = pd.read_parquet(parquet_path)
+    events = idsse_fixture_native("sample_match")  # the native frame (team resolved from the qualifiers)
     df = pd.DataFrame(
         {
             "game_id": 1,

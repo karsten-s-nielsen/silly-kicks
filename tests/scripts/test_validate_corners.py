@@ -258,3 +258,71 @@ def test_injection_firewall_no_outcome_vector():
     params = set(inspect.signature(att_power_curve).parameters)
     assert "injection" in params
     assert "Y" not in params and "outcomes" not in params  # observed outcome is structurally unrepresentable
+
+
+def test_divergence_rows_give_no_row_for_a_corner_with_no_window(monkeypatch):
+    from types import SimpleNamespace
+
+    from scripts.validate_corners import _divergence_rows
+    from tests.scripts._corner_no_window import frames, stub_corner_pipeline
+
+    stub_corner_pipeline(monkeypatch)
+    out = _divergence_rows(SimpleNamespace(actions=pd.DataFrame(), frames=frames(), provider="idsse"), object())
+    assert len(out) == 2  # the measured corner's 2 players only
+
+
+def test_a_corner_with_no_window_takes_the_no_routine_bucket_and_missing_chances():
+    # the _match_rows composition: encoding -> routine features -> dominant routine, and chance quality
+    from scripts.validate_corners import dominant_routine
+    from silly_kicks.corners import compute_corner_chance_quality, compute_corner_routine_features
+    from silly_kicks.corners._encode import compute_corner_run_encoding
+    from tests.corners.test_encode import _model
+    from tests.corners.test_routine_model import _toy_model
+    from tests.scripts._corner_no_window import frames, windowed_corners
+
+    enc = compute_corner_run_encoding(windowed_corners(), frames(), model=_model())
+    run_cols = [c for c in enc.columns if c.startswith("run_")]
+    assert enc.loc[enc["corner_id"] == 1, run_cols].isna().all(axis=None)
+    assert enc.loc[enc["corner_id"] == 0, run_cols].notna().all(axis=None)
+    # the toy routine model has its own run columns: corner 1's row is NaN exactly when its real encoding is
+    toy = pd.DataFrame({"game_id": ["g1", "g1"], "corner_id": [0, 1]})
+    nan_row = enc.loc[enc["corner_id"] == 1, run_cols].isna().all(axis=None)
+    for c, v in zip(["run_1a", "run_1b", "run_2a", "run_2b"], [1.0, 0.0, 1.0, 0.0], strict=True):
+        toy[c] = [v, np.nan if nan_row else v]
+    feats = compute_corner_routine_features(toy, model=_toy_model())
+    feat = [c for c in feats.columns if c.startswith("routine_feat_")]
+    assert dominant_routine(feats[feat].to_numpy(dtype=float)).tolist()[1] == -1
+    acts = pd.DataFrame(
+        {"game_id": ["g1"], "period_id": [1], "time_seconds": [102.0], "type_id": [11], "result_id": [0]}
+    )
+    q = compute_corner_chance_quality(windowed_corners(), acts).set_index("corner_id")
+    assert pd.isna(q.loc[1, "n_shots"]) and q.loc[0, "n_shots"] == 1
+
+
+def test_divergence_rows_give_no_row_for_a_measured_corner_with_no_side(monkeypatch):
+    from types import SimpleNamespace
+
+    from scripts.validate_corners import _divergence_rows
+    from tests.scripts._corner_no_window import frames, stub_corner_pipeline, windowed_corners
+
+    table = windowed_corners()
+    table["corner_side"] = pd.Series([pd.NA, pd.NA], dtype="category")
+    stub_corner_pipeline(monkeypatch, table)
+    out = _divergence_rows(SimpleNamespace(actions=pd.DataFrame(), frames=frames(), provider="idsse"), object())
+    assert len(out) == 0
+
+
+def test_reduce_samples_takes_missing_counts_of_corners_with_no_window():
+    # A corner with no measured kick has <NA> chance counts (Int64). The reduce must leave
+    # them out of each mean and still count the corner. At the pandas floor (2.1.1) `Int64.to_numpy(dtype=float)`
+    # with a missing value raises ValueError, so the reads take na_value=np.nan.
+    from scripts.validate_corners import reduce_samples
+
+    rows = [("A", "idsse", 1, 3), ("A", "idsse", 0, 1), ("B", "skillcorner", 0, 2), ("B", "skillcorner", None, None)]
+    samples = pd.DataFrame(rows, columns=["team_id", "provider", "n_goals", "n_shots"])
+    samples["n_goals"] = samples["n_goals"].astype("Int64")
+    samples["n_shots"] = samples["n_shots"].astype("Int64")
+    out = reduce_samples(samples)
+    assert out["n_corners"] == 4  # the no-window corner is counted
+    assert out["responsiveness"]["n_shots_mean"] == pytest.approx(2.0)  # (3 + 1 + 2) / 3: not counted as 0
+    assert out["cross_provider"]["skillcorner"]["n_shots_mean"] == pytest.approx(2.0)

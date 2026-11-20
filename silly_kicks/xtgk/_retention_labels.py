@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
+from silly_kicks.spadl.schema import is_order_only
 from silly_kicks.spadl.utils import add_possessions
 
 _SHOT = spadlconfig.actiontype_id["shot"]
@@ -50,6 +51,7 @@ def retains(actions: pd.DataFrame, *, window_seconds: float = 10.0) -> pd.Series
     poss = a["possession_id"].to_numpy()
     poss_na = pd.isna(poss)
     time_s = np.asarray(a["time_seconds"].values, dtype=np.float64)
+    order_only = is_order_only(a)  # an "order_only" anchor opens no window: NaN (action-time repair spec 4.13)
     result = np.full(len(a), np.nan, dtype=float)
 
     group_keys = [k for k in ("game_id", "period_id") if k in a.columns]
@@ -72,7 +74,7 @@ def retains(actions: pd.DataFrame, *, window_seconds: float = 10.0) -> pd.Series
         t_last = t[-1] if len(t) else 0.0
         for li in range(len(idx)):
             gi = idx[li]
-            if team_na[gi]:
+            if team_na[gi] or order_only[gi]:
                 continue  # unknown anchor team -> no knowable "whose team retained" -> NaN (ADR-027)
             end = min(boundaries[li], len(idx))
             label: float | None = None

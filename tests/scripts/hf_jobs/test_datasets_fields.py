@@ -86,6 +86,7 @@ def test_committed_declarations_carry_the_spec_values():
         "tc3": ("restricted", "extended"),
         "xshot17": ("redistributable", "public"),
         "xshot115": ("restricted", "extended"),
+        "xshot187": ("restricted", "extended"),
         "xcross_probe": ("restricted", "public"),
         "sb360": ("restricted", "extended"),
         "sb_open": ("redistributable", "public"),
@@ -157,7 +158,7 @@ def test_private_repo_required(tmp_path, monkeypatch):
 def test_staged_repos_exempt_only_the_upstream_open_source():
     sb_open = D.declared()["sb_open"]
     assert D.staged_repos(sb_open) == ["silly-kicks/hf-refit-sb-open"]  # the upstream statsbomb/open-data is exempt
-    assert D.staged_repos(D.declared()["tc3"]) == ["silly-kicks/hf-refit-tc3"]
+    assert D.staged_repos(D.declared()["tc3"]) == ["karstenskyt/hf-refit-tc3-8d96d36"]
 
 
 def test_private_check_fails_closed_on_api_error():
@@ -228,3 +229,24 @@ def test_the_record_cli_injects_the_launcher_policy(monkeypatch, capsys):
     assert '"repo": "r"' in capsys.readouterr().out
     with pytest.raises(TypeError):
         D.record("xshot17")  # pyright: ignore[reportCallIssue]  -- no default policy: a caller must inject it
+
+
+def test_the_release_refit_stages_live_in_the_user_namespace():
+    # The owner's decision of 2026-11-17: the three restaged datasets move to new private repos under karstenskyt/;
+    # the dataset names stay. The stage of the amended commit 2, 8d96d36c (ADR-135), goes to new repositories with that
+    # suffix, so the earlier stages stay as they are (the xshot187 shard generation is the same in each).
+    repos = {n: D.declared()[n].repo for n in ("xshot187", "tc3", "xcross_probe")}
+    assert repos == {
+        "xshot187": "karstenskyt/hf-refit-xshot187-8d96d36",
+        "tc3": "karstenskyt/hf-refit-tc3-8d96d36",
+        "xcross_probe": "karstenskyt/hf-refit-xcross-probe-8d96d36",
+    }
+
+
+def test_the_lock_names_the_declared_repository_of_each_dataset():
+    # A repository change in datasets.toml must be followed by `datasets record`, which writes the lock: each declared
+    # dataset has a staging record, and the record names the declared repository.
+    lock = D._read_lock()
+    declared = D.declared()
+    assert sorted(lock) == sorted(declared)
+    assert {n: lock[n]["repo"] for n in declared} == {n: d.repo for n, d in declared.items()}

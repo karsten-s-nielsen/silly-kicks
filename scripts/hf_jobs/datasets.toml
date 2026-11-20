@@ -6,7 +6,9 @@
 # A mounted dataset declares `read_concurrency` (the job-wide whole-file read cap; see tc3).
 
 [datasets.tc3]
-repo = "silly-kicks/hf-refit-tc3"
+# The stage of the amended commit 2, 8d96d36c (the action-time repair, ADR-135), in the PRO user namespace; a new
+# repository, so the earlier stages (karstenskyt/hf-refit-tc3, -26a2c33) stay as they are.
+repo = "karstenskyt/hf-refit-tc3-8d96d36"
 kind = "flat_tc3"
 raw = "restricted"
 provenance = "extended"
@@ -36,8 +38,19 @@ access = "mount"
 read_concurrency = 4  # the tc3 measurement (same mount type)
 description = "115-match idsse + SkillCorner corpus: the Hub sc_extended xShot and xCross artifacts"
 
+[datasets.xshot187]
+# The stage of the amended commit 2, 8d96d36c (the action-time repair, ADR-135); a new repository, so the earlier
+# stages (karstenskyt/hf-refit-xshot187, -26a2c33) stay as they are (each has the shard generation 3836f5993b9c5a9f).
+repo = "karstenskyt/hf-refit-xshot187-8d96d36"
+kind = "flat_tc3"
+raw = "restricted"
+provenance = "extended"
+access = "mount"
+read_concurrency = 4  # the tc3 measurement (same mount type)
+description = "187-match idsse + SkillCorner + Gradient Sports corpus (ADR-132): both xShot/xCross arms"
+
 [datasets.xcross_probe]
-repo = "silly-kicks/hf-refit-xcross-probe"
+repo = "karstenskyt/hf-refit-xcross-probe-8d96d36"  # the stage of commit 8d96d36c (ADR-135); a new repository
 kind = "pergame"
 raw = "restricted"
 provenance = "public"

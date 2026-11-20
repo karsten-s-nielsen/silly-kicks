@@ -3,6 +3,7 @@
 import pandas as pd
 
 import silly_kicks.spadl.config as _spadl
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 from silly_kicks.spadl.base import _add_dribbles
 from silly_kicks.spadl.utils import _finalize_output, _validate_preserve_native
 
@@ -173,8 +174,8 @@ def _compute_shot_extras(actions: pd.DataFrame) -> pd.DataFrame:
     sameperiod = actions.period_id == next_actions.period_id
 
     shot = actions.type_id.isin(shot_ids)
-    goal = shot & (actions.result_id == _spadl.result_id["success"])
-    owngoal = actions.result_id == _spadl.result_id["owngoal"]
+    goal = goal_mask(actions)
+    owngoal = owngoal_mask(actions)
     next_corner_goalkick = next_actions.type_id.isin(
         [
             _atomicspadl.actiontype_id["corner_crossed"],

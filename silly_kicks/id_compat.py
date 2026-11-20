@@ -21,6 +21,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from silly_kicks import _pandas_compat
+
 
 def _canonical(x):
     """Single-element canonical id key. NA/None/NaN -> pd.NA (never matches).
@@ -63,6 +65,25 @@ def _decat(s: pd.Series) -> pd.Series:
             return s.astype("Int64")
         return s.astype(cats_dtype)
     return s
+
+
+def _id_input(x) -> pd.Series:
+    """The ONE input step of every comparison entry: wrap as a Series, then decategorize (``_decat``).
+
+    At the declared pandas floor (before 2.2.1, :data:`~silly_kicks._pandas_compat.PANDAS_COMPARES_READ_ONLY_OBJECT`
+    ``False``), an object-dtype ``Series == scalar`` needs a WRITEABLE buffer and raises "buffer source array
+    is read-only" otherwise. ``PitchControlSurface`` keeps its id arrays read-only on purpose (immutability),
+    so on that pandas only, a read-only object input is copied here: one pointer copy of ``len(x)`` values
+    (a surface holds about 22 player ids), the caller's array untouched. From pandas 2.2.1 nothing is copied.
+    """
+    s = pd.Series(x)
+    if (
+        not _pandas_compat.PANDAS_COMPARES_READ_ONLY_OBJECT
+        and s.dtype == object
+        and not s.to_numpy(copy=False).flags.writeable
+    ):
+        s = s.copy()
+    return _decat(s)
 
 
 def canonical_id(x):
@@ -123,7 +144,7 @@ def canonical_id_series(s: pd.Series) -> pd.Series:
     >>> canonical_id_series(pd.Series([2.0, "3"], dtype=object)).tolist()
     ['2', '3']
     """
-    s = _decat(pd.Series(s))
+    s = _id_input(s)
     out = pd.Series(pd.NA, index=s.index, dtype="object")
     notna = s.notna()
     if not notna.any():
@@ -352,7 +373,7 @@ def ids_equal(a: pd.Series, b: pd.Series) -> pd.Series:
     >>> ids_equal(pd.Series([1, None], dtype="Int64"), pd.Series([1, None], dtype="Int64")).tolist()
     [True, False]
     """
-    a, b = _decat(pd.Series(a)), _decat(pd.Series(b))
+    a, b = _id_input(a), _id_input(b)
     pa, pb = _positional(a, b)
     if _raw_comparable(a, b):
         eq = (pa == pb) & pa.notna() & pb.notna()
@@ -386,7 +407,7 @@ def ids_differ(a: pd.Series, b: pd.Series) -> pd.Series:
     (ADR-027 -- Gradient Sports emits genuinely team-less duel/foul events) must not be
     counted as an opponent just because its id fails to equal ours.
     """
-    a, b = _decat(pd.Series(a)), _decat(pd.Series(b))
+    a, b = _id_input(a), _id_input(b)
     pa, pb = _positional(a, b)
     if _raw_comparable(a, b):
         differ = pa.notna() & pb.notna() & (pa != pb)
@@ -421,7 +442,7 @@ def ids_match(series, scalar) -> pd.Series:
     >>> ids_match(team_id, None).tolist()
     [False, False, False]
     """
-    s = _decat(pd.Series(series))
+    s = _id_input(series)
     key = canonical_id(scalar)
     if key is pd.NA:
         return pd.Series(np.zeros(len(s), dtype=bool), index=s.index)
@@ -465,7 +486,7 @@ def ids_isin(series, scalars) -> pd.Series:
     >>> ids_isin(pd.Series([999, None]), {None}).tolist()
     [False, False]
     """
-    s = _decat(pd.Series(series))
+    s = _id_input(series)
     if scalars is None:
         return pd.Series(np.zeros(len(s), dtype=bool), index=s.index)
     keys = {k for k in (canonical_id(v) for v in scalars) if isinstance(k, str)}

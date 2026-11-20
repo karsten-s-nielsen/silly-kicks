@@ -90,6 +90,7 @@ __all__ = [
     "PitchControlSurface",
     "PlayerInfluence",
     "PositionLabel",
+    "PredatesDeclaredConstantWarning",
     "PreprocessConfig",
     "PressureParams",
     "ReceiverModel",
@@ -286,6 +287,7 @@ __all__ = [
     "resolve_detected_keeper_xy",
     "resolve_intended_receiver",
     "resolve_restart_geometry",
+    "restart_gaps",
     "run_tracking_features",
     "schema",
     "secured_reception",
@@ -306,6 +308,7 @@ __all__ = [
     "sportec",
     "structural_pass_xfns",
     "subsample_negatives",
+    "sync_action_times",
     "sync_score",
     "team_shape_xfns",
     "tracking_default_xfns",
@@ -334,6 +337,7 @@ from . import (
     sportec,
     utils,
 )
+from ._action_time import restart_gaps, sync_action_times
 from ._ball_carrier import derive_team_in_possession, infer_ball_carrier
 from ._ball_contact import (
     BallContactParams,
@@ -439,6 +443,7 @@ from ._warnings import (
     IgnoredSurfaceInputsWarning,
     MissingFeatureContractWarning,
     OrientationUnresolvedWarning,
+    PredatesDeclaredConstantWarning,
     RunValueCoverageWarning,
     SyntheticEPVWarning,
     UnverifiableFeatureContractWarning,

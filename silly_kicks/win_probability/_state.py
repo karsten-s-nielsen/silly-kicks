@@ -8,22 +8,31 @@ yellow). No ``add_names``, no ``vaep`` import -- the id-based goal rule mirrors 
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from silly_kicks.id_compat import same_id
 from silly_kicks.spadl import config as _spadl
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
 from ._config import WinProbabilityParams
 
-_SHOT_TYPE_IDS = [_spadl.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")]
-_SUCCESS = _spadl.result_id["success"]
-_OWNGOAL = _spadl.result_id["owngoal"]
 _RED = _spadl.result_id["red_card"]
 _YELLOW = _spadl.result_id["yellow_card"]
 _FOUL = _spadl.actiontype_id["foul"]
 
-# Absolute-minute offset per period start (regulation + extra time). Period 5 (PSO) excluded upstream.
+# Absolute-minute offset per period start (regulation + extra time). Period 5 is the penalty shoot-out, which is no part
+# of the match: its rows move no score, no card count and no final minute, and each holds the end state of the match.
 _PERIOD_OFFSET_MIN = {1: 0, 2: 45, 3: 90, 4: 105, 5: 120}
+
+
+def _match_mask(g: pd.DataFrame) -> np.ndarray:
+    """True on the rows of the match: a penalty shoot-out row (period 5), or a row with no period, is no part of it.
+
+    The fit drops the rows that are not in the match. The serve (``derive_match_states``) needs a period on each row
+    and raises without one; it gives a shoot-out row the end state of the match."""
+    p = g["period_id"]
+    return (p.notna() & p.ne(5)).fillna(False).to_numpy(dtype=bool)
 
 
 def _home_team_map(actions: pd.DataFrame, games: pd.DataFrame | None) -> dict:
@@ -54,10 +63,12 @@ def derive_match_states(
         goals = {t: 0 for t in teams}
         reds = {t: 0 for t in teams}
         yellows: dict = {t: {} for t in teams}
-        scored_np = (g["type_id"].isin(_SHOT_TYPE_IDS) & (g["result_id"] == _SUCCESS)).to_numpy()
-        og_np = (g["result_id"] == _OWNGOAL).to_numpy()
-        period_np = g["period_id"].to_numpy()
-        time_np = g["time_seconds"].to_numpy()
+        in_match = _match_mask(g)
+        scored_np = goal_mask(g).fillna(False).to_numpy(dtype=bool) & in_match  # the library goal rule
+        og_np = owngoal_mask(g).fillna(False).to_numpy(dtype=bool) & in_match
+        gm = g[in_match] if in_match.any() else g  # the final minute of the match, from its own rows
+        period_np = gm["period_id"].to_numpy()
+        time_np = gm["time_seconds"].to_numpy()
         last_period = int(period_np.max())
         last_time = float(time_np[period_np == last_period].max())
         final_min = _PERIOD_OFFSET_MIN.get(last_period, 90) + last_time / 60.0
@@ -66,7 +77,10 @@ def derive_match_states(
             t = r["team_id"]
             opp_candidates = [x for x in teams if not same_id(x, t)]
             opp = opp_candidates[0] if len(opp_candidates) == 1 else None
-            abs_min = _PERIOD_OFFSET_MIN.get(int(r["period_id"]), 0) + float(r["time_seconds"]) / 60.0
+            if in_match[j]:
+                abs_min = _PERIOD_OFFSET_MIN.get(int(r["period_id"]), 0) + float(r["time_seconds"]) / 60.0
+            else:  # a shoot-out row: the match has ended, so its clock is the final minute
+                abs_min = final_min
             own_s = goals.get(t, 0)
             opp_s = goals.get(opp, 0) if opp is not None else 0
             man = (reds.get(opp, 0) - reds.get(t, 0)) if opp is not None else 0
@@ -91,9 +105,12 @@ def derive_match_states(
                 goals[t] = goals.get(t, 0) + 1
             elif bool(og_np[j]) and opp is not None:
                 goals[opp] = goals.get(opp, 0) + 1
-            if r["type_id"] == _FOUL and r["result_id"] == _RED:
+            card = r["result_id"] if (in_match[j] and r["type_id"] == _FOUL) else None
+            if card is None or pd.isna(card):
+                continue  # no card of the match: a shoot-out row, no foul, or a missing result
+            if card == _RED:
                 reds[t] = reds.get(t, 0) + 1
-            elif r["type_id"] == _FOUL and r["result_id"] == _YELLOW:
+            elif card == _YELLOW:
                 pid = r.get("player_id")
                 if pid is not None and not pd.isna(pid):
                     yellows[t][pid] = yellows[t].get(pid, 0) + 1

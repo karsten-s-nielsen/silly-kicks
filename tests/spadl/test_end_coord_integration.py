@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 
 from silly_kicks.spadl import config as spadlconfig
+from tests._idsse_fixtures import idsse_fixture_native, idsse_goalkeeper_ids
 
-_IDSSE_DIR = Path(__file__).parent.parent / "datasets" / "idsse"
 _SB_DIR = Path(__file__).parent.parent / "datasets" / "statsbomb"
 
 
@@ -24,12 +24,8 @@ class TestSportecEndCoordinates:
     def actions(self) -> pd.DataFrame:
         from silly_kicks.spadl.sportec import convert_to_actions
 
-        events = pd.read_parquet(_IDSSE_DIR / "per_period_match.parquet")
-        gk_ids: set[str] | None = None
-        if "play_goal_keeper_action" in events.columns:
-            gk_ids = set(
-                events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist()
-            )
+        events = idsse_fixture_native("per_period_match")  # through shape_events_to_native
+        gk_ids = idsse_goalkeeper_ids(events)
         actions, _report = convert_to_actions(
             events,
             home_team_id="home",

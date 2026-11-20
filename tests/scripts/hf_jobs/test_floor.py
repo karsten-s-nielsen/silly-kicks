@@ -207,3 +207,25 @@ def test_only_the_xcross_default_build_drops_the_in_sample_gate():
         if not b.in_sample_gate
     }
     assert off == {("xcross_attempt", "default")}
+
+
+@pytest.mark.parametrize(("fresh", "ok"), [(0.0030, True), (0.0068, True), (0.0069, False), (float("nan"), False)])
+def test_retrain_public_cv_parity_is_one_sided(fresh, ok):
+    spec, good = reg.REGISTRY["pass_completion"], {"ece": 0.0065}
+    got, d = certify(
+        spec, "public", fresh_metrics={"ece": fresh}, committed_metrics=good, headtohead=_h2h(spec), cv_one_sided=True
+    )
+    assert got is ok and d["cv_parity"]["form"] == "one_sided"
+
+
+def test_cv_tolerance_stays_two_sided_in_retrain():
+    spec, rho = reg.REGISTRY["match_outcome_dependence"], 0.021614208683848977
+    got, d = certify(
+        spec,
+        "public",
+        fresh_metrics={"rho": rho - 2e-6},
+        committed_metrics={"rho": rho},
+        headtohead=_h2h(spec),
+        cv_one_sided=True,
+    )
+    assert not got and d["cv_parity"]["form"] == "two_sided"

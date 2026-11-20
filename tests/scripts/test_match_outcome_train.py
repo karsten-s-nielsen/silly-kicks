@@ -128,7 +128,11 @@ def test_train_main_writes_loadable_artifact(tmp_path, monkeypatch):
     from scripts._corpus_identity import open_data_identity
 
     metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-    assert metrics == {
+    assert set(metrics["acceptance"]) == {
+        "rho_inside_bounds",
+        "fit_reaches_the_likelihood_optimum",
+    }  # refit mode (ADR-130)
+    assert {k: v for k, v in metrics.items() if k not in ("acceptance", "acceptance_detail")} == {
         "rho": m.rho,
         **open_data_identity([mid for _p, mid, *_ in _with_one_sided_game(_fake_corpus())]),
     }
@@ -176,8 +180,9 @@ def test_fit_artifact_matches_the_legacy_main():
 
 
 def test_fit_artifact_writes_the_open_identity_metrics():
-    """HFU spec 14.3: the bundle's metrics.json holds ``rho`` and the corpus identity of the refs it fit; the
-    model.json bytes and SHA256SUMS (model.json only, the repo convention) do not change."""
+    """HFU spec 14.3: the bundle's metrics.json holds ``rho``, the refit acceptance gates (ADR-130) and the corpus
+    identity of the refs it fit; the model.json bytes and SHA256SUMS (model.json only, the repo convention) do not
+    change."""
     import json
 
     from scripts._corpus_identity import open_data_identity
@@ -190,7 +195,12 @@ def test_fit_artifact_writes_the_open_identity_metrics():
         _extract_reduce(dict(sorted(shards.items())), None), {"commit": "c" * 40, "dirty": False}, match_ids=ids
     )
     model = json.loads(art.files["model.json"])
-    assert json.loads(art.files["metrics.json"]) == {"rho": model["rho"], **open_data_identity(ids)}
+    metrics = json.loads(art.files["metrics.json"])
+    assert set(metrics["acceptance"]) == {"rho_inside_bounds", "fit_reaches_the_likelihood_optimum"}
+    assert {k: v for k, v in metrics.items() if k not in ("acceptance", "acceptance_detail")} == {
+        "rho": model["rho"],
+        **open_data_identity(ids),
+    }
     assert art.files["SHA256SUMS"].decode("ascii").split() == [
         art.files["SHA256SUMS"].split()[0].decode(),
         "model.json",
@@ -212,3 +222,115 @@ def test_reduce_over_shards_equals_in_memory_fit():
     assert abs(fit_rho(matches_from_shards(shards)) - fit_rho(in_memory)) < 1e-9
     # order-independent: a reversed shard order fits the same rho
     assert abs(fit_rho(matches_from_shards(list(reversed(shards)))) - fit_rho(in_memory)) < 1e-9
+
+
+def test_match_tuples_counts_no_shootout_goal():
+    # The library's goal rule: a period-5 (shoot-out) goal is no goal of the match.
+    fx = make_actions(
+        [
+            {"team_id": 10, "type_id": SHOT, "result_id": SUCCESS, "period_id": 1},
+            {"team_id": 20, "type_id": SHOT, "result_id": SUCCESS, "period_id": 5},
+            {"team_id": 20, "type_id": SHOT, "result_id": SUCCESS, "period_id": 5},
+            {"team_id": 20, "type_id": PASS, "period_id": 1},
+            {"team_id": 10, "type_id": PASS, "period_id": 5},
+        ]
+    )
+    (_hxg, _axg, hg, ag) = _match_tuples(fx, "xg")[0]
+    assert (hg, ag) == (1, 0)
+
+
+def test_acceptance_gates_pass_when_the_fresh_rho_fits_the_data_better():
+    # Refit mode (ADR-130): the fresh rho replaces the committed one on purpose; its gates are the fit inside its
+    # bounds and a likelihood of the matches no worse than the committed rho's on the same matches.
+    from scripts.train_match_outcome_dependence import acceptance_gates
+
+    matches = _simulate(-0.1, n=600, seed=1)
+    gates, detail = acceptance_gates(matches, fresh_rho=fit_rho(matches), committed_rho=0.3)
+    assert gates == {"rho_inside_bounds": True, "fit_reaches_the_likelihood_optimum": True}
+    assert detail["nll_fresh"] <= detail["nll_committed"]
+
+
+def test_acceptance_gates_pass_a_refit_of_the_same_matches_in_any_order():
+    # Owner ruling (R106): the likelihood gate is a fit check -- the fresh fit is at the likelihood optimum, within the
+    # fit's tolerance. A refit of the matches of the committed rho passes in any match order, and against a tighter
+    # optimum (the arithmetic differs only by rounding).
+    from typing import cast
+
+    from scipy.optimize import OptimizeResult, minimize_scalar
+
+    from scripts.train_match_outcome_dependence import _nll, acceptance_gates
+
+    matches = _simulate(0.05, n=400, seed=3)
+    committed = fit_rho(matches)
+    rng = np.random.default_rng(7)
+    for _ in range(8):
+        perm = [matches[i] for i in rng.permutation(len(matches))]
+        gates, _ = acceptance_gates(perm, fresh_rho=fit_rho(perm), committed_rho=committed)
+        assert gates["fit_reaches_the_likelihood_optimum"] is True
+    tight = cast(
+        OptimizeResult,
+        minimize_scalar(lambda r: _nll(r, matches), bounds=(-0.5, 0.5), method="bounded", options={"xatol": 1e-12}),
+    )
+    gates, detail = acceptance_gates(matches, fresh_rho=committed, committed_rho=float(tight.x))
+    assert gates["fit_reaches_the_likelihood_optimum"] is True
+    assert detail["nll_drop_at_neighbours"] <= 0.0  # the fit is the optimum: no neighbour is lower
+
+
+def test_acceptance_gates_fail_a_fit_that_misses_the_optimum(monkeypatch):
+    # The trainer's real path: a broken optimizer (a fit 100 resolutions off the optimum) writes a failed gate.
+    import json
+    import types
+
+    import scripts.train_match_outcome_dependence as T
+    from silly_kicks.match_outcome._dependence import DependenceModel
+
+    corpus = _fake_corpus(4)
+    shards = {f"statsbomb__{mid}": T.extract_match_slice(a, "xg") for _p, mid, a, _f, _h in corpus}
+    pooled = T._extract_reduce(dict(sorted(shards.items())), None)
+    optimum = T.fit_rho(T.matches_from_shards([pooled]))
+    monkeypatch.setattr(DependenceModel, "load", classmethod(lambda cls, path: types.SimpleNamespace(rho=optimum)))
+    ids = [mid for _p, mid, *_ in corpus]
+    good = json.loads(T.fit_artifact(pooled, {"commit": "c" * 40, "dirty": False}, match_ids=ids).files["metrics.json"])
+    assert good["acceptance"]["fit_reaches_the_likelihood_optimum"] is True
+    real = T.fit_rho
+    monkeypatch.setattr(T, "fit_rho", lambda m, **k: real(m, **k) - 100 * T.FIT_XATOL)  # inward: 0.5 is a bound
+    bad = json.loads(T.fit_artifact(pooled, {"commit": "c" * 40, "dirty": False}, match_ids=ids).files["metrics.json"])
+    assert bad["acceptance"]["fit_reaches_the_likelihood_optimum"] is False
+
+
+def test_acceptance_gates_fail_a_small_miss_whatever_the_committed_rho():
+    # Owner ruling (R106): the fit check tests the optimum directly. A fit 5 tolerances off the optimum fails even when
+    # the committed rho is far from it (the check does not depend on the committed rho); a miss inside the fit's own
+    # tolerance passes.
+    from scripts.train_match_outcome_dependence import FIT_XATOL, acceptance_gates
+
+    matches = _simulate(0.05, n=400, seed=3)
+    optimum = fit_rho(matches)
+    gates, _ = acceptance_gates(matches, fresh_rho=optimum + 5 * FIT_XATOL, committed_rho=0.3)
+    assert gates["fit_reaches_the_likelihood_optimum"] is False
+    gates, _ = acceptance_gates(matches, fresh_rho=optimum - 5 * FIT_XATOL, committed_rho=0.3)
+    assert gates["fit_reaches_the_likelihood_optimum"] is False
+    gates, _ = acceptance_gates(matches, fresh_rho=optimum + 0.5 * FIT_XATOL, committed_rho=0.3)
+    assert gates["fit_reaches_the_likelihood_optimum"] is True
+
+
+def test_acceptance_gates_fail_at_a_bound():
+    from scripts.train_match_outcome_dependence import acceptance_gates
+
+    matches = _simulate(0.0, n=200, seed=2)
+    gates, _ = acceptance_gates(matches, fresh_rho=0.5, committed_rho=0.0)
+    assert gates["rho_inside_bounds"] is False
+
+
+def test_match_tuples_leave_the_shootout_out_of_the_xg():
+    # A shoot-out row is no part of the match, for its shots too.
+    fx = make_actions(
+        [
+            {"team_id": 10, "type_id": SHOT, "xg": 0.3, "result_id": FAIL, "period_id": 1},
+            {"team_id": 20, "type_id": SHOT, "xg": 0.2, "result_id": FAIL, "period_id": 1},
+            {"team_id": 10, "type_id": SHOT, "xg": 0.78, "result_id": SUCCESS, "period_id": 5},
+            {"team_id": 20, "type_id": SHOT, "xg": 0.78, "result_id": FAIL, "period_id": 5},
+        ]
+    )
+    (hxg, axg, hg, ag) = _match_tuples(fx, "xg")[0]
+    assert (list(hxg), list(axg), hg, ag) == ([0.3], [0.2], 0, 0)

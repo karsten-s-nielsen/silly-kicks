@@ -112,10 +112,21 @@ def test_committed_campaigns_keep_todays_arms(name):
     c = C.load_campaign(_CAMPAIGNS / name)
     gated = [i for i in C.instances(c, SHA) if "--arms-json" in i.args]
     assert gated
+    if name == "tf46_refit.toml":  # ADR-132 / the xshot187 refit plan: every gated job reads xshot187
+        assert {j.dataset for j in c.jobs if j.arms is not None} == {"xshot187"}
     for inst in gated:
         job = next(j for j in c.jobs if j.job == inst.job and j.tier == inst.tier)
         today = arm_policy.compute_arms(staged_units(job.dataset))
-        if job.dataset == "xshot17":  # the wheel jobs: the only arm xshot17 produces
+        if job.dataset == "xshot187":  # ADR-132 item 6: the wheel jobs run the two-arm rule, the Hub jobs sc_extended
+            if job.tier == "public":
+                assert job.arms == ("public", "sc_extended") and _arms_payload(inst) == today
+            else:
+                assert job.tier == "sc_extended" and job.arms == ("sc_extended",)
+                assert _arms_payload(inst) == {
+                    "arms": {"sc_extended": today["arms"]["sc_extended"]},
+                    "ship_order": ["sc_extended"],
+                }
+        elif job.dataset == "xshot17":  # the wheel jobs: the only arm xshot17 produces
             assert job.arms == ("public",) and _arms_payload(inst) == today
         else:  # the Hub jobs on xshot115: the arm today's run ships (ship_order[-1])
             assert job.dataset == "xshot115" and job.arms == ("sc_extended",)
@@ -124,3 +135,38 @@ def test_committed_campaigns_keep_todays_arms(name):
                 "arms": {"sc_extended": today["arms"]["sc_extended"]},
                 "ship_order": ["sc_extended"],
             }
+
+
+# ---- ship_variant: a campaign forces the shipped arm of a paired gated job (spec 4.8) ----
+
+_PAIRED = (
+    'job = "xshot_occurrence"\ntier = "public"\ndataset = "tc3"\nvariants = ["default"]\n'
+    'arms = ["public", "sc_extended"]\n'
+)
+
+
+def test_ship_variant_is_parsed(tmp_path):
+    c = _write(tmp_path, _PAIRED + 'ship_variant = "public"\n')
+    assert c.jobs[0].ship_variant == "public"
+    assert _write(tmp_path, _PAIRED).jobs[0].ship_variant is None
+
+
+def test_ship_variant_on_a_trainer_without_the_option_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="ship_variant"):
+        _write(tmp_path, 'job = "receiver_model"\ntier = "public"\ndataset = "sb_open"\nvariants = ["default"]\n'
+               'ship_variant = "public"\n')  # fmt: skip
+
+
+def test_ship_variant_outside_the_jobs_arms_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="ship_variant"):
+        _write(tmp_path, 'job = "xshot_occurrence"\ntier = "public"\ndataset = "tc3"\nvariants = ["default"]\n'
+               'arms = ["sc_extended"]\nship_variant = "public"\n')  # fmt: skip
+
+
+def test_ship_variant_reaches_the_instance_after_the_arms(tmp_path):
+    (inst,) = C.instances(_write(tmp_path, _PAIRED + 'ship_variant = "public"\n'), SHA)
+    i = inst.args.index("--ship-variant")
+    assert inst.args[i + 1] == "public"
+    assert i > inst.args.index("--arms-json")
+    (plain,) = C.instances(_write(tmp_path, _PAIRED), SHA)
+    assert "--ship-variant" not in plain.args

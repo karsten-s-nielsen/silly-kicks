@@ -240,6 +240,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/tracking/_collective.py",
     "silly_kicks/tracking/_defensive_line.py",
     "silly_kicks/tracking/_elastic_sync.py",
+    "silly_kicks/tracking/_action_time.py",  # sync_action_times / restart_gaps (action-time repair)
     "silly_kicks/tracking/_line_breaking.py",
     "silly_kicks/tracking/_obso.py",
     "silly_kicks/tracking/_packing.py",

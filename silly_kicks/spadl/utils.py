@@ -8,9 +8,11 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks._pandas_compat import masked_to_numpy
 from silly_kicks.reflection import SPADL_REFLECTION_KINDS, reflect
 
 from . import config as spadlconfig
+from ._goals import goal_mask, owngoal_mask
 from .schema import SPADL_COLUMNS
 
 if TYPE_CHECKING:
@@ -660,8 +662,8 @@ def add_pre_shot_gk_context(
         return sorted_actions
 
     type_id = sorted_actions["type_id"].to_numpy()
-    team_id = sorted_actions["team_id"].to_numpy()
-    player_id = sorted_actions["player_id"].to_numpy()
+    team_id = masked_to_numpy(sorted_actions["team_id"])  # pandas 2.2 semantics at the 2.1.1 floor
+    player_id = masked_to_numpy(sorted_actions["player_id"])  # player_id_is_object stays read from the dtype
     time_seconds_arr = sorted_actions["time_seconds"].to_numpy(dtype=np.float64)
     game_id = sorted_actions["game_id"].to_numpy()
     period_id = sorted_actions["period_id"].to_numpy()
@@ -893,7 +895,7 @@ def _compute_possession_boundaries(
 
     game_id = sorted_actions["game_id"].to_numpy()
     period_id = sorted_actions["period_id"].to_numpy()
-    team_id = sorted_actions["team_id"].to_numpy()
+    team_id = masked_to_numpy(sorted_actions["team_id"])  # pandas 2.2 semantics at the 2.1.1 floor
     time_seconds = sorted_actions["time_seconds"].to_numpy()
     type_id = sorted_actions["type_id"].to_numpy()
 
@@ -941,6 +943,11 @@ def _compute_possession_boundaries(
     if merge_brief_opposing_actions > 0 and brief_window_seconds > 0:
         suppress_at_i = np.zeros(n, dtype=bool)
         suppress_at_k = np.zeros(n, dtype=bool)
+        # No time test reads an "order_only" row at either end (i or i + k): such a pair is never a brief opposing
+        # action, so its boundary stays (action-time repair spec section 4.13).
+        from silly_kicks.spadl.schema import is_order_only
+
+        order_only = is_order_only(sorted_actions)
         for k in range(1, merge_brief_opposing_actions + 1):
             # Aligned look-ahead: index i sees row i+k; sentinels for last k positions.
             team_at_k = np.empty(n, dtype=team_id.dtype)
@@ -960,7 +967,10 @@ def _compute_possession_boundaries(
             period_at_k[n - k :] = -1
 
             same_game_period = (game_at_k == game_id) & (period_at_k == period_id)
-            within_time = (time_at_k - time_seconds) <= brief_window_seconds
+            oo_at_k = np.ones(n, dtype=bool)  # sentinel rows never match
+            if n > k:
+                oo_at_k[: n - k] = order_only[k:]
+            within_time = ((time_at_k - time_seconds) <= brief_window_seconds) & ~order_only & ~oo_at_k
             team_back = team_at_k == prev_team
             match = boundary & same_game_period & within_time & team_back
 
@@ -1724,6 +1734,17 @@ def _finalize_output(
                 f"These names are already part of the canonical schema; remove them from extra_columns."
             )
 
+    if "time_source" in schema and "time_source" in df.columns:
+        from .schema import TIME_SOURCE_VALUES
+
+        ts = df["time_source"]
+        bad = ts.isna() | ~ts.isin(TIME_SOURCE_VALUES)
+        if bool(bad.any()):
+            raise ValueError(
+                f"_finalize_output: time_source has values outside TIME_SOURCE_VALUES {TIME_SOURCE_VALUES}: "
+                f"{sorted(map(str, pd.unique(ts[bad])))}"
+            )
+
     cols = [*schema.keys(), *extras]
     result = df[cols].copy()
     for col, dtype in schema.items():
@@ -1900,8 +1921,10 @@ def validate_spadl(
 def add_game_state(actions: pd.DataFrame) -> pd.DataFrame:
     """Add ``game_state`` column to SPADL actions.
 
-    Derives the running scoreline from successful shots within the match,
-    then classifies each action as ``"winning"``, ``"losing"``, or
+    Derives the running scoreline by the library's goal rule
+    (``silly_kicks.spadl._goals``: a successful ``shot``, ``shot_penalty`` or
+    ``shot_freekick`` row is a goal; an ``owngoal`` row counts for the other
+    team), then classifies each action as ``"winning"``, ``"losing"``, or
     ``"drawing"`` from the perspective of the team performing the action.
 
     Parameters
@@ -1921,9 +1944,8 @@ def add_game_state(actions: pd.DataFrame) -> pd.DataFrame:
     Notes
     -----
     - Operates on a single match (all rows must share the same ``game_id``).
-    - Own goals (``result_name == "owngoal"``) are attributed to the acting
-      team in SPADL, so they increment the wrong team's score. This affects
-      ~3-5% of all goals.
+    - A row of period 5 (the penalty shoot-out) changes no score: each
+      period-5 row sees the score at the end of period 4.
     - Actions occurring at the exact same ``(period_id, time_seconds)`` as a
       goal see the score AFTER that goal (inclusive boundary).
 
@@ -1937,16 +1959,10 @@ def add_game_state(actions: pd.DataFrame) -> pd.DataFrame:
     """
     df = actions.copy()
 
-    # Resolve goal mask — support both name and ID columns
-    if "type_name" in df.columns and "result_name" in df.columns:
-        goal_mask = (df["type_name"] == "shot") & (df["result_name"] == "success")
-    else:
-        shot_id = spadlconfig.actiontype_id["shot"]
-        success_id = spadlconfig.result_id["success"]
-        goal_mask = (df["type_id"] == shot_id) & (df["result_id"] == success_id)
+    # Identify the two teams in the match by the dtype-safe id (ADR-019): 1 and "1" are one team.
+    from silly_kicks.id_compat import canonical_id_series
 
-    # Identify the two teams in the match
-    teams = df["team_id"].dropna().unique()
+    teams = canonical_id_series(df["team_id"]).dropna().unique()
     if len(teams) < 2:
         df["game_state"] = "drawing"
         return df
@@ -1959,21 +1975,25 @@ def add_game_state(actions: pd.DataFrame) -> pd.DataFrame:
         sort_cols.append("action_id")
     df = df.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
 
-    # Recalculate goal_mask after sort (index changed)
-    if "type_name" in df.columns and "result_name" in df.columns:
-        goal_mask = (df["type_name"] == "shot") & (df["result_name"] == "success")
-    else:
-        goal_mask = (df["type_id"] == shot_id) & (df["result_id"] == success_id)
+    # The goal rule; a shoot-out (period 5) row scores for neither team, and a missing result or period is no goal
+    # (plain numpy booleans, so a nullable column cannot leave a missing value in the masks).
+    in_match = (df["period_id"].notna() & df["period_id"].ne(5)).fillna(False).to_numpy(dtype=bool)
+    goal = goal_mask(df).fillna(False).to_numpy(dtype=bool) & in_match
+    own = owngoal_mask(df).fillna(False).to_numpy(dtype=bool) & in_match
 
-    # Cumulative goals scored by each team (inclusive — goal action sees its own goal)
-    goals_a = (goal_mask & (df["team_id"] == team_a)).cumsum()
-    goals_b = (goal_mask & (df["team_id"] == team_b)).cumsum()
+    # Each team mask once, by the same dtype-safe id; a row with a missing team id is neither team.
+    canon = canonical_id_series(df["team_id"])
+    is_a = canon.eq(team_a).fillna(False).to_numpy(dtype=bool)
+    is_b = canon.eq(team_b).fillna(False).to_numpy(dtype=bool)
+
+    # Cumulative goals of each team (inclusive: a goal row sees its own goal); an own goal counts for the other team
+    goals_a = pd.Series(np.cumsum((goal & is_a) | (own & is_b)), index=df.index)
+    goals_b = pd.Series(np.cumsum((goal & is_b) | (own & is_a)), index=df.index)
 
     # For each action, compute score differential from acting team's perspective.
     # NaN team_id rows are neither team → default to "drawing" (ADR-003).
-    acting_is_a = df["team_id"] == team_a
-    acting_is_b = df["team_id"] == team_b
-    known_team = acting_is_a | acting_is_b
+    acting_is_a = pd.Series(is_a, index=df.index)
+    known_team = pd.Series(is_a | is_b, index=df.index)
 
     acting_goals = goals_a.where(acting_is_a, goals_b)
     opponent_goals = goals_b.where(acting_is_a, goals_a)

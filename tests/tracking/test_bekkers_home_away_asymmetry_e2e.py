@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -49,8 +50,19 @@ def _load_loader():
         "_loader_pining", str(Path(__file__).parents[2] / "scripts" / "_loader_pining.py")
     )
     mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    # Register before exec: the loader defines @dataclass types (ADR-052 MatchRef), and on Python 3.12 dataclasses
+    # resolve the defining module through sys.modules -- an unregistered module raises AttributeError at import.
+    sys.modules.setdefault("_loader_pining", mod)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
+
+
+def _float64_coords(frames):
+    """Upcast the stored float32 coordinates (ADR-106) before reflecting: ``105 - x`` in float32 rounds at ~4e-6 m,
+    which is storage resolution, not the D1 defect. The kernel computes in float64 anyway, so the invariant is
+    measured on the exact reflection and the strict bound keeps its meaning."""
+    cols = [c for c in ("x", "y", "vx", "vy", "x_smoothed", "y_smoothed", "speed") if c in frames.columns]
+    return frames.astype({c: "float64" for c in cols})
 
 
 def _bekkers(actions, frames) -> np.ndarray:
@@ -70,6 +82,7 @@ def test_bekkers_is_invariant_under_a_complete_physical_mirror_on_real_data(prov
     if match is None:
         pytest.skip(f"no {provider} match available from the pining listing")
     _provider, _match_id, actions, frames, _home = match
+    frames = _float64_coords(frames)
 
     base = _bekkers(actions, frames)
     mask = np.ones(len(frames), dtype=bool)

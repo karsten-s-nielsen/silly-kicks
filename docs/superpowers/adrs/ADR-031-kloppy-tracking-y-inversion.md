@@ -138,3 +138,12 @@ kloppy `_kloppy_tracking_to_frames` is **retired**.
   ADR-019 (id-dtype seams), ADR-028 / ADR-029 (orientation — explicitly distinguished from this
   single-axis y mirror). The lakehouse's own ADR-029 (ET guard) and ADR-046 (terraform dep parity)
   are distinct documents in the lakehouse repo.
+
+## Amendment (2026-11-18, ADR-135): the port reads a penalty's outcome
+
+The port of PR-S95 now differs from the luxury-lakehouse parser at `0efac60` on one element: a `Penalty` whose nested
+`ShotAtGoal` holds an outcome tag. The nested-child loop of `_build_event_row` gives that outcome the rule it has one
+level up (`shot_outcome_type` and the `shot_outcome_*` attributes; owner ruling R63). The bronze of such a match gains
+those values and, because the column order follows the first row with a key, its column order. Every caller of
+`parse_dfl_events` sees this at its next upgrade, the lakehouse's `bronze.idsse_events` among them; stored bronze keeps
+its old rows, which the converter excludes with a warning.

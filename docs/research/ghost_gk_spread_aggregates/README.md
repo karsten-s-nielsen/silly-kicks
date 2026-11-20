@@ -585,10 +585,10 @@ Reproducing therefore means recreating that layout, not running them in place:
 | `01`, `02`, `13` | `queries_all.parquet` / `queries_all_meta.parquet` in **their own directory** |
 | `03`–`07` | an `agg/` directory **as a sibling** holding `gt.npz` + the query parquets |
 | `06`, `07` | a `weights_copy/` directory **in their own directory** (a copy of the bundled `default` weights — deliberately not the repo path) |
-| `01`–`07`, `13` | `REPO` hardcoded to the repo root; edit that one line |
-| `08`–`11` | an `out/` subdirectory; `08` reads `SK_REPO`, `10` reads `SK_MODEL` from the environment |
+| `01`–`08`, `11`, `13` | the repository root in the `SK_REPO` environment variable |
+| `08`–`11` | an `out/` subdirectory; `10` reads `SK_MODEL` from the environment |
 
-The `REPO` constant is a single line at the top of each file. Nothing else needs editing.
+Set `SK_REPO` to the repository root before a run. Nothing in the scripts needs editing.
 
 ### 8.2 Seeds
 

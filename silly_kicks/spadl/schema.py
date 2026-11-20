@@ -6,6 +6,9 @@ They replace the pandera DataFrameModel that previously served this role.
 
 import dataclasses
 
+import numpy as np
+import pandas as pd
+
 SPADL_COLUMNS: dict[str, str] = {
     "game_id": "int64",
     "original_event_id": "object",
@@ -32,7 +35,17 @@ SPADL_COLUMNS: dict[str, str] = {
     # pass-class rows and on corner/free-kick rows where the provider labels deliveries (there it equals the
     # type, which the rule does not re-type), pd.NA elsewhere and on providers with no native label (SkillCorner).
     "cross_native": "boolean",
+    # The source of each row's time_seconds (action-time repair spec section 4.1): one of TIME_SOURCE_VALUES.
+    # "event" = the provider's event clock; "tracking" = the provider's time on its own tracking clock;
+    # "elastic" = set from the tracking by ELASTIC; "kick" = a restart or penalty kick measured from the
+    # tracking; "placeholder" = a restart with a first possession, no measured kick (an upper bound of the
+    # kick); "order_only" = a restart with no first possession (the time keeps the row order only);
+    # "derived" = computed from the neighbouring rows (synthetic dribbles).
+    "time_source": "object",
 }
+
+TIME_SOURCE_VALUES: tuple[str, ...] = ("event", "tracking", "elastic", "kick", "placeholder", "order_only", "derived")
+"""The vocabulary of the ``time_source`` column; ``_finalize_output`` refuses any other value."""
 
 SPADL_NAME_COLUMNS: dict[str, str] = {
     "type_name": "object",
@@ -153,3 +166,67 @@ class ConversionReport:
     def has_unrecognized(self) -> bool:
         """Return True if any unrecognized event types were encountered."""
         return len(self.unrecognized_counts) > 0
+
+
+def is_order_only(actions: pd.DataFrame) -> np.ndarray:
+    """True where ``time_source == "order_only"``: a time that keeps the row order only (spec section 4.1).
+
+    A reader that takes a row time as a moment, or as the bound of a time window, takes no window at such a row.
+    All ``False`` when the table has no ``time_source`` column (a reader treats each row as ``"event"``).
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> is_order_only(pd.DataFrame({"time_source": ["placeholder", "order_only", "event"]})).tolist()
+    [False, True, False]
+    """
+    if "time_source" not in actions.columns:
+        return np.zeros(len(actions), dtype=bool)
+    return (actions["time_source"] == "order_only").to_numpy(dtype=bool)
+
+
+def is_time_unmeasured(actions: pd.DataFrame) -> np.ndarray:
+    """True where ``time_source`` is ``"placeholder"`` or ``"order_only"``: neither is the moment of the action.
+
+    The readers of a shot row's time skip such a row (spec section 5.4). All ``False`` without the column.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> is_time_unmeasured(pd.DataFrame({"time_source": ["placeholder", "order_only", "kick"]})).tolist()
+    [True, True, False]
+    """
+    if "time_source" not in actions.columns:
+        return np.zeros(len(actions), dtype=bool)
+    return actions["time_source"].isin(("placeholder", "order_only")).to_numpy(dtype=bool)
+
+
+_RESTART_KINDS: dict[str, str] = {
+    "corner_crossed": "corner",
+    "corner_short": "corner",
+    "freekick_crossed": "free_kick",
+    "freekick_short": "free_kick",
+    "goalkick": "goal_kick",
+    "throw_in": "throw_in",
+    "shot_penalty": "penalty",
+}
+
+
+def restart_kind(type_id: int) -> str:
+    """The restart kind of a SPADL type id; the type name for any other type (spec section 4.18).
+
+    The kind is part of the key of a SkillCorner row, so a step that re-sets a corner subtype leaves the key as it
+    was.
+
+    Examples
+    --------
+    >>> from silly_kicks.spadl import config as spadlconfig
+    >>> restart_kind(spadlconfig.actiontype_id["corner_short"])
+    'corner'
+    >>> restart_kind(spadlconfig.actiontype_id["pass"])
+    'pass'
+    """
+    from . import config as spadlconfig
+
+    name = spadlconfig.actiontypes[int(type_id)]
+    return _RESTART_KINDS.get(name, name)

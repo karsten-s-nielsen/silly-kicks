@@ -1247,6 +1247,12 @@ COVERED_BY_AGGREGATOR_GATE: dict[str, str] = {
 #: Genuinely cannot be dtype-invariant. Each entry states WHY, and each is a case where
 #: invariance would mean the function is BROKEN -- not a case we chose not to test.
 NOT_INVARIANT: dict[str, str] = {
+    "silly_kicks.spadl.schema.restart_kind": (
+        "The flagged scalar is `type_id` -- a SPADL ACTION-TYPE CODE (an index into spadlconfig.actiontypes), "
+        "not a provider-assigned entity id. The name heuristic (`name.endswith('_id')`) false-positives it, as it "
+        "does `period_id` below. There is no id-space to skew: the code is the library's own enum, and the "
+        "function maps it to a restart kind by name (action-time repair spec section 4.18)."
+    ),
     "silly_kicks.tracking._ball_contact.first_contact_in_window": (
         "The flagged scalar is `period_id` -- a PERIOD NUMBER (1-5), which this registry's own module "
         "docstring explicitly lists as id-SHAPED but NOT an entity id (alongside cluster labels). The "

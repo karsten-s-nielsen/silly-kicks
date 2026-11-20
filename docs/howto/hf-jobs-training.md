@@ -62,7 +62,8 @@ open-data cache; a cache miss raises `OpenDataSnapshotMissError` and never fetch
 ceiling), `attempts` (the per-unit bound; each HF job itself gets one attempt), an optional `mode`
 (`rematerialize`, the default: `verify` requires the fresh run to reproduce the committed model; `refit`: new
 data replaces the model on purpose, so `verify` passes each arm on its own acceptance gates and reports the
-comparison with the committed model; ADR-130), the resource-sharing knobs
+comparison with the committed model; `retrain`: the standing certification with the public CV parity one-sided,
+except a `cv_tolerance` spec; ADR-130; a job may set its own `mode`), the resource-sharing knobs
 (`units_per_job`/`max_shards` size a stage into few big jobs; `units_per_job_by_stage` gives one `"job/stage"` its own job size; `mount_cap` + `mount_cap_by_dataset` bound
 concurrent mounts of a dataset; `mount_fault_budget`; `launch_batch` + `backoff_max_s` pace launches; a
 `peak_rss_by_stage` hint sizes memory-heavy stages — ADR-128 amendment 2026-11-03), and per job the trainer or
@@ -156,7 +157,8 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    the driver stops before any launch with `FATAL code_identity: <instance> planned under <identity>, the jobs
    run <commit7>` when a `--plan` reports another identity. Then restore the tree and `resume`. `retrieve` has
    no guard of its own: keep the tree clean until `verify` and `compare` end, and draft the run record outside
-   the repo.
+   the repo. One exception, after `retrieve` only: the spec 7.1 expectation edit of `docs/artifacts/manifest.toml`
+   (step 8; ADR-132 item 10).
 4. `status` -- per instance, stage progress and the running jobs. A failed instance: read its job logs and
    the unit `*.failed.json`; a code defect is a new owner-approved commit, then `resume`.
 5. `cancel` -- cancels every non-terminal job of the campaign commit.
@@ -172,15 +174,18 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
 7. `verify --staging DIR` -- loads every artifact in `.venv-hfjobs`, checks the five expectations (training
    commit = campaign commit; recorded dataset revision = the pin; corpus digest + n = the record; shipped
    variant = the entry's `shipped_arm`, else its tier; ADR-132), certifies per the registry (`public`: the head-to-head as in-sample parity AND two-sided CV parity on
-   `cv_metric` within 5 %, from the committed `metrics.json` or its manifest `cv_reference`; `owner`: CV
-   parity on `cv_metric`; `rebaseline`: identity comparison, decision P15, where a code delta is an AST change
-   of an input module) and runs the ADR-126 integrity gate for xShot/xCross. A build with `in_sample_gate=False`
+   `cv_metric` within 5 % (one-sided in a `retrain` job, except a `cv_tolerance` spec), from the committed `metrics.json` or its manifest `cv_reference`; `owner`: CV
+   parity on `cv_metric`; `rebaseline`: identity comparison, decision P15 as amended by the owner (2026-11-17): a difference passes
+   only inside the driver's `tolerance`, every other one stops for an owner ruling; the code/environment
+   classification over the input modules is reported for that ruling) and runs the ADR-126 integrity gate for xShot/xCross. A build with `in_sample_gate=False`
    (the xCross default: no parameter match) certifies on CV parity and records the head-to-head. A driver with a
    `DriverSpec.tolerance` (the census) passes a rebaseline whose outputs differ only within it
-   (`"within_tolerance": true`). An `sb_open` artifact's corpus check is the lock digest (`identity.open`); each
+   (`"within_tolerance": true`); a driver without one passes only an identical output. An `sb_open` artifact's corpus check is the lock digest (`identity.open`); each
    `sb_open` head-to-head caches its open data in `DIR/_open_data/<instance>`. 4 instances run at once. Prints
    `[verify] <i>/<n> <instance> ok|FAIL (<checks>) in <s> s` when each instance ends (an `sb_open` line ends with its
-   coverage note) and writes `DIR/verify.json` (instances in campaign order in the returned report).
+   coverage note) and writes `DIR/verify.json` (instances in campaign order in the returned report). `verify.json`
+   holds `manifest_sha256`, the digest of the manifest that `verify` checked (its values; not `training_commit`,
+   comments or line endings). `adopt` refuses another manifest: after any manifest edit, run `verify` again.
 8. `adopt --staging DIR` -- on a clean tree at the campaign commit (the provenance check and the root's own
    `git status`): bundles the verified files into the
    wheel dirs (a public bundle is rehydrated with the canonical public ids), writes
@@ -189,6 +194,15 @@ step's launches, as a launch 429 does; a lost per-job manifest prints `[driver] 
    regions, writes the verdict JSONs and a CHANGELOG draft, runs the full local gate, and STOPS at the
    commit gate. Its diff touches only the allowlisted paths. A failure while it writes restores the tree (a
    restore that fails raises `AdoptionRollbackError` naming the paths); the local gate runs after the writes.
+   **The expectation edit** (ADR-132 item 10). A run can decide what its manifest entries must expect (the
+   two-arm rule picks `shipped_arm`; a refit on a new dataset changes `dataset`), so the operator writes those
+   values after `retrieve` and before `verify` (corpus widening spec 7.1), and does not commit them. `adopt`
+   accepts that one uncommitted change: only `docs/artifacts/manifest.toml` changed, only in the fields
+   `dataset`, `shipped_arm`, `certification`, `corpus` and `expect` of this campaign's entries, with no field
+   or `expect` key removed, `dataset` declared and locked, and `shipped_arm` / `corpus` / `certification` in
+   `public`, `sc_extended` / `public_ids`, `digest` / `public`, `owner`. Any other change is refused with its
+   reason; a tree with more than the manifest changed gets today's clean-tree refusal. A failure while `adopt`
+   writes restores the tree and keeps the edit. The edit and the adoption go into the same adoption commit.
    Commit the adoption as a NEW commit on top of the campaign commit, never an amend: every adopted
    `training_commit` names that commit. adopt reads each instance from `DIR/_final/<instance>/`, the staging files
    with `metrics.json` finalized off HF (canonical xCross probe ids); `publish` uploads the same copy. A bundle's
@@ -215,7 +229,10 @@ bucket adds a small per-GB-month cost.
 
 The org has a private storage limit of 100 GB (owner-verified 2026-11-10 on the HF billing page; the buckets,
 the private datasets and the private models together). Launch 7 stopped on it (`403 Private storage limit
-reached`). At the limit HF also refuses the bucket delete, so clean up BEFORE the limit is near.
+reached`). At the limit HF also refuses the bucket delete, so clean up BEFORE the limit is near. The 4.144.0
+release refit keeps its stages and bucket in the PRO user namespace `karstenskyt/` (1 TB; release-refit delta spec
+4.2): its campaign files set that bucket and `storage_limit_bytes = 1_000_000_000_000`, and check 7 measures the
+namespace of the campaign's bucket.
 
 - **Preflight check 7, `check_storage`.** It adds the size of the org's buckets and `usedStorage` of each private
   dataset and model, and fails when the sum plus `storage_headroom_bytes` (20 GB) is above `storage_limit_bytes`

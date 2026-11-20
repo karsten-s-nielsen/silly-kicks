@@ -25,6 +25,7 @@ import pandas as pd
 from sklearn.exceptions import NotFittedError
 
 import silly_kicks.spadl.config as spadlconfig
+from silly_kicks.spadl.schema import is_order_only
 from silly_kicks.spadl.utils import _sort_actions_chronological_or_action_id, add_possessions
 from silly_kicks.xtgk._moves import _is_turnover
 from silly_kicks.xtgk._possession_value import M, N, PossessionValue, PressureLevel, mirror_zone
@@ -212,6 +213,10 @@ class EmpiricalTurnoverValue:
         )
         a["_p_level"] = pl.apply(a[pressure_column], zones=zones)
         a["_turnover"] = _is_turnover(a)
+        if self.window_seconds is not None:
+            # an "order_only" row opens no time window, so it is no turnover anchor (action-time repair spec 4.13);
+            # the possession-bound scope opens no time window and is unchanged
+            a["_turnover"] = a["_turnover"].to_numpy(dtype=bool) & ~is_order_only(a)
         a["_opp_shot_xg"] = self._opp_first_shot_after_turnover(a, xg_column, window_seconds=self.window_seconds)
         turnovers = a[a["_turnover"]].dropna(subset=["start_x", "start_y"])
         ncell, cf = self.w * self.l, self.coarsen

@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 from . import config as spadlconfig
-from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves
+from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves, infer_penalties, infer_restarts
 from .base import (
     _DERIVE_END_TYPE_IDS,
     _add_dribbles,
@@ -36,7 +36,7 @@ from .base import (
 )
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr
 from .schema import SKILLCORNER_SPADL_COLUMNS, ConversionReport
-from .utils import _blocked_flag, _finalize_output
+from .utils import _blocked_flag, _finalize_output, _validate_preserve_native
 
 
 def _scale_to_spadl(
@@ -204,7 +204,7 @@ def convert_to_actions(
     events: pd.DataFrame,
     match_metadata: dict,
     *,
-    preserve_native: bool = False,
+    preserve_native: bool | list[str] = False,
 ) -> tuple[pd.DataFrame, ConversionReport]:
     """Convert SkillCorner dynamic_events.csv to SPADL actions.
 
@@ -215,10 +215,13 @@ def convert_to_actions(
         the converter selects what it needs).
     match_metadata : dict
         Parsed ``match.json`` dict. Required keys: ``pitch_length``,
-        ``pitch_width``, ``home_team`` (with ``id`` sub-key).
-    preserve_native : bool, default False
-        When True, attach ``original_event_id`` (the SC ``event_id``)
-        as an extra column.
+        ``pitch_width``, ``home_team`` (with ``id`` sub-key). ``away_team`` (with ``id``) is optional: without it,
+        the away team is the one other team id of the events (the team of a derived restart row "against" home).
+    preserve_native : bool or list of str, default False
+        ``True`` adds no column: ``original_event_id`` is a schema column already (earlier releases raised a
+        ``ValueError`` on ``True``). A list carries the named
+        event fields (for example ``["team_score", "opponent_team_score"]``, the provider's running score) on the
+        native rows as extra columns; derived rows carry ``NaN`` there (action-time repair spec section 4.15).
 
     Returns
     -------
@@ -239,8 +242,13 @@ def convert_to_actions(
 
     Notes
     -----
-    A native row (pass, shot, clearance, set-piece delivery, foul, loss) sits at the kick: ``time_end`` and
-    ``x_end``/``y_end``. Start-type interceptions/recoveries and keeper saves stay at the possession start.
+    A native row (pass, shot, clearance, foul, loss) is the receiver's own action at the possession end:
+    ``time_end`` and ``x_end``/``y_end``; it takes its type from its own ``end_type``. Each restart (corner, free
+    kick, goal kick, throw-in) and each penalty is its own derived row from the interruption markers, with
+    ``player_id`` ``<NA>`` (the data has no taker), a rule-point start, and ``time_source`` ``"placeholder"``
+    (a restart with a first possession: the first reception minus 0.02 s, an upper bound of the kick) or
+    ``"order_only"`` (no first possession: the time keeps the row order only); see the action-time repair spec
+    sections 4.2 and 4.17. Start-type interceptions/recoveries and keeper saves stay at the possession start.
     Deliveries follow :func:`silly_kicks.spadl.base.classify_deliveries` and its event-only limits (ADR-133).
     SkillCorner has no native cross label (``cross_native`` is ``<NA>``), and its events miss defenders'
     touches in the box, so a cross whose first touch is a defender's reads as a pass in events alone.
@@ -269,6 +277,9 @@ def convert_to_actions(
             f"skillcorner.convert_to_actions: missing column(s) {missing_cols}. A SPADL row is the on-ball action "
             "at the possession END (time_end, x_end, y_end), not the reception at its start (ADR-133)."
         )
+
+    native_fields: list[str] = list(preserve_native) if isinstance(preserve_native, list) else []
+    _validate_preserve_native(events, native_fields, "skillcorner", schema=SKILLCORNER_SPADL_COLUMNS)
 
     # --- Filter to player_possession rows with valid actors ---
     pp = events[events["event_type"] == "player_possession"].copy()
@@ -348,11 +359,6 @@ def convert_to_actions(
     )
 
     # --- Action type + result dispatch ---
-    gi_before = (
-        pp["game_interruption_before"].fillna("")
-        if "game_interruption_before" in pp.columns
-        else pd.Series("", index=pp.index)
-    )
     gi_after = (
         pp["game_interruption_after"].fillna("")
         if "game_interruption_after" in pp.columns
@@ -367,21 +373,9 @@ def convert_to_actions(
     next_team = pp["team_id"].shift(-1)
     same_team_next = (pp["team_id"] == next_team).fillna(False)
 
-    # Short corner/freekick detection: next action same team within 15m
-    next_sx = sx.shift(-1)
-    next_sy = sy.shift(-1)
-    dist_to_next = np.sqrt((sx - next_sx) ** 2 + (sy - next_sy) ** 2)
-    is_short = same_team_next & (dist_to_next < 15.0)
-
     # --- Vectorized dispatch ---
-    # Priority 1: set pieces from game_interruption_before
-    # Exclude shots -- a free kick or corner that ends with a shot is a shot, not a set piece pass
-    is_goalkick = gi_before == "goal_kick_for"
-    is_corner = (gi_before == "corner_for") & (end_type != "shot")
-    is_throw_in = gi_before == "throw_in_for"
-    is_freekick = (gi_before == "free_kick_for") & (end_type != "shot")
-
-    # Priority 2: end_type
+    # The first possession after a restart takes its type from its own end_type: the restart itself is a
+    # derived row (infer_restarts below), never the receiver's possession.
     is_shot = end_type == "shot"
     is_pass = end_type == "pass"
     is_clearance = end_type == "clearance"
@@ -398,12 +392,6 @@ def convert_to_actions(
 
     type_id_arr = np.select(
         [
-            is_goalkick,
-            is_corner & is_short,
-            is_corner & ~is_short,
-            is_throw_in,
-            is_freekick & is_short,
-            is_freekick & ~is_short,
             is_shot,
             is_pass,
             is_clearance,
@@ -412,12 +400,6 @@ def convert_to_actions(
             is_unknown,
         ],
         [
-            spadlconfig.actiontype_id["goalkick"],
-            spadlconfig.actiontype_id["corner_short"],
-            spadlconfig.actiontype_id["corner_crossed"],
-            spadlconfig.actiontype_id["throw_in"],
-            spadlconfig.actiontype_id["freekick_short"],
-            spadlconfig.actiontype_id["freekick_crossed"],
             spadlconfig.actiontype_id["shot"],
             spadlconfig.actiontype_id["pass"],
             spadlconfig.actiontype_id["clearance"],
@@ -512,6 +494,8 @@ def convert_to_actions(
             "action_provenance": "native",
         }
     )
+    for field in native_fields:
+        actions[field] = pp[field].to_numpy()
 
     # --- Derived actions ---
     # Prepare OBE for inference
@@ -572,12 +556,16 @@ def convert_to_actions(
         if len(_derived) > 0 and "result_source" not in _derived.columns:
             _derived["result_source"] = "native"
 
-    # Merge all actions
+    # Merge all actions. A derived row has no event of its own, so the native fields of a `preserve_native` list
+    # (the running score) are NaN on it; any other missing column still raises.
+    def _as_actions(derived: pd.DataFrame) -> pd.DataFrame:
+        return derived.assign(**{c: np.nan for c in native_fields if c not in derived.columns})[actions.columns]
+
     parts = [actions]
     if len(defensive) > 0:
-        parts.append(defensive[actions.columns])
+        parts.append(_as_actions(defensive))
     if len(ks) > 0:
-        parts.append(ks[actions.columns])
+        parts.append(_as_actions(ks))
 
     actions = pd.concat(parts, ignore_index=True)
     actions = actions.sort_values(["period_id", "time_seconds"]).reset_index(drop=True)
@@ -585,6 +573,44 @@ def convert_to_actions(
 
     # --- Post-processors ---
     actions = _derive_end_coordinates(actions)
+
+    # --- Derived restart and penalty rows (action-time repair spec sections 4.2, 4.17) ---
+    # Added AFTER the end derivation: their ends are defined (a rule point, the first reception, or the start
+    # itself), and they must not become the "next row" that derives a native row's end.
+    sx_start, sy_start = _transform_coords(
+        pp["x_start"].astype("float64"), pp["y_start"].astype("float64"), pitch_length, pitch_width
+    )
+    pp_restarts = pp[["event_id", "period", "start_seconds", "time_seconds", "team_id"]].copy()
+    for col in ("game_interruption_before", "game_interruption_after"):
+        pp_restarts[col] = pp[col].to_numpy() if col in pp.columns else None
+    for col in ("team_score", "opponent_team_score"):
+        if col in pp.columns:
+            pp_restarts[col] = pp[col].to_numpy()
+    pp_restarts["sx_end"], pp_restarts["sy_end"] = sx.to_numpy(), sy.to_numpy()
+    pp_restarts["sx_start"], pp_restarts["sy_start"] = sx_start.to_numpy(), sy_start.to_numpy()
+    away = match_metadata.get("away_team", {}).get("id")
+    if away is None:  # not a required key: the away team is the events' other team (never the "" team)
+        others = {str(t) for t in pp["team_id"].dropna().unique()} - {home_team_id}
+        away = next(iter(others)) if len(others) == 1 else ""
+    teams = (home_team_id, str(away))
+    restart_parts = [
+        part
+        for part in (
+            infer_restarts(pp_restarts, teams),
+            infer_penalties(pp_restarts, teams, match_metadata),
+        )
+        if len(part) > 0
+    ]
+    if restart_parts:
+        restarts = pd.concat(restart_parts, ignore_index=True)
+        restarts["game_id"] = game_id
+        restarts["original_event_id"] = restarts["event_id"]
+        restarts["action_id"] = 0
+        actions = pd.concat(
+            [actions, restarts[[*actions.columns.intersection(restarts.columns), "time_source"]]], ignore_index=True
+        )
+        actions = actions.sort_values(["period_id", "time_seconds"], kind="mergesort").reset_index(drop=True)
+        actions["action_id"] = np.arange(len(actions), dtype="int64")
 
     # --- LTR normalization (no-op for possession perspective) ---
     # Runs BEFORE _add_dribbles (ADR-133): the delivery rule needs canonical LTR rows with no
@@ -598,6 +624,12 @@ def convert_to_actions(
     # stays <NA> (set below). Event-only limit: SkillCorner events miss defenders' in-box touches, so a cross
     # cleared by a defender reads as a pass here.
     actions = classify_deliveries(actions)
+    # The receiver's own action is timed on SkillCorner's tracking clock; the derived restart and penalty rows
+    # carry their own "placeholder" / "order_only" (action-time repair spec section 4.1).
+    if "time_source" in actions.columns:
+        actions["time_source"] = actions["time_source"].fillna("tracking")
+    else:
+        actions["time_source"] = "tracking"
     actions = _add_dribbles(actions)
 
     # Mark dribbles as derived
@@ -633,7 +665,9 @@ def convert_to_actions(
     # Block-detection: SkillCorner records no shot/cross-block signal (real-data verified, both
     # tiers) -> all pd.NA. Set AFTER the derived-actions pd.concat above to avoid the
     # `defensive[actions.columns]` reindex KeyError on frames that lack these columns.
-    extra = ["original_event_id"] if preserve_native else None
+    # ``preserve_native=True`` adds no column: ``original_event_id``, its former extra column, is a schema column
+    # now, so naming it again raised the extra-columns overlap ValueError.
+    extra: list[str] | None = native_fields or None
     actions["shot_blocked"] = _blocked_flag(len(actions))
     actions["cross_blocked"] = _blocked_flag(len(actions))
     actions["cross_native"] = _blocked_flag(len(actions))  # SkillCorner has no native cross label (ADR-133)

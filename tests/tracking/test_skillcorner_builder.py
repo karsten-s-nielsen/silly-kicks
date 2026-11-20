@@ -128,3 +128,18 @@ def test_missing_input_column_raises():
     bad = _bronze().drop(columns=["ball_z"])
     with pytest.raises(ValueError, match="ball_z"):
         sk.convert_to_frames(bad, home_team_id="31")
+
+
+def test_ball_visibility_from_the_feed_is_detected_flag():
+    # Action-time repair spec section 4.4: the ball `is_detected` of the feed is the ball row's `visibility`.
+    bronze = _bronze()
+    bronze["ball_is_detected"] = bronze["frame"].map({0: True, 1: False, 2: True, 3: None})
+    frames, _ = sk.convert_to_frames(bronze, home_team_id="31", output_convention="absolute_frame")
+    ball = frames[frames.is_ball].sort_values("frame_id")
+    assert ball["visibility"].tolist()[:3] == [True, False, True]
+    assert pd.isna(ball["visibility"].tolist()[3])
+
+
+def test_ball_visibility_without_the_flag_stays_null():
+    frames, _ = sk.convert_to_frames(_bronze(), home_team_id="31", output_convention="absolute_frame")
+    assert frames.loc[frames.is_ball, "visibility"].isna().all()

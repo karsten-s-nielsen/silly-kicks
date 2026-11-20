@@ -311,6 +311,7 @@ def convert_to_actions(
         actions.loc[no_label, "cross_native"] = pd.NA
         actions = classify_deliveries(actions)
         actions["action_id"] = range(len(actions))
+        actions["time_source"] = "event"  # the provider's event clock (action-time repair spec section 4.1)
         actions = _add_dribbles(actions)
 
         actions["start_x"] = actions["start_x"].clip(0, spadlconfig.field_length)
@@ -320,6 +321,8 @@ def convert_to_actions(
     else:
         actions = raw_actions
 
+    if "time_source" not in actions.columns:
+        actions["time_source"] = "event"
     extras = list(preserve_native) if preserve_native else None
     actions = _finalize_output(actions, schema=KLOPPY_SPADL_COLUMNS, extra_columns=extras)
 

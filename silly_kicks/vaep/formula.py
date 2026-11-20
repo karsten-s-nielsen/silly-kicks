@@ -2,11 +2,18 @@
 
 import pandas as pd
 
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
+
 
 def _prev(x: pd.Series) -> pd.Series:
     prev_x = x.shift(1)
     prev_x[:1] = x.values[0]
     return prev_x  # type: ignore[reportReturnType]
+
+
+def _prev_scored(actions: pd.DataFrame) -> pd.Series:
+    """True where the previous action is a goal or an own goal (``silly_kicks.spadl._goals``)."""
+    return _prev(goal_mask(actions) | owngoal_mask(actions)).astype(bool)
 
 
 _SAMEPHASE_NB: int = 10  # number of subsequent actions considered same phase
@@ -62,10 +69,8 @@ def offensive_value(actions: pd.DataFrame, scores: pd.Series, concedes: pd.Serie
     toolong_idx = abs(actions.time_seconds - _prev(actions.time_seconds)) > _SAMEPHASE_NB
     prev_scores[toolong_idx] = 0.0
 
-    # if the previous action was a goal, the odds of scoring are now 0
-    prevgoal_idx = (_prev(actions.type_name).isin(["shot", "shot_freekick", "shot_penalty"])) & (
-        _prev(actions.result_name) == "success"
-    )
+    # if the previous action was a goal or an own goal (the library's goal rule), the odds of scoring are now 0
+    prevgoal_idx = _prev_scored(actions)
     prev_scores[prevgoal_idx] = 0.0
 
     # fixed odds of scoring when penalty
@@ -126,10 +131,8 @@ def defensive_value(actions: pd.DataFrame, scores: pd.Series, concedes: pd.Serie
     toolong_idx = abs(actions.time_seconds - _prev(actions.time_seconds)) > _SAMEPHASE_NB
     prev_concedes[toolong_idx] = 0.0
 
-    # if the previous action was a goal, the odds of conceding are now 0
-    prevgoal_idx = (_prev(actions.type_name).isin(["shot", "shot_freekick", "shot_penalty"])) & (
-        _prev(actions.result_name) == "success"
-    )
+    # if the previous action was a goal or an own goal (the library's goal rule), the odds of conceding are now 0
+    prevgoal_idx = _prev_scored(actions)
     prev_concedes[prevgoal_idx] = 0.0
 
     return -(concedes - prev_concedes)

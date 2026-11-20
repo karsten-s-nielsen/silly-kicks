@@ -8,7 +8,8 @@ rebaseline driver) and runs the ADR-126 integrity gate for xShot/xCross. ``adopt
 staging dir into a commit-ready diff -- wheel bundles, the manifest training commits (of the artifacts with a
 ``commit_field``), ``observed.json``,
 re-rendered card regions, verdict JSONs, a CHANGELOG draft -- under the ADR-037 guards (clean tree at the
-campaign commit; a diff limited to the allowlist), runs the full local gate and STOPS: it never commits.
+campaign commit, except the spec 7.1 expectation edit of the manifest, ADR-132 item 10; the manifest that
+``verify`` checked; a diff limited to the allowlist), runs the full local gate and STOPS: it never commits.
 ``publish`` (an owner go every time) pushes Hub artifacts through the unchanged ADR-088 seam and verifies
 what the Hub then holds; ``--sandbox`` targets private ``silly-kicks/sandbox-<name>`` repos.
 """
@@ -523,11 +524,12 @@ def _integrity(
 
 
 def _rebaseline(spec: Any, fresh: pathlib.Path, commit: str, *, run: Callable[..., Any]) -> dict:
-    """A rebaseline driver (decisions P3, P15): its output vs the committed one, provenance removed. A
-    difference is classified by the code of the driver's declared input modules at ``dd7ed4f`` and at the
-    campaign commit (:func:`_code_delta`, docstrings removed): none changed -> an environment delta
-    (reported); else a code delta, which STOPS for an owner ruling -- unless the driver declares a ``tolerance``
-    and every difference is within it (:func:`_within_tolerance`, HFU spec 17.4)."""
+    """A rebaseline driver (decisions P3, P15; owner 2026-11-17): its output vs the committed one, provenance
+    removed. A difference passes ONLY when the driver declares a ``tolerance`` and every difference is within it
+    (:func:`_within_tolerance`, HFU spec 17.4); every other difference STOPS for an owner ruling, whatever its
+    cause. For that ruling the difference is classified by the code of the driver's declared input modules at its
+    ``REBASELINE_FROM`` commit and at the campaign commit (:func:`_code_delta`, docstrings removed: ``code`` or
+    ``environment``); a driver without a ``REBASELINE_FROM`` entry gets no classification."""
     from importlib import import_module
 
     from scripts.hf_jobs.identity import artifact_identity, compare
@@ -541,22 +543,16 @@ def _rebaseline(spec: Any, fresh: pathlib.Path, commit: str, *, run: Callable[..
     )
     if not diffs:
         return {"ok": True, "basis": "rebaseline", "identical": True, "diffs": []}
-    contract = import_module(spec.module).input_contract()
-    modules = sorted({*contract.get("extractors", []), *contract.get("models", [])})
-    paths = [m.replace(".", "/") + ".py" for m in modules]
-    changed = _code_delta(paths, REBASELINE_FROM[spec.name], commit, run=run)
-    out = {
-        "ok": not changed,  # a code delta STOPS adoption of this artifact for an owner ruling (P15)
-        "basis": "rebaseline",
-        "identical": False,
-        "diffs": diffs,
-        "delta": "code" if changed else "environment",
-        "input_modules": modules,
-        "changed_modules": changed,
-    }
-    if spec.tolerance is not None:  # HFU spec 17.4: within the owner-ratified tolerance passes
+    out: dict[str, Any] = {"ok": False, "basis": "rebaseline", "identical": False, "diffs": diffs, "delta": None}
+    if spec.name in REBASELINE_FROM:  # the classification is information for the owner's ruling
+        contract = import_module(spec.module).input_contract()
+        modules = sorted({*contract.get("extractors", []), *contract.get("models", [])})
+        paths = [m.replace(".", "/") + ".py" for m in modules]
+        changed = _code_delta(paths, REBASELINE_FROM[spec.name], commit, run=run)
+        out |= {"delta": "code" if changed else "environment", "input_modules": modules, "changed_modules": changed}
+    if spec.tolerance is not None:  # HFU spec 17.4: within the owner-ratified tolerance passes, nothing else
         within, notes = _within_tolerance(committed, fresh, spec.tolerance)
-        out |= {"ok": out["ok"] or within, "within_tolerance": within, "tolerance_notes": notes}
+        out |= {"ok": within, "within_tolerance": within, "tolerance_notes": notes}
     return out
 
 
@@ -699,9 +695,11 @@ def _certify(
     observed: Mapping[str, Any],
     *,
     run: Callable[..., Any],
+    one_sided: bool = False,
 ) -> dict:
     """Step 3 (`floor.certify`, the registry policy): ``public`` -> the head-to-head CLI against the
-    committed wheel bundle; ``owner`` -> CV parity on the registry ``cv_metric``. Missing inputs FAIL."""
+    committed wheel bundle; ``owner`` -> CV parity on the registry ``cv_metric``. Missing inputs FAIL.
+    ``one_sided`` (a ``retrain`` job): the public CV parity fails only a worsening beyond its band."""
     from scripts.hf_jobs import floor
 
     arm = mf.effective_shipped_arm(ref)  # ADR-132 (spec 7.1): certify what the entry expects to have shipped
@@ -746,6 +744,7 @@ def _certify(
                 committed_metrics=committed,
                 headtohead=_read_json(h2h),
                 in_sample_gate=gate,
+                cv_one_sided=one_sided,
             )
         except AdoptionRefusedError as exc:
             return {"ok": False, "reason": str(exc)}
@@ -772,18 +771,20 @@ def verify(
 ) -> dict:
     """Steps 2-4 for every retrieved instance; writes ``<staging>/verify.json``. ``ok`` per instance. Up to
     ``workers`` instances at once (HFU spec 17.5): each ``[verify]`` line prints when its instance ends; the report
-    is in instance order."""
+    is in instance order. The report holds ``manifest_sha256`` (:func:`_manifest_sha256`) of the working-tree
+    manifest it checked, read once; :func:`adopt` refuses another manifest (ADR-132 item 10)."""
     import concurrent.futures
 
     staging = _outside_repo(staging)
-    man = mf.load()
+    text = mf.MANIFEST.read_text(encoding="utf-8")  # read ONCE: the checked manifest and its digest agree
+    man = mf.loads(text, base=mf.MANIFEST.resolve().parents[2])
     observed = _read_json(mf.OBSERVED) if mf.OBSERVED.is_file() else {}
     insts = instances(c, commit, replica=replica)
 
     def one(item: tuple[int, Instance]) -> dict | None:
         i, inst = item
         return _verify_one(
-            inst, i, len(insts), commit=commit, staging=staging, man=man, observed=observed, run=run, mode=c.mode
+            inst, i, len(insts), commit=commit, staging=staging, man=man, observed=observed, run=run, mode=inst.mode
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
@@ -791,6 +792,7 @@ def verify(
     report: dict[str, Any] = {
         "commit": commit,
         "campaign": c.name,
+        "manifest_sha256": _manifest_sha256(text),  # ADR-132 item 10: adopt refuses another manifest
         "instances": {inst.id: row for inst, row in zip(insts, rows, strict=True) if row is not None},
     }
     (staging / "verify.json").write_text(
@@ -838,7 +840,7 @@ def _verify_one(
     # instance has one (a Hub mirror / sibling shares it), else the Hub artifact's observed metrics.
     ref = next((a for a in targets if a.kind == "wheel"), targets[0])
     fresh_metrics = _read_json(fresh / "metrics.json") if (fresh / "metrics.json").is_file() else {}
-    comparison = _certify(spec, inst, ref, fresh, fresh_metrics, observed, run=run)
+    comparison = _certify(spec, inst, ref, fresh, fresh_metrics, observed, run=run, one_sided=mode == "retrain")
     if mode == "refit":  # ADR-130: the arm passes on its own acceptance gates; the comparison is reported
         gates = fresh_metrics.get("acceptance") or {}
         ok = bool(gates) and all(bool(v) for v in gates.values())
@@ -907,10 +909,107 @@ def _set_manifest_commit(text: str, artifact_id: str, commit: str) -> str:
     return text[:start] + "\n".join(lines) + text[end:]
 
 
-def _rollback(run: Callable[..., Any], root: pathlib.Path) -> list[str]:
+def _manifest_sha256(text: str) -> str:
+    """ADR-132 item 10, rule 11: the digest of the manifest a ``verify`` checked. The sha256 of the canonical JSON
+    of the parsed TOML with every artifact's ``training_commit`` removed: that is the one field ``adopt`` writes
+    (INV-9), so a committed adoption keeps the digest its ``verify`` recorded. A comment or a line ending does
+    not move it; every value does."""
+    from scripts._toml import loads_toml
+
+    raw = loads_toml(text)
+    raw["artifacts"] = [{k: v for k, v in a.items() if k != "training_commit"} for a in raw.get("artifacts", [])]
+    return hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+#: ADR-132 item 10 (corpus widening spec 7.1): the manifest fields that the operator's edit after a run may change
+#: (spec 7.1's table). ``tier`` is the channel and never changes; ``training_commit`` is the one field a tool
+#: writes (INV-9).
+_EXPECTATION_FIELDS: frozenset[str] = frozenset({"dataset", "shipped_arm", "certification", "corpus", "expect"})
+#: The values spec 7.1 sets. ``dataset`` must be a declared, locked dataset (checked apart).
+_EXPECTATION_DOMAINS: dict[str, frozenset[str]] = {
+    "shipped_arm": frozenset({"public", "sc_extended"}),
+    "corpus": frozenset({"public_ids", "digest"}),
+    "certification": frozenset({"public", "owner"}),
+}
+_MANIFEST_REL = "docs/artifacts/manifest.toml"
+
+
+def _expectation_edit(c: Campaign, commit: str, *, run: Callable[..., Any], root: pathlib.Path) -> bytes | None:
+    """ADR-132 item 10: the pre-adopt manifest bytes when the ONLY uncommitted change of ``root`` is an edit of
+    the expectation fields of this campaign's entries (spec 7.1 step 2, made after the run and before ``verify``);
+    ``None`` when the root has no change or more than the manifest changed, so that today's checks answer it with
+    today's messages. Raises :class:`AdoptionRefusedError` for any other manifest edit. Reads only; the HEAD check
+    and the ``verify`` binding stay in :func:`adopt`."""
+    from scripts._toml import loads_toml
+    from scripts.hf_jobs.datasets import locked
+
+    if _git_status(run, root) != {_MANIFEST_REL}:  # rules 1 and 2: before any campaign or HEAD read
+        return None
+    if not (root / _MANIFEST_REL).is_file():
+        raise AdoptionRefusedError("manifest edit: the manifest is deleted; restore it")
+    pre = (root / _MANIFEST_REL).read_bytes()
+    work = pre.decode("utf-8")
+    head = run(["git", "show", f"HEAD:{_MANIFEST_REL}"], capture_output=True, text=True, check=True, cwd=root).stdout
+    try:  # rule 4: both sides are valid manifests
+        head_man = mf.loads(head, base=root)
+        mf.loads(work, base=root)
+    except Exception as exc:
+        raise AdoptionRefusedError(f"manifest edit: the manifest does not load ({exc})") from exc
+    h, w = loads_toml(head), loads_toml(work)
+    for key in sorted((set(h) | set(w)) - {"artifacts"}):  # rule 5
+        if h.get(key) != w.get(key):
+            raise AdoptionRefusedError(f"manifest edit: the top-level table {key!r} changed; only artifacts may")
+    ha, wa = h.get("artifacts", []), w.get("artifacts", [])
+    if [a["id"] for a in ha] != [a["id"] for a in wa]:  # rule 6
+        raise AdoptionRefusedError("manifest edit: the artifact list changed (an entry added, removed or moved)")
+    ours = {a.id for inst in instances(c, commit) for a in artifacts_for(inst, head_man)}  # rule 7, from HEAD
+    for old, new in zip(ha, wa, strict=True):
+        aid = old["id"]
+        if aid not in ours:
+            if old != new:
+                raise AdoptionRefusedError(f"manifest edit: {aid} changed; it is not an entry of this campaign")
+            continue
+        for key in sorted((set(old) | set(new)) - _EXPECTATION_FIELDS):  # rule 8
+            if old.get(key) != new.get(key):
+                raise AdoptionRefusedError(
+                    f"manifest edit: {aid}.{key} changed; only {sorted(_EXPECTATION_FIELDS)} may change"
+                )
+        gone = [k for k in sorted(_EXPECTATION_FIELDS) if k in old and k not in new]  # rule 9
+        gone += [f"expect key {k!r}" for k in sorted(old.get("expect", {})) if k not in new.get("expect", {})]
+        if gone:
+            raise AdoptionRefusedError(
+                f"manifest edit: {aid} removes {', '.join(gone)}; the edit may set an expectation, never remove one"
+            )
+        if "dataset" in new:  # rule 10: every present value of a campaign entry
+            ds = new["dataset"]
+            try:
+                usable = ds in _declared() and bool(locked(ds))
+            except KeyError:  # declared but never recorded
+                usable = False
+            if not usable:
+                raise AdoptionRefusedError(f"manifest edit: {aid}.dataset {ds!r} is not a declared, locked dataset")
+        for key, domain in _EXPECTATION_DOMAINS.items():
+            if key in new and new[key] not in domain:
+                raise AdoptionRefusedError(f"manifest edit: {aid}.{key} = {new[key]!r} is not one of {sorted(domain)}")
+    return pre
+
+
+def _rollback(run: Callable[..., Any], root: pathlib.Path, *, keep: Mapping[str, bytes] | None = None) -> list[str]:
     """HFU spec 18.3: restore every path ``git status`` of ``root`` reports -- the root was clean at entry, so each
     is adopt's own: a tracked path is checked out from HEAD (a deleted file comes back), a new file is removed.
-    Returns the paths it could not restore."""
+    ``keep`` (ADR-132 item 10): the paths that were already changed at entry (the operator's manifest edit) and
+    their bytes then; each is written back after the restore. Returns the paths it could not restore."""
+    unrestored = _restore_to_head(run, root)
+    for rel, data in (keep or {}).items():
+        try:
+            (root / rel).write_bytes(data)
+        except Exception:  # named with the other failures
+            unrestored.append(rel)
+    return unrestored
+
+
+def _restore_to_head(run: Callable[..., Any], root: pathlib.Path) -> list[str]:
+    """Check out every changed tracked path of ``root`` from HEAD and remove every untracked one."""
     try:
         p = run(
             ["git", "status", "--porcelain", "--untracked-files=all"],
@@ -1033,14 +1132,49 @@ def _sibling_cards(man: mf.Manifest, adopted: Iterable[str]) -> set[str]:
     return {a.card for a in man.artifacts.values() if a.card and ({a.mirror_of, a.wheel_sibling} & ids)}
 
 
-def _changelog_draft(man: mf.Manifest, adopted: Sequence[str], c_name: str, commit: str) -> str:
+def _rule_notes(staging: pathlib.Path, rep: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+    """Per adopted artifact, the paired verdict its training run recorded.
+
+    Read from ``<staging>/<instance>/metrics.json`` -- the fresh training report, the file in which each trainer
+    writes ``candidates`` -- at ``candidates.paired``: ``rule_verdict`` (the paired rule's arm), ``rule_why`` and
+    ``shipped``. An instance whose report has no paired record (a one-arm run, a non-gated trainer) gives none.
+    """
+    notes: dict[str, dict[str, str]] = {}
+    for inst_id, row in sorted(rep["instances"].items()):
+        metrics = _artifact_dir(staging, inst_id) / "metrics.json"
+        if not metrics.is_file():
+            continue
+        paired = (_read_json(metrics).get("candidates") or {}).get("paired") or {}
+        if "rule_verdict" not in paired:
+            continue
+        note = {k: str(paired.get(k, "")) for k in ("rule_verdict", "shipped", "rule_why")}
+        for aid in sorted(row.get("artifacts", {})):
+            notes[aid] = note
+    return notes
+
+
+def _changelog_draft(
+    man: mf.Manifest,
+    adopted: Sequence[str],
+    c_name: str,
+    commit: str,
+    *,
+    rule_notes: Mapping[str, Mapping[str, str]] | None = None,
+) -> str:
     lines = [f"### Re-fit weights (campaign {c_name}, commit {commit[:7]}) -- DRAFT for a human edit", ""]
     for aid in adopted:
         a = man.artifacts[aid]
-        lines.append(
+        line = (
             f"- `{aid}` ({a.destination}): job `{a.job}`, variant `{a.variant}`, tier `{a.tier}`, "
             f"shipped arm `{mf.effective_shipped_arm(a)}`."
         )
+        note = (rule_notes or {}).get(aid)
+        if note and note["rule_verdict"] != note["shipped"]:  # the set-aside verdict is reported
+            line += (
+                f" The paired rule chose `{note['rule_verdict']}` ({note['rule_why']}); the run shipped "
+                f"`{note['shipped']}` by the campaign's `ship_variant`."
+            )
+        lines.append(line)
     return "\n".join(lines) + "\n"
 
 
@@ -1074,27 +1208,38 @@ def adopt(
 ) -> dict:
     """Spec 5.7 steps 5-10 over a verified staging dir; never commits. Refuses (writing nothing) on a dirty
     tree (the provenance check, then the root's own ``git status``), a HEAD other than the campaign commit, a
-    ``verify.json`` of another commit, or any instance that did not verify. A failure in the write phase restores
-    the tree (HFU spec 18.3); the local gate runs after it, outside the rollback. Idempotent: a second run over the
-    same staging dir writes nothing -- over an uncommitted adoption it refuses at the root status, over a committed
-    one at the campaign commit (the adoption commit moved HEAD), and the write phase itself is a fixed point."""
+    ``verify.json`` of another commit or of another manifest (``manifest_sha256``, ADR-132 item 10), or any
+    instance that did not verify. The ONE dirty tree it accepts is the spec 7.1 expectation edit: only the
+    manifest changed, and only in the expectation fields of this campaign's entries (:func:`_expectation_edit`).
+    A failure in the write phase restores the tree (HFU spec 18.3) and keeps the expectation edit; the local gate
+    runs after it, outside the rollback. Idempotent: a second run over the same staging dir writes nothing --
+    over an uncommitted adoption it refuses at the root status, over a committed one at the campaign commit (the
+    adoption commit moved HEAD), and the write phase itself is a fixed point."""
     from scripts._provenance import git_provenance, require_clean_tree
 
     root = pathlib.Path(root).resolve()
     staging = _outside_repo(staging, root)
     prov = dict((git or git_provenance)())
-    try:
-        require_clean_tree(prov, allow_dirty=False)
-    except SystemExit as exc:
-        raise AdoptionRefusedError(f"adopt needs a clean tree (ADR-037): {exc}") from exc
+    pre = _expectation_edit(c, commit, run=run, root=root)  # ADR-132 item 10: None = today's checks, unchanged
+    if pre is None:
+        try:
+            require_clean_tree(prov, allow_dirty=False)
+        except SystemExit as exc:
+            raise AdoptionRefusedError(f"adopt needs a clean tree (ADR-037): {exc}") from exc
     if prov.get("commit") != commit:
         raise AdoptionRefusedError(f"HEAD {prov.get('commit')} is not the campaign commit {commit} (ADR-037)")
-    changed = _git_status(run, root)  # the provenance reads the cwd; the root is where adopt writes (HFU spec 18.3)
-    if changed:
-        raise AdoptionRefusedError(f"the root tree is not clean (ADR-037): {sorted(changed)[:10]}")
+    if pre is None:
+        changed = _git_status(run, root)  # the provenance reads the cwd; the root is where adopt writes (HFU 18.3)
+        if changed:
+            raise AdoptionRefusedError(f"the root tree is not clean (ADR-037): {sorted(changed)[:10]}")
     rep = _read_json(staging / "verify.json")
     if rep.get("commit") != commit:
         raise AdoptionRefusedError(f"verify.json is for commit {rep.get('commit')}, not {commit}")
+    checked = rep.get("manifest_sha256")  # ADR-132 item 10, rule 11: the manifest that verify checked
+    if not checked:
+        raise AdoptionRefusedError("verify.json has no manifest_sha256 (it predates ADR-132 item 10); run verify again")
+    if checked != _manifest_sha256((root / _MANIFEST_REL).read_text(encoding="utf-8")):
+        raise AdoptionRefusedError("the manifest changed after verify; run verify again")
     bad = sorted(k for k, v in rep["instances"].items() if not v.get("ok"))
     if bad:
         raise AdoptionRefusedError(f"instances that did not verify: {bad}")
@@ -1102,7 +1247,7 @@ def adopt(
     try:
         adopted, written, draft = _write_phase(c, commit, rep, staging=staging, now=now, run=run, root=root)
     except BaseException as exc:  # HFU spec 18.3: a KeyboardInterrupt too
-        unrestored = _rollback(run, root)
+        unrestored = _rollback(run, root, keep=None if pre is None else {_MANIFEST_REL: pre})
         if unrestored:
             raise AdoptionRollbackError(f"adopt failed and could not restore {unrestored}") from exc
         raise
@@ -1136,7 +1281,7 @@ def _write_phase(
         fresh = _artifact_dir(staging, inst_id)
         cert = row.get("certification") or {}
         if cert.get("basis") == "rebaseline":
-            if not cert.get("identical"):  # an environment delta (P15): the fresh output is adopted
+            if not cert.get("identical"):  # a difference inside the tolerance: the fresh output is adopted
                 rk = inst_id.split("/")[0]
                 names = [n for n in drivers if f"-{n}-" in rk]
                 if len(names) != 1:
@@ -1180,7 +1325,9 @@ def _write_phase(
                 dst.write_bytes(v.read_bytes())
                 written.append((VERDICTS / v.name).as_posix())
     draft = staging / "CHANGELOG-draft.md"
-    draft.write_text(_changelog_draft(man, adopted, c.name, commit), encoding="utf-8")
+    draft.write_text(
+        _changelog_draft(man, adopted, c.name, commit, rule_notes=_rule_notes(staging, rep)), encoding="utf-8"
+    )
     stray = sorted(p for p in _git_status(run, root) if not _allowed(p, man))
     if stray:
         raise AdoptionRefusedError(f"adopt changed paths outside the allowlist (ADR-037): {stray}")

@@ -56,7 +56,9 @@ def reflect_corners_to_canonical_side(
     """
     if side_column not in df.columns:
         raise KeyError(f"reflect_corners_to_canonical_side: {side_column!r} not in df.")
-    mask = (df[side_column] != canonical_side).to_numpy()
+    # a corner with no measured side (<NA>: no measured kick, action-time repair spec section 5.2) is not reflected
+    side = df[side_column]
+    mask = (side.notna() & (side != canonical_side)).to_numpy(dtype=bool)
     point_x = [c for c, k in kinds.items() if k == "point_x"]
     point_y = [c for c, k in kinds.items() if k == "point_y"]
     vector_x = [c for c, k in kinds.items() if k == "vector_x"]

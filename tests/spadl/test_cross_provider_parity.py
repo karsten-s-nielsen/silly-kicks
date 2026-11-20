@@ -25,6 +25,7 @@ import pytest
 
 from scripts._sb_raw import flatten_events
 from silly_kicks.spadl import coverage_metrics
+from tests._idsse_fixtures import idsse_fixture_native, idsse_fixture_path, idsse_goalkeeper_ids
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _KEEPER_TYPE_NAMES = frozenset({"keeper_save", "keeper_claim", "keeper_punch", "keeper_pick_up"})
@@ -38,21 +39,15 @@ _KEEPER_TYPE_NAMES = frozenset({"keeper_save", "keeper_claim", "keeper_punch", "
 def _load_idsse_fixture():
     from silly_kicks.spadl import sportec
 
-    parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "sample_match.parquet"
-    if not parquet_path.exists():
-        pytest.fail(
-            f"IDSSE fixture not found at {parquet_path}. Regenerate via "
-            f"scripts/extract_provider_fixtures.py --provider idsse."
-        )
-    events = pd.read_parquet(parquet_path)
+    if not idsse_fixture_path("sample_match").exists():
+        pytest.fail(f"IDSSE fixture not found at {idsse_fixture_path('sample_match')}.")
+    events = idsse_fixture_native("sample_match")  # through shape_events_to_native
     # IDSSE bronze ``team`` column uses literal "home"/"away" labels (not team_ids).
     # Pass "home" so the converter mirrors only away-team rows per the
     # ABSOLUTE_FRAME_HOME_RIGHT contract. PR-S22 fixed the prior
     # ``events["team"].iloc[0]`` heuristic which picked "away" because the first
     # row in this fixture happens to be an away-team event.
-    gk_ids: set[str] | None = None
-    if "play_goal_keeper_action" in events.columns:
-        gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
+    gk_ids = idsse_goalkeeper_ids(events)
     actions, _ = sportec.convert_to_actions(
         events, home_team_id="home", goalkeeper_ids=gk_ids, home_team_start_left=True
     )
@@ -239,8 +234,7 @@ def _input_team_values_for(provider: str) -> set[str]:
     output team_id values must be a subset of this set.
     """
     if provider == "sportec":
-        parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "sample_match.parquet"
-        events = pd.read_parquet(parquet_path)
+        events = idsse_fixture_native("sample_match")  # the converter's documented input
         return set(events["team"].dropna().astype(str).tolist())
     if provider == "metrica":
         parquet_path = _REPO_ROOT / "tests" / "datasets" / "metrica" / "sample_match.parquet"
@@ -304,8 +298,7 @@ class TestSportecAdrContractOnProductionFixture:
     def _load_actions():
         from silly_kicks.spadl import sportec
 
-        parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "sample_match.parquet"
-        events = pd.read_parquet(parquet_path)
+        events = idsse_fixture_native("sample_match")  # through shape_events_to_native
 
         # The IDSSE bronze fixture already uses literal "home"/"away" labels in
         # the team column (verified empirically; PR-S22). Earlier versions of

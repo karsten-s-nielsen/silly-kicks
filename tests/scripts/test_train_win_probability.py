@@ -214,3 +214,28 @@ def test_calibration_metrics_prints_one_line_per_fold(capsys):
     lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[progress] win_probability fold ")]
     assert [ln.split()[3] for ln in lines] == [f"{k}/5" for k in range(1, 6)]
     assert all(re.fullmatch(r"\[progress\] win_probability fold \d/5 in \d+\.\d s", ln) for ln in lines), lines
+
+
+def test_team_final_goals_counts_no_shootout_goal():
+    # The library's goal rule: a period-5 (shoot-out) goal is no goal of the match.
+    from scripts.train_win_probability import _team_final_goals
+    from tests.match_outcome._helpers import PASS, SHOT, SUCCESS, make_actions
+
+    assert _team_final_goals(
+        make_actions(
+            [
+                {"team_id": 10, "type_id": SHOT, "result_id": SUCCESS, "period_id": 1},
+                {"team_id": 20, "type_id": SHOT, "result_id": SUCCESS, "period_id": 5},
+                {"team_id": 20, "type_id": SHOT, "result_id": SUCCESS, "period_id": 5},
+                {"team_id": 10, "type_id": PASS, "period_id": 5},
+            ]
+        )
+    ) == {10: 1, 20: 0}
+
+
+def test_strength_leaves_the_shootout_out():
+    # A shoot-out row is no part of the match: its shots add no xG to the supremacy.
+    pooled = _pooled(0.2)
+    so = pooled[(pooled["game_id"] == "m1") & (pooled["team_id"] == 2)].copy()  # one team kicks
+    so["period_id"], so["xg"] = 5, 0.78
+    assert chronological_strength(pd.concat([pooled, so], ignore_index=True)) == chronological_strength(pooled)

@@ -14,7 +14,9 @@ import pytest
 import silly_kicks.spadl.config as spadlconfig
 
 
-@pytest.mark.parametrize("name", ["MissingFeatureContractWarning", "UnverifiableFeatureContractWarning"])
+@pytest.mark.parametrize(
+    "name", ["MissingFeatureContractWarning", "UnverifiableFeatureContractWarning", "PredatesDeclaredConstantWarning"]
+)
 def test_warning_category_is_registered_on_every_public_surface(name):
     """The value of a named category is a STABLE import path. Registering it in one list and
     forgetting the others is the classic failure."""
@@ -256,16 +258,18 @@ def test_constant_change_alone_raises_even_when_the_fingerprint_matches():
 
 
 def test_new_constant_keys_are_additive_and_removed_keys_warn():
-    from silly_kicks.tracking import UnverifiableFeatureContractWarning
+    from silly_kicks.tracking import PredatesDeclaredConstantWarning, UnverifiableFeatureContractWarning
     from silly_kicks.tracking._feature_contract import verify_feature_contract
 
-    verify_feature_contract(  # new key on the library side -> ignored
-        _fc(constants={"penalty_area_half_width": 20.16, "new_thing": 1.0}),
-        _fc(),
-        legacy_override=False,
-        model_name="m",
-        error_cls=_FakeIntegrityError,
-    )
+    # A new key on the library side WARNS: the artifact was fitted before the library declared it. It loads.
+    with pytest.warns(PredatesDeclaredConstantWarning, match="new_thing"):
+        verify_feature_contract(
+            _fc(constants={"penalty_area_half_width": 20.16, "new_thing": 1.0}),
+            _fc(),
+            legacy_override=False,
+            model_name="m",
+            error_cls=_FakeIntegrityError,
+        )
     with pytest.warns(UnverifiableFeatureContractWarning):
         verify_feature_contract(
             _fc(constants={}), _fc(), legacy_override=False, model_name="m", error_cls=_FakeIntegrityError
@@ -367,6 +371,7 @@ def test_xcross_records_and_verifies_a_contract(tmp_path, monkeypatch):
         "penalty_area_half_width",
         "penalty_area_depth",
         "goal_width",
+        "match_context_revision",  # the score input's revision tag (REVISION_CONTRACT_KEYS)
     }
 
     XCrossAttemptModel.load(out)
@@ -521,3 +526,76 @@ def test_the_unverifiable_category_is_NOT_escalated():
     from silly_kicks.tracking import UnverifiableFeatureContractWarning
 
     warnings.warn("probe", UnverifiableFeatureContractWarning, stacklevel=2)
+
+
+# --------------------------------------------------------------------------------------------
+# an artifact fitted before the score and phase repairs (action-time repair spec section 4.14)
+# --------------------------------------------------------------------------------------------
+
+
+def _with_mcr(base: dict, value: float | None) -> dict:
+    c = dict(base["constants"])
+    if value is not None:
+        c["match_context_revision"] = value
+    return _fc(constants=c)
+
+
+def test_pre_repair_artifact_warns_with_the_meaning_and_loads():
+    from silly_kicks.tracking import PredatesDeclaredConstantWarning
+    from silly_kicks.tracking._feature_contract import MATCH_CONTEXT_REVISION, verify_feature_contract
+
+    with pytest.warns(PredatesDeclaredConstantWarning, match=r"match_context_revision.*per period.*goal rule"):
+        verify_feature_contract(
+            _with_mcr(_fc(), MATCH_CONTEXT_REVISION), _with_mcr(_fc(), None), legacy_override=False, model_name="m",
+            error_cls=_FakeIntegrityError,
+        )  # fmt: skip
+
+
+def test_repaired_artifact_loads_silently():
+    from silly_kicks.tracking._feature_contract import MATCH_CONTEXT_REVISION, verify_feature_contract
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        verify_feature_contract(
+            _with_mcr(_fc(), MATCH_CONTEXT_REVISION), _with_mcr(_fc(), MATCH_CONTEXT_REVISION),
+            legacy_override=False, model_name="m", error_cls=_FakeIntegrityError,
+        )  # fmt: skip
+
+
+def test_another_revision_raises():
+    from silly_kicks.tracking._feature_contract import MATCH_CONTEXT_REVISION, verify_feature_contract
+
+    with pytest.raises(_FakeIntegrityError, match="match_context_revision"):
+        verify_feature_contract(
+            _with_mcr(_fc(), MATCH_CONTEXT_REVISION), _with_mcr(_fc(), MATCH_CONTEXT_REVISION + 1.0),
+            legacy_override=False, model_name="m", error_cls=_FakeIntegrityError,
+        )  # fmt: skip
+
+
+def test_predates_is_its_own_category():
+    from silly_kicks.tracking import (
+        MissingFeatureContractWarning,
+        PredatesDeclaredConstantWarning,
+        UnverifiableFeatureContractWarning,
+    )
+
+    for other in (MissingFeatureContractWarning, UnverifiableFeatureContractWarning):
+        assert not issubclass(PredatesDeclaredConstantWarning, other)
+        assert not issubclass(other, PredatesDeclaredConstantWarning)
+
+
+@pytest.mark.parametrize(
+    ("module", "builder", "declares"),
+    [("_ghost_gk", "_feature_contract_block", True), ("_ghost_outfield", "_outfield_feature_contract_block", True),
+     ("_xcross_attempt", "_feature_contract_block", True), ("_xshot_occurrence", "_feature_contract_block", False)],
+)  # fmt: skip
+def test_the_score_and_phase_readers_declare_the_revision(module, builder, declares):
+    import importlib
+
+    from silly_kicks.tracking._feature_contract import MATCH_CONTEXT_REVISION
+
+    constants = getattr(importlib.import_module(f"silly_kicks.tracking.{module}"), builder)()["constants"]
+    if declares:
+        assert constants["match_context_revision"] == MATCH_CONTEXT_REVISION
+    else:  # xShot reads no score or phase input
+        assert "match_context_revision" not in constants

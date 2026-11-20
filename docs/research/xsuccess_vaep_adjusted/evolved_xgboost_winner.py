@@ -20,7 +20,7 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.expanduser("~/silly-kicks-tf61"))
+sys.path.insert(0, os.environ["SK_REPO"])
 import silly_kicks.spadl.config as cfg  # noqa: E402
 
 _GOAL = (float(cfg.field_length), float(cfg.field_width) / 2.0)

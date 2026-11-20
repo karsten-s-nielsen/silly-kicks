@@ -14,6 +14,7 @@ import pandas as pd
 from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import canonical_id_series, ids_match
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.spadl._goals import owngoal_mask
 
 from ._columns import MATCH_OUTCOME_COLUMNS
 from ._config import MatchOutcomeParams
@@ -21,7 +22,6 @@ from ._pmf import goal_count_pmf, match_outcome_probabilities
 from ._report import MatchOutcomeReport
 
 _SHOT_TYPE_IDS = [spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")]
-_OWNGOAL = spadlconfig.result_id["owngoal"]
 _DEFAULT_PARAMS = MatchOutcomeParams.default()
 
 
@@ -46,7 +46,14 @@ def compute_match_outcome(
     -------
     (samples, report)
         ``samples``: one row per ``(game_id, team_id)`` over ``MATCH_OUTCOME_COLUMNS``.
-        ``report``: a :class:`MatchOutcomeReport` conserving the match + shot-xG population.
+        ``report``: a :class:`MatchOutcomeReport` conserving the match + shot-xG population of the match rows
+        (a shoot-out row, or a row with no period, is not in it).
+
+    Notes
+    -----
+    The outcome is that of the match: a penalty shoot-out row (period 5), or a row with no period, adds no shot and
+    no goal (silly_kicks.spadl._goals); the report counts the match rows. A table with no ``period_id`` column has
+    no period rule.
 
     Examples
     --------
@@ -58,16 +65,23 @@ def compute_match_outcome(
     if len(actions) == 0:
         return _finalize([]), MatchOutcomeReport(params, 0, 0, 0, 0, 0, 0, 0)
 
-    # Distinct-team count per game in ONE vectorized groupby (never a per-game rescan; ADR-068).
+    n_matches_in = int(canonical_id_series(actions["game_id"]).nunique(dropna=True))
+
+    # A shoot-out (period 5) row is no part of the match, for its shots and its goals; nor is a row with no period.
+    # A table with no period_id column has no period rule (the independent path needs no possessions).
+    if "period_id" in actions.columns:
+        p = actions["period_id"]
+        actions = actions.iloc[(p.notna() & p.ne(5)).fillna(False).to_numpy(dtype=bool)]
+
+    # Distinct-team count per game of the match rows, in ONE vectorized groupby (never a per-game rescan; ADR-068).
     canon = canonical_id_series(actions["game_id"])
     nteams = (
         pd.DataFrame({"_cg": canon.to_numpy(), "team_id": actions["team_id"].to_numpy()})
         .groupby("_cg", sort=False)["team_id"]
         .nunique(dropna=True)
     )
-    n_matches_in = int(nteams.shape[0])
     scored_canon = set(nteams.index[nteams == 2])
-    n_excluded = int((nteams != 2).sum())
+    n_excluded = n_matches_in - len(scored_canon)  # a game with no match row is excluded too
 
     scored_mask = canon.isin(scored_canon).to_numpy()
     a_scored = actions.iloc[scored_mask]
@@ -137,7 +151,7 @@ def _census(a_scored: pd.DataFrame, xg_column: str) -> tuple[int, int, int, int]
     is_shot = a_scored["type_id"].isin(_SHOT_TYPE_IDS).to_numpy()
     n_shots = int(is_shot.sum())
     with_xg = int((is_shot & a_scored[xg_column].notna().to_numpy()).sum()) if xg_column in a_scored.columns else 0
-    n_own = int((a_scored["result_id"] == _OWNGOAL).sum())
+    n_own = int(owngoal_mask(a_scored).sum())
     return n_shots, with_xg, n_shots - with_xg, n_own
 
 

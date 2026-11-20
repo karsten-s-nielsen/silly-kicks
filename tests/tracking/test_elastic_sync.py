@@ -459,6 +459,32 @@ class TestEventEnrichment:
         )
         assert [e.kind for e in evs] == ["real", "goal", "real"]
 
+    def test_goal_inserted_after_an_own_goal_then_kickoff(self):
+        # The library's goal rule: an own goal is a bad_touch row with the owngoal result, and the ball is in the net.
+        evs = _enrich_events(
+            _events_df([("bad_touch", "p1_0", 1, "owngoal"), ("pass", "p1_1", 2)]), params=ElasticSyncParams()
+        )
+        assert [e.kind for e in evs] == ["real", "goal", "real"]
+
+    def test_goal_inserted_on_a_table_with_result_id_only(self):
+        # Converter output carries result_id and no result_name (SPADL_COLUMNS); the goal rule reads result_id, so
+        # every goal gets its termination on the real pipeline too.
+        from silly_kicks.spadl import config as spadlcfg
+
+        acts = _events_df([("shot", "p1_0", 1, "success"), ("pass", "p2_0", 2)])
+        acts["result_id"] = acts["result_name"].map(spadlcfg.result_id)
+        evs = _enrich_events(acts.drop(columns=["result_name"]), params=ElasticSyncParams())
+        assert [e.kind for e in evs] == ["real", "goal", "real"]
+
+    def test_a_missing_result_gets_no_goal_termination(self):
+        # A nullable result_id (Int64) with a missing value: no exception, and that row is no goal.
+        from silly_kicks.spadl import config as spadlcfg
+
+        acts = _events_df([("shot", "p1_0", 1, "success"), ("pass", "p2_0", 2)])
+        acts["result_id"] = pd.array([pd.NA, spadlcfg.result_id["success"]], dtype="Int64")
+        evs = _enrich_events(acts.drop(columns=["result_name"]), params=ElasticSyncParams())
+        assert [e.kind for e in evs] == ["real", "real"]
+
     def test_no_insertion_same_player_continuation(self):
         evs = _enrich_events(_events_df([("pass", "p1_0", 1), ("take_on", "p1_0", 1)]), params=ElasticSyncParams())
         assert [e.kind for e in evs] == ["real", "real"]

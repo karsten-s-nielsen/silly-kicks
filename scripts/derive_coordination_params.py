@@ -114,7 +114,13 @@ def residual_cutoff_for_run(values: np.ndarray, fs: float) -> float:
 
 # --------------------------------------------------------------------------- weighting + quantiles (single-sourced)
 def weighted_quantile(values: np.ndarray, q: float, weights: np.ndarray) -> float:
-    """The ONE quantile definition every reducer uses: ``np.quantile(..., method="inverted_cdf")`` (numpy>=2).
+    """The ONE quantile definition every reducer uses: the weighted ``inverted_cdf`` quantile.
+
+    It is numpy 2's ``np.quantile(values, q, weights=weights, method="inverted_cdf")``, written out so
+    it runs on the declared ``numpy>=1.26`` floor too (numpy 1.x has no ``weights=``). The steps
+    are numpy's own: a stable sort, the normalised cumulative weight ``cdf``, leading zero weights set
+    to -1 so ``q=0`` takes the first positive weight, then the first index with ``q <= cdf`` (clipped
+    to the last value). A NaN value gives NaN; a negative weight raises, as in numpy.
 
     Examples
     --------
@@ -125,7 +131,18 @@ def weighted_quantile(values: np.ndarray, q: float, weights: np.ndarray) -> floa
     """
     values = np.asarray(values, dtype=np.float64)
     weights = np.asarray(weights, dtype=np.float64)
-    return float(np.quantile(values, q, weights=weights, method="inverted_cdf"))
+    if np.any(weights < 0):
+        raise ValueError("Weights must be non-negative.")
+    order = np.argsort(values, kind="stable")
+    sorted_values = values[order]
+    if np.isnan(sorted_values[-1]):  # NaN sorts last
+        return float("nan")
+    cdf = np.cumsum(weights[order], dtype=np.float64)
+    cdf /= cdf[-1]
+    if cdf[0] == 0:
+        cdf[cdf == 0] = -1
+    index = min(int(np.searchsorted(cdf, np.float64(q), side="left")), sorted_values.size - 1)
+    return float(sorted_values[index])
 
 
 def unit_weights(provider: np.ndarray, match: np.ndarray, *, provider_neutral: bool) -> np.ndarray:

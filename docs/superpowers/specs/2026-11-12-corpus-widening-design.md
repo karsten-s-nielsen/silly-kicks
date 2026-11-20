@@ -25,6 +25,7 @@ Owner rulings of 2026-11-12 that set this cycle:
   arm. The public training arm is therefore 89 matches (SkillCorner 20 + IDSSE 7 + GS 62) and the extended arm 187.
 - r3: "Rule picks the wheel model": the wheel jobs get both arms and ship what the section 5.2 rule selects; the Hub
   jobs get only `sc_extended` (section 5.5).
+  > **Amended 2026-11-18 (owner rulings R38, R49; ADR-135, ADR-132 amendment):** for the 4.144.0 refit the xShot and xCross wheel jobs ship the `public` arm, forced by the campaign's `ship_variant`; they still train both arms and run the paired test, whose verdict is recorded as `rule_verdict` / `rule_why` and reported at adoption.
 - r3 (owner note): "there is a size limit on what can go in the wheel due to pypi" (section 5.6).
 - r4: "Both files, fail at 80 MB": the release workflow checks the wheel AND the sdist before upload (section 5.6).
 - r7: "Per-provider gate": GS would be about 70% of the public arm's matches (62 of 89), and the pooled gates and
@@ -161,6 +162,7 @@ replace the three-arm `fixed_sequence_ship` with a two-arm decision in `scripts/
   (`scripts/_paired.py:12-18`).
 - **Outcome:** ship `sc_extended` if the rule clears, else ship `public`. The operator override `--ship-variant`
   stays as today (xCross).
+  > **Amended 2026-11-18 (owner rulings R38, R49; ADR-135, ADR-132 amendment):** for the 4.144.0 refit the xShot and xCross wheel jobs ship the `public` arm, forced by the campaign's `ship_variant` (the override, now on xShot too); they still train both arms and run the paired test, whose verdict is recorded as `rule_verdict` / `rule_why` and reported at adoption.
 - The ADR-131 gates then apply to the shipped arm, unchanged.
 
 The non-paired branch (a dataset whose `compute_arms` yields one arm) ships that arm, as today.
@@ -190,6 +192,7 @@ every job both arms. The fix:
   "sc_extended"]`. They run the section 5.2 rule and ship its choice: `public` unless `sc_extended` clears.
   Licensed-derived weights in the wheel are allowed (ruling D7; reversibility, ADR-116); the bundle's label then reads
   `sc_extended`. The manifest entries (`shipped_variant`) move with the bundles in the adoption PR (section 7).
+  > **Amended 2026-11-18 (owner rulings R38, R49; ADR-135, ADR-132 amendment):** for the 4.144.0 refit the xShot and xCross wheel jobs ship the `public` arm, forced by the campaign's `ship_variant`; they still train both arms and run the paired test, whose verdict is recorded as `rule_verdict` / `rule_why` and reported at adoption.
 - **Hub jobs** (the `sc_extended` channel): `arms = ["sc_extended"]`, one arm, the non-paired branch; they always ship
   `sc_extended`.
 
@@ -240,8 +243,9 @@ same usable folds as `forecast_skill`:
   y[tr].mean()`). It is computed in the cv fold unit and recorded there (`fold.json`: `train_rate_by_provider`). This
   is stricter than the pooled reference: provider recognition alone earns no skill.
 - **Per provider P:** `brier_skill_P = 1 - mean((y-p)^2) / mean((y-r_P)^2)` and `log_loss_skill_P` with the same
-  `SKILL_LOG_CLIP = 1e-15`, both over P's held-out rows; point estimates (no bootstrap: IDSSE has 7 matches, and a
-  match-bootstrap bound over 7 clusters is too wide to be useful).
+  `SKILL_LOG_CLIP = 1e-15`, both over P's held-out rows; point estimates (no bootstrap gate: IDSSE has 7 matches, and
+  a match-bootstrap bound over 7 clusters is too wide to gate on). Amendment 2026-11-17 (owner R10; ADR-132 item 5):
+  the bound is REPORTED per provider (`bootstrap` block, `n_matches` beside it), never gated.
 - **Gates:** `provider_brier_skill_gt_0` and `provider_log_loss_skill_gt_0` are True iff the candidate has held-out
   rows of at least one provider and EVERY provider with held-out rows has the skill strictly above 0. A NaN skill
   (no training rows of P in a fold, or a zero reference loss) fails the gate (fail-closed, `_gt0`).
@@ -334,6 +338,10 @@ exclusion is reported to the owner with the restage.
 | Adoption release | per bundle, by the rule's outcome (section 7.1); gk_completion keeps its own pin | per section 7.1 | `test_corpus_guard`, `test_datasets_lock`, `test_bundled_weights_corpus_policy`, `test_bundled_probe_ids_are_committed_ids` and `docs/artifacts/manifest.toml` move with the bundles in the adoption PR; `xshot17`/`xshot115` deleted after |
 
 ### 7.1 The adoption contract for a wheel bundle, by the rule's outcome
+
+> **Amended 2026-11-18 (owner rulings R38, R49; ADR-135):** for the 4.144.0 refit the wheel outcome is `public` by
+> `ship_variant`, so the `sc_extended` wheel column of this section does not apply to that refit; it stays the contract
+> for a run that ships the rule's choice.
 
 Two different things were both called `tier`; this cycle separates them.
 

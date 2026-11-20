@@ -426,3 +426,19 @@ def test_main_labels_the_bundle_from_the_declared_visibility(tmp_path, vis, want
     args = ["--dataset", "sb", "--min-rows", "1", "--min-passes", "1", "--corpus-visibility", vis]
     _ctx, man = _run(tmp_path, *args, "--corpus-n-matches", "2")
     assert man["corpus_visibility"] == want and man["corpus_n_matches"] == 2
+
+
+@pytest.mark.parametrize("strategy", ["trajectory", "id"])
+def test_candidate_rows_keep_the_actions_id_dtype_on_an_all_numeric_table(strategy):
+    # `iterrows` on an all-numeric actions table upcast int game_id/action_id to float, so the namespaced id
+    # read "gs:7.0". The candidate rows take the ids with the dtype and value of the actions table.
+    from scripts.train_receiver_model import _namespace_game_ids, extract_candidate_rows
+
+    a, fr = _traj_match(receiver_on_ray=True) if strategy == "trajectory" else _one_pass_match(receiver_in_frame=True)
+    assert all(pd.api.types.is_numeric_dtype(d) for d in a.dtypes)  # precondition: the all-numeric scene
+    assert pd.api.types.is_integer_dtype(a["game_id"]) and pd.api.types.is_integer_dtype(a["action_id"])
+    rows = extract_candidate_rows(a, fr, feature_set="public", labeling_strategy=strategy)
+    assert len(rows) > 0  # non-vacuity
+    assert rows["game_id"].dtype == a["game_id"].dtype and rows["action_id"].dtype == a["action_id"].dtype
+    assert set(rows["game_id"]) <= set(a["game_id"]) and set(rows["action_id"]) <= set(a["action_id"])
+    assert not any(g.endswith(".0") for g in _namespace_game_ids(rows, "gs")["game_id"])

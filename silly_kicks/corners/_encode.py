@@ -28,7 +28,13 @@ def _run_column_names(model: RunZoneModel) -> list[str]:
 
 
 def _nearest_frame_xy(frames: pd.DataFrame, period: int, t: float, team) -> pd.DataFrame | None:
-    """The attacking team's player (player_id, x, y) at the frame nearest ``t`` in ``period``."""
+    """The attacking team's player (player_id, x, y) at the frame nearest ``t`` in ``period``.
+
+    ``None`` for a missing ``t``: a corner with no measured kick has no window (action-time repair spec section 5.2),
+    and the argmin of an all-NaN distance would pick the period's first frame.
+    """
+    if not np.isfinite(t):
+        return None
     # NA-safe id compare (ADR-019): the ball row carries a <NA> team_id, so a raw ``==`` yields an
     # NA-bearing mask that crashes under boolean indexing. Both masks are positional numpy arrays --
     # ids_match returns a fresh-RangeIndex Series, so never ``&`` it with a label-indexed Series.
@@ -61,8 +67,8 @@ def _encode_one(corner: pd.Series, frames: pd.DataFrame, model: RunZoneModel, pa
     init_t = float(corner["t_kick"]) if sb360 else float(corner["t_init"])
     init = _nearest_frame_xy(frames, period, init_t, team)
     target = _nearest_frame_xy(frames, period, float(corner["t_target"]), team)
-    if init is None or target is None:
-        return None
+    if init is None or target is None or pd.isna(corner["corner_side"]):
+        return None  # no window, or no measured side to reflect by (never the text "None")
     side = str(corner["corner_side"])
     init, target = _reflect_y(init, side), _reflect_y(target, side)
     # align the two snapshots by player (a run is one player's init -> target)

@@ -20,9 +20,14 @@ def _takes_frames(fn) -> bool:
     return "frames" in inspect.signature(fn).parameters
 
 
+#: Public frame-consuming transforms that are not add_* but take the same (actions, frames, *, ...) shape (action-time
+#: repair plan Task 6). Held to the same call-shape rules as every add_*.
+_FRAME_TRANSFORMS = {"sync_action_times"}
+
+
 def _frame_consumers() -> dict[str, inspect.Signature]:
     out = {}
-    for name in _public_add_names():
+    for name in _public_add_names() | _FRAME_TRANSFORMS:
         fn = getattr(T, name)
         sig = inspect.signature(fn)
         if "frames" in sig.parameters:
@@ -67,3 +72,9 @@ def test_exemptions_carry_a_reason():
 def test_exemptions_are_all_real_exports():
     stale = set(_CALL_SHAPE_EXEMPT) - _public_add_names()
     assert not stale, f"exemption names a non-exported add_*: {sorted(stale)}"
+
+
+def test_registered_frame_transforms_are_exported_and_take_frames():
+    for name in _FRAME_TRANSFORMS:
+        assert name in T.__all__, f"{name}: not a public tracking export"
+        assert "frames" in inspect.signature(getattr(T, name)).parameters, f"{name}: takes no frames"

@@ -22,11 +22,18 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
-from ._warnings import MissingFeatureContractWarning, UnverifiableFeatureContractWarning
+from ._warnings import (
+    MissingFeatureContractWarning,
+    PredatesDeclaredConstantWarning,
+    UnverifiableFeatureContractWarning,
+)
 
 __all__ = [
     "CANONICAL_CONTRACT_KEYS",
+    "DECLARED_CONSTANT_MEANINGS",
     "DECLARED_CONSTANT_SOURCES",
+    "MATCH_CONTEXT_REVISION",
+    "REVISION_CONTRACT_KEYS",
     "contract_probe_frame",
     "feature_contract",
     "verify_feature_contract",
@@ -87,6 +94,33 @@ DECLARED_CONSTANT_SOURCES: dict[str, str] = {
     "GOAL_Y_MIN": "goal_width",
     "GOAL_Y_MAX": "goal_width",
     "_GOAL_HALF_WIDTH_M": "goal_width",
+}
+
+#: The form of the score and phase inputs of the ghost-GK, ghost-outfield and xCross features (action-time
+#: repair spec section 4.14): per period, the full goal rule, the SkillCorner running score and
+#: the penalty rows. One constant covers all of them; a later change of those inputs bumps it, and a
+#: stored value that differs then raises by the declared-constant rule (ADR-050).
+MATCH_CONTEXT_REVISION = 1.0
+
+#: The third declared-constant registry: REVISION keys -- hand-bumped version tags of a model's inputs, mapped to
+#: their value. They are NOT geometry and NOT probe-movable, so they are outside ``DECLARED_CONSTANT_SOURCES``
+#: (probe-movable geometry module constants) and ``CANONICAL_CONTRACT_KEYS`` (``spadlconfig`` values); their gate is
+#: the value pin in ``tests/tracking/test_declared_constant_values.py``. The contract blocks stamp from here.
+#:
+#: The tag is bumped by hand. Its gate: ``tests/tracking/test_match_context_revision_gate.py`` runs the score
+#: and phase lookups on a fixed probe and fails when their outputs differ from the pin of the current revision.
+#: LIMIT, in plain words: a change that the probe does not exercise is not detected.
+REVISION_CONTRACT_KEYS: dict[str, float] = {"match_context_revision": MATCH_CONTEXT_REVISION}
+
+#: What a declared constant means, for the message of a :class:`PredatesDeclaredConstantWarning`. Relative to
+#: 4.144.0, the last release without the repair, so the text needs no number of the release that ships it (the
+#: same form as the stale-bronze penalty warning; the commit-prep check of plan line 192 covers both).
+DECLARED_CONSTANT_MEANINGS: dict[str, str] = {
+    "match_context_revision": (
+        "the score and phase inputs are computed per period, with the full goal rule, the SkillCorner running score "
+        "and the penalty rows, in every release after silly-kicks 4.144.0; this artifact was fitted with "
+        "silly-kicks 4.144.0 or earlier"
+    ),
 }
 
 #: Contract keys whose canonical source is ``spadlconfig``, resolved as ``getattr(spadlconfig, key)``.
@@ -231,6 +265,17 @@ def verify_feature_contract(
             f"{model_name}: declared constant(s) {removed} are recorded in the artifact but no "
             "longer declared by the library; cannot compare them.",
             UnverifiableFeatureContractWarning,
+            stacklevel=2,
+        )
+    # A constant the library declares and the artifact lacks: the artifact was fitted before the library declared
+    # it (action-time repair spec section 4.14). It loads, and the warning names what changed since.
+    predates = sorted(set(rec_c) - set(sto_c))
+    if predates:
+        meanings = "; ".join(f"{k}: {DECLARED_CONSTANT_MEANINGS.get(k, 'no meaning recorded')}" for k in predates)
+        warnings.warn(
+            f"{model_name}: the artifact lacks declared constant(s) {predates}, so it was fitted before the library "
+            f"declared them ({meanings}). Loading anyway; re-fit to clear this warning.",
+            PredatesDeclaredConstantWarning,
             stacklevel=2,
         )
     # EXACT float equality, deliberately -- do NOT add a tolerance here. The change this prong

@@ -32,6 +32,7 @@ import pandas as pd
 from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as _spc
+from silly_kicks.spadl.schema import is_time_unmeasured
 from silly_kicks.tracking._ball_carrier import derive_team_in_possession, infer_ball_carrier
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
 from silly_kicks.tracking._xcross_attempt import (
@@ -335,7 +336,7 @@ def _row(sp, actions, cfg, score_fn, home_team_id) -> dict:
     sd = np.nan
     if score_fn is not None:
         # R2-L1: _build_score_lookup returns a _zero callback when no goals -> raw is never None/NaN.
-        raw = score_fn(gid, sp["entry_time"])  # home - away
+        raw = score_fn(gid, int(per), sp["entry_time"])  # home - away
         sd = float(raw) if same_id(team, home_team_id) else -float(raw)
     feats = _extract_row(cfg, grp, gk_team_id=defending[0], goal_x=goal_x, carrier_pid=carrier_pid, sd=sd)
     row = {c: float(feats[c]) for c in list(cfg.confounders) + list(cfg.gk_block)}
@@ -380,6 +381,7 @@ def _team_period_action_times(actions, gid, per, team, type_names) -> np.ndarray
         & (actions["period_id"] == per)
         & ids_match(actions["team_id"], team)
         & actions["type_id"].isin(type_ids)
+        & ~is_time_unmeasured(actions)  # an unmeasured time is no treatment moment (spec section 5.4)
     )
     return np.sort(actions.loc[sel, "time_seconds"].to_numpy(dtype=float))
 
@@ -463,6 +465,7 @@ def _outcome_distances(actions, gid, per, team, anchor, cfg) -> np.ndarray:
         & (actions["period_id"] == per)
         & ids_match(actions["team_id"], team)
         & actions["type_id"].isin(type_ids)
+        & ~is_time_unmeasured(actions)  # an unmeasured time is no outcome moment (spec section 5.4)
     )
     if cfg.outcome_result_ids is not None:
         sel &= actions["result_id"].isin(cfg.outcome_result_ids)

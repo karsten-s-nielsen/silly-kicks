@@ -185,6 +185,12 @@ def test_action_frame_colocation_on_a_non_105_pitch():
     # `link_actions_to_frames` returns (pointers, LinkReport); pointers carry action_id + frame_id
     # (Int64, NaN if unlinked) but NOT period_id -- pull period_id + acting team_id from the actions.
     links, _report = link_actions_to_frames(actions, frames)
+    # A "placeholder" / "order_only" restart row has no measured time, and its start can be NaN by design (action-time
+    # repair spec sections 4.2, 4.7): it says nothing about co-location, so the gate reads the measured rows only.
+    from silly_kicks.spadl.schema import is_time_unmeasured
+
+    measured_ids = actions.loc[~np.asarray(is_time_unmeasured(actions), dtype=bool), "action_id"]
+    links = links[links["action_id"].isin(measured_ids)]
     links = links.dropna(subset=["frame_id"]).copy()
     links["frame_id"] = links["frame_id"].astype("int64")
     merged = links.merge(actions[["action_id", "period_id", "team_id", "start_x", "start_y"]], on="action_id")

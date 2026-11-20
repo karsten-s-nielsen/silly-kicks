@@ -211,3 +211,34 @@ def test_actiontype_result_onehot_vectorized(spadl_actions: pd.DataFrame) -> Non
     result = fs.actiontype_result_onehot(gamestates)
     assert any("actiontype_pass_result_success" in c for c in result.columns)
     assert result.shape[0] == len(spadl_actions)
+
+
+def _goal_rows(rows: list[tuple[int, str, str, int]]) -> pd.DataFrame:
+    """Minimal actions from (team_id, type_name, result_name, period_id), one second apart."""
+    return pd.DataFrame(
+        {
+            "team_id": [r[0] for r in rows],
+            "type_name": [r[1] for r in rows],
+            "type_id": [spadl.config.actiontype_id[r[1]] for r in rows],
+            "result_name": [r[2] for r in rows],
+            "result_id": [spadl.config.result_id[r[2]] for r in rows],
+            "period_id": [r[3] for r in rows],
+            "time_seconds": [float(i) for i in range(len(rows))],
+        }
+    )
+
+
+def test_goalscore_counts_an_own_goal_for_the_other_team() -> None:
+    # Converters emit an own goal as a bad_touch row with the owngoal result (ADR-018).
+    actions = _goal_rows([(1, "bad_touch", "owngoal", 1), (2, "pass", "success", 1), (1, "pass", "success", 1)])
+    out = fs.goalscore([actions])
+    assert out["goalscore_team"].tolist() == [0, 1, 0]
+    assert out["goalscore_opponent"].tolist() == [0, 0, 1]
+
+
+def test_goalscore_counts_no_goal_of_the_shootout() -> None:
+    # Period 5 is the penalty shoot-out: each of its rows holds the score at the end of period 4.
+    actions = _goal_rows([(1, "shot", "success", 1), (2, "shot_penalty", "success", 5), (1, "pass", "success", 5)])
+    out = fs.goalscore([actions])
+    assert out["goalscore_team"].tolist() == [0, 0, 1]
+    assert out["goalscore_opponent"].tolist() == [0, 1, 0]

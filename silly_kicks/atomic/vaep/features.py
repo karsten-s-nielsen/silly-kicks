@@ -366,8 +366,10 @@ def goalscore(gamestates: GameStates) -> Features:
     """
     actions = gamestates[0]
     teamA = actions["team_id"].values[0]
-    goals = actions.type_name == "goal"
-    owngoals = actions["type_name"].str.contains("owngoal")
+    # A shoot-out (period 5) row scores for neither team, so each period-5 row holds the score at the end of period 4.
+    in_match = actions["period_id"] != 5
+    goals = (actions.type_name == "goal") & in_match
+    owngoals = actions["type_name"].str.contains("owngoal") & in_match
 
     teamisA = actions["team_id"] == teamA
     teamisB = ~teamisA

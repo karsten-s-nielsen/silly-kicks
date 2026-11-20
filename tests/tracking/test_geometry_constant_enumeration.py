@@ -163,7 +163,8 @@ def test_the_registry_and_the_built_contracts_agree(tmp_path):
     assert not unaccounted, (
         f"models stamp keys nothing accounts for: {sorted(unaccounted)}. EITHER add the owning "
         f"module constant to DECLARED_CONSTANT_SOURCES (if the extractor keeps a private copy), OR "
-        f"add the key to CANONICAL_CONTRACT_KEYS (if it now reads spadlconfig directly)."
+        f"add the key to CANONICAL_CONTRACT_KEYS (if it now reads spadlconfig directly), OR add it to "
+        f"REVISION_CONTRACT_KEYS (if it is a hand-bumped version tag of the model's inputs)."
     )
 
 
@@ -179,10 +180,19 @@ def test_every_declared_constant_is_load_bearing_on_the_probe(tmp_path):
     A declaration the probe cannot move is a guard that fires when nothing changed -- which is how
     ``legacy_override`` becomes reflex.
     """
+    from silly_kicks.tracking._feature_contract import REVISION_CONTRACT_KEYS
+
     built = _built_contract_constants(tmp_path)
-    assert built["xshot"] == {"goal_width"}
-    assert built["xcross"] == {"penalty_area_half_width", "penalty_area_depth", "goal_width"}
-    assert built["ghost"] == {"penalty_area_half_width", "penalty_area_depth"}
+    revision = set(REVISION_CONTRACT_KEYS)
+    # The geometry keys, net of the revision keys. A revision key is a hand-bumped version tag of the
+    # model's inputs: no probe moves it, so it is outside this test's premise and is pinned by name below and by
+    # value in test_declared_constant_values.py.
+    assert built["xshot"] - revision == {"goal_width"}
+    assert built["xcross"] - revision == {"penalty_area_half_width", "penalty_area_depth", "goal_width"}
+    assert built["ghost"] - revision == {"penalty_area_half_width", "penalty_area_depth"}
+    assert built["xshot"] & revision == set()  # xShot reads no score or phase input
+    assert built["xcross"] & revision == {"match_context_revision"}
+    assert built["ghost"] & revision == {"match_context_revision"}
 
 
 # --------------------------------------------------------------------------------------------
@@ -198,9 +208,9 @@ def _unaccounted_keys(all_keys: set[str], registry: dict[str, str]) -> set[str]:
     gate unsatisfiable the moment an extractor migrates: the constant is deleted BY DESIGN, and the
     old failure message tells the reader to re-add a constant that cannot exist.
     """
-    from silly_kicks.tracking._feature_contract import CANONICAL_CONTRACT_KEYS
+    from silly_kicks.tracking._feature_contract import CANONICAL_CONTRACT_KEYS, REVISION_CONTRACT_KEYS
 
-    return all_keys - (set(registry.values()) | set(CANONICAL_CONTRACT_KEYS))
+    return all_keys - (set(registry.values()) | set(CANONICAL_CONTRACT_KEYS) | set(REVISION_CONTRACT_KEYS))
 
 
 def test_the_gate_survives_an_extractor_migrating_onto_the_canonical_source(tmp_path):
@@ -226,6 +236,32 @@ def test_a_key_with_neither_a_constant_nor_a_canonical_source_is_REPORTED():
     """Non-vacuity, and the property that keeps the union honest: widening the accounting must not
     make it accept everything. A stamped key backed by nothing must still fail."""
     assert _unaccounted_keys({"invented_key"}, {}) == {"invented_key"}
+
+
+def test_every_revision_key_is_stamped_by_a_model(tmp_path):
+    """Honesty, as for the other registries: a revision key no model stamps is a gate on nothing."""
+    from silly_kicks.tracking._feature_contract import REVISION_CONTRACT_KEYS
+    from silly_kicks.tracking._ghost_outfield import _outfield_feature_contract_block
+
+    stamped = set().union(
+        *_built_contract_constants(tmp_path).values(), _outfield_feature_contract_block()["constants"]
+    )
+    assert set(REVISION_CONTRACT_KEYS) <= stamped, sorted(set(REVISION_CONTRACT_KEYS) - stamped)
+
+
+def test_no_key_is_in_two_registries():
+    from silly_kicks.tracking._feature_contract import (
+        CANONICAL_CONTRACT_KEYS,
+        DECLARED_CONSTANT_SOURCES,
+        REVISION_CONTRACT_KEYS,
+    )
+
+    geometry, canonical, revision = (
+        set(DECLARED_CONSTANT_SOURCES.values()),
+        set(CANONICAL_CONTRACT_KEYS),
+        set(REVISION_CONTRACT_KEYS),
+    )
+    assert not revision & geometry and not revision & canonical, sorted((revision & geometry) | (revision & canonical))
 
 
 def test_every_canonical_contract_key_resolves_on_spadlconfig():

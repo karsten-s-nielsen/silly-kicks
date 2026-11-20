@@ -875,7 +875,14 @@ def _resolve_from_roster(
     # Goal-kick event override (event > roster). A goal-kick actor names the acting team's keeper,
     # so it beats a stale roster after a substitution. Restricted to (game, period, team) tuples the
     # frames already witnessed -- an event cannot introduce a team the match's frames never showed.
-    is_goalkick = (actions["type_name"] == _GOALKICK_TYPE_NAME) & actions["player_id"].notna()
+    # Canonical SPADL carries `type_id`; `type_name` exists only after `add_names`, so read whichever is present.
+    if "type_name" in actions.columns:
+        is_goalkick_type = actions["type_name"] == _GOALKICK_TYPE_NAME
+    else:
+        from silly_kicks.spadl import config as spadlconfig
+
+        is_goalkick_type = actions["type_id"] == spadlconfig.actiontype_id[_GOALKICK_TYPE_NAME]
+    is_goalkick = is_goalkick_type & actions["player_id"].notna()
     goalkicks = actions.loc[is_goalkick, ["game_id", "period_id", "team_id", "player_id", "time_seconds"]].copy()
     if not goalkicks.empty:
         # Sort ascending so the LATEST goal kick per group is last (a mid-period sub: the later

@@ -21,7 +21,7 @@ import pytest
 from tests.spadl._converter_cases import CONVERTER_CASES
 
 GOLDEN = Path(__file__).parent / "fixtures" / "reorder_golden"
-_EXCLUDED = ["type_id", "cross_native"]
+_EXCLUDED = ["type_id", "cross_native", "time_source"]  # time_source: added by the action-time repair
 
 
 def _output(name: str) -> pd.DataFrame:

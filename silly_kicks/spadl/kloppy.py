@@ -265,6 +265,7 @@ def convert_to_actions(
     if not has_pass_type:
         df_actions["cross_native"] = pd.array([pd.NA] * len(df_actions), dtype="boolean")
     df_actions = classify_deliveries(df_actions)
+    df_actions["time_source"] = "event"  # the provider's event clock (action-time repair spec section 4.1)
     df_actions = _add_dribbles(df_actions)
 
     # Clamp output coords to the SPADL pitch frame, matching the convention

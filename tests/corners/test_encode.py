@@ -136,3 +136,30 @@ def test_pure_does_not_mutate():
     compute_corner_run_encoding(corners, frames, model=model)
     pd.testing.assert_frame_equal(corners, cb)
     pd.testing.assert_frame_equal(frames, fb)
+
+
+def test_direct_corner_with_no_window_gets_no_encoding():
+    # An unmeasured corner has t_init/t_target NaN and corner_side <NA>; argmin of
+    # an all-NaN distance is 0, so it was encoded from the period's first frame
+    corners = _corners()
+    corners.loc[0, ["t_init", "t_target"]] = np.nan
+    corners["corner_side"] = pd.Series([pd.NA, "left"], dtype="category")
+    out = compute_corner_run_encoding(corners, _frames(), model=_model())
+    run_cols = _run_column_names(_model())
+    assert len(out) == 2  # the row stays
+    assert out.loc[out["corner_id"] == 0, run_cols].isna().all(axis=None)
+
+
+def test_nearest_frame_gives_no_frame_for_a_missing_time():
+    from silly_kicks.corners._encode import _nearest_frame_xy
+
+    assert _nearest_frame_xy(_frames(), 1, float("nan"), "tA") is None
+    assert _nearest_frame_xy(_frames(), 1, 98.0, "tA") is not None  # non-vacuity
+
+
+def test_known_window_with_unknown_side_gets_no_encoding():
+    # no str(<NA>) == "None" side reaches the reflection
+    corners = _corners()
+    corners["corner_side"] = pd.Series([pd.NA, "left"], dtype="category")
+    out = compute_corner_run_encoding(corners, _frames(), model=_model())
+    assert out.loc[out["corner_id"] == 0, _run_column_names(_model())].isna().all(axis=None)

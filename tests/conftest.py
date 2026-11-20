@@ -1,5 +1,6 @@
 """Configuration for pytest."""
 
+import importlib.util
 import os
 from collections.abc import Iterator
 
@@ -82,3 +83,29 @@ def shadow_pre_index_oracle(monkeypatch):
 
     monkeypatch.setattr(_ball_carrier, "_pre_index_frames", shadow)
     return calls
+
+
+# Checked once: without statsbombpy (a script dependency, absent from the [test] extra) the guard below costs one dict
+# lookup per test, not a failed import per test.
+_HAS_STATSBOMBPY = importlib.util.find_spec("statsbombpy") is not None
+
+
+@pytest.fixture(autouse=True)
+def _restore_statsbombpy_open_data_paths() -> Iterator[None]:
+    """Restore statsbombpy's process-global ``config.OPEN_DATA_PATHS`` after every test.
+
+    ``scripts._sb_open_data.pin_open_data_revision`` edits that dict in place; a test that runs the open-data stages
+    in-process (test_dataset_read_audit) pins it to a toy server that stops when the test ends, and ``monkeypatch``
+    restores only the env. Without this guard every later statsbombpy call of the process read the stopped server.
+    A no-op when statsbombpy is not installed (it is a script dependency, not a library one).
+    """
+    if not _HAS_STATSBOMBPY:
+        yield
+        return
+    from statsbombpy import config  # type: ignore[import-not-found]
+
+    saved = dict(config.OPEN_DATA_PATHS)  # this test's starting paths, restored after it (not the session start's)
+    yield
+    if config.OPEN_DATA_PATHS != saved:
+        config.OPEN_DATA_PATHS.clear()
+        config.OPEN_DATA_PATHS.update(saved)

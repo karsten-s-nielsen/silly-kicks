@@ -464,6 +464,27 @@ def resolve_restart_geometry(
             continue  # open-play / freekick_short -> no rule-point
         osrc[i], oconf[i] = "restart_prior", _PRIOR_CONF[t]
 
+    # Derived SkillCorner restart and penalty rows (action-time repair spec section 4.7): the engine reads
+    # `time_source`, so a rule point never reads as native and a measured rest point never reads as a prior. The
+    # tracking tiers do not apply to them: their linked frame is a reception frame, not the spot.
+    if "time_source" in actions.columns and "action_provenance" in actions.columns:
+        derived = (actions["action_provenance"] == "derived").to_numpy()
+        ts = actions["time_source"].to_numpy()
+        unmeasured = derived & np.isin(ts, ("placeholder", "order_only"))
+        kicked = derived & (ts == "kick")
+        has_start = np.isfinite(sx) & np.isfinite(sy)
+        for i in np.where(unmeasured)[0]:
+            t = int(tid[i])
+            if has_start[i] and (t in (_GOALKICK, _PENALTY, _THROW_IN) or t in _CORNER_TYPES):
+                ox[i], oy[i] = sx[i], sy[i]
+                osrc[i], oconf[i] = "restart_prior", _PRIOR_CONF[t]
+            else:
+                ox[i], oy[i] = np.nan, np.nan
+                osrc[i], oconf[i] = "unresolved", 0.0
+        for i in np.where(kicked & has_start)[0]:
+            ox[i], oy[i] = sx[i], sy[i]
+            osrc[i], oconf[i] = "tracking_ball", _CONF_TRACKING_BALL
+
     out["enriched_start_x"], out["enriched_start_y"] = ox, oy
     out["start_coord_source"], out["start_coord_confidence"] = osrc, oconf
 

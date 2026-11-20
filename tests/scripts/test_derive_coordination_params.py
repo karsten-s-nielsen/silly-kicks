@@ -90,6 +90,51 @@ def test_weighted_quantile_weights_shift_the_result():
     assert d.weighted_quantile(v, 0.5, np.array([1.0, 9.0])) == 1.0  # mass on 1.0
 
 
+# The reference values below are numpy 2.2.6's ``np.quantile(v, q, weights=w, method="inverted_cdf")``.
+# They hold on BOTH numpy majors: the declared floor is numpy 1.26, which has no ``weights=`` keyword
+# (the pandas-floor CI job found the script raising "unexpected keyword argument 'weights'").
+_NUMPY2_WEIGHTED_REFERENCE = [
+    ([3.0, 1.0, 2.0, 4.0], [1, 1, 1, 1], 0.5, 2.0),
+    ([3.0, 1.0, 2.0, 4.0], [1, 2, 3, 4], 0.25, 2.0),
+    ([3.0, 1.0, 2.0, 4.0], [1, 2, 3, 4], 0.3, 2.0),
+    ([0.0, 0.0, 1.0, 5.0], [0.5, 0.5, 2.0, 1.0], 0.75, 1.0),
+    ([2.0, 7.0, 5.0], [0.0, 0.0, 1.0], 0.0, 5.0),  # leading zero weights: q=0 takes the first positive weight
+    ([2.0, 7.0, 5.0], [0.0, 1.0, 1.0], 0.0, 5.0),
+    ([2.0, 7.0, 5.0], [1.0, 1.0, 1.0], 1.0, 7.0),
+    ([0.1, 0.2, 0.3, 0.4, 0.5], [0.2] * 5, 0.4, 0.2),  # a cumulative weight that lands on q in float64
+]
+
+
+@pytest.mark.parametrize(("values", "weights", "q", "expected"), _NUMPY2_WEIGHTED_REFERENCE)
+def test_weighted_quantile_matches_the_numpy2_reference_on_numpy_floor_1_26(values, weights, q, expected):
+    """Red on numpy 1.26 at ``2901fa5c`` (no ``weights=`` keyword); the same values on numpy 1.x and 2.x."""
+    assert d.weighted_quantile(np.array(values), q, np.array(weights, dtype=float)) == expected
+
+
+def test_weighted_quantile_is_nan_when_a_value_is_nan_on_numpy_floor_1_26():
+    assert np.isnan(d.weighted_quantile(np.array([1.0, np.nan, 2.0]), 0.5, np.ones(3)))
+
+
+def test_weighted_quantile_refuses_negative_weights_like_numpy():
+    with pytest.raises(ValueError, match="Weights must be non-negative"):
+        d.weighted_quantile(np.array([1.0, 2.0]), 0.5, np.array([1.0, -1.0]))
+
+
+@pytest.mark.skipif(np.lib.NumpyVersion(np.__version__) < "2.0.0", reason="np.quantile(weights=) exists from numpy 2.0")
+def test_weighted_quantile_is_bit_identical_to_numpy2_weighted_inverted_cdf():
+    """On numpy 2 the script's quantile equals ``np.quantile(..., weights=, method="inverted_cdf")`` exactly."""
+    rng = np.random.default_rng(20261119)
+    for _ in range(400):
+        n = int(rng.integers(1, 40))
+        values = np.round(rng.normal(size=n), int(rng.integers(0, 3)))  # rounding makes ties
+        weights = rng.choice([0.0, 0.1, 0.2, 0.5, 1.0, 3.0], size=n)
+        if weights.sum() == 0:
+            weights[0] = 1.0
+        for q in (0.0, 0.05, 0.2, 0.5, 0.95, 1.0, float(rng.random())):
+            expected = float(np.quantile(values, q, weights=weights, method="inverted_cdf"))
+            assert d.weighted_quantile(values, q, weights) == expected
+
+
 def test_unit_weights_sum_to_one_and_each_match_sums_to_its_share():
     p = np.array(["a", "a", "a", "b"])
     m = np.array([1, 1, 2, 9])

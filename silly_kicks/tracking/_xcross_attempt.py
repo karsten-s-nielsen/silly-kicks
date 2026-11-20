@@ -13,7 +13,7 @@ import json
 import math
 import warnings
 from pathlib import Path
-from typing import Literal, overload
+from typing import Literal, cast, overload
 
 import numpy as np
 import pandas as pd
@@ -495,7 +495,7 @@ def prepare_xcross_training_data(
             coverage["carrier_resolved"] += 1
         sd = np.nan  # PA-H1: score differential from the POSSESSING team's perspective
         if score_fn is not None:
-            raw = score_fn(gid, float(grp["time_seconds"].iloc[0]))  # home_score - away_score
+            raw = score_fn(gid, int(cast(int, pid)), float(grp["time_seconds"].iloc[0]))  # home_score - away_score
             # ADR-019: a naive str()==str() renders a float-backed id as "5.0" against a
             # scalar "5", so the compare is ALWAYS False and every row's sign flips.
             sd = raw if same_id(poss_team, home_team_id) else -raw
@@ -602,7 +602,7 @@ def _feature_contract_block(feature_set: XCrossFeatureSet = "faithful") -> dict:
     ``in_box`` predicate actually evaluates, and reading a different binding here would let the two
     drift apart silently.
     """
-    from silly_kicks.tracking._feature_contract import contract_probe_frame, feature_contract
+    from silly_kicks.tracking._feature_contract import REVISION_CONTRACT_KEYS, contract_probe_frame, feature_contract
 
     def _vec():
         return (
@@ -624,6 +624,7 @@ def _feature_contract_block(feature_set: XCrossFeatureSet = "faithful") -> dict:
             "penalty_area_half_width": _BOX_HALF_WIDTH_M,
             "penalty_area_depth": _BOX_DEPTH_M,
             "goal_width": _GOAL_HALF_WIDTH_M * 2.0,
+            "match_context_revision": REVISION_CONTRACT_KEYS["match_context_revision"],  # the score input
         },
     )
 
@@ -977,7 +978,7 @@ def compute_xcross_attempt(
         carrier_pid = carrier_pid_s.iloc[0] if not carrier_pid_s.empty else None
         sd = np.nan
         if score_fn is not None:
-            raw = score_fn(gid, float(grp["time_seconds"].iloc[0]))
+            raw = score_fn(gid, int(cast(int, pid)), float(grp["time_seconds"].iloc[0]))
             # ADR-019: see the sibling site above -- a naive str compare flips every sign.
             sd = raw if same_id(tip, home_team_id) else -raw
         feat_rows.append(

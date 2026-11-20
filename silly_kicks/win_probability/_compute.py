@@ -63,7 +63,9 @@ def _score_states(states: pd.DataFrame, model: WinProbabilityModel, strength: di
             dl = d_raw + l_raw
             d_cal = rem * (d_raw / dl) if dl > 0 else rem / 2.0
             di_up = min(di + 1, 2 * K)
-            leverage = model._apply_isotonic(float(Pw[di_up, m])) - w
+            # A shoot-out row (period 5) holds the end state of the match, and no kick changes the match result: its
+            # leverage is 0.
+            leverage = 0.0 if int(r["period_id"]) == 5 else model._apply_isotonic(float(Pw[di_up, m])) - w
             pw[pos] = w
             pd_[pos] = d_cal
             pl[pos] = rem - d_cal
@@ -80,6 +82,12 @@ def compute_win_probability(
     params: WinProbabilityParams = _DEFAULT_PARAMS,
 ) -> tuple[pd.DataFrame, WinProbabilityReport]:
     """Per-action win/draw/loss + goal leverage. Returns ``(samples, report)``.
+
+    Notes
+    -----
+    The state is that of the match: a penalty shoot-out row (period 5) moves no score, no card count and no final
+    minute. Each shoot-out row holds the end state of the match (the final score, 0 minutes remaining, the
+    probabilities of that state) and a ``win_prob_leverage`` of 0, because no kick changes the match result.
 
     Examples
     --------
@@ -182,6 +190,11 @@ def goal_leverage(
     params: WinProbabilityParams = _DEFAULT_PARAMS,
 ) -> pd.Series:
     """``ΔP(win | goal)`` per action, aligned to ``actions.index`` (honest-NaN where unresolved).
+
+    Notes
+    -----
+    A penalty shoot-out row (period 5) has a leverage of 0: no kick changes the match result (see
+    :func:`compute_win_probability`).
 
     Examples
     --------

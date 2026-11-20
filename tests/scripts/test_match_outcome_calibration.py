@@ -164,3 +164,39 @@ def test_stats_prepass_reduce_equals_in_memory():
     assert len(by_game) == len(in_memory)
     assert [f["rho"] for f in cv_rho_by_fold(cv, 2)] == [f["rho"] for f in cv_rho_by_fold(in_memory, 2)]
     assert [f["rho"] for f in cv_rho_by_fold(list(reversed(cv)), 2)] == [f["rho"] for f in cv_rho_by_fold(in_memory, 2)]
+
+
+def test_team_stats_counts_no_shootout_goal():
+    # The library's goal rule: a period-5 (shoot-out) goal is no goal of the match.
+    from scripts.validate_match_outcome_calibration import _team_stats
+    from silly_kicks.match_outcome import MatchOutcomeParams
+    from tests.match_outcome._helpers import PASS, SHOT, SUCCESS, make_actions
+
+    fx = make_actions(
+        [
+            {"team_id": 10, "type_id": SHOT, "result_id": SUCCESS, "period_id": 1},
+            {"team_id": 20, "type_id": SHOT, "result_id": SUCCESS, "period_id": 5},
+            {"team_id": 20, "type_id": SHOT, "result_id": SUCCESS, "period_id": 5},
+            {"team_id": 20, "type_id": PASS, "period_id": 1},
+            {"team_id": 10, "type_id": PASS, "period_id": 5},
+        ]
+    )
+    stats = _team_stats(fx, "xg", gap=MatchOutcomeParams().possession_max_gap_seconds)
+    assert stats is not None and (stats[10]["goals"], stats[20]["goals"]) == (1, 0)
+
+
+def test_team_stats_leave_the_shootout_out_of_the_xg():
+    # A shoot-out row is no part of the match, for its shots too.
+    from scripts.validate_match_outcome_calibration import _team_stats
+    from silly_kicks.match_outcome import MatchOutcomeParams
+    from tests.match_outcome._helpers import FAIL, SHOT, make_actions
+
+    fx = make_actions(
+        [
+            {"team_id": 10, "type_id": SHOT, "xg": 0.3, "result_id": FAIL, "period_id": 1},
+            {"team_id": 20, "type_id": SHOT, "xg": 0.2, "result_id": FAIL, "period_id": 1},
+            {"team_id": 10, "type_id": SHOT, "xg": 0.78, "result_id": FAIL, "period_id": 5},
+        ]
+    )
+    stats = _team_stats(fx, "xg", gap=MatchOutcomeParams().possession_max_gap_seconds)
+    assert stats is not None and list(stats[10]["indep"]) == [0.3] and list(stats[20]["indep"]) == [0.2]

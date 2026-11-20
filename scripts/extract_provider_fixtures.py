@@ -10,9 +10,10 @@ Two extractors per provider, each with two variants (``--variant``):
    - ``--variant default`` -> ~200-400 representative rows including all
      keeper-relevant rows (``sample_match.parquet``; contract-test
      fixture).
-   - ``--variant per_period`` -> full match (``per_period_match.parquet``)
-     used by ``tests/invariants/test_direction_of_play.py`` for the
-     per-(team, period) orientation invariant added in PR-S23.
+   - ``--variant per_period`` is REFUSED for idsse: the full-match
+     fixture ``tests/datasets/idsse/per_period_match.parquet`` is built
+     from the raw public DFL files by
+     ``scripts/build_idsse_per_period_fixture.py``, never from Databricks.
 
 2. Metrica: two source strategies depending on variant.
 
@@ -29,7 +30,7 @@ Two extractors per provider, each with two variants (``--variant``):
 Output paths:
 
 - ``--variant default``  -> ``tests/datasets/{provider}/sample_match.parquet``
-- ``--variant per_period`` -> ``tests/datasets/{provider}/per_period_match.parquet``
+- ``--variant per_period`` -> ``tests/datasets/metrica/per_period_match.parquet`` (metrica only)
 
 Security: this script reads ``DATABRICKS_HOST`` / ``DATABRICKS_TOKEN`` /
 ``DATABRICKS_HTTP_PATH`` from environment variables and never echoes the
@@ -44,8 +45,8 @@ Usage::
     # Single provider, default variant.
     python scripts/extract_provider_fixtures.py --provider idsse
 
-    # Per-period invariant fixtures (PR-S23 / silly-kicks 3.0.1).
-    python scripts/extract_provider_fixtures.py --provider idsse --variant per_period
+    # Per-period invariant fixture, metrica (PR-S23 / silly-kicks 3.0.1). The idsse one is built by
+    # scripts/build_idsse_per_period_fixture.py from the raw public DFL files.
     python scripts/extract_provider_fixtures.py --provider metrica --variant per_period
 """
 
@@ -61,7 +62,6 @@ import pandas as pd
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _IDSSE_OUT = _REPO_ROOT / "tests" / "datasets" / "idsse" / "sample_match.parquet"
-_IDSSE_PER_PERIOD_OUT = _REPO_ROOT / "tests" / "datasets" / "idsse" / "per_period_match.parquet"
 _METRICA_OUT = _REPO_ROOT / "tests" / "datasets" / "metrica" / "sample_match.parquet"
 _METRICA_PER_PERIOD_OUT = _REPO_ROOT / "tests" / "datasets" / "metrica" / "per_period_match.parquet"
 _METRICA_KLOPPY_SOURCE = _REPO_ROOT / "tests" / "datasets" / "kloppy" / "metrica_events.json"
@@ -82,18 +82,11 @@ _METRICA_PITCH_LENGTH_M = 105.0
 _METRICA_PITCH_WIDTH_M = 68.0
 
 # Maximum rows in the contract-test (default-variant) IDSSE fixture.
-# The per-period variant skips this cap to preserve full-match shot density.
 _IDSSE_MAX_ROWS = 400
 
 
-def _extract_idsse(out_path: Path, *, variant: str = "default") -> None:
-    """Pull a subset of bronze.idsse_events for the source match.
-
-    ``variant='default'`` keeps the existing ~400-row stratified subset
-    (used by contract tests). ``variant='per_period'`` skips the row cap
-    so the full match is preserved with per-period shot density intact --
-    required by the per-(team, period) orientation invariant added in
-    PR-S23 (silly-kicks 3.0.1).
+def _extract_idsse(out_path: Path) -> None:
+    """Pull the ~400-row stratified subset of bronze.idsse_events for the source match (contract tests).
 
     Reads ``DATABRICKS_HOST`` / ``DATABRICKS_TOKEN`` / ``DATABRICKS_HTTP_PATH``
     from env. NEVER echoes those values to stdout / stderr -- only their
@@ -124,43 +117,32 @@ def _extract_idsse(out_path: Path, *, variant: str = "default") -> None:
         print(f"ERROR: missing env vars: {missing}", file=sys.stderr)
         sys.exit(1)
 
-    # Query: per variant.
     # ORDER BY (period, timestamp_seconds, event_id) for deterministic output.
     # Fully qualified table name: catalog.schema.table (Unity Catalog).
     # The S608 SQL-injection rule is suppressed in pyproject.toml's
     # per-file-ignores for this file: interpolated values are module-level
     # constants (no user input), not a real injection vector.
-    if variant == "per_period":
-        # Full match -- preserve per-period shot density for the
-        # tests/invariants/test_direction_of_play.py per-(team, period)
-        # invariant added in PR-S23 (silly-kicks 3.0.1).
-        query = f"""
-        SELECT * FROM soccer_analytics.bronze.idsse_events
-        WHERE match_id = '{_IDSSE_SOURCE_MATCH_ID}'
-        ORDER BY period, timestamp_seconds, event_id
-        """
-    else:
-        # Default contract-test fixture: keep all GK-relevant Play rows +
-        # a stratified sample of other rows (~400 rows total).
-        query = f"""
-        WITH source AS (
-          SELECT * FROM soccer_analytics.bronze.idsse_events WHERE match_id = '{_IDSSE_SOURCE_MATCH_ID}'
-        ),
-        gk_rows AS (
-          SELECT * FROM source
-          WHERE event_type = 'Play' AND play_goal_keeper_action IS NOT NULL
-        ),
-        other_rows AS (
-          SELECT * FROM source
-          WHERE NOT (event_type = 'Play' AND play_goal_keeper_action IS NOT NULL)
-          ORDER BY rand(42)
-          LIMIT {_IDSSE_MAX_ROWS - 100}
-        )
-        SELECT * FROM gk_rows
-        UNION ALL
-        SELECT * FROM other_rows
-        ORDER BY period, timestamp_seconds, event_id
-        """
+    # Contract-test fixture: keep all GK-relevant Play rows + a stratified
+    # sample of other rows (~400 rows total).
+    query = f"""
+    WITH source AS (
+      SELECT * FROM soccer_analytics.bronze.idsse_events WHERE match_id = '{_IDSSE_SOURCE_MATCH_ID}'
+    ),
+    gk_rows AS (
+      SELECT * FROM source
+      WHERE event_type = 'Play' AND play_goal_keeper_action IS NOT NULL
+    ),
+    other_rows AS (
+      SELECT * FROM source
+      WHERE NOT (event_type = 'Play' AND play_goal_keeper_action IS NOT NULL)
+      ORDER BY rand(42)
+      LIMIT {_IDSSE_MAX_ROWS - 100}
+    )
+    SELECT * FROM gk_rows
+    UNION ALL
+    SELECT * FROM other_rows
+    ORDER BY period, timestamp_seconds, event_id
+    """
 
     print("Connecting to Databricks (host/token/path read from env)...")
     try:
@@ -383,7 +365,7 @@ def _extract_metrica(out_path: Path) -> None:
     print(f"Wrote {out_path.name} ({size_kb:.1f} KB, {len(df)} rows)")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--provider",
@@ -397,19 +379,28 @@ def main() -> int:
         default="default",
         help=(
             "'default' produces the small ~300-row contract-test fixture "
-            "(sample_match.parquet); 'per_period' produces a full-match "
+            "(sample_match.parquet); 'per_period' (metrica only; idsse is refused) produces a full-match "
             "fixture (per_period_match.parquet) used by "
             "tests/invariants/test_direction_of_play.py for per-(team, "
             "period) orientation assertions (PR-S23 / silly-kicks 3.0.1)."
         ),
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    # the idsse full-match fixture is built from the raw public DFL files, never from Databricks. Refused at the
+    # argument check, before any work, so no run writes a file and then fails.
+    if args.variant == "per_period" and args.provider in ("idsse", "all"):
+        msg = (
+            "ERROR: --variant per_period is not available for idsse: tests/datasets/idsse/per_period_match.parquet is "
+            "built from the raw public DFL files by scripts/build_idsse_per_period_fixture.py."
+        )
+        if args.provider == "all":
+            msg += " For metrica: python scripts/extract_provider_fixtures.py --provider metrica --variant per_period"
+        print(msg, file=sys.stderr)
+        return 2
 
     if args.provider in ("idsse", "all"):
-        if args.variant == "per_period":
-            _extract_idsse(_IDSSE_PER_PERIOD_OUT, variant="per_period")
-        else:
-            _extract_idsse(_IDSSE_OUT, variant="default")
+        _extract_idsse(_IDSSE_OUT)
     if args.provider in ("metrica", "all"):
         if args.variant == "per_period":
             _extract_metrica_per_period(_METRICA_PER_PERIOD_OUT)

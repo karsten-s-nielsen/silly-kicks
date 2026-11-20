@@ -855,33 +855,33 @@ class TestBuildScoreLookup:
 
         actions = _make_spadl_actions()
         fn = _build_score_lookup(actions, home_team_id=1)
-        assert fn("100", 10.0) == 0.0
-        assert fn("100", 60.0) == 0.0
+        assert fn("100", 1, 10.0) == 0.0
+        assert fn("100", 1, 60.0) == 0.0
 
     def test_home_goal(self):
         from silly_kicks.tracking._ghost_gk import _build_score_lookup
 
         actions = _make_spadl_actions(goals=[(30.0, 1)])
         fn = _build_score_lookup(actions, home_team_id=1)
-        assert fn("100", 25.0) == 0.0  # before goal
-        assert fn("100", 30.0) == 1.0  # at goal
-        assert fn("100", 60.0) == 1.0  # after goal
+        assert fn("100", 1, 25.0) == 0.0  # before goal
+        assert fn("100", 1, 30.0) == 1.0  # at goal
+        assert fn("100", 1, 60.0) == 1.0  # after goal
 
     def test_away_goal(self):
         from silly_kicks.tracking._ghost_gk import _build_score_lookup
 
         actions = _make_spadl_actions(goals=[(30.0, 2)])
         fn = _build_score_lookup(actions, home_team_id=1)
-        assert fn("100", 35.0) == -1.0  # home perspective: 0-1
+        assert fn("100", 1, 35.0) == -1.0  # home perspective: 0-1
 
     def test_multiple_goals(self):
         from silly_kicks.tracking._ghost_gk import _build_score_lookup
 
         actions = _make_spadl_actions(goals=[(10.0, 1), (20.0, 2), (30.0, 1)])
         fn = _build_score_lookup(actions, home_team_id=1)
-        assert fn("100", 15.0) == 1.0  # 1-0
-        assert fn("100", 25.0) == 0.0  # 1-1
-        assert fn("100", 35.0) == 1.0  # 2-1
+        assert fn("100", 1, 15.0) == 1.0  # 1-0
+        assert fn("100", 1, 25.0) == 0.0  # 1-1
+        assert fn("100", 1, 35.0) == 1.0  # 2-1
 
     def test_own_goal_attributed_to_opponent(self):
         from silly_kicks.tracking._ghost_gk import _build_score_lookup
@@ -889,7 +889,7 @@ class TestBuildScoreLookup:
         # Team 1 scores own goal -> counts as team 2 scoring
         actions = _make_spadl_actions(owngoals=[(30.0, 1)])
         fn = _build_score_lookup(actions, home_team_id=1)
-        assert fn("100", 35.0) == -1.0  # 0-1 from home perspective
+        assert fn("100", 1, 35.0) == -1.0  # 0-1 from home perspective
 
 
 class TestBuildPhaseLookup:
@@ -900,42 +900,42 @@ class TestBuildPhaseLookup:
 
         actions = _make_spadl_actions()
         fn = _build_phase_lookup(actions)
-        assert fn("100", 10.0) == 0
+        assert fn("100", 1, 10.0) == 0
 
     def test_freekick_within_decay(self):
         from silly_kicks.tracking._ghost_gk import _build_phase_lookup
 
         actions = _make_spadl_actions(set_pieces=[(30.0, "freekick_short")])
         fn = _build_phase_lookup(actions)
-        assert fn("100", 33.0) == 1  # 3s after freekick -> set_piece
+        assert fn("100", 1, 33.0) == 1  # 3s after freekick -> set_piece
 
     def test_goalkick(self):
         from silly_kicks.tracking._ghost_gk import _build_phase_lookup
 
         actions = _make_spadl_actions(set_pieces=[(30.0, "goalkick")])
         fn = _build_phase_lookup(actions)
-        assert fn("100", 33.0) == 2  # goal_kick phase
+        assert fn("100", 1, 33.0) == 2  # goal_kick phase
 
     def test_corner(self):
         from silly_kicks.tracking._ghost_gk import _build_phase_lookup
 
         actions = _make_spadl_actions(set_pieces=[(30.0, "corner_crossed")])
         fn = _build_phase_lookup(actions)
-        assert fn("100", 33.0) == 1  # set_piece
+        assert fn("100", 1, 33.0) == 1  # set_piece
 
     def test_decay_after_10s(self):
         from silly_kicks.tracking._ghost_gk import _build_phase_lookup
 
         actions = _make_spadl_actions(set_pieces=[(30.0, "freekick_short")])
         fn = _build_phase_lookup(actions)
-        assert fn("100", 41.0) == 0  # >10s -> open play
+        assert fn("100", 1, 41.0) == 0  # >10s -> open play
 
     def test_throw_in_excluded(self):
         from silly_kicks.tracking._ghost_gk import _build_phase_lookup
 
         actions = _make_spadl_actions(set_pieces=[(30.0, "throw_in")])
         fn = _build_phase_lookup(actions)
-        assert fn("100", 33.0) == 0  # throw_in is NOT a set piece
+        assert fn("100", 1, 33.0) == 0  # throw_in is NOT a set piece
 
 
 # ---------------------------------------------------------------------------
@@ -1029,7 +1029,7 @@ class TestExtractAllFeatures:
 
         frames = _make_multi_frame_fixture(n_frames=1)
 
-        def mock_score(game_id, time_s):
+        def mock_score(game_id, period_id, time_s):
             return 2.0  # home perspective: home leads 2-0
 
         features, meta = _extract_all_ghost_gk_features(

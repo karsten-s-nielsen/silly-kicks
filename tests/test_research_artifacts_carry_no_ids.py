@@ -57,7 +57,7 @@ def _scan_strings(node, out):
 
 _JSON = sorted(p for d in _DIRS for p in d.glob("**/*.json"))
 _PARQUET = sorted(p for d in _DIRS for p in d.glob("**/*.parquet"))
-_TEXT = sorted(p for d in _DIRS for p in [*d.glob("**/*.md"), *d.glob("**/*.csv")])
+_TEXT = sorted(p for d in _DIRS for p in [*d.glob("**/*.md"), *d.glob("**/*.csv"), *d.glob("**/*.py")])
 
 
 @pytest.mark.parametrize("path", _JSON, ids=str)

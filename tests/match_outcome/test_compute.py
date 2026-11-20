@@ -113,3 +113,57 @@ def test_default_is_both_corrections():
     assert abs(default[10]["p_win"] - indep[10]["p_win"]) > 1e-3  # corrections move the number
     for r in (default, indep):  # both remain valid simplices
         assert abs(r[10]["p_win"] + r[10]["p_draw"] + r[10]["p_loss"] - 1.0) < 1e-12
+
+
+def test_a_shootout_row_is_no_part_of_the_match():
+    # A period-5 (shoot-out) row adds no shot and no goal to the match: the outcome equals that of the match alone.
+    match = [
+        {"team_id": 10, "type_id": SHOT, "xg": 0.3, "result_id": 0},
+        {"team_id": 20, "type_id": SHOT, "xg": 0.2, "result_id": 0},
+        {"team_id": 10, "type_id": PASS},
+    ]
+    shootout = [{"team_id": t, "type_id": SHOT, "xg": 0.78, "period_id": 5} for t in (10, 20, 10, 20)]
+    with_so, rep_so = compute_match_outcome(make_actions(match + shootout), xg_column="xg")
+    alone, rep_alone = compute_match_outcome(make_actions(match), xg_column="xg")
+    pd.testing.assert_frame_equal(with_so, alone)
+    assert rep_so.n_shots == rep_alone.n_shots == 2
+
+
+def test_a_team_only_in_the_shootout_leaves_a_one_team_match():
+    # The two-team count reads the match rows: a team with rows only in period 5 is no team of the match.
+    fx = make_actions(
+        [
+            {"team_id": 10, "type_id": SHOT, "xg": 0.3, "result_id": 0},
+            {"team_id": 20, "type_id": SHOT, "xg": 0.78, "period_id": 5},
+        ]
+    )
+    samples, rep = compute_match_outcome(fx, xg_column="xg")
+    assert len(samples) == 0
+    assert (rep.n_matches_in, rep.n_matches_scored, rep.n_matches_excluded_not_two_teams) == (1, 0, 1)
+
+
+def test_a_game_with_no_period_is_excluded_and_counted():
+    fx = make_actions(
+        [
+            {"team_id": 10, "type_id": SHOT, "xg": 0.3, "result_id": 0},
+            {"team_id": 20, "type_id": SHOT, "xg": 0.2, "result_id": 0},
+        ]
+    )
+    fx["period_id"] = pd.array([pd.NA, pd.NA], dtype="Int64")
+    samples, rep = compute_match_outcome(fx, xg_column="xg")
+    assert len(samples) == 0
+    assert (rep.n_matches_in, rep.n_matches_scored, rep.n_matches_excluded_not_two_teams) == (1, 0, 1)
+
+
+def test_a_table_with_no_period_column_keeps_every_row():
+    # No period_id column (possible on the independent path, which needs no possessions): no period rule applies.
+    fx = make_actions(
+        [
+            {"team_id": 10, "type_id": SHOT, "xg": 0.3, "result_id": 0},
+            {"team_id": 20, "type_id": SHOT, "xg": 0.2, "result_id": 0},
+        ]
+    )
+    params = MatchOutcomeParams(same_possession="independent")
+    without, _ = compute_match_outcome(fx.drop(columns=["period_id"]), xg_column="xg", params=params)
+    with_col, _ = compute_match_outcome(fx, xg_column="xg", params=params)
+    pd.testing.assert_frame_equal(without, with_col)

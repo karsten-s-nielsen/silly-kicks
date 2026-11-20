@@ -47,7 +47,7 @@ def test_run_paired_needs_public_and_sc_extended(module):
     assert "is_paired(" in src and '"full" in arms' not in src  # the trainers single-source the predicate
 
 
-def _selection_world(module, monkeypatch, deltas, *, by_provider=None):
+def _selection_world(module, monkeypatch, deltas, *, by_provider=None, ship_variant=None):
     mod = importlib.import_module(module)
     full_rows = {a: {"n_estimators": 100 + i, "max_depth": 3} for i, a in enumerate(ARMS)}
     gf = {"n_estimators": 7, "max_depth": 2}
@@ -71,7 +71,7 @@ def _selection_world(module, monkeypatch, deltas, *, by_provider=None):
             "run_prov": {},
             "negative_subsample": None,
             "seed": 42,
-            "ship_variant": None,
+            "ship_variant": ship_variant,
             "expect_variant": None,
             "ship_order": ARMS,
         },
@@ -138,6 +138,44 @@ def test_xcross_ship_variant_drops_full():
     mod = importlib.import_module("scripts.train_xcross_attempt")
     (param,) = [p for p in mod.PIPELINE.params if p.name == "ship_variant"]
     assert param.choices == ("public", "sc_extended")
+
+
+@pytest.mark.parametrize("module", TRAINERS)
+@pytest.mark.parametrize(("deltas", "want"), [(CLEARS, "sc_extended"), (FAILS, "public")])
+def test_the_rule_verdict_is_recorded_as_a_field(module, monkeypatch, deltas, want):
+    # Action-time repair spec 4.8: the paired rule's arm and reason are fields, not only text
+    _mod, sel, _f, _s = _selection_world(module, monkeypatch, deltas)
+    paired = sel["candidates"]["paired"]
+    assert paired["rule_verdict"] == want == paired["shipped"]
+    assert paired["rule_why"] == paired["why"] and paired["rule_why"]
+
+
+@pytest.mark.parametrize("module", TRAINERS)
+def test_ship_variant_overrides_and_keeps_the_rule_verdict(module, monkeypatch):
+    # the rule clears (sc_extended); the operator forces public (the wheel jobs of tf46_refit.toml)
+    _mod, sel, full_rows, _s = _selection_world(module, monkeypatch, CLEARS, ship_variant="public")
+    assert sel["shipped"] == "public"
+    assert sel["candidates"]["public"]["params"] == full_rows["public"]
+    paired = sel["candidates"]["paired"]
+    assert paired["shipped"] == "public"
+    assert paired["rule_verdict"] == "sc_extended"
+    assert "override" in paired["why"] and paired["rule_why"] and "override" not in paired["rule_why"]
+
+
+def test_xshot_ship_variant_param():
+    mod = importlib.import_module("scripts.train_xshot_occurrence")
+    (param,) = [p for p in mod.PIPELINE.params if p.name == "ship_variant"]
+    assert param.choices == ("public", "sc_extended") and param.default is None
+    (prep,) = [st for st in mod.PIPELINE.stages if st.name == "prep"]
+    assert "ship_variant" in prep.params  # in the prep token inputs, as xCross
+
+
+def test_xshot_ship_variant_refused_without_the_two_arm_corpus():
+    payload = {"arms": {"public": ["a", "b"]}, "ship_order": ["public"]}
+    ctx = _prep_ctx(json.dumps(payload))
+    ctx.params["ship_variant"] = "public"
+    with pytest.raises(ValueError, match="two-arm"):
+        importlib.import_module("scripts.train_xshot_occurrence")._prep_work("only", ctx)
 
 
 def test_probe_held_out():

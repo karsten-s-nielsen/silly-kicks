@@ -56,7 +56,10 @@ lines (SkillCorner restart and goal rows) and a kick-time resolver. It never mer
 5. **`Campaign.mode`** (`rematerialize` default, `refit`). In `refit` mode `verify` skips the `_integrity`
    "reproduces" check and passes each arm on its own acceptance gates (the trainers' `acceptance` block); the
    comparison with the committed model is run and reported, not gated (owner ruling 2026-11-11).
-   `scripts/hf_jobs/campaigns/tf46_refit.toml` holds the 8 xShot/xCross instances in `refit` mode.
+   Amendment 2026-11-17 (owner R20, R21; PR-S209): a third mode, `retrain`: the standing certification
+   (`floor.certify`) with the public CV parity one-sided (only a worsening beyond the 5 % band fails; a spec with
+   `cv_tolerance` stays two-sided). A job may set its own `mode`, overriding the campaign's. `tf46_refit.toml` now
+   holds the 21 instances of the 4.144.0 release refit (8 `refit`, 10 `retrain`, 3 `rematerialize`).
 
 ## Consequences
 

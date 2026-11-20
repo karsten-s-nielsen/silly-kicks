@@ -17,6 +17,7 @@ __all__ = [
     "IgnoredSurfaceInputsWarning",
     "MissingFeatureContractWarning",
     "OrientationUnresolvedWarning",
+    "PredatesDeclaredConstantWarning",
     "RunValueCoverageWarning",
     "SyntheticEPVWarning",
     "UnverifiableFeatureContractWarning",
@@ -153,6 +154,26 @@ class UnverifiableFeatureContractWarning(UserWarning):
 
         warnings.filterwarnings("error", category=MissingFeatureContractWarning)
         warnings.filterwarnings("default", category=UnverifiableFeatureContractWarning)
+    """
+
+
+class PredatesDeclaredConstantWarning(UserWarning):
+    """An artifact lacks a constant that the library now declares in its feature contract: it was fitted before.
+
+    The artifact still loads (it is older, not known-bad), and the message names the constant and what changed
+    since. Emitted, for example, for a ghost-GK, ghost-outfield or xCross bundle fitted before the score and phase
+    repairs (``match_context_revision``; action-time repair spec section 4.14).
+
+    SEPARATE from :class:`MissingFeatureContractWarning` and :class:`UnverifiableFeatureContractWarning`, and not
+    a subclass of either: a consumer that escalates one of them must not escalate this one by accident.
+
+    Examples
+    --------
+    Escalate it in a batch job that must not serve a pre-repair model::
+
+        import warnings
+        from silly_kicks.tracking import PredatesDeclaredConstantWarning
+        warnings.simplefilter("error", PredatesDeclaredConstantWarning)
     """
 
 

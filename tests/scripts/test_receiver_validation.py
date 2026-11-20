@@ -128,3 +128,14 @@ def test_failed_pass_accuracy_survives_ball_less_frame():
     acc = receiver_failed_pass_accuracy(_fitted_model(), _actions(), fr_no_ball, links=_links())
     assert acc["n_scored"] == 1  # completes without raising; the covered pass is still model-scored
     assert acc["top1_proxy"] == 0.0  # the velocity proxy was skipped on the ball-less frame
+
+
+def test_trajectory_weak_labels_keep_the_actions_id_dtype_on_an_all_numeric_table():
+    # `iterrows` on an all-numeric actions table upcast an int action_id to float in the weak-label frame
+    a = _actions()
+    assert all(pd.api.types.is_numeric_dtype(d) for d in a.dtypes)  # precondition: the all-numeric scene
+    assert pd.api.types.is_integer_dtype(a["action_id"])
+    labels = trajectory_weak_labels(a, _frame_100(), links=_links())
+    assert len(labels) > 0  # non-vacuity
+    assert labels["action_id"].dtype == a["action_id"].dtype
+    assert set(labels["action_id"]) <= set(a["action_id"])

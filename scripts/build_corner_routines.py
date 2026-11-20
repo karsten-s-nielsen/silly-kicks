@@ -43,6 +43,8 @@ def _snapshot_rows(item) -> pd.DataFrame:
     # SB360 (statsbomb) is freeze-frame only: its initial snapshot is the KICK freeze frame (t_kick),
     # not the -2s continuous snapshot (spec section 7; the -2s-vs-kick divergence is measured in section 12.7).
     for _, c in windowed.iterrows():
+        if pd.isna(c["corner_side"]):
+            continue  # no measured side to reflect by (never the text "None"); a missing time gives no frame below
         period, team, side = int(c["period_id"]), c["attacking_team_id"], str(c["corner_side"])
         init_t = float(c["t_kick"]) if item.provider == "statsbomb" else float(c["t_init"])
         init = _nearest_frame_xy(frames, period, init_t, team)

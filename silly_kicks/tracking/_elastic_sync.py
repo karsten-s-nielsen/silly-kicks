@@ -35,6 +35,7 @@ from scipy.signal import argrelextrema, find_peaks
 from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import canonical_id, canonical_id_series, same_id
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
 #: A physically-plausible ball-touch candidate frame: ``players`` is the tuple of canonical
 #: player ids within ``touch_distance_m`` of the ball at that frame (the paper's set P_c).
@@ -396,7 +397,6 @@ _INCOMING_TYPES = frozenset({"interception", "keeper_save", "keeper_claim", "kee
 _MINOR_TYPES = frozenset({"foul", "tackle", "bad_touch"})
 #: A following action of one of these types means the ball went out of play before it (spec section 7).
 _OUT_TRIGGER_TYPES = frozenset({"throw_in", "goalkick", "corner_crossed", "corner_short"})
-_SHOT_TYPES = frozenset({"shot", "shot_penalty", "shot_freekick"})
 
 
 def _map_category(type_name) -> str | None:
@@ -410,12 +410,15 @@ def _map_category(type_name) -> str | None:
     return None
 
 
-def _virtual_between(cur, nxt) -> Event | None:
-    """The virtual termination event to insert between consecutive real events, or None (spec 7)."""
+def _virtual_between(cur, nxt, *, scored: bool = False) -> Event | None:
+    """The virtual termination event to insert between consecutive real events, or None (spec 7).
+
+    ``scored``: ``cur`` is a goal or an own goal by the library's goal rule (``silly_kicks.spadl._goals``).
+    """
     et = (float(cur.time_seconds) + float(nxt.time_seconds)) / 2.0
     if getattr(nxt, "type_name", None) in _OUT_TRIGGER_TYPES:
         return Event(pd.NA, cur.player_id, "out", "out", et)
-    if getattr(cur, "type_name", None) in _SHOT_TYPES and getattr(cur, "result_name", None) == "success":
+    if scored:
         return Event(pd.NA, cur.player_id, "goal", "goal", et)
     same_possession = getattr(cur, "possession_id", None) == getattr(nxt, "possession_id", None)
     if (
@@ -434,11 +437,22 @@ def _enrich_events(actions_period: pd.DataFrame, *, params: ElasticSyncParams | 
     events (reception / out / goal), returning the alternating event sequence (spec 2.1 / 7).
 
     ``actions_period`` must carry ``action_id``, ``player_id``, ``type_name``, ``possession_id``,
-    ``time_seconds`` (and ``result_name`` for the goal rule). Excluded types (``_map_category``
+    ``time_seconds`` (and ``result_id`` / ``result_name`` for the goal rule). Excluded types (``_map_category``
     None) are dropped. ``params`` is accepted for call-site uniformity (unused here).
     """
     del params  # accepted for a uniform engine call signature; enrichment has no thresholds
-    reals = [r for r in actions_period.itertuples() if _map_category(getattr(r, "type_name", None)) is not None]
+    cols = actions_period.columns
+    if "result_id" in cols or "result_name" in cols:
+        scored = (
+            (goal_mask(actions_period) | owngoal_mask(actions_period)).fillna(False).to_numpy(dtype=bool)
+        )  # NA: no goal
+    else:
+        scored = np.zeros(len(actions_period), dtype=bool)  # no result column: no goal termination
+    reals, real_scored = [], []
+    for i, r in enumerate(actions_period.itertuples()):
+        if _map_category(getattr(r, "type_name", None)) is not None:
+            reals.append(r)
+            real_scored.append(bool(scored[i]))
     events: list[Event] = []
     for k, r in enumerate(reals):
         events.append(
@@ -451,7 +465,7 @@ def _enrich_events(actions_period: pd.DataFrame, *, params: ElasticSyncParams | 
             )
         )
         if k + 1 < len(reals):
-            virt = _virtual_between(r, reals[k + 1])
+            virt = _virtual_between(r, reals[k + 1], scored=real_scored[k])
             if virt is not None:
                 events.append(virt)
     return events

@@ -116,3 +116,40 @@ def test_flat_tc3_public_eval_reads_eval_rows(tmp_path, monkeypatch):
     assert b["y"].tolist() == [0, 1, 0] and b["groups"].tolist() == ["g1", "g1", "g2"]
     with pytest.raises(H.EvalDataUnavailableError):
         H.build_eval("xshot_occurrence", None, certification="public", eval_rows=None)
+
+
+def test_final_winner_counts_no_shootout_goal():
+    # The library's goal rule: a period-5 (shoot-out) goal is no goal, so the match winner is team 10.
+    from scripts.hf_jobs.headtohead import _final_winner
+    from tests.match_outcome._helpers import PASS, SHOT, SUCCESS, make_actions
+
+    assert _final_winner(
+        make_actions(
+            [
+                {"team_id": 10, "type_id": SHOT, "result_id": SUCCESS, "period_id": 1},
+                {"team_id": 20, "type_id": SHOT, "result_id": SUCCESS, "period_id": 5},
+                {"team_id": 20, "type_id": SHOT, "result_id": SUCCESS, "period_id": 5},
+                {"team_id": 10, "type_id": PASS, "period_id": 5},
+            ]
+        )
+    ) == {"1": 10}
+
+
+def test_match_outcome_eval_row_reads_the_match_only():
+    # The head-to-head eval of the match-outcome model uses the library goal rule: an own goal counts for the
+    # opponent, and a shoot-out (period 5) row adds no goal and no xG.
+    import pandas as pd
+
+    from scripts.hf_jobs.headtohead import _match_outcome_eval_row
+    from tests.match_outcome._helpers import OWNGOAL, PASS, SHOT, SUCCESS, make_actions
+
+    acts = make_actions(
+        [
+            {"team_id": 10, "type_id": SHOT, "result_id": 0, "xg": 0.4, "period_id": 1},
+            {"team_id": 20, "type_id": PASS, "result_id": OWNGOAL, "xg": float("nan"), "period_id": 2},
+            {"team_id": 20, "type_id": SHOT, "result_id": SUCCESS, "xg": 0.78, "period_id": 5},
+            {"team_id": 20, "type_id": SHOT, "result_id": SUCCESS, "xg": 0.78, "period_id": 5},
+        ]
+    )
+    assert isinstance(acts, pd.DataFrame)
+    assert _match_outcome_eval_row(acts, home=10) == (0.4, 0.0, 1.0)
