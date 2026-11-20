@@ -108,3 +108,39 @@ def test_integer_game_id_works(sample_two_match_actions):
     samples, report = compute_win_probability(a, model=m, games=games)
     assert report.n_matches_scored == 2
     assert len(samples) == len(a)
+
+
+def _shootout_rows(game_id: str) -> pd.DataFrame:
+    shot = C.actiontype_id["shot"]
+    return pd.DataFrame(
+        {
+            "game_id": [game_id] * 4,
+            "action_id": [100, 101, 102, 103],
+            "period_id": [5] * 4,
+            "team_id": ["A", "B", "A", "B"],
+            "time_seconds": [30, 90, 150, 210],
+            "type_id": [shot] * 4,
+            "result_id": [SUCC, SUCC, SUCC, C.result_id["fail"]],
+        }
+    )
+
+
+def test_a_shootout_row_gets_the_end_state_of_the_match_and_no_leverage(sample_two_match_actions, sample_games):
+    # Owner ruling (R107): a shoot-out row holds the end state of the match (the final score, 0 minutes remaining,
+    # the model's probabilities of that state) and a leverage of 0, because no kick changes the match result.
+    m = _fitted(sample_two_match_actions, sample_games)
+    actions = pd.concat([sample_two_match_actions, _shootout_rows("g1")], ignore_index=True)
+    samples, _ = compute_win_probability(actions, model=m, games=sample_games)
+    so = samples[samples["period_id"] == 5]
+    assert len(so) == 4 and (so["win_prob_leverage"] == 0.0).all()
+    for _team, grp in so.groupby("team_id"):
+        assert grp[["p_win", "p_draw", "p_loss"]].nunique().eq(1).all()  # one end state per team
+    assert np.allclose(so[["p_win", "p_draw", "p_loss"]].sum(axis=1), 1.0)
+    states = derive_match_states(actions, games=sample_games, params=_P)
+    so_states = states[states["period_id"] == 5]
+    assert (so_states["minutes_remaining"] == 0.0).all()
+    final_min = states.loc[states["period_id"] != 5].query("game_id == 'g1'")["absolute_minute"].max()
+    assert (so_states["absolute_minute"] == final_min).all()
+    # the match rows keep the values they have without the shoot-out
+    base, _ = compute_win_probability(sample_two_match_actions, model=m, games=sample_games)
+    pd.testing.assert_frame_equal(samples[samples["period_id"] != 5].reset_index(drop=True), base)

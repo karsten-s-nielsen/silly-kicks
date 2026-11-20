@@ -8,19 +8,10 @@
           "matches_built": 0,
           "n_processes": 1
         },
-        "resume_workers": {
-          "ended_without_closing_line": [],
-          "matches_built": 61,
-          "n_processes": 6
-        },
         "workers": {
-          "ended_without_closing_line": [
-            "t_w2.log",
-            "t_w3.log",
-            "t_w5.log"
-          ],
-          "matches_built": 118,
-          "n_processes": 8
+          "ended_without_closing_line": [],
+          "matches_built": 179,
+          "n_processes": 6
         }
       },
       "xcross_probe": {
@@ -33,33 +24,17 @@
       "xshot187": {
         "final_pass": {
           "ended_without_closing_line": [],
-          "matches_built": 58,
-          "n_processes": 1
-        },
-        "second_final_pass": {
-          "ended_without_closing_line": [],
           "matches_built": 0,
           "n_processes": 1
         },
         "workers": {
-          "ended_without_closing_line": [
-            "x_w1.log",
-            "x_w5.log",
-            "x_w6.log"
-          ],
-          "matches_built": 129,
-          "n_processes": 10
+          "ended_without_closing_line": [],
+          "matches_built": 187,
+          "n_processes": 6
         }
       }
     },
-    "processes_killed_out_of_memory": [
-      "t_w2.log",
-      "t_w3.log",
-      "t_w5.log",
-      "x_w1.log",
-      "x_w5.log",
-      "x_w6.log"
-    ],
+    "processes_killed_out_of_memory": [],
     "worker_sha256": "36d6e3b8e429be4e2fe45dc3cdc68534a8a1e0bdf77254d64d98bfd4f2255954"
   },
   "datasets": {
@@ -69,18 +44,18 @@
         "_actions/gradientsports__10503.parquet": "586237df7c56ece6a14ff74b8a4f20b0e394d0c552f2888e5d7d716ac3d24625",
         "_actions/gradientsports__10504.parquet": "881aaaa5be87fb9913233d6ac140ea994807e12af6c4d67375a966a7842d5e15",
         "_actions/gradientsports__10505.parquet": "cb20c470fea2fc5f223d306484c1b455f8a7d701d6e1c48d11d5143577fc15fd",
-        "_actions/gradientsports__10506.parquet": "15b7af1c12368aa6c93db0fad5a4348ea5906a979d6df7ec42646aa8cccbb5c1",
+        "_actions/gradientsports__10506.parquet": "a6281131936a694b3a16c55cfa8e63f0bed5842adff921e0c68f5691eb3b457d",
         "_actions/gradientsports__10507.parquet": "2f3458c54faad238f39ebbd149317d2c03e57d3cba614290ddedb8cfb0914660",
-        "_actions/gradientsports__10508.parquet": "084f37caf507619d4119bd58dd952b986b4c8109bee9a0793ca0d5193bddf7d2",
+        "_actions/gradientsports__10508.parquet": "fec48ca1f4c006ad024cdafb090f7ef4d8012ff1c9846479728f3ec80a48b90a",
         "_actions/gradientsports__10509.parquet": "eb51930c114a49a6a35a4b8e5d3b43cc6175e9a39f9e6d55c877183e6ea16812",
-        "_actions/gradientsports__10510.parquet": "b243e2cc04ba2789997d5888690542def63ad08902e5d06092e186a7dd5d2fd5",
-        "_actions/gradientsports__10511.parquet": "593359d21009809a50cd23c1f4b3f8680d7bc1f0e3351e696acdd71c9183e021",
+        "_actions/gradientsports__10510.parquet": "0bee443ca2690d10b8e9503c9119a187f2016cf79fefc5fddb82a837be0be2ec",
+        "_actions/gradientsports__10511.parquet": "113c491cf929f239b37336b0807b6fdd66275016dae33d9a33d293b53d07ccd1",
         "_actions/gradientsports__10512.parquet": "87649e787dfacf5a7ca1333d1cf5ac1b0c1dea1f64503ea500d10496d52edb7d",
         "_actions/gradientsports__10513.parquet": "45a5ca970c93dfe8e2283b42628d17baae30802ceecfbade1b308b560ef531a8",
         "_actions/gradientsports__10514.parquet": "e93fdfefcb22212d2e1d9d808259d5a2408819672cb5d1f19d45a1570ceb611b",
         "_actions/gradientsports__10515.parquet": "c6a3abc9b9f0fa469e56846d42e8b8c21c7141c19ace04fcc6e2e85f6d6f45fe",
         "_actions/gradientsports__10516.parquet": "0419a61f1269e12a13539b0272f932c63bfaeeb18ade2082266b90bd3cc41311",
-        "_actions/gradientsports__10517.parquet": "fdc305942efd0a842e82799138ce0d6d4904ac5941dcd287e3efba430e32f8a5",
+        "_actions/gradientsports__10517.parquet": "d754f9f9598a223e72d43c73637decf59bc76cd41b563ed9ef480ce9e268aee9",
         "_actions/gradientsports__3812.parquet": "da51cf3f045eac89d21b0ebce6b975b78dd70a8236fab2c51b57bd3bc51cde8a",
         "_actions/gradientsports__3813.parquet": "1818a8497e1982e9cb46bc7bc5f3a0fda1441af70013b0fba0c396b5fa899ced",
         "_actions/gradientsports__3814.parquet": "da60ab5805e5c637e0f15e5fbba916199dc77d7618424858620404ee0011fa8c",
@@ -249,9 +224,9 @@
         "shards/0f43213bb5bccd5c/gradientsports__10503.parquet": "69ab953474e095cd4f3259e068968054896a5946e65ed2e1c3de517542c4ad96",
         "shards/0f43213bb5bccd5c/gradientsports__10504.parquet": "c1941888bc37249ae8ff1ff2b7dd990928af830f09f776f459d1b068aecf030f",
         "shards/0f43213bb5bccd5c/gradientsports__10505.parquet": "fb263979a83567d79434d962a368922166235b48c1471285105db5cf22d4f5e6",
-        "shards/0f43213bb5bccd5c/gradientsports__10506.parquet": "d2b5861b75e5666d40ad1aeca50d6eab9cca4e0011ab7988560acfce69e31346",
+        "shards/0f43213bb5bccd5c/gradientsports__10506.parquet": "fd27254042d70a6eefe9969891fbe5794a0c87be8cf7c2d5ad2cc20c370d89a2",
         "shards/0f43213bb5bccd5c/gradientsports__10507.parquet": "5e6ca8066d8ce9eff0a21bd2cc2913c80041c4144c684086655a9162d7623224",
-        "shards/0f43213bb5bccd5c/gradientsports__10508.parquet": "5d9efbcdd5b11397a6fa9432eefbc9ce16658c5ae968a41fb45fbdc570677e50",
+        "shards/0f43213bb5bccd5c/gradientsports__10508.parquet": "39e371a98e729737af02510a2a82dddb3216500a9c1686b8ce0bf12226fa7147",
         "shards/0f43213bb5bccd5c/gradientsports__10509.parquet": "5a3e1014ea0d3bc94d3770dc53cb361e998f7d754626f8b3c98f050053a4128b",
         "shards/0f43213bb5bccd5c/gradientsports__10510.parquet": "2d1b53b857a5e5096a810c365363f5fdc907a3c1cbe18d97710aed21fd60cc57",
         "shards/0f43213bb5bccd5c/gradientsports__10511.parquet": "0c76226c7b581df3956240991ebb25041819f27d2b11ce3a44d5c4a2bee159e0",
@@ -260,7 +235,7 @@
         "shards/0f43213bb5bccd5c/gradientsports__10514.parquet": "319a671520959fecec79c69476552e51f84e697b8f005a89b4faebf40ac9c2c1",
         "shards/0f43213bb5bccd5c/gradientsports__10515.parquet": "27d9247e140f48f17186e815fddd3cedc9067b3ee8b1e1af2e1cdae18a2068f7",
         "shards/0f43213bb5bccd5c/gradientsports__10516.parquet": "adb1335aa2618d128b51f0aca2d37bf4a946c6058551a884344462c8f1b51fed",
-        "shards/0f43213bb5bccd5c/gradientsports__10517.parquet": "2f9cd016d2b1650040b19d5c07cf3f87ee322e1705539dd6ccadec82e739fc53",
+        "shards/0f43213bb5bccd5c/gradientsports__10517.parquet": "40543a804747936bc2176df078ac376c8420afab297792ac734cacddf490e6eb",
         "shards/0f43213bb5bccd5c/gradientsports__3812.parquet": "30d9211ff383c348e010ebfafb045607339a4fe1d0fe10c6e9e3557ebb046dd8",
         "shards/0f43213bb5bccd5c/gradientsports__3813.parquet": "c083c7d56a875429691efa5d3258a0b94666deb8892a21a67a41e86a5b470572",
         "shards/0f43213bb5bccd5c/gradientsports__3814.parquet": "0d96cc3717ee5e25d4b6648f17112a3a3558a3e01652561df4ec11cf665db04d",
@@ -427,16 +402,14 @@
       },
       "generation": "0f43213bb5bccd5c",
       "n_files": 359,
-      "repo": "karstenskyt/hf-refit-tc3-26a2c33",
-      "revision": "8df00381b2ce3c6e656efb06c5579e520e911dbf",
+      "repo": "karstenskyt/hf-refit-tc3-8d96d36",
+      "revision": "21f7b425ce0e2c22977a8abb74037ec9563e44f2",
       "schema_change_vs_replaced_stage": {
         "actions": {
           "gradientsports": {
-            "added": [
-              "time_source"
-            ],
+            "added": [],
             "n_columns": [
-              22,
+              23,
               23
             ],
             "n_files": 64,
@@ -444,11 +417,9 @@
             "type_changed": []
           },
           "idsse": {
-            "added": [
-              "time_source"
-            ],
+            "added": [],
             "n_columns": [
-              22,
+              23,
               23
             ],
             "n_files": 7,
@@ -456,13 +427,9 @@
             "type_changed": []
           },
           "skillcorner": {
-            "added": [
-              "time_source",
-              "team_score",
-              "opponent_team_score"
-            ],
+            "added": [],
             "n_columns": [
-              19,
+              22,
               22
             ],
             "n_files": 108,
@@ -503,7 +470,7 @@
           }
         }
       },
-      "stage_run_commit": "26a2c33b2182650c22efe3a05eeaeb80deb0f802",
+      "stage_run_commit": "8d96d36cfdafb47e9ec349e2a9984c1979623db0",
       "stage_run_tree_dirty": false
     },
     "xcross_probe": {
@@ -517,16 +484,14 @@
       },
       "generation": null,
       "n_files": 6,
-      "repo": "karstenskyt/hf-refit-xcross-probe-26a2c33",
-      "revision": "94c623b207752d7f5e0479786443e578d9db10f7",
+      "repo": "karstenskyt/hf-refit-xcross-probe-8d96d36",
+      "revision": "88bb4218f78984c3bb67dbdd2e50f7f47cee6347",
       "schema_change_vs_replaced_stage": {
         "actions": {
           "gradientsports": {
-            "added": [
-              "time_source"
-            ],
+            "added": [],
             "n_columns": [
-              22,
+              23,
               23
             ],
             "n_files": 2,
@@ -547,25 +512,25 @@
           }
         }
       },
-      "stage_run_commit": "26a2c33b2182650c22efe3a05eeaeb80deb0f802",
+      "stage_run_commit": "8d96d36cfdafb47e9ec349e2a9984c1979623db0",
       "stage_run_tree_dirty": false
     },
     "xshot187": {
       "files_sha256": {
         "_actions/gradientsports__10504.parquet": "881aaaa5be87fb9913233d6ac140ea994807e12af6c4d67375a966a7842d5e15",
         "_actions/gradientsports__10505.parquet": "cb20c470fea2fc5f223d306484c1b455f8a7d701d6e1c48d11d5143577fc15fd",
-        "_actions/gradientsports__10506.parquet": "15b7af1c12368aa6c93db0fad5a4348ea5906a979d6df7ec42646aa8cccbb5c1",
+        "_actions/gradientsports__10506.parquet": "a6281131936a694b3a16c55cfa8e63f0bed5842adff921e0c68f5691eb3b457d",
         "_actions/gradientsports__10507.parquet": "2f3458c54faad238f39ebbd149317d2c03e57d3cba614290ddedb8cfb0914660",
-        "_actions/gradientsports__10508.parquet": "084f37caf507619d4119bd58dd952b986b4c8109bee9a0793ca0d5193bddf7d2",
+        "_actions/gradientsports__10508.parquet": "fec48ca1f4c006ad024cdafb090f7ef4d8012ff1c9846479728f3ec80a48b90a",
         "_actions/gradientsports__10509.parquet": "eb51930c114a49a6a35a4b8e5d3b43cc6175e9a39f9e6d55c877183e6ea16812",
-        "_actions/gradientsports__10510.parquet": "b243e2cc04ba2789997d5888690542def63ad08902e5d06092e186a7dd5d2fd5",
-        "_actions/gradientsports__10511.parquet": "593359d21009809a50cd23c1f4b3f8680d7bc1f0e3351e696acdd71c9183e021",
+        "_actions/gradientsports__10510.parquet": "0bee443ca2690d10b8e9503c9119a187f2016cf79fefc5fddb82a837be0be2ec",
+        "_actions/gradientsports__10511.parquet": "113c491cf929f239b37336b0807b6fdd66275016dae33d9a33d293b53d07ccd1",
         "_actions/gradientsports__10512.parquet": "87649e787dfacf5a7ca1333d1cf5ac1b0c1dea1f64503ea500d10496d52edb7d",
         "_actions/gradientsports__10513.parquet": "45a5ca970c93dfe8e2283b42628d17baae30802ceecfbade1b308b560ef531a8",
         "_actions/gradientsports__10514.parquet": "e93fdfefcb22212d2e1d9d808259d5a2408819672cb5d1f19d45a1570ceb611b",
         "_actions/gradientsports__10515.parquet": "c6a3abc9b9f0fa469e56846d42e8b8c21c7141c19ace04fcc6e2e85f6d6f45fe",
         "_actions/gradientsports__10516.parquet": "0419a61f1269e12a13539b0272f932c63bfaeeb18ade2082266b90bd3cc41311",
-        "_actions/gradientsports__10517.parquet": "fdc305942efd0a842e82799138ce0d6d4904ac5941dcd287e3efba430e32f8a5",
+        "_actions/gradientsports__10517.parquet": "d754f9f9598a223e72d43c73637decf59bc76cd41b563ed9ef480ce9e268aee9",
         "_actions/gradientsports__3812.parquet": "da51cf3f045eac89d21b0ebce6b975b78dd70a8236fab2c51b57bd3bc51cde8a",
         "_actions/gradientsports__3813.parquet": "1818a8497e1982e9cb46bc7bc5f3a0fda1441af70013b0fba0c396b5fa899ced",
         "_actions/gradientsports__3814.parquet": "da60ab5805e5c637e0f15e5fbba916199dc77d7618424858620404ee0011fa8c",
@@ -742,9 +707,9 @@
         "home_teams.json": "0bbb330254a473da7571789c6613ffedf5156833dc74b5a1949ae070320ead1c",
         "shards/3836f5993b9c5a9f/gradientsports__10504.parquet": "c1941888bc37249ae8ff1ff2b7dd990928af830f09f776f459d1b068aecf030f",
         "shards/3836f5993b9c5a9f/gradientsports__10505.parquet": "fb263979a83567d79434d962a368922166235b48c1471285105db5cf22d4f5e6",
-        "shards/3836f5993b9c5a9f/gradientsports__10506.parquet": "d2b5861b75e5666d40ad1aeca50d6eab9cca4e0011ab7988560acfce69e31346",
+        "shards/3836f5993b9c5a9f/gradientsports__10506.parquet": "fd27254042d70a6eefe9969891fbe5794a0c87be8cf7c2d5ad2cc20c370d89a2",
         "shards/3836f5993b9c5a9f/gradientsports__10507.parquet": "5e6ca8066d8ce9eff0a21bd2cc2913c80041c4144c684086655a9162d7623224",
-        "shards/3836f5993b9c5a9f/gradientsports__10508.parquet": "5d9efbcdd5b11397a6fa9432eefbc9ce16658c5ae968a41fb45fbdc570677e50",
+        "shards/3836f5993b9c5a9f/gradientsports__10508.parquet": "39e371a98e729737af02510a2a82dddb3216500a9c1686b8ce0bf12226fa7147",
         "shards/3836f5993b9c5a9f/gradientsports__10509.parquet": "5a3e1014ea0d3bc94d3770dc53cb361e998f7d754626f8b3c98f050053a4128b",
         "shards/3836f5993b9c5a9f/gradientsports__10510.parquet": "2d1b53b857a5e5096a810c365363f5fdc907a3c1cbe18d97710aed21fd60cc57",
         "shards/3836f5993b9c5a9f/gradientsports__10511.parquet": "0c76226c7b581df3956240991ebb25041819f27d2b11ce3a44d5c4a2bee159e0",
@@ -753,7 +718,7 @@
         "shards/3836f5993b9c5a9f/gradientsports__10514.parquet": "319a671520959fecec79c69476552e51f84e697b8f005a89b4faebf40ac9c2c1",
         "shards/3836f5993b9c5a9f/gradientsports__10515.parquet": "27d9247e140f48f17186e815fddd3cedc9067b3ee8b1e1af2e1cdae18a2068f7",
         "shards/3836f5993b9c5a9f/gradientsports__10516.parquet": "adb1335aa2618d128b51f0aca2d37bf4a946c6058551a884344462c8f1b51fed",
-        "shards/3836f5993b9c5a9f/gradientsports__10517.parquet": "2f9cd016d2b1650040b19d5c07cf3f87ee322e1705539dd6ccadec82e739fc53",
+        "shards/3836f5993b9c5a9f/gradientsports__10517.parquet": "40543a804747936bc2176df078ac376c8420afab297792ac734cacddf490e6eb",
         "shards/3836f5993b9c5a9f/gradientsports__3812.parquet": "30d9211ff383c348e010ebfafb045607339a4fe1d0fe10c6e9e3557ebb046dd8",
         "shards/3836f5993b9c5a9f/gradientsports__3813.parquet": "c083c7d56a875429691efa5d3258a0b94666deb8892a21a67a41e86a5b470572",
         "shards/3836f5993b9c5a9f/gradientsports__3814.parquet": "0d96cc3717ee5e25d4b6648f17112a3a3558a3e01652561df4ec11cf665db04d",
@@ -930,16 +895,14 @@
       },
       "generation": "3836f5993b9c5a9f",
       "n_files": 375,
-      "repo": "karstenskyt/hf-refit-xshot187-26a2c33",
-      "revision": "badb21541b9a4b4e96b48b800659788eb35d7d55",
+      "repo": "karstenskyt/hf-refit-xshot187-8d96d36",
+      "revision": "cd14fd3427b7d73498dc21408760f45dfe0df789",
       "schema_change_vs_replaced_stage": {
         "actions": {
           "gradientsports": {
-            "added": [
-              "time_source"
-            ],
+            "added": [],
             "n_columns": [
-              22,
+              23,
               23
             ],
             "n_files": 62,
@@ -947,11 +910,9 @@
             "type_changed": []
           },
           "idsse": {
-            "added": [
-              "time_source"
-            ],
+            "added": [],
             "n_columns": [
-              22,
+              23,
               23
             ],
             "n_files": 7,
@@ -959,13 +920,9 @@
             "type_changed": []
           },
           "skillcorner": {
-            "added": [
-              "time_source",
-              "team_score",
-              "opponent_team_score"
-            ],
+            "added": [],
             "n_columns": [
-              19,
+              22,
               22
             ],
             "n_files": 118,
@@ -1006,13 +963,13 @@
           }
         }
       },
-      "stage_run_commit": "26a2c33b2182650c22efe3a05eeaeb80deb0f802",
+      "stage_run_commit": "8d96d36cfdafb47e9ec349e2a9984c1979623db0",
       "stage_run_tree_dirty": false
     }
   },
   "meaning": "run_commit = the library at measurement time; the stage provenance of each dataset is under datasets",
-  "run_commit": "26a2c33b2182650c22efe3a05eeaeb80deb0f802",
+  "run_commit": "8d96d36cfdafb47e9ec349e2a9984c1979623db0",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
-  "writer_sha256": "32d9f9fadfdaa1439638ad7b1369a4fc5af650c017bd8a78ac23933762cb98f1"
+  "writer_sha256": "eb63c59952066f063c8498f3cbe3ed5c873702146ebca1301c635a2e32f8b137"
 }

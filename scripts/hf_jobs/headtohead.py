@@ -124,19 +124,20 @@ def _fold_frame(bundle: dict) -> np.ndarray:
 
 # --- per-trainer scorers (pure; score committed + fresh on the SAME injected eval bundle) ----------
 def _final_winner(actions: pd.DataFrame) -> dict:
-    """Per game: the team that won (more goals), or None on a draw. Goals = scored shots + own goals to opp."""
-    import silly_kicks.spadl.config as spadlconfig
+    """Per game: the team that won (more goals), or None on a draw. Goals by the library's goal rule (an own goal
+    counts for the opponent); a shoot-out (period 5) goal or a row with a missing result or period is no goal."""
+    from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
-    shot_ids = {spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")}
-    succ, owngoal = spadlconfig.result_id["success"], spadlconfig.result_id["owngoal"]
     winner: dict = {}
     for gid, grp in actions.groupby(actions["game_id"].astype(str), sort=False):
         teams = list(pd.unique(grp["team_id"].dropna()))
         goals = dict.fromkeys(teams, 0)
-        scored = grp["type_id"].isin(shot_ids) & (grp["result_id"] == succ)
+        in_match = (grp["period_id"].notna() & grp["period_id"].ne(5)).fillna(False).astype(bool)
+        scored = goal_mask(grp).fillna(False).astype(bool) & in_match
+        own = owngoal_mask(grp).fillna(False).astype(bool) & in_match
         for t in grp.loc[scored, "team_id"]:
             goals[t] = goals.get(t, 0) + 1
-        for t in grp.loc[grp["result_id"] == owngoal, "team_id"]:
+        for t in grp.loc[own, "team_id"]:
             opp = [x for x in teams if x != t]
             if opp:
                 goals[opp[0]] = goals.get(opp[0], 0) + 1
@@ -518,31 +519,40 @@ def _public_eval_xsuccess() -> dict:  # pragma: no cover - needs statsbombpy + s
     return {"actions": acts, "y": (acts["result_id"] == spadlconfig.result_id["success"]).to_numpy(dtype=float)}
 
 
+def _match_outcome_eval_row(actions: pd.DataFrame, *, home) -> tuple[float, float, float] | None:
+    """One match of the match-outcome eval: (home xG, away xG, 1.0 on a home win else 0.0), or None when the match
+    has no second team or no ``xg`` column. The library goal rule decides the winner (``_final_winner``); a
+    shoot-out (period 5) row, or a row with no period, adds no goal and no xG."""
+    from silly_kicks.id_compat import ids_match, same_id
+
+    teams = list(pd.unique(actions["team_id"].dropna()))
+    away = next((t for t in teams if not same_id(t, home)), None)
+    if away is None or "xg" not in actions.columns:
+        return None
+    p = actions["period_id"]
+    in_match = actions[(p.notna() & p.ne(5)).fillna(False).to_numpy(dtype=bool)]
+    xg_home = float(in_match.loc[ids_match(in_match["team_id"], home), "xg"].sum())
+    xg_away = float(in_match.loc[ids_match(in_match["team_id"], away), "xg"].sum())
+    winner = next(iter(_final_winner(actions).values()), None)
+    return xg_home, xg_away, 1.0 if winner is not None and same_id(winner, home) else 0.0
+
+
 def _public_eval_match_outcome() -> dict:  # pragma: no cover - needs statsbombpy + scripts/ (DGX/P1)
     """Per open match: home/away expected goals (summed per-shot xg) -> Poisson goal pmfs + the realized
     home-win outcome. The scorer applies the fitted Dixon-Coles rho to the pmf pair."""
     from scipy.stats import poisson
 
     import scripts._sb_open_data as sbod
-    import silly_kicks.spadl.config as spadlconfig
-    from silly_kicks.id_compat import same_id
 
     refs, load = sbod.open_data_source([(43, 106)], max_matches=8, cache_dir=None)
-    shot_ids = {spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")}
-    succ = spadlconfig.result_id["success"]
     k = np.arange(16)
     matches = []
     for ref in refs:
         _provider, _mid, actions, _frames, home, *_ = load(ref)
-        teams = [t for t in pd.unique(actions["team_id"].dropna())]
-        away = next((t for t in teams if not same_id(t, home)), None)
-        if away is None or "xg" not in actions.columns:
+        row = _match_outcome_eval_row(actions, home=home)
+        if row is None:
             continue
-        xg = actions.groupby("team_id")["xg"].sum()
-        home_xg, away_xg = float(xg.get(home, 0.0) or 0.0), float(xg.get(away, 0.0) or 0.0)
-        scored = actions[actions["type_id"].isin(shot_ids) & (actions["result_id"] == succ)]
-        goals = scored.groupby("team_id").size()
-        home_win = 1.0 if int(goals.get(home, 0)) > int(goals.get(away, 0)) else 0.0
+        home_xg, away_xg, home_win = row
         matches.append((poisson.pmf(k, max(home_xg, 0.05)), poisson.pmf(k, max(away_xg, 0.05)), home_win))
     if not matches:
         raise EvalDataUnavailableError("match_outcome: no scoreable matches (need xg + two teams)")

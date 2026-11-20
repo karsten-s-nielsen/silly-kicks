@@ -206,8 +206,11 @@ def test_tf46_refit_holds_the_21_release_instances():
     for v in ("default", "position_only"):
         want[("ghost_outfield", "owner", v)] = "retrain"
     want[("receiver_model", "owner", "default")] = "retrain"
-    for job in ("win_probability", "match_outcome_dependence", "build_territory_ranking_census"):
-        want[(job, "public", "default")] = "rematerialize"
+    # The library goal rule counts no shoot-out goal, so these two move on purpose: win_probability is retrained,
+    # match_outcome_dependence refits on its own acceptance gates.
+    want[("win_probability", "public", "default")] = "retrain"
+    want[("match_outcome_dependence", "public", "default")] = "refit"
+    want[("build_territory_ranking_census", "public", "default")] = "rematerialize"
     assert len(want) == 21 and got == want
     assert c.mode == "refit" and c.bucket == "karstenskyt/hf-refit-scratch"
     assert c.storage_limit_bytes == 10**12 and c.jobs[0].job == "xsuccess"

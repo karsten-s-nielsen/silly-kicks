@@ -1,10 +1,11 @@
 # The 4.144.0 release refit (PR-S209; docs/superpowers/specs/2026-11-17-release-refit-delta-design.md): every model
 # that ADR-133 makes owed, on data staged from the release, in ONE campaign. The mode is set per job (design X):
-#   refit         xShot/xCross: each arm passes on its own ADR-131/132 acceptance gates (ADR-130).
-#   retrain       xsuccess, pass_completion, ghost_gk, ghost_outfield, receiver_model: the standing certification,
-#                 with the public CV parity one-sided (a `cv_tolerance` spec stays two-sided).
-#   rematerialize win_probability, match_outcome_dependence (proof they do not move: IDENTICAL = not adopted) and the
-#                 territory census (rebaseline: a difference outside its tolerance stops for an owner ruling).
+#   refit         xShot/xCross: each arm passes on its own ADR-131/132 acceptance gates (ADR-130);
+#                 match_outcome_dependence: its rho inside the bounds and the fit check (the likelihood does not
+#                 drop at twice the fit's tolerance to either side of the fit; owner ruling R106).
+#   retrain       xsuccess, pass_completion, ghost_gk, ghost_outfield, receiver_model, win_probability: the standing
+#                 certification, with the public CV parity one-sided (a `cv_tolerance` spec stays two-sided).
+#   rematerialize the territory census (rebaseline: a difference outside its tolerance stops for an owner ruling).
 # The stages and the bucket live in the PRO user namespace karstenskyt/ (delta spec 4.2, owner 2026-11-17).
 #   .venv-hfjobs/Scripts/python -m scripts.hf_jobs campaign scripts/hf_jobs/campaigns/tf46_refit.toml <command>
 
@@ -124,18 +125,22 @@ variants = ["default"]
 mode = "retrain"
 
 [[jobs]]
+# retrain: the library goal rule counts no shoot-out (period 5) goal, so the labels of the StatsBomb matches decided on
+# penalties change (owner ruling 2026-11-20).
 job = "win_probability"
 tier = "public"
 dataset = "sb_open"
 variants = ["default"]
-mode = "rematerialize"
+mode = "retrain"
 
 [[jobs]]
+# refit: the library goal rule counts no shoot-out (period 5) goal; the rho of the corrected labels replaces the
+# committed one on purpose, so the job passes on its own acceptance gates (owner ruling 2026-11-20).
 job = "match_outcome_dependence"
 tier = "public"
 dataset = "sb_open"
 variants = ["default"]
-mode = "rematerialize"
+mode = "refit"
 
 [[jobs]]
 job = "build_territory_ranking_census"

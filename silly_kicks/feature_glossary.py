@@ -2628,8 +2628,10 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         definition=(
             "Goal leverage at the action's pre-action game state: dP(win | goal) = P(win | score+1) - "
             "P(win | score), the swing in the acting team's win probability from scoring one more goal. "
-            "High for a late equalizer, ≈ 0 in a decided (garbage-time) state. Weights VAEP_adjusted into "
-            "xImpact (VAEP.rate_ximpact)."
+            "High for a late go-ahead goal; low for a late equalizer by a trailing team (a draw is not a win); "
+            "≈ 0 in a decided (garbage-time) state; 0 on a penalty shoot-out row "
+            "(period 5), because no kick changes the match result. Weights VAEP_adjusted into xImpact "
+            "(VAEP.rate_ximpact)."
         ),
         unit="probability",
         emitting_module=_M_WIN_PROB,

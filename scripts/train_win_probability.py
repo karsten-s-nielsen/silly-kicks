@@ -39,10 +39,9 @@ import pandas as pd
 import silly_kicks.spadl.config as spadlconfig
 from scripts import _open_data_stages as od
 from scripts._stages import FileSet, ItemStage, Pipeline, Stage, main
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
 _SHOT_IDS = [spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")]
-_SUCCESS = spadlconfig.result_id["success"]
-_OWNGOAL = spadlconfig.result_id["owngoal"]
 
 #: Columns one match's shard carries -- exactly what WinProbabilityModel.fit reads (via games +
 #: strength_column) plus match_date (chronology) + home_team_id + per-shot xg (strength).
@@ -91,11 +90,13 @@ def match_shard(actions: pd.DataFrame, home_team_id: int | str, match_date: str)
 
 
 def _team_final_goals(g: pd.DataFrame) -> dict:
-    """Final id-based goal count per team for one match (scored shots + own goals credited to opp)."""
+    """Final id-based goal count per team for one match, by the library's goal rule (own goals credited to opp); a
+    shoot-out (period 5) goal or a row with a missing result or period is no goal."""
     teams = list(pd.unique(g["team_id"].dropna()))
     goals = {t: 0 for t in teams}
-    is_scored = g["type_id"].isin(_SHOT_IDS) & (g["result_id"] == _SUCCESS)
-    is_og = g["result_id"] == _OWNGOAL
+    in_match = (g["period_id"].notna() & g["period_id"].ne(5)).fillna(False).astype(bool)
+    is_scored = goal_mask(g).fillna(False).astype(bool) & in_match
+    is_og = owngoal_mask(g).fillna(False).astype(bool) & in_match
     tcol = g["team_id"].to_numpy()
     sc = is_scored.to_numpy()
     og = is_og.to_numpy()
@@ -121,6 +122,8 @@ def chronological_strength(pooled: pd.DataFrame) -> dict:
     for gid, g in pooled.groupby("game_id", sort=False):
         teams = list(pd.unique(g["team_id"].dropna()))
         date = str(g["match_date"].iloc[0])
+        # A shoot-out (period 5) row is no part of the match: its shots add no xG.
+        g = g[(g["period_id"].notna() & g["period_id"].ne(5)).fillna(False).to_numpy(dtype=bool)]
         shots = g[g["type_id"].isin(_SHOT_IDS)]
         xg_for = {t: float(shots[shots["team_id"] == t]["xg"].fillna(0.0).sum()) for t in teams}
         for t in teams:

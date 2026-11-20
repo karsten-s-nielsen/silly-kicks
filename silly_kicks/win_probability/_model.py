@@ -23,7 +23,7 @@ from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
 from ._chain import outcome_table
 from ._config import WinProbabilityParams
-from ._state import _FOUL, _PERIOD_OFFSET_MIN, _RED
+from ._state import _FOUL, _PERIOD_OFFSET_MIN, _RED, _match_mask
 
 _HAZARD_FEATURES = ("score_diff", "minutes_remaining", "base_strength", "home", "man_advantage")
 
@@ -52,8 +52,8 @@ class WinProbabilityIntegrityError(RuntimeError):
 def _team_goal_minutes(g: pd.DataFrame, teams: list) -> dict:
     """Absolute-minute goal timeline per team (id-based, ADR-018 own-goal-by-result)."""
     out: dict = {t: [] for t in teams}
-    is_scored = goal_mask(g).to_numpy()  # the library goal rule
-    is_og = owngoal_mask(g).to_numpy()
+    is_scored = goal_mask(g).fillna(False).to_numpy(dtype=bool)  # the library goal rule (a missing result: no goal)
+    is_og = owngoal_mask(g).fillna(False).to_numpy(dtype=bool)
     team_col = g["team_id"].to_numpy()
     periods = g["period_id"].to_numpy()
     times = g["time_seconds"].to_numpy()
@@ -71,7 +71,7 @@ def _team_goal_minutes(g: pd.DataFrame, teams: list) -> dict:
 
 def _team_red_minutes(g: pd.DataFrame, teams: list) -> dict:
     out: dict = {t: [] for t in teams}
-    reds = ((g["type_id"] == _FOUL) & (g["result_id"] == _RED)).to_numpy()
+    reds = ((g["type_id"] == _FOUL) & (g["result_id"] == _RED)).fillna(False).to_numpy(dtype=bool)
     team_col = g["team_id"].to_numpy()
     periods = g["period_id"].to_numpy()
     times = g["time_seconds"].to_numpy()
@@ -91,6 +91,7 @@ def _build_interval_training(actions, games, strength_column, params):
     rows_y: list[int] = []
     groups: list = []
     for game_id, g in actions.groupby("game_id", sort=False):
+        g = g[_match_mask(g)]  # a match decided on penalties trains as the draw it was
         home_id = home_map.get(game_id)
         teams = list(pd.unique(g["team_id"].dropna()))
         if len(teams) != 2:

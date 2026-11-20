@@ -133,3 +133,48 @@ def test_state_golden_snapshot():
     )
     got = st[["action_id", "score_diff", "own_score", "opp_score"]]
     pd.testing.assert_frame_equal(got, exp, check_dtype=False)
+
+
+def _with_shootout(df: pd.DataFrame) -> pd.DataFrame:
+    """Append a shoot-out (period 5): a goal of each team and one more kick."""
+    so = pd.DataFrame(
+        {
+            "game_id": ["g1"] * 3,
+            "action_id": [100, 101, 102],
+            "period_id": [5, 5, 5],
+            "team_id": ["A", "B", "A"],
+            "time_seconds": [5, 10, 15],
+            "type_id": [SHOT, SHOT, SHOT],
+            "result_id": [SUCC, SUCC, FAIL],
+        }
+    )
+    return pd.concat([df, so], ignore_index=True)
+
+
+def test_match_states_hold_the_score_of_the_match_in_the_shootout():
+    # A shoot-out row is no part of the match: the match rows keep their states, and each shoot-out row holds the
+    # score at the end of the match.
+    base = derive_match_states(_actions(), games=_GAMES, params=_P)
+    with_so = derive_match_states(_with_shootout(_actions()), games=_GAMES, params=_P)
+    pd.testing.assert_frame_equal(with_so[with_so["period_id"] != 5].reset_index(drop=True), base)
+    so = with_so[with_so["period_id"] == 5]
+    assert so.set_index("action_id")["score_diff"].to_dict() == {100: 1, 101: -1, 102: 1}
+
+
+def test_a_card_in_the_shootout_is_no_card_of_the_match():
+    # A red card in the shoot-out moves no man advantage: the later shoot-out rows keep the state of the match.
+    so = _with_shootout(_actions())
+    card = so.iloc[[-2]].assign(action_id=101, team_id="B", type_id=FOUL, result_id=RED, time_seconds=12)
+    acts = pd.concat([so[so["action_id"] != 101], card], ignore_index=True)
+    states = derive_match_states(acts, games=_GAMES, params=_P)
+    assert (states.loc[states["period_id"] == 5, "man_advantage"] == 0).all()
+
+
+def test_a_foul_with_a_missing_result_is_no_card():
+    acts = _actions()
+    foul = acts.iloc[[1]].assign(action_id=99, type_id=FOUL, time_seconds=25)
+    acts = pd.concat([acts, foul], ignore_index=True)
+    acts["result_id"] = acts["result_id"].astype("Int64")
+    acts.loc[acts["action_id"] == 99, "result_id"] = pd.NA
+    states = derive_match_states(acts, games=_GAMES, params=_P)
+    assert (states["man_advantage"] == 0).all()

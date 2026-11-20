@@ -47,7 +47,9 @@ the action, and that nothing in a row said so:
    lookup read it; a shoot-out row (period 5) is no goal of the score. The amended commit 2 (R83, R88, R92, R95) extends the readers:
    `add_game_state`, the `goalscore` feature and its atomic twin, the VAEP formula, the coordination event windows, the ELASTIC goal termination (R98),
    the atomic conversion and the match-outcome census. The Gradient Sports converter puts the shoot-out in period 5,
-   with no location (R89, R93).
+   with no location (R89, R93). Commit 3 (R99-R107) moves five scripts onto the shared rule and makes a period-5 row
+   no part of the match in `compute_match_outcome` (shots, goals, team count) and in the win-probability fit and
+   state (score, cards, clock); a shoot-out row holds the end state of the match with a leverage of 0.
 6. **The SkillCorner running score** (R56): where the provider's `team_score` / `opponent_team_score` are on the
    native rows (the converter's `preserve_native` list), the score lookup reads them, with the new score in effect
    from the native row after the first higher one; a decrease or a missing value falls back to the goal rows.

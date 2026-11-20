@@ -70,6 +70,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goal or an own goal). On the 7 idsse stage matches no action time changes; `add_elastic_sync` now fills
   `elastic_receive_frame_id`, `elastic_receive_confidence` and `elastic_receive_error_seconds` for a goal shot
   (missing before). A row with a missing result is no goal.
+- **`compute_match_outcome` gives the outcome of the match**: a penalty shoot-out row (period 5) adds no shot and
+  no goal, and a row with no period is left out too; before, the shoot-out shots counted as shots of the match
+  (about 7.8 xG in a match with 10 kicks). The two teams of a match are counted on the rows that remain, and a
+  table with no `period_id` column has no period rule.
+- **`compute_win_probability`, `goal_leverage` and `VAEP.rate_ximpact` read the state of the match**: a penalty
+  shoot-out row (period 5) moves no score, no card count and no final minute. Each shoot-out row holds the end
+  state of the match (the final score, 0 minutes remaining, the model's probabilities of that state) and a
+  `win_prob_leverage` of 0, because no kick changes the match result. Before, the shoot-out goals counted, the
+  minutes remaining of each match row counted the shoot-out (by 2.0 to 37.5 minutes in the 36 open-data matches
+  with a shoot-out), and a kick had the leverage of a goal in a live match (median 0.125, 163 of 363 kicks over
+  0.5). With the bundled model, `p_win` moves by more than 0.01 on
+  41,406 of the 88,380 match rows of these 36 matches (at most 0.43); other matches do not change.
+- **The two match-outcome models are fitted again on the corrected labels**: on the StatsBomb open data 36 of
+  3,961 matches change, because their shoot-out leaves the match. The Dixon-Coles rho is fitted again on its own
+  acceptance gates (+0.0216 before; -0.0036 measured before the run), and the win-probability model is retrained
+  (a match decided on penalties is a draw, in its labels and its team strengths).
 - **The SkillCorner score comes from the running score** where the native rows carry it (R56): it takes effect at the
   native row after the first higher one (a lag of a median 1.5 s after the kick-off reception); a decrease or a
   missing value falls back to the goal rows.

@@ -33,10 +33,9 @@ from silly_kicks.id_compat import ids_match
 from silly_kicks.match_outcome import MatchOutcomeParams, apply_dependence, goal_count_pmf
 from silly_kicks.match_outcome._collapse import collapse_team_xgs
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
 _SHOT_TYPE_IDS = [spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick")]
-_SUCCESS = spadlconfig.result_id["success"]
-_OWNGOAL = spadlconfig.result_id["owngoal"]
 
 #: The four method configs the study scores side by side (the two orthogonal correction axes).
 CONFIGS: tuple[str, ...] = ("independent", "collapse", "dixon_coles", "both")
@@ -204,6 +203,8 @@ def _team_stats(actions: pd.DataFrame, xg_column: str, *, gap: float) -> dict | 
     """
     from silly_kicks import spadl
 
+    # A shoot-out (period 5) row is no part of the match, for its shots and its goals; nor is a row with no period.
+    actions = actions[(actions["period_id"].notna() & actions["period_id"].ne(5)).fillna(False).to_numpy(dtype=bool)]
     teams = list(pd.unique(actions["team_id"].dropna()))
     if len(teams) != 2:
         return None
@@ -213,8 +214,9 @@ def _team_stats(actions: pd.DataFrame, xg_column: str, *, gap: float) -> dict | 
         tm = ids_match(ctx["team_id"], t).to_numpy()
         ta = ctx.iloc[tm]
         shots = ta[ta["type_id"].isin(_SHOT_TYPE_IDS)]
-        succ[t] = int((shots["result_id"] == _SUCCESS).sum())
-        og[t] = int((ta["result_id"] == _OWNGOAL).sum())
+        # The library's goal rule; a row with a missing result is no goal.
+        succ[t] = int(goal_mask(ta).fillna(False).astype(bool).sum())
+        og[t] = int(owngoal_mask(ta).fillna(False).astype(bool).sum())
         stats[t] = {
             "indep": shots[xg_column].dropna().to_numpy(dtype="float64")
             if xg_column in shots.columns

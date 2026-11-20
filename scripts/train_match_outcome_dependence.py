@@ -20,7 +20,7 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -40,12 +40,75 @@ def _nll(rho: float, matches: Sequence[tuple]) -> float:
     return total
 
 
+#: The rho resolution of the bounded fit (scipy's default ``xatol`` for ``method="bounded"``, stated so that the
+#: acceptance gate reads the same number).
+FIT_XATOL = 1e-5
+
+
 def fit_rho(matches: Sequence[tuple], *, bounds: tuple[float, float] = (-0.5, 0.5)) -> float:
     """MLE of the Dixon-Coles rho over ``(home_xgs, away_xgs, home_goals, away_goals)`` tuples."""
-    from scipy.optimize import minimize_scalar  # scipy is fit-time only (never at serve)
+    from scipy.optimize import OptimizeResult, minimize_scalar  # scipy is fit-time only (never at serve)
 
-    res = minimize_scalar(lambda r: _nll(r, matches), bounds=bounds, method="bounded")
+    res = cast(
+        OptimizeResult,
+        minimize_scalar(lambda r: _nll(r, matches), bounds=bounds, method="bounded", options={"xatol": FIT_XATOL}),
+    )
     return float(res.x)
+
+
+#: The folds of the out-of-fold likelihood that the acceptance detail reports (information, not a gate).
+ACCEPTANCE_FOLDS = 5
+#: A fit within this distance of a bound counts as stuck at the bound.
+BOUND_MARGIN = 1e-3
+#: The fit check probes the likelihood this far to each side of the fresh rho: twice the fit's own tolerance, so a fit
+#: within its tolerance of the optimum passes and a fit farther from it fails.
+OPTIMUM_PROBE = 2 * FIT_XATOL
+#: The relative rounding noise of the likelihood (measured: 4e-11 on 10544 between match orders); a drop must exceed it.
+NLL_NOISE_RTOL = 1e-12
+
+
+def acceptance_gates(
+    matches: Sequence[tuple],
+    *,
+    fresh_rho: float,
+    committed_rho: float,
+    bounds: tuple[float, float] = (-0.5, 0.5),
+    folds: int = ACCEPTANCE_FOLDS,
+) -> tuple[dict[str, bool], dict[str, float]]:
+    """The acceptance gates of a refit (ADR-130: the fresh rho replaces the committed one on purpose).
+
+    ``rho_inside_bounds``: the fresh rho is not stuck at a bound of the bounded fit.
+    ``fit_reaches_the_likelihood_optimum``: a FIT CHECK (owner ruling R106 of the action-time repair spec), which tests
+    the optimum directly and does not depend on the committed rho. The negative log-likelihood must not drop when rho
+    moves ``OPTIMUM_PROBE`` (twice the fit's tolerance ``FIT_XATOL``) to either side inside the bounds, beyond the
+    rounding noise. A fit within ``FIT_XATOL`` of the optimum passes in any match order; a fit farther than
+    ``FIT_XATOL`` from it fails. It never fails on a change of the data. The detail reports, as information only,
+    the likelihood under the committed rho and under independence (rho 0), and the out-of-fold likelihood of the fit
+    (each fold scored with the rho fitted on the other folds; folds round-robin over the corpus order).
+    """
+    lo, hi = bounds
+    fresh = _nll(fresh_rho, matches)
+    neighbours = [r for r in (fresh_rho - OPTIMUM_PROBE, fresh_rho + OPTIMUM_PROBE) if lo <= r <= hi]
+    drop = max((fresh - _nll(r, matches) for r in neighbours), default=0.0)
+    oof = 0.0
+    for k in range(folds):
+        train = [m for i, m in enumerate(matches) if i % folds != k]
+        test = [m for i, m in enumerate(matches) if i % folds == k]
+        if test:
+            oof += _nll(fit_rho(train, bounds=bounds), test)
+    gates = {
+        "rho_inside_bounds": bool(lo + BOUND_MARGIN < fresh_rho < hi - BOUND_MARGIN),
+        "fit_reaches_the_likelihood_optimum": bool(drop <= NLL_NOISE_RTOL * max(1.0, abs(fresh))),
+    }
+    detail = {
+        "nll_fresh": fresh,
+        "nll_drop_at_neighbours": drop,
+        "nll_committed": _nll(committed_rho, matches),
+        "nll_rho_zero": _nll(0.0, matches),
+        "oof_nll_fresh": oof,
+        "committed_rho": float(committed_rho),
+    }
+    return gates, detail
 
 
 _SHOT_NAMES = ("shot", "shot_penalty", "shot_freekick")
@@ -53,23 +116,28 @@ _SHOT_NAMES = ("shot", "shot_penalty", "shot_freekick")
 
 def _match_tuples(actions: pd.DataFrame, xg_column: str) -> list[tuple]:
     """Per-match ``(home_xgs, away_xgs, home_goals, away_goals)`` from SPADL actions with injected xg."""
+    from silly_kicks.id_compat import ids_match
     from silly_kicks.spadl import config as spadlconfig
+    from silly_kicks.spadl._goals import goal_mask, owngoal_mask
 
     shot_ids = [spadlconfig.actiontype_id[n] for n in _SHOT_NAMES]
-    success = spadlconfig.result_id["success"]
-    owngoal = spadlconfig.result_id["owngoal"]
     out: list[tuple] = []
     for _gid, ga in actions.groupby("game_id", sort=False):
+        # A shoot-out (period 5) row is no part of the match, for its shots and its goals; nor is a row with no period.
+        ga = ga[(ga["period_id"].notna() & ga["period_id"].ne(5)).fillna(False).to_numpy(dtype=bool)]
         teams = list(pd.unique(ga["team_id"].dropna()))
         if len(teams) != 2:
             continue
+        # The library's goal rule; a row with a missing result is no goal.
+        scored = goal_mask(ga).fillna(False).astype(bool)
+        own = owngoal_mask(ga).fillna(False).astype(bool)
         per = []
         for t in teams:
-            ta = ga[ga["team_id"] == t]
-            oa = ga[ga["team_id"] != t]
+            is_t = ids_match(ga["team_id"], t)
+            ta = ga[is_t]
             xgs = ta.loc[ta["type_id"].isin(shot_ids), xg_column].dropna().to_numpy(dtype="float64")
-            goals = int(((ta["type_id"].isin(shot_ids)) & (ta["result_id"] == success)).sum())
-            goals += int((oa["result_id"] == owngoal).sum())  # opponent own goal credits this team
+            goals = int((scored & is_t).sum())
+            goals += int((own & ~is_t & ga["team_id"].notna()).sum())  # opponent own goal credits this team
             per.append((xgs, goals))
         out.append((per[0][0], per[1][0], per[0][1], per[1][1]))
     return out
@@ -169,6 +237,8 @@ def fit_artifact(pooled: pd.DataFrame, prov: Mapping[str, Any], *, match_ids: Se
     ``model.json``), plus ``metrics.json``: ``rho`` and the corpus identity of ``match_ids`` (the listed refs),
     which verify compares with the lock (HFU spec 14.3)."""
     from scripts._corpus_identity import open_data_identity
+    from silly_kicks import match_outcome
+    from silly_kicks.match_outcome._dependence import DependenceModel
 
     matches = matches_from_shards([pooled])
     payload = {
@@ -181,7 +251,12 @@ def fit_artifact(pooled: pd.DataFrame, prov: Mapping[str, Any], *, match_ids: Se
     model = json.dumps(payload, indent=2).encode("utf-8")
     sha = hashlib.sha256(model).hexdigest()
     print(json.dumps({**payload, "sha256": sha}, indent=2))
-    metrics = json.dumps({"rho": payload["rho"], **open_data_identity(match_ids)}, indent=2).encode("utf-8")
+    committed_rho = DependenceModel.load(Path(match_outcome.__file__).parent / "weights").rho
+    gates, detail = acceptance_gates(matches, fresh_rho=payload["rho"], committed_rho=committed_rho)
+    metrics = json.dumps(
+        {"rho": payload["rho"], "acceptance": gates, "acceptance_detail": detail, **open_data_identity(match_ids)},
+        indent=2,
+    ).encode("utf-8")
     return FileSet({"model.json": model, "SHA256SUMS": f"{sha}  model.json\n".encode("ascii"), "metrics.json": metrics})
 
 
@@ -209,7 +284,7 @@ PIPELINE = Pipeline(
             work=lambda lm, ctx: extract_match_slice(lm.actions, "xg"),
             needs=("refs",),
             reduce=_extract_reduce,
-            cross_commit_version="match-outcome-shard-1",
+            cross_commit_version="match-outcome-shard-2",
             uses_dataset=True,
             max_failures=None,  # the legacy for_each recorded failures and fit over the rest
         ),
