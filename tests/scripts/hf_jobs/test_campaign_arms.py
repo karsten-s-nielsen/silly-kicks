@@ -112,10 +112,21 @@ def test_committed_campaigns_keep_todays_arms(name):
     c = C.load_campaign(_CAMPAIGNS / name)
     gated = [i for i in C.instances(c, SHA) if "--arms-json" in i.args]
     assert gated
+    if name == "tf46_refit.toml":  # ADR-132 / the xshot187 refit plan (owner R2): every gated job reads xshot187
+        assert {j.dataset for j in c.jobs if j.arms is not None} == {"xshot187"}
     for inst in gated:
         job = next(j for j in c.jobs if j.job == inst.job and j.tier == inst.tier)
         today = arm_policy.compute_arms(staged_units(job.dataset))
-        if job.dataset == "xshot17":  # the wheel jobs: the only arm xshot17 produces
+        if job.dataset == "xshot187":  # ADR-132 item 6: the wheel jobs run the two-arm rule, the Hub jobs sc_extended
+            if job.tier == "public":
+                assert job.arms == ("public", "sc_extended") and _arms_payload(inst) == today
+            else:
+                assert job.tier == "sc_extended" and job.arms == ("sc_extended",)
+                assert _arms_payload(inst) == {
+                    "arms": {"sc_extended": today["arms"]["sc_extended"]},
+                    "ship_order": ["sc_extended"],
+                }
+        elif job.dataset == "xshot17":  # the wheel jobs: the only arm xshot17 produces
             assert job.arms == ("public",) and _arms_payload(inst) == today
         else:  # the Hub jobs on xshot115: the arm today's run ships (ship_order[-1])
             assert job.dataset == "xshot115" and job.arms == ("sc_extended",)

@@ -41,7 +41,7 @@ def test_owner_skillcorner_forms_sc_extended_not_public():
 
 
 @pytest.mark.parametrize("trainer", ["scripts.train_xshot_occurrence", "scripts.train_xcross_attempt"])
-@pytest.mark.parametrize("dataset", ["xshot17", "xshot115", "tc3"])
+@pytest.mark.parametrize("dataset", ["xshot17", "xshot115", "tc3", "xshot187"])
 def test_emitted_keys_equal_the_trainer_keys_on_every_locked_unit(trainer, dataset):
     """F29: every arm key is a key the trainer builds from the same locked unit; every non-probe unit is in an arm."""
     from importlib import import_module
@@ -59,6 +59,23 @@ def test_emitted_keys_equal_the_trainer_keys_on_every_locked_unit(trainer, datas
     assert in_arms == trainer_keys - probe_keys
     assert not (in_arms & probe_keys)
     assert (dataset == "tc3") == bool(probe_keys)
+
+
+def test_xshot187_arms_are_the_registry_arms_of_its_staged_units():
+    """ADR-132 item 3 / spec 6.3-6.4: on the staged `xshot187` units, `public` is the locked `public_ids` (the
+    publicly obtainable units, no probe) and `sc_extended` is every staged unit."""
+    from scripts._corpus import PUBLICLY_OBTAINABLE, in_registry
+    from scripts.hf_jobs.datasets import locked
+
+    units = staged_units("xshot187")
+    pairs = {tuple(map(str, p)) for p in locked("xshot187")["public_ids"]}
+    arms = compute_arms(units)["arms"]
+    assert not any(_is_probe(u) for u in units)
+    # two sources (INV-9): the recorded public ids are exactly the staged units the registry calls obtainable
+    assert pairs == {unit_identity(u) for u in units if in_registry(PUBLICLY_OBTAINABLE, *unit_identity(u))}
+    assert set(arms["public"]) == {_injob_key(u) for u in units if unit_identity(u) in pairs}
+    assert len(arms["public"]) == len(pairs)
+    assert set(arms["sc_extended"]) == {_injob_key(u) for u in units}
 
 
 def test_the_public_corpus_arm_holds_all_17_matches():

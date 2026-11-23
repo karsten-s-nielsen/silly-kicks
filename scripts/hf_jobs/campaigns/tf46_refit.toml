@@ -1,6 +1,8 @@
-# ADR-130: the xShot/xCross refit on the stoppage-gated datasets (xshot115, xshot17, xcross_probe; schema
-# tc3-frames-4). `verify` in refit mode passes each arm on its own acceptance gates and reports the comparison with
-# the committed model. Launched by the Part Deux session's launch 9, beside cycle1.toml (owner ruling 2026-11-11).
+# ADR-132: the ONE xShot/xCross refit on `xshot187` (SkillCorner 118 + IDSSE 7 + Gradient Sports 62; schema
+# tc3-frames-4). The wheel jobs train both arms and ship the two-arm rule's choice; the Hub jobs train
+# `sc_extended`. `verify` in refit mode (ADR-130) passes each arm on its own acceptance gates, the per-provider
+# gates included, and reports the comparison with the committed model (owner rulings 2026-11-13; plan
+# docs/superpowers/plans/2026-11-13-xshot187-refit-plan.md).
 #   .venv-hfjobs/Scripts/python -m scripts.hf_jobs campaign scripts/hf_jobs/campaigns/tf46_refit.toml <command>
 
 [campaign]
@@ -8,7 +10,9 @@ name = "tf46_refit"
 # ADR-130: new training data replaces the committed models on purpose.
 mode = "refit"
 bucket = "silly-kicks/hf-refit-scratch"
-concurrency_cap = 8  # one job per instance at most
+# The in-flight ceiling, as cycle1.toml: each extract shards into ~10 jobs (units_per_job / max_shards), so 8 would
+# run about one job per instance at a time; mount_cap below bounds the jobs that mount xshot187.
+concurrency_cap = 25
 attempts = 3
 # Resource-sharing overhaul (ADR-128 amendment 2026-11-03). Job-sizing (fix 1): few big jobs, not cap-many.
 units_per_job = 20
@@ -18,7 +22,7 @@ launch_batch = 16
 backoff_max_s = 300.0
 # Mount-fault outage budget (fix 3): transient sidecar 401s per dataset before it is reported an outage.
 mount_fault_budget = 12
-# Per-dataset concurrent-mount cap (fix 2). This campaign mounts xshot115, xshot17 and xcross_probe, never tc3.
+# Per-dataset concurrent-mount cap (fix 2). This campaign mounts xshot187 and xcross_probe, never tc3.
 mount_cap = 25
 # Preflight check 7 (HFU fit-units spec C3): the org's private storage (buckets + private datasets and models)
 # must leave the headroom under the limit. The limit is 100 GB, owner-verified 2026-11-10 (the HF billing page).
@@ -29,33 +33,33 @@ storage_headroom_bytes = 20000000000
 [[jobs]]
 job = "xshot_occurrence"
 tier = "public"
-dataset = "xshot17"
+dataset = "xshot187"
 variants = ["default", "position_only"]
-# ADR-132 / spec 5.5: the arms this job trains (the only arm xshot17 produces)
-arms = ["public"]
+# ADR-132 item 6: the wheel job trains both arms and ships the two-arm rule's choice
+arms = ["public", "sc_extended"]
 
 [[jobs]]
 job = "xshot_occurrence"
 tier = "sc_extended"
-dataset = "xshot115"
+dataset = "xshot187"
 variants = ["default", "position_only"]
-# ADR-132 / spec 5.5: the arms this job trains (today's ship_order[-1])
+# ADR-132 item 6: the Hub job trains sc_extended (a one-arm job covers every staged unit)
 arms = ["sc_extended"]
 
 [[jobs]]
 job = "xcross_attempt"
 tier = "public"
-dataset = "xshot17"
+dataset = "xshot187"
 probe_dataset = "xcross_probe"
 variants = ["default", "position_only"]
-# ADR-132 / spec 5.5: the arms this job trains (the only arm xshot17 produces)
-arms = ["public"]
+# ADR-132 item 6: the wheel job trains both arms and ships the two-arm rule's choice
+arms = ["public", "sc_extended"]
 
 [[jobs]]
 job = "xcross_attempt"
 tier = "sc_extended"
-dataset = "xshot115"
+dataset = "xshot187"
 probe_dataset = "xcross_probe"
 variants = ["default", "position_only"]
-# ADR-132 / spec 5.5: the arms this job trains (today's ship_order[-1])
+# ADR-132 item 6: the Hub job trains sc_extended (a one-arm job covers every staged unit)
 arms = ["sc_extended"]

@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-11-12 |
-| **Status** | Accepted |
+| **Status** | Accepted; amended 2026-11-13 (item 10) |
 | **Deciders** | Karsten Nielsen (owner rulings 2026-11-12: Q-A to Q-E, r2, r3, r4, r7); reviewers A and B (spec r1 to r8, plan r1 to r3) |
 | **Supersedes / amends** | amends ADR-038 (the label and the public registry); amends ADR-131 (two per-provider acceptance gates); supersedes the combined-cycle D4 note (no separate non-inferiority gate) |
 | **Source spec** | `docs/superpowers/specs/2026-11-12-corpus-widening-design.md` (r8) |
@@ -69,11 +69,25 @@ that the public xCross `position_only` arm is underpowered at that size. Ten new
 9. **Size gates.** `artifact_size_lt_5mb` (5_000_000 bytes, the TF-16 value) fails a shipped xShot/xCross bundle
    closed. The release workflow checks the wheel and the sdist before upload and fails at 80_000_000 bytes or more
    (`scripts/check_dist_sizes.py`; ruling r4).
+10. **The expectation edit** (amendment 2026-11-13; owner ruling R4 of the `xshot187` refit plan,
+    `docs/superpowers/plans/2026-11-13-xshot187-refit-plan.md`). Item 8's order (read the run's
+    `shipped_variant`, write `shipped_arm` and the outcome fields, then `verify` and `adopt`) could not run: `adopt`
+    refused every dirty tree, and a commit after the campaign commit moves HEAD and the run keys. Now `adopt`
+    accepts ONE uncommitted change: `docs/artifacts/manifest.toml`, and in it only the fields `dataset`,
+    `shipped_arm`, `certification`, `corpus` and `expect` of the entries this campaign's instances produce
+    (matched on HEAD's manifest). It refuses any other path, field, entry, top-level table or change to the
+    artifact list; a removed field or `expect` key; an undeclared or unlocked `dataset`; and a value outside spec
+    7.1's domains. A tree with more than the manifest changed gets today's clean-tree refusal. A write-phase
+    failure restores the tree and keeps the edit. `verify.json` records `manifest_sha256` (the parsed manifest
+    without `training_commit`), and `adopt` refuses a `verify.json` without it or of another manifest, so the
+    expectations `adopt` commits are the ones `verify` checked.
 
 ## Alternatives considered
 
 - **Keep one flag.** Rejected: GS stays out of every public arm, and the public xCross arm stays underpowered.
 - **Three arms (`full` kept).** Rejected (Q-A): with GS obtainable, `full` equals `sc_extended`.
+- **Item 10: a third commit for the expectation edit, with a `--campaign-commit` flag on `retrieve`, `verify` and
+  `adopt`.** Rejected: more code and three commits for the same result.
 - **Reweight providers.** Not in this cycle (r7): the gate decides; the owner decides the next step with the reported
   numbers if a provider gate fails in the refit.
 - **A bootstrap bound per provider.** Rejected: over 7 IDSSE clusters the bound is too wide to be useful.

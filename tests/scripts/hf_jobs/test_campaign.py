@@ -171,4 +171,5 @@ def test_tf46_refit_holds_exactly_the_eight_refit_instances():
         for tier in ("public", "sc_extended")
         for variant in ("default", "position_only")
     }
-    assert c.mode == "refit" and got == want and c.concurrency_cap == 8
+    # the xshot187 refit shards each extract into ~10 jobs: the in-flight ceiling is cycle1's 25, not one per instance
+    assert c.mode == "refit" and got == want and c.concurrency_cap == 25 == c.mount_cap
