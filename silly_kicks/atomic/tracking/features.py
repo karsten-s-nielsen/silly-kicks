@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from silly_kicks.tracking._link_identity import require_links_bound
+
 if TYPE_CHECKING:
     from silly_kicks.tracking.pitch_control import PitchControlCache
 
@@ -21,6 +23,7 @@ from silly_kicks.atomic.spadl import config as atomicconfig
 from silly_kicks.id_compat import ids_equal
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
+from silly_kicks.tracking._link_identity import append_pointer_columns, assemble_by_game, iter_games, remap_links
 from silly_kicks.tracking._packing import PackingParams
 from silly_kicks.tracking._shot_goalmouth import ShotGoalmouthParams
 from silly_kicks.tracking._structural_pass import (
@@ -166,6 +169,7 @@ def add_structural_pass(actions, frames, *, links=None, params=None):
         enriched = add_structural_pass(atomic_actions, frames)
         enriched[["structural_lbs", "structural_sgm", "structural_sdi"]].head()
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking.features import add_structural_pass as _std
 
     adapted = _structural_pass_atomic_endpoints(actions)
@@ -358,6 +362,7 @@ def compute_defensive_credits(
         credits = compute_defensive_credits(atomic, frames, xg_column="xg", xt=xt)
         credits.groupby("player_id")["signed_value"].sum()  # per-player rollup
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking.defensive_credit import compute_defensive_credits as _std
 
     params = params or DefensiveCreditParams()
@@ -393,17 +398,26 @@ def _aggregate_defensive_credit(
     from silly_kicks.tracking.defensive_credit._orchestration import _rollup_defending_aggregate
 
     params = params or DefensiveCreditParams()
-    long = compute_defensive_credits(
-        actions,
-        frames,
-        xg_column=xg_column,
-        xt=xt,
-        blocked_column=blocked_column,
-        on_target_column=on_target_column,
-        links=links,
-        params=params,
-    )
-    return _rollup_defending_aggregate(actions, long, params=params, visible_area=visible_area, links=links)
+    # One game at a time (spec 2026-11-08 tracking-batch section 4.9 W9.4): the shared rollup keys on
+    # action_id, which names one action only inside a game.
+    parts = []
+    for rows, game_actions, game_frames in iter_games(actions, frames):
+        game_links = remap_links(links, rows, game_actions)
+        long = compute_defensive_credits(
+            game_actions,
+            game_frames,
+            xg_column=xg_column,
+            xt=xt,
+            blocked_column=blocked_column,
+            on_target_column=on_target_column,
+            links=game_links,
+            params=params,
+        )
+        rolled = _rollup_defending_aggregate(
+            game_actions, long, params=params, visible_area=visible_area, links=game_links
+        )
+        parts.append((rows, rolled))
+    return assemble_by_game(parts)
 
 
 def add_defensive_credit(
@@ -434,6 +448,7 @@ def add_defensive_credit(
         out = add_defensive_credit(atomic, frames, xg_column="xg", xt=xt)
         out[["defensive_credit_net", "defensive_credit_plus", "n_defensive_credits"]].head()
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking.utils import link_actions_to_frames
 
     pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
@@ -450,8 +465,7 @@ def add_defensive_credit(
     )
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     if not any(c in out.columns for c in provenance_cols) and len(pointers) > 0:
-        ptr = pointers.drop_duplicates("action_id").set_index("action_id")[provenance_cols]
-        out = out.merge(ptr, left_on="action_id", right_index=True, how="left")
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 
@@ -517,6 +531,7 @@ def add_packing(actions, frames, *, goal_map=None, links=None, params=None):
         enriched = add_packing(atomic_actions, frames)
         enriched[["packing_made", "packing_net", "packing_goal_threat"]].head()
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking.features import add_packing as _std
 
     if params is None:
@@ -625,6 +640,7 @@ def add_off_ball_run_values(actions, frames, xt, *, links=None, pitch_control_ca
         enriched = add_off_ball_run_values(atomic_actions, frames, fitted_xt)
         enriched[["run_value_target", "n_disruptive_runs"]].head()
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking.features import _RUN_VALUE_COLS
     from silly_kicks.tracking.features import add_off_ball_run_values as _std
 
@@ -786,6 +802,7 @@ def add_action_context(
         from silly_kicks.atomic.tracking.features import add_action_context
         enriched = add_action_context(atomic_actions, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     ctx = _resolve_action_frame_context(actions, frames, links=links)
     out = actions.copy()
     out["nearest_defender_distance"] = _kernels._nearest_defender_distance(actions["x"], actions["y"], ctx)
@@ -796,11 +813,9 @@ def add_action_context(
     out["receiver_zone_density"] = rz.astype("Int64")
     dt = _kernels._defenders_in_triangle_to_goal(actions["x"], actions["y"], ctx)
     out["defenders_in_triangle_to_goal"] = dt.astype("Int64")
-    pointer_cols = ctx.pointers.set_index("action_id")[
-        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
-    ]
-    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
-    return out
+    return append_pointer_columns(
+        out, actions, ctx.pointers, ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    )
 
 
 atomic_tracking_default_xfns = [
@@ -959,6 +974,7 @@ def add_pre_shot_gk_position(
         atomic = add_pre_shot_gk_context(atomic)
         enriched = add_pre_shot_gk_position(atomic, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     if "defending_gk_player_id" not in actions.columns:
         raise ValueError(
             "add_pre_shot_gk_position: actions missing required column "
@@ -970,11 +986,9 @@ def add_pre_shot_gk_position(
     out = actions.copy()
     for col in ("pre_shot_gk_x", "pre_shot_gk_y", "pre_shot_gk_distance_to_goal", "pre_shot_gk_distance_to_shot"):
         out[col] = df[col]
-    pointer_cols = ctx.pointers.set_index("action_id")[
-        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
-    ]
-    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
-    return out
+    return append_pointer_columns(
+        out, actions, ctx.pointers, ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    )
 
 
 atomic_pre_shot_gk_default_xfns = [
@@ -1045,6 +1059,7 @@ def add_pre_shot_gk_angle(
     --------
     >>> # See tests/test_pre_shot_gk_angle.py for a runnable example.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     if "defending_gk_player_id" not in actions.columns:
         raise ValueError(
             "add_pre_shot_gk_angle: actions missing required column 'defending_gk_player_id'. "
@@ -1133,6 +1148,7 @@ def add_actor_pre_window(
     >>> from silly_kicks.atomic.tracking.features import add_actor_pre_window
     >>> # See tests/atomic/tracking/test_pre_window_features_atomic.py for runnable examples.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     df = _kernels._actor_pre_window_kernel(actions, frames, pre_seconds=pre_seconds)
     out = actions.copy()
     out["actor_arc_length_pre_window"] = df["actor_arc_length_pre_window"]
@@ -1143,10 +1159,9 @@ def add_actor_pre_window(
         pointers = links
     else:
         pointers, _report = link_actions_to_frames(actions, frames)
-    pointer_cols = pointers.set_index("action_id")[
-        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
-    ]
-    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    out = append_pointer_columns(
+        out, actions, pointers, ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    )
     return out
 
 
@@ -1176,6 +1191,7 @@ def pressure_on_actor(
     >>> from silly_kicks.atomic.tracking.features import pressure_on_actor
     >>> # See tests/atomic/tracking/test_pressure_*_atomic.py for runnable examples per method.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking.pressure import (
         AndrienkoParams,
         BekkersParams,
@@ -1243,6 +1259,7 @@ def add_pressure_on_actor(
     >>> from silly_kicks.atomic.tracking.features import add_pressure_on_actor
     >>> # See tests/atomic/tracking/test_pressure_*_atomic.py for runnable examples.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking.pressure import validate_params_for_method
 
     if params_per_method is None:
@@ -1259,10 +1276,9 @@ def add_pressure_on_actor(
         pointers = links
     else:
         pointers, _report = link_actions_to_frames(actions, frames)
-    pointer_cols = pointers.set_index("action_id")[
-        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
-    ]
-    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    out = append_pointer_columns(
+        out, actions, pointers, ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    )
     return out
 
 
@@ -1298,6 +1314,7 @@ def pitch_control_at_target(
         from silly_kicks.atomic.tracking.features import pitch_control_at_target
         pc = pitch_control_at_target(actions, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking.features import pitch_control_at_target as _std_pc
 
     if frames is None:
@@ -1331,6 +1348,7 @@ def add_pitch_control(
         from silly_kicks.atomic.tracking.features import add_pitch_control
         enriched = add_pitch_control(actions, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     out = actions.copy()
     s = pitch_control_at_target(actions, frames, links=links, method=method)
     out[s.name] = s.values
@@ -1399,6 +1417,7 @@ def add_cover_shadows(
         from silly_kicks.atomic.tracking.features import add_cover_shadows
         enriched = add_cover_shadows(atomic_actions, frames, xt)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking.features import add_cover_shadows as _std_cs
 
     adapted = actions.rename(
@@ -1448,6 +1467,7 @@ def add_press_commitment(
         from silly_kicks.atomic.tracking.features import add_press_commitment
         enriched = add_press_commitment(atomic_actions, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking.features import add_press_commitment as _std_pc
 
     return _std_pc(actions, frames, links=links, params=params)
@@ -1481,6 +1501,7 @@ def add_shot_goalmouth(
 
     See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking._shot_goalmouth import compute_shot_goalmouth
     from silly_kicks.tracking.utils import link_actions_to_frames
 
@@ -1492,8 +1513,7 @@ def add_shot_goalmouth(
     if not any(c in out.columns for c in provenance_cols):
         pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
         if len(pointers) > 0:
-            ptr_cols = pointers.set_index("action_id")[provenance_cols]
-            out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+            out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 

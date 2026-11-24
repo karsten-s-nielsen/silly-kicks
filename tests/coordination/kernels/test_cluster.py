@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from scripts._bitwise import assert_bits_equal
 from silly_kicks.coordination._kernels import _cluster
 from silly_kicks.coordination._kernels import _cluster_reference as REF
 from silly_kicks.coordination._kernels._cluster import (
@@ -86,14 +87,6 @@ def _per_draw_reference(z, valid, min_players, runs, start, end, n_draws):
     return np.array(out)
 
 
-def _assert_bitwise_equal(got: np.ndarray, want: np.ndarray) -> None:
-    got = np.asarray(got, dtype=np.float64)
-    want = np.asarray(want, dtype=np.float64)
-    assert got.shape == want.shape
-    same = (got.view(np.int64) == want.view(np.int64)) | (np.isnan(got) & np.isnan(want))
-    assert same.all(), f"first mismatch at {int(np.flatnonzero(~same)[0])}: {got[~same][:3]} vs {want[~same][:3]}"
-
-
 def _case(rng, k, n_draws, p_hole=0.0):
     """Players with 1-3 disjoint phase runs each (finite phasors inside, NaN outside -- as ``_cluster_inputs``
     builds them), and a window that cuts some runs, contains others and misses the rest.
@@ -138,7 +131,7 @@ def test_shifted_rho_group_means_is_byte_identical_to_the_per_draw_loop(monkeypa
             usable = cluster_phase(z, valid, min_players)[2]
             want = _per_draw_reference(z, valid, min_players, runs, start, end, n_draws)
             got = shifted_rho_group_means(z, valid, usable, start, end, runs, n_draws)
-            _assert_bitwise_equal(got, want)
+            assert_bits_equal(np.asarray(got, np.float64), np.asarray(want, np.float64))
             n_finite += int(np.isfinite(want).sum())
     assert n_finite > 0  # the comparison is not NaN == NaN throughout
 
@@ -150,7 +143,7 @@ def test_shifted_rho_group_means_with_precomputed_parts_is_byte_identical():
     usable = cluster_phase(z, valid, 3)[2]
     want = shifted_rho_group_means(z, valid, usable, start, end, runs, 23)
     got = shifted_rho_group_means(z, valid, usable, start, end, runs, 23, parts=_cluster.phasor_parts(z))
-    _assert_bitwise_equal(got, want)
+    assert_bits_equal(np.asarray(got, np.float64), np.asarray(want, np.float64))
     assert np.isfinite(want).any()
     with pytest.raises(ValueError, match="parts have shapes"):
         shifted_rho_group_means(z, valid, usable, start, end, runs, 23, parts=_cluster.phasor_parts(z[:-1]))
@@ -170,7 +163,9 @@ def test_shifted_rho_group_means_keeps_every_shifted_value_finite():
     runs += [ShiftRun(2, 0, 150, rng.integers(0, 150, size=9)), ShiftRun(7, 150, 300, rng.integers(0, 150, size=9))]
     usable = cluster_phase(z, valid, 3)[2]
     got = shifted_rho_group_means(z, valid, usable, 40, 260, runs, 9)
-    _assert_bitwise_equal(got, _per_draw_reference(z, valid, 3, runs, 40, 260, 9))
+    assert_bits_equal(
+        np.asarray(got, np.float64), np.asarray(_per_draw_reference(z, valid, 3, runs, 40, 260, 9), np.float64)
+    )
     assert np.isfinite(got).all()
 
 
@@ -191,7 +186,10 @@ def test_shifted_rho_group_means_is_chunk_invariant(monkeypatch):
     assert np.isfinite(want).all()
     for chunk in (1, 5 * 260 * k, 1 << 30):
         monkeypatch.setattr(_cluster, "SURROGATE_CHUNK_ELEMENTS", chunk)
-        _assert_bitwise_equal(shifted_rho_group_means(z, valid, usable, 20, 280, runs, 23), want)
+        assert_bits_equal(
+            np.asarray(shifted_rho_group_means(z, valid, usable, 20, 280, runs, 23), np.float64),
+            np.asarray(want, np.float64),
+        )
 
 
 def test_shifted_rho_group_means_moves_the_null():
@@ -259,7 +257,7 @@ def test_cluster_null_backends_agree_bit_for_bit(monkeypatch, k, p_hole):
         monkeypatch.setenv(_FORCE_NUMPY, "1")
         got_np = shifted_rho_group_means(z, valid, usable, start, end, runs, n_draws)
         monkeypatch.delenv(_FORCE_NUMPY)
-        _assert_bitwise_equal(got_nb, got_np)
+        assert_bits_equal(np.asarray(got_nb, np.float64), np.asarray(got_np, np.float64))
         n_finite += int(np.isfinite(got_np).sum())
     assert n_finite > 0
 
@@ -298,7 +296,10 @@ def test_cluster_null_at_zero_shift_is_the_observed_estimator(monkeypatch, force
     _q, rel, usable = cluster_phase(z, valid, 3)
     obs = window_cluster_stats(rel, valid, usable, start, end).rho_group_mean
     assert np.isfinite(obs)
-    _assert_bitwise_equal(shifted_rho_group_means(z, valid, usable, start, end, zero_runs, 5), np.full(5, obs))
+    assert_bits_equal(
+        np.asarray(shifted_rho_group_means(z, valid, usable, start, end, zero_runs, 5), np.float64),
+        np.asarray(np.full(5, obs), np.float64),
+    )
 
 
 def test_zero_resultant_player_phasor_is_one_not_nan():
@@ -311,10 +312,13 @@ def test_zero_resultant_player_phasor_is_one_not_nan():
     ref = REF.window_cluster_stats(REF.cluster_phase(z, valid, 3)[1], valid, usable, 0, 2)
     assert float(np.sum(rel[:, 0]).real) == 0.0  # the exact cancellation the case is built on
     assert np.isfinite(st.rho_group_i).all()
-    _assert_bitwise_equal(st.rho_group_i, ref.rho_group_i)
+    assert_bits_equal(np.asarray(st.rho_group_i, np.float64), np.asarray(ref.rho_group_i, np.float64))
     assert st.rho_group_mean == ref.rho_group_mean
     runs = [ShiftRun(j, 0, 2, np.zeros(3, dtype=np.int64)) for j in range(3)]
-    _assert_bitwise_equal(shifted_rho_group_means(z, valid, usable, 0, 2, runs, 3), np.full(3, st.rho_group_mean))
+    assert_bits_equal(
+        np.asarray(shifted_rho_group_means(z, valid, usable, 0, 2, runs, 3), np.float64),
+        np.asarray(np.full(3, st.rho_group_mean), np.float64),
+    )
 
 
 def test_observed_cluster_statistics_match_the_as_built_arithmetic():
@@ -385,7 +389,7 @@ def test_pearson_rows_backends_agree_bit_for_bit(monkeypatch):
     mask = rng.random(257) > 0.2
     got_nb = pearson_rows(a, b, mask, 4)
     monkeypatch.setenv(_FORCE_NUMPY, "1")
-    _assert_bitwise_equal(got_nb, pearson_rows(a, b, mask, 4))
+    assert_bits_equal(np.asarray(got_nb, np.float64), np.asarray(pearson_rows(a, b, mask, 4), np.float64))
 
 
 def test_pearson_rows_undefined_cases_are_nan():

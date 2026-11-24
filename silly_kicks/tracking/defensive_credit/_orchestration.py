@@ -8,7 +8,15 @@ import pandas as pd
 from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import ids_differ
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.spadl.utils import _chronological_order
 from silly_kicks.tracking._action_orientation import acting_team_attacks_rtl
+from silly_kicks.tracking._link_identity import (
+    assemble_by_game,
+    iter_games,
+    pointers_by_action_row,
+    remap_links,
+    require_links_bound,
+)
 from silly_kicks.tracking.utils import link_actions_to_frames
 
 from ._chaining import with_possessions
@@ -89,18 +97,52 @@ def compute_defensive_credits(
 
         credits = compute_defensive_credits(actions, frames, xg_column="xg", xt=xt)
         credits.groupby("player_id")["signed_value"].sum()  # per-player rollup
-    """
-    params = params or DefensiveCreditParams()
-    act = with_possessions(actions).reset_index(drop=True)
 
-    pointers = links if links is not None else link_actions_to_frames(act, frames)[0]
+    The credits are computed one game at a time (``iter_games``; spec 2026-11-08 tracking-batch section
+    4.9 W9.4), and the rows are in game order: an ``action_id`` or a ``frame_id`` that two games share
+    cannot cross over. ``links`` must be built from exactly this ``actions`` frame, in this row order.
+    """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
+    params = params or DefensiveCreditParams()
+    parts: list[pd.DataFrame] = []
+    for rows, game_actions, game_frames in iter_games(actions, frames):
+        # W9.5: the caller's links follow the game subset, and then the possession re-sort below
+        order = _chronological_order(game_actions)
+        act = with_possessions(game_actions).reset_index(drop=True)
+        game_links = remap_links(remap_links(links, rows, game_actions), order, act)
+        pointers = game_links if game_links is not None else link_actions_to_frames(act, game_frames)[0]
+        parts.append(
+            _credit_rows_one_game(
+                act,
+                game_frames,
+                pointers,
+                xg_column=xg_column,
+                xt=xt,
+                blocked_column=blocked_column,
+                on_target_column=on_target_column,
+                params=params,
+            )
+        )
+    return parts[0] if len(parts) == 1 else pd.concat(parts, ignore_index=True)
+
+
+def _credit_rows_one_game(
+    act: pd.DataFrame,
+    frames: pd.DataFrame,
+    pointers: pd.DataFrame,
+    *,
+    xg_column: str,
+    xt,
+    blocked_column: str,
+    on_target_column: str,
+    params: DefensiveCreditParams,
+) -> pd.DataFrame:
+    """The long-form credit rows of ONE game. ``act`` is that game's actions with ``possession_id``, in the
+    possession sort order with a fresh index, and ``pointers`` are its pointers, built on ``act``."""
     act = _ensure_on_target(act, frames, pointers, on_target_column)  # P-1: attach _on_target (tri-state)
-    fid_by_pos = (
-        pointers.drop_duplicates("action_id")
-        .set_index("action_id")["frame_id"]
-        .reindex(act["action_id"].to_numpy())
-        .to_numpy()
-    )
+    fid_by_pos = pointers_by_action_row(act, pointers)["frame_id"].to_numpy()  # by action ROW (W9.4)
+    # spec W9.4: a frame is (period_id, frame_id) inside one game; a provider can repeat frame_id across periods
+    pid_by_pos = act["period_id"].to_numpy()
     flip_series = acting_team_attacks_rtl(act, frames)  # ONE reprojection decision per action
 
     enabled = [r for r in DEFENSIVE_CREDIT_RULES if r in params.rules]
@@ -116,12 +158,13 @@ def compute_defensive_credits(
             frames,
             fid_by_pos=fid_by_pos,
             flip_by_pos=flip_series.fillna(False).to_numpy(dtype=bool),
+            period_by_pos=pid_by_pos,
         )
     else:
         line_break_between_lines = pd.array([pd.NA] * len(act), dtype="boolean")
-    # ADR-068: build the per-frame lookup ONCE (keyed on frame_id, matching resolve_responsible_
-    # defenders' filter exactly) instead of re-scanning the whole `frames` table per action x per rule.
-    frame_groups = group_rows(frames, "frame_id")
+    # ADR-068: build the per-frame lookup ONCE (keyed on (period_id, frame_id), spec W9.4, matching
+    # resolve_responsible_defenders' filter exactly) instead of re-scanning `frames` per action x per rule.
+    frame_groups = group_rows(frames, ("period_id", "frame_id"))
     rows: list[CreditRow] = []
     for idx in range(len(act)):
         if pd.isna(flip_series.iloc[idx]):
@@ -146,6 +189,7 @@ def compute_defensive_credits(
             flip=bool(flip_series.iloc[idx]),
             line_break_between_lines=line_break_between_lines,
             frame_groups=frame_groups,
+            period_id=pid_by_pos[idx],
         )
         for rule_name in enabled:
             rows.extend(RULE_REGISTRY[rule_name](ctx))
@@ -202,17 +246,25 @@ def _aggregate_defensive_credit(
     """
     params = params or DefensiveCreditParams()  # resolve ONCE (byte-identical) so the rollup below
     # and compute_defensive_credits share the exact lane geometry the FOV corridor is rebuilt from.
-    long = compute_defensive_credits(
-        actions,
-        frames,
-        xg_column=xg_column,
-        xt=xt,
-        blocked_column=blocked_column,
-        on_target_column=on_target_column,
-        links=links,
-        params=params,
-    )
-    return _rollup_defending_aggregate(actions, long, params=params, visible_area=visible_area, links=links)
+    # One game at a time (W9.4): the rollup keys on action_id, which names one action only inside a game.
+    parts: list[tuple[np.ndarray, pd.DataFrame]] = []
+    for rows, game_actions, game_frames in iter_games(actions, frames):
+        game_links = remap_links(links, rows, game_actions)
+        long = compute_defensive_credits(
+            game_actions,
+            game_frames,
+            xg_column=xg_column,
+            xt=xt,
+            blocked_column=blocked_column,
+            on_target_column=on_target_column,
+            links=game_links,
+            params=params,
+        )
+        rolled = _rollup_defending_aggregate(
+            game_actions, long, params=params, visible_area=visible_area, links=game_links
+        )
+        parts.append((rows, rolled))
+    return assemble_by_game(parts)
 
 
 def _rollup_defending_aggregate(
@@ -278,6 +330,7 @@ def _defensive_credit_observation_rollup(actions, defending, *, params, visible_
     """
     # Function-local imports keep this seam neutral (the _fov_registry engine imports NEITHER
     # _orchestration nor features, so it may serve this custom path without a cycle).
+    from silly_kicks._visible_area import polygons_by_action_row
     from silly_kicks.id_compat import canonical_id
     from silly_kicks.tracking._fov_registry import (
         _NO_REGION,
@@ -287,11 +340,18 @@ def _defensive_credit_observation_rollup(actions, defending, *, params, visible_
     from silly_kicks.tracking._visibility import (
         REGION_OBSERVATION_DEGENERATE_REGION,
         VISIBLE_AREA_UNLINKED,
-        _polygons_by_action,
         classify_region_observation,
     )
 
-    polygons = _polygons_by_action(visible_area)
+    # The ONE visible-area join (W9.4): `actions` is one game here (`iter_games`), so its action_id keys this
+    # game's polygons; `visible_area` may span every game of the call.
+    polygons = dict(
+        zip(
+            (canonical_id(a) for a in actions["action_id"]),
+            polygons_by_action_row(actions, visible_area),
+            strict=True,
+        )
+    )
     linked_ids: set | None = None
     if links is not None and len(links) > 0:
         ok = links[links["frame_id"].notna()] if "frame_id" in links.columns else links

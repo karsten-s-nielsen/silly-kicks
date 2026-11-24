@@ -29,7 +29,7 @@ from collections import defaultdict
 
 import pytest
 
-from tests.scripts.test_compute_contract import _compliant
+from tests.scripts.test_compute_contract import _LOCAL_ONLY, _compliant
 
 
 class _Audit:
@@ -173,6 +173,11 @@ def test_every_dataset_read_is_gated_and_declared(name, tmp_path, monkeypatch):
 
     mod = importlib.import_module(f"scripts.{name}")
     pipe = mod.PIPELINE
+    if not any(st.uses_dataset for st in pipe.stages):
+        # A local-only pipeline (owner ruling 2026-11-11) reads pining on the DGX and no staged dataset, so there
+        # is no dataset read to audit; every other compliant pipeline must declare its dataset stage.
+        assert name in _LOCAL_ONLY, f"{name}: a compliant HF pipeline with no dataset stage"
+        return
     if pipe.module in TOY_OPEN_DATA:
         # The refs unit reads the served open-data tree through statsbombpy, which only the `hfjobs` group
         # installs: these two cases run in `.venv-hfjobs` and skip in CI, like their parity tests.

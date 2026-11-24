@@ -30,6 +30,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[2] / "silly_kicks"
 SEAM = "silly_kicks/tracking/_gk_resolve.py"
 
 _EXEMPT: dict[str, str] = {
+    "silly_kicks/tracking/_shape_graph.py": (
+        "infer_positions' attack-frame map (_to_attack_frame, spec 2026-11-08 tracking-batch W5.6): the CALLER "
+        "passes the attacking direction; the goal_x it picks is the reflection parameter of the ADR-051 "
+        "to_goal_relative helpers, not a defended goal resolved from the data."
+    ),
     "silly_kicks/tracking/_shot_goalmouth.py": (
         "The documented PSO / degenerate ball-mean fallback: a LAST-RESORT end for when the goal "
         "map itself is degenerate, so by construction it cannot consult the map."

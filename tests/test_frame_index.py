@@ -44,6 +44,26 @@ def test_missing_key_returns_empty_frame_not_keyerror():
     assert out.dtypes.equals(df.dtypes)
 
 
+def test_positions_are_the_rows_of_get():
+    df = _frames()
+    g = group_rows(df, ("game_id", "frame_id"))
+    assert g.positions(1, 10).tolist() == [0, 1]
+    assert g.positions("2", 10.0).tolist() == [3, 4]  # dtype-agnostic, like get
+    pd.testing.assert_frame_equal(g.frame.take(g.positions(1, 10)), g.get(1, 10))
+    miss = g.positions(9, 99)
+    assert miss.tolist() == [] and miss.dtype == np.intp
+
+
+def test_canonical_key_is_the_listed_key():
+    df = _frames()
+    multi = group_rows(df, ("game_id", "frame_id"))
+    assert multi.canonical_key("2", 10.0) in multi.keys()
+    assert multi.canonical_key(2, 10) == multi.canonical_key("2", 10.0)
+    single = group_rows(df, "frame_id")
+    assert single.canonical_key(10.0) in single.keys()
+    assert single.frame is df
+
+
 def test_within_group_order_preserved():
     df = _frames()
     g = group_rows(df, "frame_id")

@@ -82,7 +82,9 @@ def test_tracking_link_rate(provider):
     sample = frames.drop_duplicates(["period_id", "frame_id"]).sample(20, random_state=42)
     actions = pd.DataFrame(
         {
-            "game_id": 1,
+            # the frames' own game: the game-aware linker (spec 2026-11-08 tracking-batch W9.1, R5) never links one
+            # game's actions to another game's frames, so a placeholder game id would link nothing
+            "game_id": sample["game_id"].to_numpy(),
             "action_id": range(20),
             "period_id": sample["period_id"].to_numpy(),
             "time_seconds": sample["time_seconds"].to_numpy(),

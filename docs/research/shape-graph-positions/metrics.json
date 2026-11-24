@@ -1,0 +1,235 @@
+{
+  "cells": {
+    "lateral_away": {
+      "agreement": 0.9400921658986175,
+      "baseline_agreement": 0.9400921658986175,
+      "baseline_n": 217,
+      "n": 217,
+      "n_draws": 10000,
+      "null_p95": 0.5622119815668203,
+      "p": 9.999000099990002e-05,
+      "seed": 20261108,
+      "wilson_high": 0.964658803295483,
+      "wilson_low": 0.9002150343432955
+    },
+    "lateral_home": {
+      "agreement": 0.9354838709677419,
+      "baseline_agreement": 0.041474654377880185,
+      "baseline_n": 217,
+      "n": 217,
+      "n_draws": 10000,
+      "null_p95": 0.5529953917050692,
+      "p": 9.999000099990002e-05,
+      "seed": 20261108,
+      "wilson_high": 0.9611836216968739,
+      "wilson_low": 0.8946339453907133
+    },
+    "vertical_away": {
+      "agreement": 0.8762886597938144,
+      "baseline_agreement": 0.8762886597938144,
+      "baseline_n": 291,
+      "n": 291,
+      "n_draws": 10000,
+      "null_p95": 0.3848797250859107,
+      "p": 9.999000099990002e-05,
+      "seed": 20261108,
+      "wilson_high": 0.9092866576671537,
+      "wilson_low": 0.8334854099923792
+    },
+    "vertical_home": {
+      "agreement": 0.8732876712328768,
+      "baseline_agreement": 0.8732876712328768,
+      "baseline_n": 292,
+      "n": 292,
+      "n_draws": 10000,
+      "null_p95": 0.3972602739726027,
+      "p": 9.999000099990002e-05,
+      "seed": 20261108,
+      "wilson_high": 0.9066551182154394,
+      "wilson_low": 0.8302260507356882
+    }
+  },
+  "code_identity": "c64baa6699d5f1983f6067553655c4f19d102e4b",
+  "diagnostics": {
+    "away": {
+      "confusion": {
+        "AM": {
+          "AM": 5,
+          "DM": 1,
+          "F": 6,
+          "M": 1
+        },
+        "CB": {
+          "B": 7
+        },
+        "CF": {
+          "AM": 2,
+          "F": 49
+        },
+        "DM": {
+          "DM": 2,
+          "M": 1
+        },
+        "LB": {
+          "B": 16
+        },
+        "LCB": {
+          "B": 22
+        },
+        "LDM": {
+          "F": 2,
+          "M": 5
+        },
+        "LF": {
+          "F": 4
+        },
+        "LM": {
+          "AM": 2,
+          "DM": 1,
+          "M": 16
+        },
+        "LW": {
+          "AM": 8,
+          "F": 22
+        },
+        "LWB": {
+          "AM": 1,
+          "B": 5,
+          "F": 1,
+          "M": 1
+        },
+        "RB": {
+          "B": 15,
+          "DM": 3
+        },
+        "RCB": {
+          "B": 23
+        },
+        "RDM": {
+          "DM": 6,
+          "M": 3
+        },
+        "RF": {
+          "F": 3
+        },
+        "RM": {
+          "AM": 2,
+          "DM": 3,
+          "F": 1,
+          "M": 15
+        },
+        "RW": {
+          "AM": 6,
+          "B": 1,
+          "F": 22
+        },
+        "RWB": {
+          "AM": 1,
+          "B": 4,
+          "DM": 2,
+          "F": 1
+        }
+      },
+      "lateral_fallback": 0,
+      "lateral_fallback_odd_n": 0,
+      "n_team_frames": 87920,
+      "pitch_thirds": 0,
+      "tied_players": 0
+    },
+    "home": {
+      "confusion": {
+        "AM": {
+          "AM": 6,
+          "F": 7,
+          "M": 1
+        },
+        "CB": {
+          "B": 4
+        },
+        "CF": {
+          "AM": 1,
+          "F": 50,
+          "M": 2
+        },
+        "DM": {
+          "DM": 4
+        },
+        "LB": {
+          "B": 18,
+          "DM": 2
+        },
+        "LCB": {
+          "B": 22
+        },
+        "LDM": {
+          "DM": 3,
+          "F": 1,
+          "M": 2
+        },
+        "LF": {
+          "F": 1
+        },
+        "LM": {
+          "AM": 1,
+          "DM": 4,
+          "M": 16
+        },
+        "LW": {
+          "AM": 8,
+          "F": 23,
+          "M": 1
+        },
+        "LWB": {
+          "B": 1
+        },
+        "RB": {
+          "B": 25
+        },
+        "RCB": {
+          "B": 22
+        },
+        "RDM": {
+          "AM": 1,
+          "B": 1,
+          "DM": 3,
+          "M": 3
+        },
+        "RF": {
+          "F": 2
+        },
+        "RM": {
+          "DM": 7,
+          "F": 2,
+          "M": 10
+        },
+        "RW": {
+          "AM": 11,
+          "F": 25
+        },
+        "RWB": {
+          "B": 1,
+          "DM": 1
+        }
+      },
+      "lateral_fallback": 0,
+      "lateral_fallback_odd_n": 0,
+      "n_team_frames": 87920,
+      "pitch_thirds": 0,
+      "tied_players": 0
+    }
+  },
+  "failed_rules": [],
+  "mirror": {
+    "differing": [],
+    "n_differing_team_frames": 0
+  },
+  "n_matches": 20,
+  "n_scored_players": 583,
+  "null": {
+    "n_draws": 10000,
+    "seed": 20261108
+  },
+  "passed": true,
+  "run_commit": "9adae310e089cbb5fb910074f4ac49ee22cfb5a4",
+  "run_tree_dirty": false
+}

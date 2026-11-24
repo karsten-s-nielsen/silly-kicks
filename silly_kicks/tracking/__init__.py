@@ -40,6 +40,7 @@ __all__ = [
     "METRICA_TRACKING_FRAMES_COLUMNS",
     "REGION_OBSERVATION_DEGENERATE_REGION",
     "REGION_OBSERVATION_SOURCE_VALUES",
+    "SHAPE_GRAPH_SOURCE_VALUES",
     "SKILLCORNER_TRACKING_FRAMES_COLUMNS",
     "SPEED_SOURCE_UNAVAILABLE",
     "SPORTEC_TRACKING_FRAMES_COLUMNS",
@@ -97,6 +98,7 @@ __all__ = [
     "RunValuationParams",
     "RunValueCoverageWarning",
     "ShapeGraph",
+    "ShapeGraphBatch",
     "ShotGoalmouthParams",
     "ShotGoalmouthReport",
     "SpaceCreationParams",
@@ -180,6 +182,7 @@ __all__ = [
     "compute_pitch_control_at_points",
     "compute_player_influence",
     "compute_shape_graph",
+    "compute_shape_graphs",
     "compute_shot_goalmouth",
     "compute_space_created",
     "compute_structural_pass_metrics",
@@ -413,7 +416,15 @@ from ._receiver import (
 from ._restart_report import RestartCoordinateReport
 from ._run_features import TrackingFeaturesReport, run_tracking_features
 from ._run_values import RunValuationParams, detect_off_ball_runs, value_off_ball_runs
-from ._shape_graph import PositionLabel, ShapeGraph, compute_shape_graph, infer_positions
+from ._shape_graph import (
+    SHAPE_GRAPH_SOURCE_VALUES,
+    PositionLabel,
+    ShapeGraph,
+    ShapeGraphBatch,
+    compute_shape_graph,
+    compute_shape_graphs,
+    infer_positions,
+)
 from ._shot_goalmouth import ShotGoalmouthParams, ShotGoalmouthReport, compute_shot_goalmouth
 from ._snapshot import snapshot_to_tracking_frames
 from ._space_creation import SpaceCreationParams, compute_space_created

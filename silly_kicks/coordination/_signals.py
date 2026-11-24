@@ -36,6 +36,7 @@ from silly_kicks.tracking.preprocess._butterworth import (
     butterworth_min_length,
     grid_span,
 )
+from silly_kicks.tracking.utils import resolve_link_positions
 
 _REQUIRED_COLUMNS = (
     "game_id",
@@ -709,6 +710,9 @@ def build_coordination_signals(
         signals = build_coordination_signals(frames, windows=period_windows(frames), actions=actions)
         pair, phase, report = compute_relative_phase(signals)
     """
+    if links is not None and actions is not None:
+        # W9.5 (spec 2026-11-08 tracking-batch section 4.9): caller links bind to exactly this actions frame
+        resolve_link_positions(actions, links)
     return _build_coordination_signals(
         frames,
         windows=windows,

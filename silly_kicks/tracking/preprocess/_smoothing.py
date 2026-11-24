@@ -21,7 +21,7 @@ import pandas as pd
 from scipy.signal import savgol_filter
 
 from ._config_dataclass import PreprocessConfig
-from ._densify import bridge_small, densify_group, segments
+from ._densify import bridge_small, densify_group, segments, sorted_group_slices
 
 # game_id in the key so a two-game frame never smooths one entity's series across the game boundary (review A-31;
 # the defect fixed in resample_frames this cycle). Single-game frames are byte-identical (game_id is constant).
@@ -115,6 +115,8 @@ def _smooth_positions_dense(
     poly: int,
     cfg: PreprocessConfig,
     hz: float,
+    *,
+    cov_cache: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Smooth one group on its dense ``frame_id`` grid (TF-65 §4.1).
 
@@ -132,8 +134,8 @@ def _smooth_positions_dense(
         from ._kalman import kalman_ca
 
         dt = 1.0 / hz
-        xs = kalman_ca(xd, dt, cfg).pos
-        ys = kalman_ca(yd, dt, cfg).pos
+        xs = kalman_ca(xd, dt, cfg, cov_cache=cov_cache).pos
+        ys = kalman_ca(yd, dt, cfg, cov_cache=cov_cache).pos
         return xs[dense_idx], ys[dense_idx]
     maxg = round(cfg.max_gap_seconds * hz)
     valid = ~(np.isnan(xd) | np.isnan(yd))
@@ -216,14 +218,19 @@ def smooth_frames(
     # Each group is smoothed on its dense frame_id grid (TF-65 §4.1): a non-detection becomes a
     # NaN-position run the max_gap cap handles, and segments split at runs > max_gap so no window
     # spans a big gap. Contiguous single-detection-run groups are byte-identical to the old row path.
-    for _key, idx in sorted_frames.groupby(_GROUP_KEYS, dropna=False).groups.items():
-        idx_arr = np.asarray(list(idx), dtype=int)
-        fids = sorted_frames.loc[idx_arr, "frame_id"].to_numpy()
-        x_vals = sorted_frames.loc[idx_arr, "x"].to_numpy(dtype=float)
-        y_vals = sorted_frames.loc[idx_arr, "y"].to_numpy(dtype=float)
-        xs, ys = _smooth_positions_dense(fids, x_vals, y_vals, method_used, window_frames, cfg.sg_poly_order, cfg, hz)
-        x_smoothed[idx_arr] = xs
-        y_smoothed[idx_arr] = ys
+    # W7.3 (spec 2026-11-08 tracking-batch): the frames are sorted on the group keys, so each group is one
+    # contiguous slice -- no groupby, no per-group index list. One covariance cache per call (W7.1).
+    fid_all = sorted_frames["frame_id"].to_numpy()
+    x_all = sorted_frames["x"].to_numpy(dtype=float)
+    y_all = sorted_frames["y"].to_numpy(dtype=float)
+    cov_cache: dict = {}
+    for rows in sorted_group_slices(sorted_frames, _GROUP_KEYS):
+        xs, ys = _smooth_positions_dense(
+            fid_all[rows], x_all[rows], y_all[rows], method_used, window_frames, cfg.sg_poly_order, cfg, hz,
+            cov_cache=cov_cache,
+        )  # fmt: skip
+        x_smoothed[rows] = xs
+        y_smoothed[rows] = ys
 
     # F1b (ADR-106): smoothed-position STORAGE is float32, matching the float32 coordinate columns.
     sorted_frames["x_smoothed"] = x_smoothed.astype(np.float32)

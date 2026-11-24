@@ -124,6 +124,8 @@ import importlib
 import inspect
 import pathlib
 import pkgutil
+import sys
+import textwrap
 import warnings
 
 import pytest
@@ -265,6 +267,15 @@ _PUBLIC_MODULE_FILES = (
     # public module this release. Documented on promotion rather than deferred: a
     # brand-new public module should not ship already in debt.
     "silly_kicks/id_compat.py",
+    # W1 public backend query (spec 2026-11-08 tracking-batch section 4.1): a new public module, documented on
+    # creation (both functions carry runnable doctests).
+    "silly_kicks/backends.py",
+    # W8 DFL event derivation (spec 2026-11-08 tracking-batch section 4.8): a new public surface of
+    # silly_kicks.providers.sportec, documented on creation.
+    "silly_kicks/providers/sportec/_event_derivation.py",
+    # Its re-exports (FAMILIES, NumbaUnavailableError) are defined in the dispatch module, which the derivation
+    # then counts as public.
+    "silly_kicks/_numba_dispatch.py",
     # ADR-055 single-source keeper-identity resolver, promoted from `tracking/_keeper_identity.py`
     # to this repo-wide public module (breaking move, no shim). Documented on promotion rather than
     # deferred: a brand-new public module should not ship already in debt.
@@ -886,9 +897,6 @@ _EXAMPLES_DEBT: dict[str, str] = {
     # TF-79 ball-contact detection (candidate-touch primitive; covered by tests/tracking/test_ball_contact.py)
     "silly_kicks/tracking/_ball_contact.py::detect_ball_contacts": (
         "TF-79 candidate-touch detector: ball trajectory -> per-contact table."
-    ),
-    "silly_kicks/tracking/_ball_contact.py::add_ball_contacts": (
-        "TF-79 action enricher: first ball contact in each action window (first_contact_* columns)."
     ),
     "silly_kicks/tracking/_ball_contact.py::first_contact_in_window": (
         "TF-79 low-level corner-window query: earliest resolved contact in [t0, t1)."
@@ -1958,3 +1966,124 @@ def test_derivation_sees_both_rules():
     discovered = _discover_public_modules()
     assert "silly_kicks/tracking/_ghost_gk.py" in discovered, "P1 (re-export) rule found nothing"
     assert "silly_kicks/spadl/statsbomb.py" in discovered, "P2 (dotted-path) rule found nothing"
+
+
+# --------------------------------------------------------------------------------------
+# W5.4: an Examples section imports a symbol from its PUBLIC path (spec 2026-11-08 tracking-batch W5.4, F3)
+# --------------------------------------------------------------------------------------
+
+#: The F3 scope: this cycle's modules only (spec F3).
+_F3_SCOPE = (
+    "silly_kicks/tracking/pitch_control/",
+    "silly_kicks/tracking/_shape_graph.py",
+    "silly_kicks/tracking/_line_breaking.py",
+    "silly_kicks/tracking/preprocess/",
+    "silly_kicks/providers/sportec/",
+    "silly_kicks/backends.py",
+)
+
+
+def _f3_files() -> list[pathlib.Path]:
+    files: set[pathlib.Path] = set()
+    for scope in _F3_SCOPE:
+        path = REPO_ROOT / scope
+        files |= set(path.rglob("*.py")) if scope.endswith("/") else {path}
+    return sorted(files)
+
+
+def _example_code_blocks(lines: list[str]) -> list[str]:
+    """The Python sources of an Examples section: each doctest example (:func:`_doctest_source`), and each indented
+    literal block that follows a ``::`` paragraph."""
+    sources = [_doctest_source(group) for group in _doctest_examples(lines)]
+    block: list[str] = []
+    in_block = False
+    for raw in [*lines, ""]:
+        stripped = raw.strip()
+        if in_block and (not stripped or raw[:1] in (" ", "\t")) and not stripped.startswith((">>>", "...")):
+            if stripped or block:
+                block.append(raw)
+            continue
+        if block:
+            sources.append(textwrap.dedent("\n".join(block)))
+            block = []
+        in_block = stripped.endswith("::")
+    return sources
+
+
+def _private_example_imports(file_path: pathlib.Path) -> list[tuple[int, str, str, str]]:
+    """``(lineno, symbol, module, name)`` for every ``from silly_kicks...._private import name`` in an Examples
+    section of *file_path* whose object also has a public path (a public package or module that exposes it)."""
+    out: list[tuple[int, str, str, str]] = []
+    tree = ast.parse(file_path.read_text(encoding="utf-8"))
+    for _kind, lineno, symbol, node in _walk_public_definitions(tree):
+        section = _examples_section(ast.get_docstring(node) or "")
+        if not section:
+            continue
+        for source in _example_code_blocks(section):
+            try:
+                parsed = ast.parse(source)
+            except SyntaxError:
+                continue
+            for imp in ast.walk(parsed):
+                if not isinstance(imp, ast.ImportFrom) or not (imp.module or "").startswith(_ROOT_MODULE):
+                    continue
+                module = imp.module or ""
+                if not any(part.startswith("_") for part in module.split(".")[1:]):
+                    continue
+                for alias in imp.names:
+                    if _public_path(module, alias.name):
+                        out.append((lineno, symbol, module, alias.name))
+    return out
+
+
+def _public_path(module: str, name: str) -> str | None:
+    """A public dotted path (no ``_`` component) that exposes the same object as ``module.name``, or None."""
+    obj = getattr(importlib.import_module(module), name, None)
+    if obj is None:
+        return None
+    _walk_public_packages()  # imports every public package
+    for dotted, mod in sorted(sys.modules.items()):
+        if not dotted.startswith(_ROOT_MODULE) or any(p.startswith("_") for p in dotted.split(".")[1:]):
+            continue
+        if getattr(mod, name, None) is obj:
+            return f"{dotted}.{name}"
+    return None
+
+
+def test_examples_use_public_paths():
+    offenders = [
+        f"{_relative(str(path))}:{lineno} {symbol}: from {module} import {name} (public: {_public_path(module, name)})"
+        for path in _f3_files()
+        for lineno, symbol, module, name in _private_example_imports(path)
+    ]
+    assert not offenders, "Examples import a symbol from a private module although it has a public path:\n" + "\n".join(
+        offenders
+    )
+
+
+def test_private_import_rule_catches_a_planted_example():
+    # non-vacuity: the rule reads a literal block and a doctest, and passes a symbol with no public path
+    planted = (
+        "def f():\n"
+        '    """F.\n\n    Examples\n    --------\n    Use it::\n\n'
+        "        from silly_kicks.tracking._shape_graph import compute_shape_graph\n\n"
+        "    >>> from silly_kicks.tracking._shape_graph import _face_centroids\n"
+        '    """\n'
+    )
+    tree = ast.parse(planted)
+    (node,) = tree.body
+    assert isinstance(node, ast.FunctionDef)
+    section = _examples_section(ast.get_docstring(node) or "") or []
+    imports = [
+        (imp.module, alias.name)
+        for source in _example_code_blocks(section)
+        for imp in ast.walk(ast.parse(source))
+        if isinstance(imp, ast.ImportFrom)
+        for alias in imp.names
+    ]
+    assert ("silly_kicks.tracking._shape_graph", "compute_shape_graph") in imports
+    assert ("silly_kicks.tracking._shape_graph", "_face_centroids") in imports
+    assert _public_path("silly_kicks.tracking._shape_graph", "compute_shape_graph") == (
+        "silly_kicks.tracking.compute_shape_graph"
+    )
+    assert _public_path("silly_kicks.tracking._shape_graph", "_face_centroids") is None

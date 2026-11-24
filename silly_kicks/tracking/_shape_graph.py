@@ -17,12 +17,18 @@ See NOTICE for full bibliographic citations.
 
 from __future__ import annotations
 
+import math
 import warnings
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
+import pandas as pd
 from scipy.spatial import Delaunay, QhullError
+
+from silly_kicks._frame_index import group_rows
+from silly_kicks.id_compat import canonical_id
+from silly_kicks.tracking._geometry import FIELD_LENGTH, to_goal_relative_x_array, to_goal_relative_y_array
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -79,7 +85,9 @@ _STABILITY_THRESHOLD: float = 45.0
 # Vertical level labels (from back to front)
 _VERTICAL_LEVELS: tuple[str, ...] = ("B", "DM", "M", "AM", "F")
 # Horizontal level labels (from left to right)
-_HORIZONTAL_LEVELS: tuple[str, ...] = ("L", "LC", "C", "RC", "R")
+# The lateral ladder in ascending y of the ATTACK frame (spec 2026-11-08 tracking-batch W5.6): there, high y is the
+# left of a player who faces the attacked goal.
+_HORIZONTAL_LEVELS: tuple[str, ...] = ("R", "RC", "C", "LC", "L")
 
 # 5x5 position label matrix (thesis Figure 4.5b)
 # Maps (vertical, horizontal) → compact position label.
@@ -116,11 +124,15 @@ def _angle_at_vertex(
     v1 = arm1 - vertex
     v2 = arm2 - vertex
     dot = float(np.dot(v1, v2))
-    mag1 = float(np.linalg.norm(v1))
-    mag2 = float(np.linalg.norm(v2))
+    # np.linalg.norm of a 1-D real vector IS sqrt(x.dot(x)) in the vector's own dtype; spelling it out skips the
+    # norm wrapper and keeps every bit (spec 2026-11-08 tracking-batch W5.1). The dot stays numpy's (a BLAS dot is
+    # not guaranteed to round as `a*b + c*d` does).
+    mag1 = float(np.sqrt(np.dot(v1, v1)))
+    mag2 = float(np.sqrt(np.dot(v2, v2)))
     if mag1 < 1e-12 or mag2 < 1e-12:
         return 0.0
-    cos_val = np.clip(dot / (mag1 * mag2), -1.0, 1.0)
+    ratio = dot / (mag1 * mag2)
+    cos_val = -1.0 if ratio < -1.0 else (1.0 if ratio > 1.0 else ratio)  # np.clip of a float; NaN passes through
     return float(np.degrees(np.arccos(cos_val)))
 
 
@@ -160,47 +172,6 @@ def _compute_edge_stability(
     return max(180.0 - angle_sum, 0.0)
 
 
-def _compute_edge_stability_from_faces(
-    p_idx: int,
-    q_idx: int,
-    faces: list[frozenset[int]],
-    points: np.ndarray,
-) -> float:
-    """Compute stability of edge (p,q) using merged faces (UpdateStabilities).
-
-    After face merging, the opposite angle from the merged-face side becomes the
-    **minimum** angle formed by (p, r, q) over all vertices r in that face
-    (excluding p and q). This prevents over-pruning (thesis p.35-36, Figure 3.8).
-
-    For each side of the edge, find the incident face and compute:
-      - If the side is the external face: opposite angle = 0°
-      - Else: opposite angle = min over r in face \\ {p,q} of angle(p, r, q)
-
-    alpha = 180 - (angle_side1 + angle_side2)
-    """
-    edge_set = frozenset({p_idx, q_idx})
-    side_angles: list[float] = []
-
-    for face in faces:
-        if p_idx in face and q_idx in face:
-            # This face is incident to the edge
-            other_verts = face - edge_set
-            if not other_verts:
-                # Degenerate face (just the edge) — contributes 0°
-                side_angles.append(0.0)
-                continue
-            # Minimum angle at any opposite vertex in this face
-            min_angle = min(_angle_at_vertex(points[r], points[p_idx], points[q_idx]) for r in other_verts)
-            side_angles.append(min_angle)
-
-    # Boundary: missing side contributes 0°
-    while len(side_angles) < 2:
-        side_angles.append(0.0)
-
-    # Use the two incident face contributions
-    return max(180.0 - side_angles[0] - side_angles[1], 0.0)
-
-
 # ---------------------------------------------------------------------------
 # Edge extraction helpers
 # ---------------------------------------------------------------------------
@@ -218,58 +189,133 @@ def _extract_edges(simplices: np.ndarray) -> set[tuple[int, int]]:
 
 
 # ---------------------------------------------------------------------------
-# Face merge + stability update helpers
+# Face state: merged faces, the vertex -> face index, and the opposite-angle cache
 # ---------------------------------------------------------------------------
 
 
-def _merge_faces_for_edge(
-    edge: tuple[int, int],
-    faces: list[frozenset[int]],
-) -> list[frozenset[int]]:
-    """Merge faces incident to *edge* into a single face."""
-    incident_indices: list[int] = []
-    for fi, face in enumerate(faces):
-        if edge[0] in face and edge[1] in face:
-            incident_indices.append(fi)
+class _FaceState:
+    """The faces of the shape graph during Algorithm 1, in creation order, with the indexes that make it fast.
 
-    if len(incident_indices) < 2:
-        return faces  # Boundary edge — no merge needed
+    Spec 2026-11-08 tracking-batch W5.1: the speed-ups are by construction, so every value equals the historical
+    list-scan code bit for bit.
 
-    merged: frozenset[int] = frozenset[int]().union(*[faces[fi] for fi in incident_indices])
-    new_faces = [f for fi, f in enumerate(faces) if fi not in set(incident_indices)]
-    new_faces.append(merged)
-    return new_faces
-
-
-def _update_stabilities_for_merged_face(
-    removed_edge: tuple[int, int],
-    faces: list[frozenset[int]],
-    active_edges: set[tuple[int, int]],
-    edge_stability: dict[tuple[int, int], float],
-    points: np.ndarray,
-) -> None:
-    """Recompute stabilities for edges adjacent to a just-merged face.
-
-    After removing *removed_edge* and merging its incident faces, find the
-    merged face and recompute stability for all of its boundary edges that
-    are still active.
-
-    Mutates *edge_stability* in place.
+    - The faces keep the historical list order: a merge drops the incident faces and appends the merged face, so a
+      face's creation id orders the faces as the list did. A vertex -> face-id index finds the faces incident to an
+      edge without a scan of all faces.
+    - Opposite angles are cached per (edge, opposite vertex): an angle depends only on the three points, so the
+      cached value is the one a recomputation gives. The cache is shared with :meth:`copy` (the tie-break
+      simulation), which reads the same points.
     """
-    # Find the merged face (the one containing both vertices of the removed edge)
-    merged_face: frozenset[int] | None = None
-    for face in faces:
-        if removed_edge[0] in face and removed_edge[1] in face:
-            merged_face = face
-            break
 
-    if merged_face is None:
-        return
+    def __init__(self, faces: list[frozenset[int]], points: np.ndarray) -> None:
+        self._faces: dict[int, frozenset[int]] = dict(enumerate(faces))
+        self._next_id = len(faces)
+        self._by_vertex: dict[int, set[int]] = {}
+        for fid, face in self._faces.items():
+            for v in face:
+                self._by_vertex.setdefault(v, set()).add(fid)
+        self._points = points
+        self._angles: dict[tuple[int, int, int], float] = {}
 
-    # Recompute stability for each active edge on this face
-    for edge in list(active_edges):
-        if edge[0] in merged_face and edge[1] in merged_face:
-            edge_stability[edge] = _compute_edge_stability_from_faces(edge[0], edge[1], faces, points)
+    def copy(self) -> _FaceState:
+        """An independent face state over the same points; the angle cache is shared."""
+        twin = object.__new__(_FaceState)
+        twin._faces = dict(self._faces)
+        twin._next_id = self._next_id
+        twin._by_vertex = {v: set(ids) for v, ids in self._by_vertex.items()}
+        twin._points = self._points
+        twin._angles = self._angles
+        return twin
+
+    def faces(self) -> list[frozenset[int]]:
+        """The faces in list order."""
+        return list(self._faces.values())
+
+    def _incident_ids(self, edge: tuple[int, int]) -> list[int]:
+        return sorted(self._by_vertex.get(edge[0], set()) & self._by_vertex.get(edge[1], set()))
+
+    def incident(self, edge: tuple[int, int]) -> list[frozenset[int]]:
+        """The faces that contain both vertices of ``edge``, in list order."""
+        return [self._faces[fid] for fid in self._incident_ids(edge)]
+
+    def _opposite_angle(self, p: int, q: int, r: int) -> float:
+        key = (p, q, r)
+        angle = self._angles.get(key)
+        if angle is None:
+            pts = self._points
+            angle = _angle_at_vertex(pts[r], pts[p], pts[q])
+            self._angles[key] = angle
+        return angle
+
+    def stability(self, edge: tuple[int, int]) -> float:
+        """Stability of ``edge`` from the merged faces (UpdateStabilities).
+
+        After face merging, the opposite angle from the merged-face side becomes the **minimum** angle formed by
+        (p, r, q) over all vertices r in that face (excluding p and q). This prevents over-pruning (thesis
+        p.35-36, Figure 3.8).
+
+        For each side of the edge, find the incident face and compute:
+          - If the side is the external face: opposite angle = 0°
+          - Else: opposite angle = min over r in face \\ {p,q} of angle(p, r, q)
+
+        alpha = 180 - (angle_side1 + angle_side2)
+        """
+        p_idx, q_idx = edge
+        edge_set = frozenset({p_idx, q_idx})
+        side_angles: list[float] = []
+        for face in self.incident(edge):
+            other_verts = face - edge_set
+            if not other_verts:
+                # Degenerate face (just the edge) — contributes 0°
+                side_angles.append(0.0)
+                continue
+            # Minimum angle at any opposite vertex in this face
+            side_angles.append(min(self._opposite_angle(p_idx, q_idx, r) for r in other_verts))
+
+        # Boundary: missing side contributes 0°
+        while len(side_angles) < 2:
+            side_angles.append(0.0)
+
+        # Use the two incident face contributions
+        return max(180.0 - side_angles[0] - side_angles[1], 0.0)
+
+    def merge(self, edge: tuple[int, int]) -> None:
+        """Merge the faces incident to ``edge`` into one face (appended last); a boundary edge merges nothing."""
+        ids = self._incident_ids(edge)
+        if len(ids) < 2:
+            return  # Boundary edge — no merge needed
+        merged: frozenset[int] = frozenset[int]().union(*[self._faces[fid] for fid in ids])
+        for fid in ids:
+            for v in self._faces.pop(fid):
+                self._by_vertex[v].discard(fid)
+        new_id = self._next_id
+        self._next_id += 1
+        self._faces[new_id] = merged
+        for v in merged:
+            self._by_vertex.setdefault(v, set()).add(new_id)
+
+    def update_after_merge(
+        self,
+        removed_edge: tuple[int, int],
+        active_edges: set[tuple[int, int]],
+        edge_stability: dict[tuple[int, int], float],
+    ) -> None:
+        """Recompute stabilities for edges adjacent to a just-merged face.
+
+        After removing *removed_edge* and merging its incident faces, find the merged face (the first face that
+        contains both vertices of the removed edge) and recompute stability for all of its boundary edges that are
+        still active. The edges are visited in ``active_edges`` order: an edge that tie-breaking took out of the
+        queue re-enters ``edge_stability`` at its end, so the visiting order is part of the result.
+
+        Mutates *edge_stability* in place.
+        """
+        incident = self.incident(removed_edge)
+        if not incident:
+            return
+        merged_face = incident[0]
+        for edge in list(active_edges):
+            if edge[0] in merged_face and edge[1] in merged_face:
+                edge_stability[edge] = self.stability(edge)
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +363,7 @@ def compute_shape_graph(
     Compute the stable subgraph for a set of player positions::
 
         import numpy as np
-        from silly_kicks.tracking._shape_graph import compute_shape_graph
+        from silly_kicks.tracking import compute_shape_graph
 
         positions = np.array([
             [20, 10], [20, 30], [20, 50],  # defenders
@@ -346,7 +392,7 @@ def compute_shape_graph(
     active_edges: set[tuple[int, int]] = _extract_edges(tri.simplices)
 
     # Initial faces: one per simplex
-    faces: list[frozenset[int]] = [frozenset(int(v) for v in s) for s in tri.simplices]
+    faces = _FaceState([frozenset(int(v) for v in s) for s in tri.simplices], positions)
 
     # Compute initial stabilities using face-based method (UpdateStabilities).
     # Initially, faces are 1:1 with simplices, so this is equivalent to the
@@ -354,7 +400,7 @@ def compute_shape_graph(
     # after merges.
     edge_stability: dict[tuple[int, int], float] = {}
     for edge in active_edges:
-        edge_stability[edge] = _compute_edge_stability_from_faces(edge[0], edge[1], faces, positions)
+        edge_stability[edge] = faces.stability(edge)
 
     # Iterative removal loop (Algorithm 1)
     # Note: edge_stability acts as the priority queue Q from the thesis.
@@ -377,15 +423,15 @@ def compute_shape_graph(
             do_not_remove = False
 
             # Simulate removal of e0: merge faces and recompute stabilities
-            sim_faces = list(faces)
+            sim_faces = faces.copy()
             sim_edges = set(active_edges)
             sim_edges.discard(e0)
-            sim_faces = _merge_faces_for_edge(e0, sim_faces)
+            sim_faces.merge(e0)
 
             # Recompute stabilities on edges adjacent to the merged face
             sim_stability = dict(edge_stability)
             del sim_stability[e0]
-            _update_stabilities_for_merged_face(e0, sim_faces, sim_edges, sim_stability, positions)
+            sim_faces.update_after_merge(e0, sim_edges, sim_stability)
 
             for e in min_edges:
                 if e == e0:
@@ -407,19 +453,16 @@ def compute_shape_graph(
         for e in min_edges:
             active_edges.discard(e)
             edge_stability.pop(e, None)
-            faces = _merge_faces_for_edge(e, faces)
+            faces.merge(e)
             # Update stabilities for edges adjacent to the newly merged face
-            _update_stabilities_for_merged_face(e, faces, active_edges, edge_stability, positions)
+            faces.update_after_merge(e, active_edges, edge_stability)
 
     # Build output — edges kept by tie-breaking may not be in edge_stability,
     # so recompute their stability from the final face state.
     remaining_edges = sorted(active_edges)
     if remaining_edges:
         stabilities = np.array(
-            [
-                edge_stability.get(e, _compute_edge_stability_from_faces(e[0], e[1], faces, positions))
-                for e in remaining_edges
-            ]
+            [edge_stability[e] if e in edge_stability else faces.stability(e) for e in remaining_edges]
         )
         edges_arr = np.array(remaining_edges, dtype=int).reshape(-1, 2)
     else:
@@ -428,7 +471,7 @@ def compute_shape_graph(
 
     return ShapeGraph(
         edges=edges_arr,
-        faces=faces,
+        faces=faces.faces(),
         stabilities=stabilities,
         points=positions,
     )
@@ -453,6 +496,9 @@ def _face_centroids(
     are excluded.  These "within-line" faces have centroids AT a positional
     line rather than BETWEEN lines, which skews the max/min face center
     boundaries used for level decomposition (Option B fix).
+
+    A centroid sums its face's vertices in ascending vertex-index order, so it does not depend on the order in which
+    the face's vertex set iterates (spec 2026-11-08 tracking-batch W5.6).
     """
     # Compute total player spread along the filter axis
     total_spread = 0.0
@@ -464,7 +510,7 @@ def _face_centroids(
     for face in shape_graph.faces:
         if len(face) < 3:
             continue
-        pts = shape_graph.points[list(face)]
+        pts = shape_graph.points[sorted(face)]  # ascending vertex index: independent of the face's set order
 
         # Option B: filter out within-line faces (low spread along decomposition axis)
         if axis is not None and total_spread > 1e-10:
@@ -572,7 +618,6 @@ def _decompose_middle(
     levels: list[str],
     positions: np.ndarray | None,
     axis: int,
-    flip: float,
     label_above: str,
     label_below: str,
     label_center: str,
@@ -580,6 +625,9 @@ def _decompose_middle(
     pitch_width: float = 68.0,
 ) -> None:
     """Decompose middle players into 3 sub-levels using §4.1 + §4.2 special cases.
+
+    *values* and *positions* are in the attack frame (:func:`_to_attack_frame`), so no flip is needed: ascending
+    *values* run from ``label_below`` to ``label_above``.
 
     Modifies *levels* in place.
     """
@@ -612,8 +660,6 @@ def _decompose_middle(
 
         if len(mid_centroids) > 0:
             mid_fc = mid_centroids[:, axis].copy()
-            if flip < 0:
-                mid_fc = -mid_fc
 
             mid_fc_max = float(np.max(mid_fc))
             mid_fc_min = float(np.min(mid_fc))
@@ -670,18 +716,14 @@ def _decompose_middle(
         # §4.2 — tree shapes: when middle shape graph is a tree (no internal faces),
         # use team centroid relative to pitch thirds.
         if _is_tree(middle_sg):
-            pitch_dim = pitch_length if axis == 0 else pitch_width
-            centroid_val = float(np.mean(values[middle_indices]))
-            if flip < 0:
-                centroid_val = -centroid_val
-            third = pitch_dim / 3.0
-            if centroid_val < third:
-                for idx in middle_indices:
-                    levels[idx] = label_below
-            elif centroid_val > 2.0 * third:
-                for idx in middle_indices:
-                    levels[idx] = label_above
-            # else: stays center
+            _pitch_thirds_level(
+                values,
+                middle_indices,
+                levels,
+                pitch_dim=pitch_length if axis == 0 else pitch_width,
+                label_above=label_above,
+                label_below=label_below,
+            )
             return
 
     # Fallback: use thirds of the middle player range
@@ -699,16 +741,41 @@ def _decompose_middle(
                 levels[idx] = label_above
 
 
+def _pitch_thirds_level(
+    values: np.ndarray,
+    middle_indices: list[int],
+    levels: list[str],
+    *,
+    pitch_dim: float,
+    label_above: str,
+    label_below: str,
+) -> None:
+    """§4.2 tree shapes: label a middle group by its mean against the pitch thirds (attack-frame *values*).
+
+    A mean in the lowest third (the team's own end on the vertical axis) gives ``label_below``, a mean in the highest
+    third gives ``label_above``, and otherwise the group stays centre. Modifies *levels* in place.
+    """
+    centroid_val = float(np.mean(values[middle_indices]))
+    third = pitch_dim / 3.0
+    if centroid_val < third:
+        for idx in middle_indices:
+            levels[idx] = label_below
+    elif centroid_val > 2.0 * third:
+        for idx in middle_indices:
+            levels[idx] = label_above
+    # else: stays center
+
+
 def _assign_levels_vertical(
     values: np.ndarray,
     face_centers: np.ndarray,
     shape_graph: ShapeGraph | None = None,
     positions: np.ndarray | None = None,
-    attacking_direction: float = 1.0,
 ) -> list[str]:
     """Assign vertical levels (B/DM/M/AM/F) using face-center decomposition.
 
-    Implements thesis §4.1 with Options B, C, D and all §4.2 special cases.
+    Implements thesis §4.1 with Options B, C, D and all §4.2 special cases. *values*, *face_centers*, and
+    *positions* are in the attack frame: ascending x runs from the team's own goal (``B``) to the attacked goal.
     """
     n = len(values)
     if n == 0:
@@ -759,7 +826,6 @@ def _assign_levels_vertical(
         levels,
         positions,
         axis=0,
-        flip=attacking_direction,
         label_above="AM",
         label_below="DM",
         label_center="M",
@@ -776,7 +842,8 @@ def _assign_levels_horizontal(
 ) -> list[str]:
     """Assign horizontal levels (L/LC/C/RC/R) using face-center decomposition.
 
-    Same algorithm as vertical (§4.1 + §4.2) but with horizontal labels.
+    Same algorithm as vertical (§4.1 + §4.2) but with horizontal labels. *values*, *face_centers*, and *positions*
+    are in the attack frame, where high y is the left: the ladder in ascending y is ``R, RC, C, LC, L``.
     """
     n = len(values)
     if n == 0:
@@ -790,15 +857,15 @@ def _assign_levels_horizontal(
     fc_max = float(np.max(face_centers))
     fc_min = float(np.min(face_centers))
 
-    right_mask = values > fc_max
-    left_mask = values < fc_min
-    middle_mask = ~right_mask & ~left_mask
+    left_mask = values > fc_max
+    right_mask = values < fc_min
+    middle_mask = ~left_mask & ~right_mask
 
     for i in range(n):
-        if right_mask[i]:
-            levels[i] = "R"
-        elif left_mask[i]:
+        if left_mask[i]:
             levels[i] = "L"
+        elif right_mask[i]:
+            levels[i] = "R"
 
     # Option D: adaptive fallback for horizontal
     c_count = sum(1 for lv in levels if lv == "C")
@@ -809,14 +876,14 @@ def _assign_levels_horizontal(
             levels = ["C"] * n
             fc_max = fc_p75
             fc_min = fc_p25
-            right_mask = values > fc_max
-            left_mask = values < fc_min
-            middle_mask = ~right_mask & ~left_mask
+            left_mask = values > fc_max
+            right_mask = values < fc_min
+            middle_mask = ~left_mask & ~right_mask
             for i in range(n):
-                if right_mask[i]:
-                    levels[i] = "R"
-                elif left_mask[i]:
+                if left_mask[i]:
                     levels[i] = "L"
+                elif right_mask[i]:
+                    levels[i] = "R"
 
     # Middle decomposition: Option C + all §4.2 special cases
     middle_indices = [i for i in range(n) if middle_mask[i]]
@@ -826,9 +893,8 @@ def _assign_levels_horizontal(
         levels,
         positions,
         axis=1,
-        flip=1.0,  # horizontal is not flipped by attacking direction
-        label_above="RC",
-        label_below="LC",
+        label_above="LC",
+        label_below="RC",
         label_center="C",
     )
 
@@ -860,6 +926,18 @@ def _equal_frequency_assign(values: np.ndarray, levels: tuple[str, ...]) -> list
 # ---------------------------------------------------------------------------
 
 
+def _to_attack_frame(positions: np.ndarray, attacking_direction: float) -> np.ndarray:
+    """``positions`` in the frame of a team that attacks +x: the identity for ``attacking_direction > 0``, the ADR-051
+    point reflection ``(105 - x, 68 - y)`` for ``< 0`` (float64). The only place that reads the direction."""
+    goal_x = 0.0 if attacking_direction > 0 else FIELD_LENGTH
+    return np.column_stack(
+        [
+            to_goal_relative_x_array(positions[:, 0], goal_x=goal_x),
+            to_goal_relative_y_array(positions[:, 1], goal_x=goal_x),
+        ]
+    )
+
+
 def infer_positions(
     shape_graph: ShapeGraph,
     positions: np.ndarray,
@@ -867,19 +945,19 @@ def infer_positions(
 ) -> list[PositionLabel]:
     """Infer tactical positions from player positions via face-center decomposition.
 
-    Vertical decomposition uses the x-coordinate (attacking axis) with face
-    centroids as split boundaries. Horizontal decomposition uses the y-coordinate
-    (lateral axis) similarly. This follows thesis Chapter 4, §4.1-4.3.
+    Vertical decomposition uses the attacking axis with face centroids as split boundaries. Horizontal decomposition
+    uses the lateral axis similarly. This follows thesis Chapter 4, §4.1-4.3.
 
-    If ``attacking_direction < 0``, the x-axis is flipped before level assignment,
-    so that "B" (back) always refers to the defensive end.
+    Every label is in the team's OWN frame, with SPADL handedness (ADR-004; spec 2026-11-08 tracking-batch W5.6):
 
-    The lateral label is PITCH-ABSOLUTE: ``y`` is deliberately NOT mirrored for a
-    reversed attacking direction (only ``x`` is negated, which reverses level
-    ORDERING). Settled by default (ADR-045 D5): this function has no in-library
-    consumer, so no behaviour validates either convention. A future consumer that
-    needs TEAM-RELATIVE lateral labels should negate ``y`` AND ``face_centers_y``
-    together (``-y``, a sort-direction negation, not ``68 - y``).
+    - vertical: ``B`` is the team's own goal end, ``F`` the attacked goal end;
+    - lateral: ``L`` is the left of a player who faces the attacked goal. For a team that attacks +x that is high y;
+      for a team that attacks -x it is low y.
+
+    The positions are first mapped to the attack frame (the ADR-051 point reflection ``(105 - x, 68 - y)`` for a
+    team that attacks -x), and every label input comes from those positions: the player values, the face centroids
+    (``shape_graph`` supplies only its face vertex sets and its edge count), the middle sub-graph, and the pitch
+    thirds. So a frame and its point reflection, with the opposite direction, get the same labels.
 
     Parameters
     ----------
@@ -888,60 +966,64 @@ def infer_positions(
     positions : np.ndarray
         (n, 2) array of player positions.
     attacking_direction : float
-        +1.0 if attacking toward higher x, -1.0 if lower.
+        ``> 0`` if the team attacks toward higher x, ``< 0`` if toward lower x.
 
     Returns
     -------
     list[PositionLabel]
         One per player. Empty if shape graph has no edges.
 
+    Raises
+    ------
+    ValueError
+        If ``attacking_direction`` is not finite or is zero (the direction is never guessed).
+
     Examples
     --------
-    Infer tactical positions for a 4-4-2::
+    Label both teams of one frame; the away team attacks -x::
 
         import numpy as np
-        from silly_kicks.tracking._shape_graph import (
-            compute_shape_graph, infer_positions,
-        )
+        from silly_kicks.tracking import compute_shape_graph, infer_positions
 
-        positions = np.array([
+        home = np.array([
             [20, 10], [20, 30], [20, 50], [20, 58],  # defenders
             [40, 15], [40, 25], [40, 43], [40, 53],  # midfielders
             [60, 25], [60, 43],                        # forwards
         ], dtype=float)
-        sg = compute_shape_graph(positions)
-        labels = infer_positions(sg, positions, attacking_direction=1.0)
-        for lbl in labels:
-            print(lbl.label)
+        away = np.column_stack([105.0 - home[:, 0], 68.0 - home[:, 1]])  # the same shape, mirrored
+        home_labels = infer_positions(compute_shape_graph(home), home, attacking_direction=1.0)
+        away_labels = infer_positions(compute_shape_graph(away), away, attacking_direction=-1.0)
+        # the same roles: each team's left back is "LB" in its own frame
+        assert [lbl.label for lbl in home_labels] == [lbl.label for lbl in away_labels]
 
     See NOTICE for full bibliographic citations.
     """
+    if not math.isfinite(attacking_direction) or attacking_direction == 0.0:
+        raise ValueError(
+            f"infer_positions: attacking_direction must be finite and non-zero, got {attacking_direction!r}"
+        )
     if len(shape_graph.edges) == 0:
         return []
 
     n = len(positions)
-    x = positions[:, 0].copy()
-    y = positions[:, 1].copy()
+    attack = _to_attack_frame(positions, attacking_direction)
+    x = attack[:, 0].copy()
+    y = attack[:, 1].copy()
 
-    # Flip x if attacking direction is reversed
-    if attacking_direction < 0:
-        x = -x
-
-    # Compute face centroids for decomposition boundaries.
+    # Compute face centroids for decomposition boundaries, from the attack-frame positions.
     # Option B: filter out within-line faces per axis to get inter-line centroids.
-    centroids_v = _face_centroids(shape_graph, axis=0)  # filter on x-spread for vertical
-    centroids_h = _face_centroids(shape_graph, axis=1)  # filter on y-spread for horizontal
+    attack_graph = ShapeGraph(
+        edges=shape_graph.edges, faces=shape_graph.faces, stabilities=shape_graph.stabilities, points=attack
+    )
+    centroids_v = _face_centroids(attack_graph, axis=0)  # filter on x-spread for vertical
+    centroids_h = _face_centroids(attack_graph, axis=1)  # filter on y-spread for horizontal
 
     face_centers_x = centroids_v[:, 0].copy() if len(centroids_v) > 0 else np.empty(0)
     face_centers_y = centroids_h[:, 1].copy() if len(centroids_h) > 0 else np.empty(0)
 
-    # Flip face centers too if attacking direction is reversed
-    if attacking_direction < 0 and len(face_centers_x) > 0:
-        face_centers_x = -face_centers_x
-
     # Assign vertical and horizontal levels
-    vertical = _assign_levels_vertical(x, face_centers_x, shape_graph, positions, attacking_direction)
-    horizontal = _assign_levels_horizontal(y, face_centers_y, shape_graph, positions)
+    vertical = _assign_levels_vertical(x, face_centers_x, attack_graph, attack)
+    horizontal = _assign_levels_horizontal(y, face_centers_y, attack_graph, attack)
 
     return [
         PositionLabel(
@@ -951,3 +1033,280 @@ def infer_positions(
         )
         for i in range(n)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Public API — many team-frames in one call (spec 2026-11-08 tracking-batch W5.2-W5.3)
+# ---------------------------------------------------------------------------
+
+#: The ``shape_graph_source`` domain of :func:`compute_shape_graphs` (the ``DAS_SOURCE_VALUES`` precedent).
+#: ``"degenerate"`` covers a Delaunay ``QhullError`` and a graph with no edges.
+SHAPE_GRAPH_SOURCE_VALUES: frozenset[str] = frozenset({"ok", "too_few_players", "degenerate", "direction_unresolved"})
+
+_TEAM_FRAME_KEYS = ("game_id", "period_id", "frame_id", "team_id")
+_SUMMARY_METRICS = ("n_players", "n_edges", "density", "mean_stability", "shape_graph_source")
+_LABEL_COLUMNS = ("vertical", "horizontal", "position_label")
+_DIRECTION_SIGN = {"ltr": 1.0, "rtl": -1.0}
+
+
+@dataclass(frozen=True)
+class _TeamFrame:
+    """One team-frame of the selection: its rows (positions into the selection), positions, and graph metrics."""
+
+    rows: np.ndarray
+    positions: np.ndarray
+    graph: ShapeGraph | None
+    n_edges: int
+    density: float
+    mean_stability: float
+    source: str  # "ok", "too_few_players", or "degenerate": the graph does not depend on the direction
+
+
+def _outfield_selection(frames: pd.DataFrame) -> pd.DataFrame:
+    """The rows a shape graph is built from: not the ball, not a goalkeeper, ``x`` and ``y`` not NaN, in frame-row
+    order."""
+    keep = (
+        ~frames["is_ball"].astype(bool).to_numpy()
+        & ~frames["is_goalkeeper"].astype(bool).to_numpy()
+        & frames["x"].notna().to_numpy()
+        & frames["y"].notna().to_numpy()
+    )
+    return frames[keep]
+
+
+def _graph_metrics(rows: np.ndarray, positions: np.ndarray, stability_threshold: float) -> _TeamFrame:
+    """The graph of one team-frame and its summary metrics (the ``add_shape_graph`` definitions)."""
+    n = len(positions)
+    if n < 3:
+        return _TeamFrame(rows, positions, None, 0, np.nan, np.nan, "too_few_players")
+    sg = compute_shape_graph(positions, stability_threshold)
+    n_edges = len(sg.edges)
+    max_edges = n * (n - 1) / 2
+    density = float(n_edges) / max_edges if max_edges > 0 else 0.0
+    mean_stability = float(np.mean(sg.stabilities)) if n_edges > 0 else np.nan
+    return _TeamFrame(rows, positions, sg, n_edges, density, mean_stability, "ok" if n_edges > 0 else "degenerate")
+
+
+def _team_frame_graphs(
+    frames: pd.DataFrame, *, stability_threshold: float = _STABILITY_THRESHOLD
+) -> tuple[pd.DataFrame, list[tuple[tuple, _TeamFrame]]]:
+    """The single per-team-frame core (spec W5.3): the outfield selection and, per (game_id, period_id, frame_id,
+    team_id) in first-appearance order, ``(canonical key, team-frame)``.
+
+    One ``group_rows`` over the selection (ADR-068); the Delaunay stays per team-frame. ``x`` and ``y`` are read as
+    float64 and never cast to the schema dtype. A row with a missing key value is not selected (``group_rows``).
+    The graph never reads the direction.
+    """
+    sel = _outfield_selection(frames)
+    xy = sel[["x", "y"]].to_numpy(dtype=np.float64)
+    groups = group_rows(sel[list(_TEAM_FRAME_KEYS)], _TEAM_FRAME_KEYS)
+    out: list[tuple[tuple, _TeamFrame]] = []
+    for key in groups.keys():
+        rows = groups.positions(*key)
+        out.append((key, _graph_metrics(rows, xy[rows], stability_threshold)))
+    return sel, out
+
+
+def _team_frame_direction(directions: np.ndarray | None, rows: np.ndarray, key_values: tuple) -> float | None:
+    """The ``infer_positions`` direction of one team-frame from its selected rows' ``team_attacking_direction``:
+    ``"ltr"`` -> +1.0, ``"rtl"`` -> -1.0, anything else -> None (never a guess). A team-frame whose rows mix values
+    (null included) is a data defect: ``ValueError`` naming it (spec W5.2, TB-SPEC-57)."""
+    if directions is None:
+        return None
+    values = directions[rows]
+    missing = pd.isna(values)
+    if missing.all():
+        return None
+    distinct = set(values[~missing].tolist())
+    if missing.any() or len(distinct) > 1:
+        game_id, period_id, frame_id, team_id = key_values
+        seen = sorted(repr(v) for v in distinct) + (["None"] if missing.any() else [])
+        raise ValueError(
+            "compute_shape_graphs: team_attacking_direction mixes values within one team-frame "
+            f"(game_id={game_id}, period_id={period_id}, frame_id={frame_id}, team_id={team_id}): {seen}"
+        )
+    return _DIRECTION_SIGN.get(next(iter(distinct)))
+
+
+@dataclass(frozen=True)
+class ShapeGraphBatch:
+    """The result of :func:`compute_shape_graphs`: two DataFrames and a graph accessor.
+
+    - ``frames_summary``: one row per (game_id, period_id, frame_id, team_id) with ``n_players``, ``n_edges``,
+      ``density``, ``mean_stability``, and ``shape_graph_source`` (one of :data:`SHAPE_GRAPH_SOURCE_VALUES`).
+    - ``players``: one row per selected outfield player of each team-frame, with ``player_id``,
+      ``shape_graph_source`` (the team-frame's value), and the ``vertical`` / ``horizontal`` / ``position_label``
+      labels (``<NA>`` unless the source is ``"ok"`` and positions were requested).
+
+    Examples
+    --------
+    Look up the graph of one team-frame::
+
+        from silly_kicks.tracking import compute_shape_graphs
+        batch = compute_shape_graphs(frames)
+        game_id, period_id, frame_id, team_id = batch.frames_summary.iloc[0][
+            ["game_id", "period_id", "frame_id", "team_id"]
+        ]
+        sg = batch.graph(game_id, period_id, frame_id, team_id)
+    """
+
+    frames_summary: pd.DataFrame
+    players: pd.DataFrame
+    _positions: Mapping[tuple, np.ndarray] = field(repr=False, compare=False)
+    _graphs: Mapping[tuple, ShapeGraph] | None = field(repr=False, compare=False)
+    _stability_threshold: float = field(repr=False, compare=False)
+
+    def graph(self, game_id, period_id, frame_id, team_id) -> ShapeGraph:
+        """The shape graph of one team-frame (ids matched dtype-safely, ADR-019). Without ``retain_graphs`` it is
+        recomputed from the retained positions, bit-identical to the batch's own graph. ``KeyError`` for a key
+        that names no team-frame.
+
+        Examples
+        --------
+        Recompute one team-frame's graph::
+
+            sg = batch.graph(7, 1, 1200, 100)
+            print(sg.edges.shape)
+        """
+        key = tuple(canonical_id(k) for k in (game_id, period_id, frame_id, team_id))
+        if self._graphs is not None:
+            return self._graphs[key]
+        return compute_shape_graph(self._positions[key], self._stability_threshold)
+
+
+def compute_shape_graphs(
+    frames: pd.DataFrame,
+    *,
+    stability_threshold: float = _STABILITY_THRESHOLD,
+    with_positions: bool = True,
+    retain_graphs: bool = False,
+) -> ShapeGraphBatch:
+    """Shape graphs and position labels for every team-frame of ``frames`` in one call (TF-39; spec 2026-11-08
+    tracking-batch W5.2).
+
+    **Selection** is the one ``add_shape_graph`` uses: per (game_id, period_id, frame_id, team_id), the outfield
+    rows (not the ball, not a goalkeeper, ``x`` / ``y`` not NaN) in frame-row order, with the teams from the frames'
+    own ``team_id`` values. ``x`` and ``y`` are read as float64, never cast. A row with a missing key value is in no
+    team-frame; the call counts such outfield rows in one ``UserWarning`` (spec AG4).
+
+    **Direction** for the labels comes from ``team_attacking_direction``: ``"ltr"`` -> +1.0, ``"rtl"`` -> -1.0.
+    Any other value (null included) gives ``<NA>`` labels and ``shape_graph_source="direction_unresolved"``; the
+    graph metrics are still emitted. All selected rows of one team-frame must carry the same value (the goalkeeper
+    and ball rows are not read); a mix raises ``ValueError`` naming the team-frame. The direction is read only when
+    ``with_positions=True``. The labels are team-relative (``infer_positions``).
+
+    **Sources**: ``"ok"``; ``"too_few_players"`` (fewer than 3 selected players); ``"degenerate"`` (a Delaunay
+    ``QhullError`` or a graph with no edges); ``"direction_unresolved"``. A team-frame's labels are all set or all
+    ``<NA>``.
+
+    **Row order**: team-frames in the order of their first appearance in ``frames``, players in frame-row order. No
+    id is sorted, so a mixed-dtype ``game_id`` cannot raise.
+
+    **Memory**: with ``retain_graphs=False`` (the default) only the positions are kept, and
+    :meth:`ShapeGraphBatch.graph` recomputes a graph on request. ``retain_graphs=True`` keeps every graph: about
+    3.5 kB more per team-frame (``tracemalloc``, measured on the whole gradientsports match 10517), so the ~508k
+    team-frames of a large match take about 1.8 GB more.
+
+    **Chunked calls**: team-frames are independent, so for chunks that are contiguous row slices of ``frames`` split
+    on whole (game_id, period_id, frame_id) frames, concatenating the per-chunk DataFrames equals one call on all
+    the frames, row order included. That is the pattern for a caller with a deadline (the function has no stop
+    callable).
+
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        Long-form tracking frames (``TRACKING_FRAMES_COLUMNS``), any number of games.
+    stability_threshold : float
+        Minimum angular stability in degrees (default 45.0).
+    with_positions : bool
+        Compute the position labels (default True). With False the labels are ``<NA>`` and the direction is not read.
+    retain_graphs : bool
+        Keep every ``ShapeGraph`` (default False).
+
+    Returns
+    -------
+    ShapeGraphBatch
+
+    Examples
+    --------
+    Keep the labelled players only, with no id join (ADR-019)::
+
+        from silly_kicks.tracking import compute_shape_graphs
+        batch = compute_shape_graphs(frames)
+        players = batch.players[batch.players["shape_graph_source"] == "ok"]
+
+    Process a long match in chunks of whole frames, for a caller with a deadline::
+
+        import pandas as pd
+        frame_key = frames["period_id"].astype(str) + "/" + frames["frame_id"].astype(str)
+        starts = frame_key.ne(frame_key.shift()).to_numpy().nonzero()[0]
+        bounds = [*starts[::5000], len(frames)]
+        parts = [compute_shape_graphs(frames.iloc[lo:hi]) for lo, hi in zip(bounds[:-1], bounds[1:])]
+        players = pd.concat([p.players for p in parts], ignore_index=True)
+
+    See NOTICE for full bibliographic citations.
+    """
+    sel, team_frames = _team_frame_graphs(frames, stability_threshold=stability_threshold)
+    keys = sel[list(_TEAM_FRAME_KEYS)]
+    n_missing_key = int(keys.isna().any(axis=1).sum())
+    if n_missing_key:
+        warnings.warn(
+            f"compute_shape_graphs: {n_missing_key} outfield row(s) have a missing game_id, period_id, frame_id or "
+            "team_id, so they are in no team-frame.",
+            stacklevel=2,
+        )
+    directions = None
+    if with_positions and "team_attacking_direction" in sel.columns:
+        directions = sel["team_attacking_direction"].to_numpy(dtype=object)
+
+    first_rows: list[int] = []
+    player_rows: list[np.ndarray] = []
+    metrics: dict[str, list] = {name: [] for name in _SUMMARY_METRICS}
+    labels: dict[str, list] = {name: [] for name in _LABEL_COLUMNS}
+    sources: list[str] = []
+    positions: dict[tuple, np.ndarray] = {}
+    graphs: dict[tuple, ShapeGraph] | None = {} if retain_graphs else None
+    for key, tf in team_frames:
+        n = len(tf.rows)
+        first_rows.append(int(tf.rows[0]))
+        player_rows.append(tf.rows)
+        source = tf.source
+        team_labels: list[PositionLabel] | None = None
+        if with_positions:
+            key_values = tuple(keys.iloc[int(tf.rows[0])])
+            direction = _team_frame_direction(directions, tf.rows, key_values)
+            if source == "ok" and direction is None:
+                source = "direction_unresolved"
+            if source == "ok" and tf.graph is not None:
+                team_labels = infer_positions(tf.graph, tf.positions, direction)  # type: ignore[arg-type]
+                if len(team_labels) != n:  # all-or-nothing (spec W5.2)
+                    raise RuntimeError(f"compute_shape_graphs: {len(team_labels)} labels for {n} players at {key}")
+        for name, value in zip(_SUMMARY_METRICS, (n, tf.n_edges, tf.density, tf.mean_stability, source), strict=True):
+            metrics[name].append(value)
+        sources.extend([source] * n)
+        labels["vertical"].extend([lb.vertical for lb in team_labels] if team_labels else [pd.NA] * n)
+        labels["horizontal"].extend([lb.horizontal for lb in team_labels] if team_labels else [pd.NA] * n)
+        labels["position_label"].extend([lb.label for lb in team_labels] if team_labels else [pd.NA] * n)
+        positions[key] = tf.positions
+        if graphs is not None:
+            graphs[key] = tf.graph if tf.graph is not None else compute_shape_graph(tf.positions, stability_threshold)
+
+    summary = keys.take(np.asarray(first_rows, dtype=np.intp)).reset_index(drop=True)
+    summary["n_players"] = np.asarray(metrics["n_players"], dtype=np.int64)
+    summary["n_edges"] = np.asarray(metrics["n_edges"], dtype=np.int64)
+    summary["density"] = np.asarray(metrics["density"], dtype=np.float64)
+    summary["mean_stability"] = np.asarray(metrics["mean_stability"], dtype=np.float64)
+    summary["shape_graph_source"] = pd.Series(metrics["shape_graph_source"], index=summary.index, dtype=object)
+
+    all_rows = np.concatenate(player_rows) if player_rows else np.empty(0, dtype=np.intp)
+    players = sel[[*_TEAM_FRAME_KEYS, "player_id"]].take(all_rows).reset_index(drop=True)
+    players["shape_graph_source"] = pd.Series(sources, index=players.index, dtype=object)
+    for name in _LABEL_COLUMNS:
+        players[name] = pd.Series(labels[name], index=players.index, dtype=object)
+    return ShapeGraphBatch(
+        frames_summary=summary,
+        players=players,
+        _positions=positions,
+        _graphs=graphs,
+        _stability_threshold=stability_threshold,
+    )

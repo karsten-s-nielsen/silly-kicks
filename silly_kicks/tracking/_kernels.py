@@ -24,6 +24,7 @@ from silly_kicks.id_compat import align_join_keys, ids_differ, ids_equal
 
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
 from ._gk_resolve import GoalMap
+from ._link_identity import LinkedFrameRows, iter_games, pointers_by_action_row, require_links_bound
 from .feature_framework import ActionFrameContext
 
 if TYPE_CHECKING:
@@ -48,48 +49,24 @@ def _inscribed_disk(cx: float, cy: float, r: float, n: int = 20) -> np.ndarray:
     return np.column_stack([cx + r * np.cos(theta), cy + r * np.sin(theta)])
 
 
-def _rows_by_action_id(actions_id: np.ndarray) -> dict:
-    """Map each ``action_id`` to the LIST of row positions carrying it.
-
-    ADR-020: ``action_id`` is NOT unique in a VAEP gamestate matrix -- shifted slots repeat the
-    boundary action -- so an ``action_id``-KEYED Series is one-to-many. Built once per kernel call
-    and shared by every write site, which is also cheaper than the per-aid ``.loc`` it replaces.
-    """
-    out: dict = {}
-    for pos, aid in enumerate(actions_id):
-        out.setdefault(aid, []).append(pos)
-    return out
+def _write_rows(out: pd.Series, by_row: pd.Series) -> pd.Series:
+    """``out`` (float64, one value per action row) with ``by_row``'s values written at its index (action rows)."""
+    values = out.to_numpy(dtype="float64", copy=True)
+    values[by_row.index.to_numpy(dtype=np.int64)] = by_row.to_numpy(dtype="float64")
+    return pd.Series(values, index=out.index, dtype="float64")
 
 
-def _write_positional(
-    out: pd.Series,
-    rows_by_aid: dict,
-    aids,
-    anchor_finite: np.ndarray,
-    value: float,
-) -> None:
-    """Write ``value`` to every row of ``aids`` whose OWN anchor is finite.
+def _write_positional(out: pd.Series, rows, anchor_finite: np.ndarray, value: float) -> None:
+    """Write ``value`` to each of the ``rows`` positions of ``out`` whose OWN anchor is finite.
 
-    This is a CRASH fix, and the gate is per-ROW because that is the form that cannot break --
-    not because a differing-anchor case was observed. Measured, on the VAEP gamestates this
-    guards: duplicated ``action_id`` rows carry IDENTICAL anchors, because the shift repeats the
-    boundary action verbatim. So the old id-keyed lookup was not computing a wrong number; it was
-    raising ``"truth value of a Series is ambiguous"`` from ``bool(Series)`` the moment an id
-    repeated, which is what ADR-020 is about.
-
-    The per-row form is therefore byte-identical wherever the old code ran at all (verified on the
-    unique-id path), and merely well-defined where the old code died. Stating the weaker true claim
-    on purpose: an earlier draft of this docstring asserted differing anchors as "measured" on the
-    strength of a synthetic probe rather than a real gamestate, which is the substitution AGENTS.md
-    warns about.
+    The kernels key on ``action_row``, the position of the action in ``ctx.actions`` (spec 2026-11-08
+    tracking-batch §4.9 W9.4). They never key on ``action_id``: it repeats across games, and it repeats in a VAEP
+    gamestate matrix, where the shifted slots copy the boundary action (ADR-020).
 
     NaN-anchor rows stay NaN, per the ADR-003 contract: pressure is undefined when the anchor
     position is unknown, which is distinct from "linked but no defenders" 0.0.
     """
-    rows = [pos for aid in aids for pos in rows_by_aid.get(aid, ())]
-    if not rows:
-        return
-    keep = [pos for pos in rows if anchor_finite[pos]]
+    keep = [int(pos) for pos in rows if anchor_finite[int(pos)]]
     if keep:
         out.iloc[keep] = value
 
@@ -103,8 +80,7 @@ def _nearest_defender_distance(
 
     Returns NaN for actions with no opposite rows in ctx (unlinked or no defenders).
     """
-    actions_id = ctx.actions["action_id"].to_numpy()
-    n = len(actions_id)
+    n = len(ctx.actions)
     out = pd.Series(np.full(n, np.nan), index=ctx.actions.index, dtype="float64")
 
     if len(ctx.opposite_rows_per_action) == 0:
@@ -112,23 +88,18 @@ def _nearest_defender_distance(
 
     a_xy = pd.DataFrame(
         {
-            "action_id": actions_id,
+            "action_row": np.arange(len(ctx.actions)),
             "anchor_x": anchor_x.to_numpy(),
             "anchor_y": anchor_y.to_numpy(),
         }
     )
-    merged = ctx.opposite_rows_per_action.merge(a_xy, on="action_id", how="left")
+    merged = ctx.opposite_rows_per_action.merge(a_xy, on="action_row", how="left")
     dx = merged["x"] - merged["anchor_x"]
     dy = merged["y"] - merged["anchor_y"]
     dist = np.sqrt(dx * dx + dy * dy)
     merged["_dist"] = dist
-    min_per_action = merged.groupby("action_id")["_dist"].min()
-
-    action_to_idx = pd.Series(ctx.actions.index, index=actions_id)
-    for aid, d in min_per_action.items():
-        if aid in action_to_idx.index:
-            out.loc[action_to_idx.loc[aid]] = d  # type: ignore[arg-type]  # .loc[scalar] returns Hashable; pandas-stubs limitation
-    return out
+    min_per_action = merged.groupby("action_row")["_dist"].min()
+    return _write_rows(out, min_per_action)
 
 
 def _actor_speed_from_ctx(ctx: ActionFrameContext) -> pd.Series:
@@ -139,13 +110,10 @@ def _actor_speed_from_ctx(ctx: ActionFrameContext) -> pd.Series:
     out = pd.Series(np.full(len(ctx.actions), np.nan), index=ctx.actions.index, dtype="float64")
     if len(ctx.actor_rows) == 0 or "speed" not in ctx.actor_rows.columns:
         return out
-    actions_id = ctx.actions["action_id"].to_numpy()
-    action_to_idx = pd.Series(ctx.actions.index, index=actions_id)
     for _, row in ctx.actor_rows.iterrows():
-        aid = row["action_id"]
         speed = row["speed"]
-        if aid in action_to_idx.index and pd.notna(speed):
-            out.loc[action_to_idx.loc[aid]] = float(speed)
+        if pd.notna(speed):
+            out.iloc[int(row["action_row"])] = float(speed)
     return out
 
 
@@ -163,34 +131,26 @@ def _receiver_zone_density(
     """
     out = pd.Series(np.full(len(ctx.actions), np.nan), index=ctx.actions.index, dtype="float64")
 
-    actions_id = ctx.actions["action_id"].to_numpy()
-    action_to_idx = pd.Series(ctx.actions.index, index=actions_id)
-    linked_aids = set(ctx.pointers.loc[ctx.pointers["frame_id"].notna(), "action_id"].to_numpy())
-    for aid in linked_aids:
-        if aid in action_to_idx.index:
-            out.loc[action_to_idx.loc[aid]] = 0.0
+    out.iloc[np.flatnonzero(ctx.linked_rows)] = 0.0
 
     if len(ctx.opposite_rows_per_action) == 0:
         return out
 
     a_xy = pd.DataFrame(
         {
-            "action_id": actions_id,
+            "action_row": np.arange(len(ctx.actions)),
             "anchor_x": anchor_x.to_numpy(),
             "anchor_y": anchor_y.to_numpy(),
         }
     )
-    merged = ctx.opposite_rows_per_action.merge(a_xy, on="action_id", how="left")
+    merged = ctx.opposite_rows_per_action.merge(a_xy, on="action_row", how="left")
     dx = merged["x"] - merged["anchor_x"]
     dy = merged["y"] - merged["anchor_y"]
     dist = np.sqrt(dx * dx + dy * dy)
     in_radius = dist <= radius
     merged["_in"] = in_radius.astype("int64")
-    counts = merged.groupby("action_id")["_in"].sum()
-    for aid, c in counts.items():
-        if aid in action_to_idx.index:
-            out.loc[action_to_idx.loc[aid]] = float(c)  # type: ignore[arg-type]  # .loc[scalar] returns Hashable; pandas-stubs limitation
-    return out
+    counts = merged.groupby("action_row")["_in"].sum()
+    return _write_rows(out, counts)
 
 
 def _defenders_in_triangle_to_goal(
@@ -207,24 +167,19 @@ def _defenders_in_triangle_to_goal(
     """
     out = pd.Series(np.full(len(ctx.actions), np.nan), index=ctx.actions.index, dtype="float64")
 
-    actions_id = ctx.actions["action_id"].to_numpy()
-    action_to_idx = pd.Series(ctx.actions.index, index=actions_id)
-    linked_aids = set(ctx.pointers.loc[ctx.pointers["frame_id"].notna(), "action_id"].to_numpy())
-    for aid in linked_aids:
-        if aid in action_to_idx.index:
-            out.loc[action_to_idx.loc[aid]] = 0.0
+    out.iloc[np.flatnonzero(ctx.linked_rows)] = 0.0
 
     if len(ctx.opposite_rows_per_action) == 0:
         return out
 
     a_xy = pd.DataFrame(
         {
-            "action_id": actions_id,
+            "action_row": np.arange(len(ctx.actions)),
             "ax": anchor_x.to_numpy(),
             "ay": anchor_y.to_numpy(),
         }
     )
-    merged = ctx.opposite_rows_per_action.merge(a_xy, on="action_id", how="left")
+    merged = ctx.opposite_rows_per_action.merge(a_xy, on="action_row", how="left")
 
     ax = merged["ax"].to_numpy()
     ay = merged["ay"].to_numpy()
@@ -246,11 +201,8 @@ def _defenders_in_triangle_to_goal(
     in_triangle = ~(has_neg & has_pos)
 
     merged["_in"] = in_triangle.astype("int64")
-    counts = merged.groupby("action_id")["_in"].sum()
-    for aid, c in counts.items():
-        if aid in action_to_idx.index:
-            out.loc[action_to_idx.loc[aid]] = float(c)  # type: ignore[arg-type]  # .loc[scalar] returns Hashable; pandas-stubs limitation
-    return out
+    counts = merged.groupby("action_row")["_in"].sum()
+    return _write_rows(out, counts)
 
 
 def _pre_shot_gk_position(
@@ -294,13 +246,13 @@ def _pre_shot_gk_position(
     if not is_shot.any():
         return out
 
-    # Left-join GK x/y on action_id; non-shot/pre-engagement/GK-absent rows have NaN gk x/y.
+    # Left-join GK x/y on action_row; non-shot/pre-engagement/GK-absent rows have NaN gk x/y.
     if len(ctx.defending_gk_rows) > 0:
-        gk = ctx.defending_gk_rows[["action_id", "x", "y"]].rename(columns={"x": "_gk_x", "y": "_gk_y"})
-        gk = gk.drop_duplicates("action_id", keep="first")
-        per_action = actions[["action_id"]].merge(gk, on="action_id", how="left")
+        gk = ctx.defending_gk_rows[["action_row", "x", "y"]].rename(columns={"x": "_gk_x", "y": "_gk_y"})
+        gk = gk.drop_duplicates("action_row", keep="first")
+        per_action = pd.DataFrame({"action_row": np.arange(len(actions))}).merge(gk, on="action_row", how="left")
     else:
-        per_action = actions[["action_id"]].assign(_gk_x=np.nan, _gk_y=np.nan)
+        per_action = pd.DataFrame({"action_row": np.arange(len(actions))}).assign(_gk_x=np.nan, _gk_y=np.nan)
     per_action.index = actions.index
 
     shot_mask = pd.Series(is_shot, index=actions.index)
@@ -355,11 +307,11 @@ def _pre_shot_gk_angle(
         return out
 
     if len(ctx.defending_gk_rows) > 0:
-        gk = ctx.defending_gk_rows[["action_id", "x", "y"]].rename(columns={"x": "_gk_x", "y": "_gk_y"})
-        gk = gk.drop_duplicates("action_id", keep="first")
-        per_action = actions[["action_id"]].merge(gk, on="action_id", how="left")
+        gk = ctx.defending_gk_rows[["action_row", "x", "y"]].rename(columns={"x": "_gk_x", "y": "_gk_y"})
+        gk = gk.drop_duplicates("action_row", keep="first")
+        per_action = pd.DataFrame({"action_row": np.arange(len(actions))}).merge(gk, on="action_row", how="left")
     else:
-        per_action = actions[["action_id"]].assign(_gk_x=np.nan, _gk_y=np.nan)
+        per_action = pd.DataFrame({"action_row": np.arange(len(actions))}).assign(_gk_x=np.nan, _gk_y=np.nan)
     per_action.index = actions.index
 
     shot_mask = pd.Series(is_shot, index=actions.index)
@@ -416,28 +368,25 @@ def _pressure_andrienko(
     See spec section 4.4, NOTICE (Andrienko et al. 2017).
     """
     out = pd.Series(np.full(len(ctx.actions), np.nan), index=ctx.actions.index, dtype="float64")
-    actions_id = ctx.actions["action_id"].to_numpy()
-    rows_by_aid = _rows_by_action_id(actions_id)
 
     # Track which actions have a finite anchor; NaN-anchor actions stay NaN
     # in output (per ADR-003 NaN-safe contract -- pressure is undefined when
     # anchor position is unknown, distinct from "linked but no defenders" 0.0).
     anchor_finite = np.isfinite(anchor_x.to_numpy()) & np.isfinite(anchor_y.to_numpy())
 
-    linked_aids = set(ctx.pointers.loc[ctx.pointers["frame_id"].notna(), "action_id"].to_numpy())
-    _write_positional(out, rows_by_aid, linked_aids, anchor_finite, 0.0)
+    _write_positional(out, np.flatnonzero(ctx.linked_rows), anchor_finite, 0.0)
 
     if len(ctx.opposite_rows_per_action) == 0:
         return out
 
     a_xy = pd.DataFrame(
         {
-            "action_id": actions_id,
+            "action_row": np.arange(len(ctx.actions)),
             "ax": anchor_x.to_numpy(),
             "ay": anchor_y.to_numpy(),
         }
     )
-    merged = ctx.opposite_rows_per_action.merge(a_xy, on="action_id", how="left")
+    merged = ctx.opposite_rows_per_action.merge(a_xy, on="action_row", how="left")
 
     ax = merged["ax"].to_numpy()
     ay = merged["ay"].to_numpy()
@@ -467,9 +416,9 @@ def _pressure_andrienko(
     pr_per_defender = np.where(in_zone, np.power(np.maximum(0.0, 1.0 - d / L), params.q) * 100.0, 0.0)
 
     merged["_pr"] = pr_per_defender
-    sums = merged.groupby("action_id")["_pr"].sum()
-    for aid, pr_total in sums.items():
-        _write_positional(out, rows_by_aid, (aid,), anchor_finite, float(pr_total))
+    sums = merged.groupby("action_row")["_pr"].sum()
+    for row, pr_total in sums.items():
+        _write_positional(out, (row,), anchor_finite, float(pr_total))
     return out
 
 
@@ -499,24 +448,21 @@ def _pressure_link(
     See spec section 4.4, NOTICE (Link et al. 2016).
     """
     out = pd.Series(np.full(len(ctx.actions), np.nan), index=ctx.actions.index, dtype="float64")
-    actions_id = ctx.actions["action_id"].to_numpy()
-    rows_by_aid = _rows_by_action_id(actions_id)  # ADR-020: positional, never action_id-keyed
     anchor_finite = np.isfinite(anchor_x.to_numpy()) & np.isfinite(anchor_y.to_numpy())
 
-    linked_aids = set(ctx.pointers.loc[ctx.pointers["frame_id"].notna(), "action_id"].to_numpy())
-    _write_positional(out, rows_by_aid, linked_aids, anchor_finite, 0.0)
+    _write_positional(out, np.flatnonzero(ctx.linked_rows), anchor_finite, 0.0)
 
     if len(ctx.opposite_rows_per_action) == 0:
         return out
 
     a_xy = pd.DataFrame(
         {
-            "action_id": actions_id,
+            "action_row": np.arange(len(ctx.actions)),
             "ax": anchor_x.to_numpy(),
             "ay": anchor_y.to_numpy(),
         }
     )
-    merged = ctx.opposite_rows_per_action.merge(a_xy, on="action_id", how="left")
+    merged = ctx.opposite_rows_per_action.merge(a_xy, on="action_row", how="left")
 
     ax = merged["ax"].to_numpy()
     ay = merged["ay"].to_numpy()
@@ -545,10 +491,10 @@ def _pressure_link(
     pr_per_defender = np.where(in_zone, np.maximum(0.0, 1.0 - d / r_zo), 0.0)
 
     merged["_pr"] = pr_per_defender
-    sums = merged.groupby("action_id")["_pr"].sum()
-    for aid, x_total in sums.items():
+    sums = merged.groupby("action_row")["_pr"].sum()
+    for row, x_total in sums.items():
         agg = 1.0 - math.exp(-params.k3 * float(x_total))
-        _write_positional(out, rows_by_aid, (aid,), anchor_finite, agg)
+        _write_positional(out, (row,), anchor_finite, agg)
     return out
 
 
@@ -639,50 +585,45 @@ def _pressure_bekkers(
     See spec section 4.4, NOTICE (Bekkers 2025; BSD-3-Clause UnravelSports).
     """
     out = pd.Series(np.full(len(ctx.actions), np.nan), index=ctx.actions.index, dtype="float64")
-    actions_id = ctx.actions["action_id"].to_numpy()
-    rows_by_aid = _rows_by_action_id(actions_id)  # ADR-020: positional, never action_id-keyed
     anchor_finite = np.isfinite(anchor_x.to_numpy()) & np.isfinite(anchor_y.to_numpy())
 
-    linked_aids = set(ctx.pointers.loc[ctx.pointers["frame_id"].notna(), "action_id"].to_numpy())
-    _write_positional(out, rows_by_aid, linked_aids, anchor_finite, 0.0)
+    _write_positional(out, np.flatnonzero(ctx.linked_rows), anchor_finite, 0.0)
 
     if len(ctx.opposite_rows_per_action) == 0:
         return out
 
     # Build per-action arrays: actor pos+v, ball pos+v (if used), defenders pos+v+speed.
-    # ctx.actor_rows can have duplicate action_id rows in real-data slim slices when
+    # ctx.actor_rows can have duplicate action_row rows in real-data slim slices when
     # the linked frame happens to contain multiple rows tagged with the actor's
     # player_id (rare but observed). Collapse to first per action.
-    actor_per_action = ctx.actor_rows.drop_duplicates(subset=["action_id"], keep="first").set_index("action_id")[
+    actor_per_action = ctx.actor_rows.drop_duplicates(subset=["action_row"], keep="first").set_index("action_row")[
         ["x", "y", "vx", "vy"]
     ]
 
     if params.use_ball_carrier_max:
         # Mirror the actor_per_action dedup above: a duplicated frame record (e.g. Gradient Sports
-        # ships some (period, frame) records up to 16x) yields >1 ball row for one action_id, so
-        # ball_per_action_indexed.loc[aid] would return a DataFrame and ball_pos would become 3-D,
+        # ships some (period, frame) records up to 16x) yields >1 ball row for one action_row, so
+        # ball_per_action_indexed.loc[row] would return a DataFrame and ball_pos would become 3-D,
         # crashing _bekkers_tti with a broadcast error. Collapse to first per action.
         ball_per_action_indexed = (
-            ball_xy_v_per_action.drop_duplicates(subset=["action_id"], keep="first").set_index("action_id")
+            ball_xy_v_per_action.drop_duplicates(subset=["action_row"], keep="first").set_index("action_row")
             if len(ball_xy_v_per_action)
             else pd.DataFrame()
         )
 
-    grouped = ctx.opposite_rows_per_action.groupby("action_id")
-    for aid, defender_group in grouped:
-        rows = rows_by_aid.get(aid, ())
-        if not rows:
-            continue
-        if not any(anchor_finite[pos] for pos in rows):
+    grouped = ctx.opposite_rows_per_action.groupby("action_row")
+    for row_key, defender_group in grouped:
+        row = int(row_key)  # type: ignore[arg-type]  # groupby key typed Scalar (pandas-stubs); action_row is int
+        if not anchor_finite[row]:
             # NaN anchor -> output stays NaN (set at init); don't compute.
             continue
-        if aid not in actor_per_action.index:
+        if row not in actor_per_action.index:
             continue
-        actor_row = actor_per_action.loc[aid]
+        actor_row = actor_per_action.loc[row]
         actor_pos = np.array([[actor_row["x"], actor_row["y"]]], dtype="float64")
         actor_vel = np.array([[actor_row["vx"], actor_row["vy"]]], dtype="float64")
         if pd.isna(actor_pos).any() or pd.isna(actor_vel).any():
-            _write_positional(out, rows_by_aid, (aid,), anchor_finite, float("nan"))
+            _write_positional(out, (row,), anchor_finite, float("nan"))
             continue
 
         defender_pos = defender_group[["x", "y"]].to_numpy(dtype="float64")
@@ -690,7 +631,7 @@ def _pressure_bekkers(
         defender_speed = defender_group["speed"].to_numpy(dtype="float64")
 
         if np.isnan(defender_pos).any() or np.isnan(defender_vel).any():
-            _write_positional(out, rows_by_aid, (aid,), anchor_finite, float("nan"))
+            _write_positional(out, (row,), anchor_finite, float("nan"))
             continue
 
         tti_to_actor = _bekkers_tti(
@@ -715,8 +656,8 @@ def _pressure_bekkers(
         # windows where kloppy returned no ball_coordinates), fall back PER ACTION to
         # the Bekkers base model (pressure-on-player only) -- a documented variant, not
         # NaN and not a raise. ball-carrier-max is an improvement, not a requirement. (3.30.0)
-        if params.use_ball_carrier_max and aid in ball_per_action_indexed.index:
-            ball_row = ball_per_action_indexed.loc[aid]
+        if params.use_ball_carrier_max and row in ball_per_action_indexed.index:
+            ball_row = ball_per_action_indexed.loc[row]
             ball_pos = np.array([[ball_row["x"], ball_row["y"]]], dtype="float64")
             ball_vel = np.array([[ball_row["vx"], ball_row["vy"]]], dtype="float64")
             if not (np.isnan(ball_pos).any() or np.isnan(ball_vel).any()):
@@ -744,7 +685,7 @@ def _pressure_bekkers(
 
         # Aggregation: 1 - prod(1 - p)
         agg = 1.0 - float(np.prod(1.0 - p_per_defender))
-        _write_positional(out, rows_by_aid, (aid,), anchor_finite, agg)
+        _write_positional(out, (row,), anchor_finite, agg)
 
     return out
 
@@ -760,7 +701,34 @@ def _actor_pre_window_kernel(
     *,
     pre_seconds: float,
 ) -> pd.DataFrame:
-    """TF-3 shared kernel: emits both arc-length and displacement.
+    """TF-3 shared kernel: emits both arc-length and displacement, indexed identically to ``actions``.
+
+    The pre-window is a TIME window of frames, not a pointer join, so it runs once per game
+    (``iter_games``; spec 2026-11-08 tracking-batch section 4.9 W9.4): a window never reads another
+    game's frames, and an ``action_id`` that two games share cannot cross over.
+    """
+    out = pd.DataFrame(
+        {
+            "actor_arc_length_pre_window": np.full(len(actions), np.nan, dtype="float64"),
+            "actor_displacement_pre_window": np.full(len(actions), np.nan, dtype="float64"),
+        },
+        index=actions.index,
+    )
+    if len(actions) == 0 or len(frames) == 0:
+        return out
+    for rows, game_actions, game_frames in iter_games(actions, frames):
+        game_out = _actor_pre_window_one_game(game_actions, game_frames, pre_seconds=pre_seconds)
+        out.iloc[rows] = game_out.to_numpy()
+    return out
+
+
+def _actor_pre_window_one_game(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    pre_seconds: float,
+) -> pd.DataFrame:
+    """The pre-window kernel for the actions and frames of ONE game.
 
     REQUIREMENT per spec section 3.3: sort frames by (action_id, time_seconds ASC)
     inside each (action, actor_player_id) group BEFORE computing segments or
@@ -834,7 +802,9 @@ def _defensive_line_at_actions(
     """All 6 defensive-line columns for the defending team at each action's linked frame.
 
     Calls compute_defensive_line ONCE on the full frames DataFrame, then
-    joins on (period_id, frame_id, opposing_team_id) per action.
+    joins on (game_id, period_id, frame_id, opposing_team_id) per action. Each action's pointer is found by
+    its action ROW (``pointers_by_action_row``, spec 2026-11-08 W9.4), never by ``action_id``: one
+    ``action_id`` names one action only inside a game.
 
     Returns DataFrame aligned with actions.index.
     """
@@ -864,25 +834,20 @@ def _defensive_line_at_actions(
     if dl.empty:
         return empty
 
-    # Link actions to frames — use _row_idx as stable positional key
-    # (action_id may not be unique in gamestates shifted slots)
-    actions_with_idx = actions.copy()
-    actions_with_idx["_row_idx"] = np.arange(n_actions)
+    # Link actions to frames. Each action row takes its OWN pointer, by position (spec W9.4): a re-attach on
+    # action_id read the other game's frame on a two-game input (the W9.6 real-data run, 2026-11-12).
     if links is not None:
         pointers = links
     else:
-        pointers, _report = link_actions_to_frames(actions_with_idx, frames)
-    linked = pointers[pointers["frame_id"].notna()].copy()
+        pointers, _report = link_actions_to_frames(actions, frames)
+    # an unlinked action has an Int64 <NA> frame id: na_value keeps the declared pandas floor (2.1 raises without it)
+    frame_ids = pointers_by_action_row(actions, pointers)["frame_id"].to_numpy(dtype="float64", na_value=np.nan)
+    linked = actions[["team_id", "period_id", "game_id"]].reset_index(drop=True)  # the caller's id dtypes
+    linked.insert(0, "_row_idx", np.arange(n_actions))
+    linked["frame_id"] = frame_ids
+    linked = linked[~np.isnan(frame_ids)].reset_index(drop=True)
     if linked.empty:
         return empty
-
-    # Re-attach _row_idx + team_id + period_id from the indexed actions
-    linked = linked.merge(
-        actions_with_idx[["action_id", "_row_idx", "team_id", "period_id", "game_id"]],
-        on="action_id",
-        how="left",
-    )
-    # For duplicate action_ids (gamestates), keep all rows — _row_idx disambiguates
     linked["frame_id_int"] = linked["frame_id"].astype("int64")
 
     # Align id-valued join keys (incl. the differently-named frame_id_int<->frame_id pair) so a
@@ -938,27 +903,20 @@ def resolve_frame_ids_by_position(
 ) -> np.ndarray:
     """Float64 array (len == len(actions)): linked frame_id per action ROW, NaN if
     unlinked. Robust to NON-UNIQUE action_id (VAEP shifted gamestate slots repeat the
-    boundary action). NEVER uses .at on a possibly-non-unique index.
+    boundary action) and to more than one game.
 
-    add_*-supplied ``links`` are keyed by the unique action_id; the internal-link path
-    re-keys to a unique positional surrogate before linking.
+    Each pointer finds its action through ``action_row`` (``pointers_by_action_row``; spec
+    2026-11-08 tracking-batch section 4.9 W9.4), for caller ``links`` and for the internal link
+    alike. ``links`` must be built from exactly this ``actions`` frame, in this row order.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from .utils import link_actions_to_frames
 
-    n = len(actions)
-    if n == 0:
+    if len(actions) == 0:
         return np.full(0, np.nan)
-    if links is not None:
-        # links action_id and actions action_id are both the post-link int64 SPADL id
-        # (link_actions_to_frames casts to int64); reindex aligns by exact id. The
-        # internal-link path below uses an int64 surrogate, so both paths are
-        # dtype-consistent -- locked by test_resolve_frame_ids_by_position.
-        fid = links.drop_duplicates("action_id").set_index("action_id")["frame_id"]
-        return fid.reindex(actions["action_id"].to_numpy()).to_numpy(dtype="float64")
-    link_input = actions.copy()
-    link_input["action_id"] = np.arange(n)  # unique positional surrogate
-    pointers, _ = link_actions_to_frames(link_input, frames)
-    return pointers.set_index("action_id")["frame_id"].reindex(np.arange(n)).to_numpy(dtype="float64")
+    pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
+    # an unlinked action has an Int64 <NA> frame id: na_value keeps the declared pandas floor (2.1 raises without it)
+    return pointers_by_action_row(actions, pointers)["frame_id"].to_numpy(dtype="float64", na_value=np.nan)
 
 
 def _structural_pass_at_actions(
@@ -1002,8 +960,8 @@ def _structural_pass_at_actions(
     # resolved bool rather than a GoalMap (the ADR-051 D3 rule).
     # Kept as the NULLABLE boolean it is: pd.NA marks an action whose direction the frames do
     # not resolve, and the loop leaves that action's three columns NaN rather than guessing.
-    _sp_flip = dict(zip(actions["action_id"], acting_team_attacks_rtl(actions, frames), strict=False))
-    frame_groups = frames.groupby(["period_id", "frame_id"])
+    _sp_flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=object)  # by action ROW (W9.4)
+    frame_rows = LinkedFrameRows(actions, frames)  # the frame of the action's own game and period
 
     for j, (_idx, row) in enumerate(actions.iterrows()):
         if row.get("type_id") not in (0, 1):  # 0=pass, 1=cross (SPADL type ids)
@@ -1011,14 +969,11 @@ def _structural_pass_at_actions(
         tid = row["team_id"]
         if pd.isna(tid) or np.isnan(fid_by_pos[j]):
             continue
-        pid = int(row["period_id"])  # shift may promote period_id to float
-        fid = int(fid_by_pos[j])
-        try:
-            frame_data = frame_groups.get_group((pid, fid))
-        except KeyError:
+        frame_data = frame_rows.get(j, int(fid_by_pos[j]))
+        if frame_data.empty:
             continue
 
-        _flip = _sp_flip.get(row["action_id"])
+        _flip = _sp_flip[j]
         if pd.isna(_flip):
             # Unresolved direction -> leave lbs/sgm/sdi NaN for this action. LBS is only clean
             # in attack-positive coords, so a guessed direction does not degrade the number, it
@@ -1092,7 +1047,7 @@ def _packing_at_actions(
     col_net = np.full(n, np.nan)
     col_gt = np.full(n, np.nan)
     col_line = np.full(n, np.nan)
-    frame_groups = frames.groupby(["period_id", "frame_id"])
+    frame_rows = LinkedFrameRows(actions, frames)  # the frame of the action's own game and period (W9.4)
 
     for j, (_idx, row) in enumerate(actions.iterrows()):
         type_id = row.get("type_id")
@@ -1105,11 +1060,8 @@ def _packing_at_actions(
         ex, ey = float(row["end_x"]), float(row["end_y"])
         if type_id == dribble_id and sx == ex and sy == ey:
             continue  # placeholder end (pre-PR-S116 corpora; period-last carries) -> unattested
-        pid = int(row["period_id"])  # shift may promote period_id to float
-        fid = int(fid_by_pos[j])
-        try:
-            frame_data = frame_groups.get_group((pid, fid))
-        except KeyError:
+        frame_data = frame_rows.get(j, int(fid_by_pos[j]))
+        if frame_data.empty:
             continue
 
         m = compute_packing_metrics(

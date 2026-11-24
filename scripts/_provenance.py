@@ -18,7 +18,7 @@ import pathlib
 import platform as _platform
 import subprocess
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 #: The ONLY degradable failures. `except Exception` here would report a TypeError or AttributeError
 #: in this module as "git unavailable" and quietly return dirty=True -- a bug wearing a known
@@ -51,31 +51,76 @@ def _git(*args: str) -> str:
     ).stdout.rstrip()
 
 
-def git_tree_hash() -> str:
-    """The git TREE hash of the working-tree CONTENT -- a stable content identifier even when the tree is dirty vs
-    HEAD or carries untracked files (review A-55: the no-flip verdict needs to be tied to the exact tree it ran on,
-    e.g. 8a219312, not only to a commit + a dirty flag).
+#: Scoped code identity (spec 2026-11-08 tracking-batch W0.4, owner ruling R11): the content that decides what a
+#: measurement or a gate ran. Docs, the ADR, and the memo change after the after-run, so a whole-tree identity cannot
+#: match the commit; this scope can.
+CODE_IDENTITY_PATHS: tuple[str, ...] = ("silly_kicks", "scripts", "pyproject.toml", "uv.lock")
+#: Left out of every scoped identity: it holds only the version string, so the commit-prep bump keeps the identity.
+CODE_IDENTITY_EXCLUDE: tuple[str, ...] = ("silly_kicks/_version.py",)
 
-    Computed over a throwaway index (``GIT_INDEX_FILE``) seeded from HEAD then ``add -A`` (tracked edits + untracked
-    files), so it matches the content a byte-identical ship of the tree would carry. ``"unknown"`` when git is absent.
+
+class ProvenanceError(RuntimeError):
+    """A scoped identity could not be computed. Never degrades to a placeholder: two failures must not compare equal
+    (fail-closed, A1-PLAN-49)."""
+
+
+def git_tree_hash(*, paths: Sequence[str] | None = None, repo: pathlib.Path | None = None) -> str:
+    """The git TREE hash of a content set -- a stable content identifier even when the tree is dirty vs HEAD or
+    carries untracked files (review A-55: the no-flip verdict needs to be tied to the exact tree it ran on, e.g.
+    8a219312, not only to a commit + a dirty flag).
+
+    With ``paths=None``, the hash covers the whole working tree: a throwaway index
+    (``GIT_INDEX_FILE``) seeded from HEAD, then ``add -A`` (tracked edits + untracked files), so it matches the content
+    a byte-identical ship of the tree would carry. ``"unknown"`` when git is absent.
+
+    With ``paths`` (spec 2026-11-08 tracking-batch W0.4), the throwaway index starts EMPTY and holds only the content
+    under ``paths`` (``git add -A -- <paths>``: tracked and untracked, not ignored), less
+    :data:`CODE_IDENTITY_EXCLUDE`.
+
+    A git failure on the scoped path raises :class:`ProvenanceError`. ``repo`` runs git there instead of in the
+    current directory, for the whole-tree hash too.
     """
-    import os
     import tempfile
 
+    if paths is None:
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                env = {**os.environ, "GIT_INDEX_FILE": str(pathlib.Path(tmp) / "index")}
+                for args in (["read-tree", "HEAD"], ["add", "-A"]):
+                    subprocess.run(["git", *args], check=True, capture_output=True, env=env, cwd=repo)  # noqa: S603, S607
+                return subprocess.run(
+                    ["git", "write-tree"],  # noqa: S607 -- git from PATH is the house pattern
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    cwd=repo,
+                ).stdout.rstrip()
+        except _GIT_FAILURES:
+            return "unknown"
+
+    scope = list(paths)
     try:
         with tempfile.TemporaryDirectory() as tmp:
             env = {**os.environ, "GIT_INDEX_FILE": str(pathlib.Path(tmp) / "index")}
-            subprocess.run(["git", "read-tree", "HEAD"], check=True, capture_output=True, env=env)  # noqa: S607
-            subprocess.run(["git", "add", "-A"], check=True, capture_output=True, env=env)  # noqa: S607
-            return subprocess.run(
-                ["git", "write-tree"],  # noqa: S607 -- git from PATH is the house pattern
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-            ).stdout.rstrip()
-    except _GIT_FAILURES:
-        return "unknown"
+
+            def run(*args: str) -> bytes:
+                return subprocess.run(  # noqa: S603 -- argv is git plus fixed literals and repo paths
+                    ["git", *args],  # noqa: S607 -- git from PATH is the house pattern
+                    check=True,
+                    capture_output=True,
+                    env=env,
+                    cwd=repo,
+                ).stdout
+
+            run("read-tree", "--empty")
+            run("add", "-A", "--", *scope)
+            run("rm", "--cached", "-q", "--ignore-unmatch", "--", *CODE_IDENTITY_EXCLUDE)
+            return run("write-tree").decode().rstrip()
+    except _GIT_FAILURES as exc:
+        stderr = getattr(exc, "stderr", None)
+        detail = stderr.decode(errors="replace").strip() if isinstance(stderr, bytes) else exc
+        raise ProvenanceError(f"scoped git tree hash failed (paths={scope}): {detail}") from exc
 
 
 def _has_tracked_changes() -> bool:

@@ -5,6 +5,150 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.145.0] — 2026-11-24 — tracking batch seams, multi-game linking, team-relative shape-graph labels, DFL event derivation (ADR-137) (PR-S210)
+
+> **Why a minor release:** the wheel gains public API, and values change for the input classes listed under
+> "Changed — approved value changes" (ADR-137). Every other input is bit-identical to the previous release. The scripts entry
+> (the W5.7 role gate) does not change the wheel.
+
+### Added
+
+- **`silly_kicks.backends`** (public): `active_backend(family)` (raises `NumbaUnavailableError` or `ValueError`, as
+  `use_numba`), `backend_report()` (never raises; `"numba"`, `"numpy"` or `"unavailable"` per family, plus
+  `"numba_version"`), and the re-exports `FAMILIES` and `NumbaUnavailableError`. It replaces a guard on the private
+  `_HAS_NUMBA`, which #299 removed.
+- **Pitch-control batch seams:** `compute_pitch_control_batch(..., max_frames_per_chunk=2048)` (a positive `int` or
+  `None`, else `ValueError`), and `PitchControlFrameIndex`, `build_pitch_control_index(frames)` and
+  `compute_pitch_control_batch_from_index(index, requests, *, method, params, max_frames_per_chunk)` from
+  `silly_kicks.tracking.pitch_control`. The spearman batch extracts players, resolves the ball and scores TTI once
+  per distinct frame, from one columnar index. Values are bit-identical at any chunk size. The docstring states the
+  measured peak memory per backend.
+- **`compute_shape_graphs(frames, *, stability_threshold=45.0, with_positions=True, retain_graphs=False)`**, its
+  result `ShapeGraphBatch` (`frames_summary`, `players`, `graph()`), and `SHAPE_GRAPH_SOURCE_VALUES`, from
+  `silly_kicks.tracking`. Chunks on whole-frame boundaries concatenate to one call's result. The new columns are in
+  `feature_glossary`. An outfield row with a missing `game_id`, `period_id`, `frame_id` or `team_id` is in no
+  team-frame; one `UserWarning` counts such rows.
+- **The DFL event contract** in `silly_kicks.providers.sportec`: `derive_dfl_event_periods`, `dfl_event_column`,
+  `dfl_actor_columns`, `resolve_dfl_event_actors`, `complete_dfl_event_bronze`, `DflPeriodReport`,
+  `DFL_EVENT_TYPE_PREFIX` and `DFL_NESTED_PREFIX`.
+- **Two warning categories:** `DflEventTimeWarning` (an event time that cannot be parsed or compared with the
+  kickoff times; the row gets `<NA>` and is counted) and `DflGameSectionWarning` (a KickOff with an unrecognised
+  `GameSection` is skipped and reported, or a period start that may lack its section). A KickOff with no
+  `GameSection` after a period started is a restart after a goal: `DflPeriodReport.n_restart_kickoffs` counts it,
+  with no warning and no parser log line (18 such KickOffs in the 7 DFL corpus matches).
+- **Pointer columns `action_row` (int64) and `action_fingerprint` (uint64)**, appended last by
+  `link_actions_to_frames` and `link_actions_to_frames_elastic`. `action_row` is the 0-based row of the action in
+  the `actions` frame passed to the linker. Join pointers to actions on `action_row`, never on `action_id` alone.
+  `action_fingerprint` is the frozen BLAKE2b 8-byte digest of `"{game}|{period}|{action}|{time}"`
+  (`id_compat.canonical_id` strings, `float(time_seconds).hex()` after an upcast to float64, `"<NA>"` for a missing
+  value); a committed test vector freezes it.
+- **`LinkReport.per_game_period_link_rate`**: the link rate per (game_id, period_id). `per_period_link_rate` keeps
+  its meaning and values for a single-game input.
+
+### Changed — the binding contract
+
+- **`links` must be built from exactly this `actions` frame, in this row order.** Every `links=` acceptor verifies a
+  `links` frame with `action_row` at every position: the row must be in range, and its fingerprint must equal the
+  fingerprint of `actions.iloc[action_row]`. A mismatch raises `ValueError` and names the first mismatched row.
+- **Legacy `links=` frames (no `action_row`)** are joined on `action_id` only when `actions` spans one game and the
+  ids are unique in both frames, as the lakehouse uses them today. Otherwise they raise `ValueError` and ask for a
+  re-link with the current linker.
+- Every function that re-sorts, filters or subsets `actions` before it passes `links=` on now remaps or re-links the
+  pointers.
+
+### Changed — approved value changes (ADR-137)
+
+- **R5 (multi-game linking).** The linkers index frames on (game_id, period_id, frame_id) and link within each
+  (game_id, period_id). Before, two games with the same period and frame ids lost half the frame rows and linked one
+  game's actions to the other game's frames. Every pointer consumer joins on `action_row` and on (game_id,
+  period_id, frame_id). **Input class:** multi-game `actions`/`frames`. **New:** `on_low_coverage="raise"` can now
+  raise on a multi-game input whose second game links badly (that game silently mis-linked before).
+- **R1/R6 (per-row results).** `detect_line_breaking`, `add_shape_graph`'s action path and `_shape_graph_at_actions`
+  give each action row its own result. **Input class:** multi-game input and duplicate `action_id` (VAEP gamestate
+  slots repeat `action_id` by design; duplicates are legal).
+- **R2 (string id keys).** The pitch-control dedup key is exact-type, so the requests `(k, 1)` and `(k, "1")` no
+  longer merge into one surface. The `astype(str)` game re-keys of `add_shape_graph`, `shape_graph_xfns` and
+  `detect_line_breaking` are gone: a float `game_id` such as `7.0` used to miss the frames' `"7"` and take the
+  no-opponent route. The DFL qualifier team fill uses `id_compat.ids_equal`, so an int-vs-str CLU id now matches.
+  **Input class:** mixed id dtypes only.
+- **R14 (team-relative position labels).** `infer_positions` labels are in the team's own frame with SPADL
+  handedness: "L" is the left of a player who faces the goal that the team attacks. **Every caller's lateral labels
+  for a team that attacks +x change** (L↔R, LC↔RC). This supersedes ADR-045 D5. The D-tree fix (the pitch-thirds
+  branch, -x) and the -x lateral-fallback fix (n ∉ {5, 10} players: four players move one lateral level; n = 3: all
+  three, by up to two levels) are correctness-only: on graphs that `compute_shape_graph` builds those branches never
+  fire. The -x exact-tie class: a two-player lateral middle group with equal y swaps its LC/RC pair. **New:**
+  `infer_positions` raises `ValueError` for a non-finite or zero `attacking_direction` (it was read as +1).
+- **W8 (DFL parse port).** `parse_dfl_events` reads the XML once and uses the public rules. Its bronze output is
+  bit-identical to the previous parser's on all 7 DFL corpus matches. A per-row time defect is now counted and warned once
+  (`DflEventTimeWarning`); the parser keeps dropping such rows.
+- **W9.6 finding: xfn dtypes (owner ruling 2026-11-12).** Every column of `defensive_line_xfns` and
+  `off_ball_context_xfns` is float64: NaN for a missing value, `line_break_a*` as 1.0 / 0.0 / NaN. Before, the
+  `Int64` / `boolean` kernel columns (`back_n_count`, `n_off_ball_runners_pre_window`,
+  `n_off_ball_runners_toward_goal_pre_window`, `n_attackers_behind_line`, `line_break`) left the xfn as int64 / bool
+  with no missing value and float64 / object with one, so the dtype depended on the data. **Input class:** every
+  input; dtypes only, the values do not change. Every other xfn already emits float64.
+- **W9.6 finding: the visible-area join (owner ruling 2026-11-12).** `add_visible_area_coverage`, the
+  `add_action_context` FOV companions, the `add_defensive_credit` FOV rollup, `compute_territorial_defense` and
+  `compute_rest_defense` read polygons through one join (`silly_kicks._visible_area`). A `visible_area` with a
+  `game_id` column joins on (game_id, action_id). Without one, the `action_id` join runs only for one game, and with
+  unique ids when `actions` has no `game_id`. Before, two games' polygons collided on `action_id` and the last one
+  won silently. `add_visible_area_coverage` also reads the link status by action row, so game 1's unlinked action no
+  longer reads `observed` because game 2's action with the same id has a frame. **Input class:** multi-game input.
+  **New:** `ValueError` for a multi-game `visible_area` without `game_id`, or a repeated `visible_area` key.
+
+- **Review round 1 (owner ruling 2026-11-23, A-01).** `sync_score` rows follow the action rows that the links were
+  built on; the index stays `action_id`. Before, the rows were sorted by `action_id`. **Input class:** action rows
+  that are not in `action_id` order.
+- **`add_ball_contacts` on a non-default index (owner ruling 2026-11-23, A-01).** The player-id columns are no longer
+  `<NA>` when the actions frame has a non-default index (the old code aligned a fresh `RangeIndex` by label).
+  **Input class:** an actions frame with a non-default index.
+- **The linked frame is (period_id, frame_id) inside one game (owner rulings 2026-11-23, A-01 and A-02).** The
+  restart-geometry tracking tiers (`resolve_restart_geometry`, `add_restart_coordinates`) and defensive credit
+  (`compute_defensive_credits`, `add_defensive_credit`, the through-ball line-break signal) read the frame of the
+  action's own period. Before, they read a `frame_id` in any period. **Input class:** a provider whose `frame_id`
+  repeats across periods.
+- **`slice_around_event` is game-aware (owner ruling 2026-11-23, A-02).** When `actions` and `frames` both have a
+  `game_id` column, a window reads only the frames of its own game. Before, a multi-game call mixed the games'
+  frames. **Input class:** multi-game input.
+
+### Changed — speed (bit-identical)
+
+- Shape-graph core: an incremental face index and cached opposite angles.
+- `smooth_frames` / `derive_velocities`: the Kalman covariance is memoised per call, and the groups are contiguous
+  sorted slices.
+- `detect_line_breaking`: one `group_rows` grouping, a loop over candidate rows only.
+- The spearman batch matches each team once per index part (one `ids_match` over that team's requested rows) when no
+  frame can change the match path; an object team column with non-string ids keeps one match per request. The
+  surfaces are bit-identical (owner ruling 2026-11-18, reviewer C TBC-PERF-03).
+- Measured before/after, in the lakehouse's own calls (per-frame pitch control and shape graphs against the batch
+  calls, wall clock per frame, with a bit compare): `docs/research/tracking-compute-perf/`.
+
+### Fixed
+
+- **R17:** `compute_territorial_defense` returns an empty table with the `TD_SAMPLE_COLUMNS` schema and dtypes, not
+  `KeyError('game_id')`, when no action is defensive.
+
+### Scripts
+
+- **W5.7 role gate:** `scripts/validate_shape_graph_roles.py` (local-only, owner ruling 2026-11-11). It scores the
+  `infer_positions` labels against SkillCorner `player_role` on the 20 public SkillCorner matches. The gate passed in
+  all four cells: vertical 0.873 home and 0.876 away (equal to the 4.139 baseline), lateral 0.935 home (baseline
+  0.041) and 0.940 away (equal); each cell beats a role-mix-preserving permutation null (p = 1.0e-4), and the labels
+  are exactly mirror-invariant. Its 4.139 baseline arm is the standalone copy
+  `scripts/_shape_graph_v4139_baseline.py`. Memo: `docs/research/shape-graph-positions/`.
+
+### Test infrastructure
+
+- **The frozen oracles ended (ADR-137, owner ruling C5).** The cycle proved the rewritten cores bit-identical to
+  the previous release against frozen copies under `tests/oracles/`, and then deleted them with their closure
+  digest, after the before/after bit compare was recorded. Each batch entry point keeps an exact guard against the
+  per-frame public call in the same test run.
+- **Value snapshots** for the rewritten cores whose tests pinned no output values (the preprocess, the two linkers,
+  the shape-graph core and `detect_line_breaking`): `tests/regressions/tracking_batch/`, float64 at `rtol=1e-12`,
+  float32-stored columns within one float32 ulp, and the float32 velocity and acceleration columns within 5e-4 m/s
+  and 1e-2 m/s² (owner rulings 2026-11-23). The DFL parser keeps its lakehouse goldens.
+- **Doctests** for `silly_kicks._numba_dispatch`; its five entries leave the doctest-debt list.
+
 ## [4.144.0] — 2026-11-16 — one open-play cross definition for every provider, at the action's own time (ADR-133) (PR-S209)
 
 > **Why a minor release:** the SPADL output changes for every converter (the open-play `cross`/`pass` split and a

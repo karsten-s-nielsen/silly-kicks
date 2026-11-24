@@ -23,6 +23,7 @@ import pandas as pd
 
 from silly_kicks.id_compat import ids_match
 
+from ._link_identity import LinkedFrameRows, pointers_by_action_row, require_links_bound
 from ._opponent_resolution import opponents_action_ltr
 from ._velocity_availability import velocity_unavailable_by_design
 
@@ -89,6 +90,7 @@ def compute_press_commitment(
     both come from the linked FRAME). Velocity contract: ``speed_source`` all-``unavailable`` ->
     NaN + ``velocity_unavailable``; ``vx``/``vy`` absent and NOT declared unavailable -> loud raise.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     params = params or PressCommitmentParams()
     n = len(actions)
     pc = np.full(n, np.nan)
@@ -110,14 +112,10 @@ def compute_press_commitment(
 
     pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
     act = actions.reset_index(drop=True)
-    fid_by_pos = (
-        pointers.drop_duplicates("action_id")
-        .set_index("action_id")["frame_id"]
-        .reindex(act["action_id"].to_numpy())
-        .to_numpy()
-    )
-
-    frames_by_frame = dict(iter(frames.groupby("frame_id", sort=False)))
+    # frame_id per action ROW, and the frame of the action's own game and period (spec 2026-11-08
+    # tracking-batch section 4.9 W9.4): never an action_id join, never a frame_id-only lookup
+    fid_by_pos = pointers_by_action_row(actions, pointers)["frame_id"].to_numpy()
+    frame_rows = LinkedFrameRows(act, frames)
     frames_by_player = dict(iter(frames.groupby("player_id", sort=False)))
 
     w = params.commitment_window_seconds
@@ -126,8 +124,8 @@ def compute_press_commitment(
         fid = fid_by_pos[i]
         if pd.isna(fid):
             continue  # unlinked
-        fr = frames_by_frame.get(int(fid))
-        if fr is None:
+        fr = frame_rows.get(i, int(fid))
+        if fr.empty:
             continue  # unlinked
 
         actor = fr[ids_match(fr["player_id"], a["player_id"]).to_numpy() & ~fr["is_ball"].astype(bool).to_numpy()]

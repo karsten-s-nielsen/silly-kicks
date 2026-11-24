@@ -236,15 +236,15 @@ def _feat_receiver(frames, actions, home_team_id):
     passes = actions[actions.get("type_name", pd.Series(index=actions.index, dtype=object)) == "pass"]
     if len(passes) == 0:
         return None
+    from silly_kicks.tracking._link_identity import linked_frame_rows
+
     links, _report = link_actions_to_frames(passes, frames, on_low_coverage="ignore")
-    fid_by_action = dict(zip(links["action_id"].to_numpy(), links["frame_id"].to_numpy(), strict=False))
+    # each pass reads its OWN game's frame BY POSITION (spec 2026-11-08 tracking-batch section 4.9 W9.4, R8)
+    frames_of = linked_frame_rows(passes, frames, links)
     feat_rows = []
     key_rows = []
-    for _, action in passes.iterrows():
-        fid = fid_by_action.get(action["action_id"])
-        if fid is None:
-            continue
-        frame = frames[frames["frame_id"] == fid]
+    for row, (_, action) in enumerate(passes.iterrows()):
+        frame = frames_of[row]
         if frame.empty:
             continue
         feats = receiver_candidate_features(action, frame, feature_set="public")

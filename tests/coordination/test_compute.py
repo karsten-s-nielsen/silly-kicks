@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scripts._bitwise import bits_equal
 from silly_kicks.coordination import _compute
 from silly_kicks.coordination._catalog import PairSpec
 from silly_kicks.coordination._columns import COORDINATION_PAIR_KEYS
@@ -292,10 +293,6 @@ def _legacy_team_sync_surrogate(ps, axis, s, e, params, fs, numerics="production
     return surrogate_triple(obs_r, np.array(dist)), "computed"
 
 
-def _bits_equal(have: float, want: float) -> bool:
-    return (np.isnan(have) and np.isnan(want)) or np.float64(have).view(np.int64) == np.float64(want).view(np.int64)
-
-
 @pytest.mark.parametrize("numerics", ["production", "reference"])
 def test_cluster_surrogate_equals_the_per_draw_player_run_loop(monkeypatch, numerics):
     # Windows inside a stoppage (no team segment and no player run there: neither is scored), windows cut by the
@@ -331,9 +328,9 @@ def test_cluster_surrogate_equals_the_per_draw_player_run_loop(monkeypatch, nume
                     )
                     seen[src] = seen.get(src, 0) + 1
                     assert row.coord_cluster_surrogate_source == src
-                    assert _bits_equal(float(row.coord_rho_group_mean_surrogate_mean), sm)
-                    assert _bits_equal(float(row.coord_rho_group_mean_percentile), pc)
-                    assert _bits_equal(float(row.coord_rho_group_mean_excess), ex)
+                    assert bits_equal(np.float64(float(row.coord_rho_group_mean_surrogate_mean)), np.float64(sm))
+                    assert bits_equal(np.float64(float(row.coord_rho_group_mean_percentile)), np.float64(pc))
+                    assert bits_equal(np.float64(float(row.coord_rho_group_mean_excess)), np.float64(ex))
             for axis in ("x", "y"):
                 sync = ts[
                     (ts.window_kind == wrow["window_kind"]) & (ts.window_id == wrow["window_id"]) & (ts.axis == axis)
@@ -347,9 +344,9 @@ def test_cluster_surrogate_equals_the_per_draw_player_run_loop(monkeypatch, nume
                 (sm, pc, ex), src = legacy
                 seen[f"team_sync_{src}"] = seen.get(f"team_sync_{src}", 0) + 1
                 assert srow.coord_team_sync_surrogate_source == src
-                assert _bits_equal(float(srow.coord_team_sync_pearson_r_surrogate_mean), sm)
-                assert _bits_equal(float(srow.coord_team_sync_pearson_r_percentile), pc)
-                assert _bits_equal(float(srow.coord_team_sync_pearson_r_excess), ex)
+                assert bits_equal(np.float64(float(srow.coord_team_sync_pearson_r_surrogate_mean)), np.float64(sm))
+                assert bits_equal(np.float64(float(srow.coord_team_sync_pearson_r_percentile)), np.float64(pc))
+                assert bits_equal(np.float64(float(srow.coord_team_sync_pearson_r_excess)), np.float64(ex))
     # every branch is exercised: shifted draws, the too-short refusal, team sync, and windows inside a stoppage
     assert {"computed", "no_team_segment_unscored", "segment_too_short", "team_sync_computed"} <= set(seen), seen
 

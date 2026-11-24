@@ -36,18 +36,16 @@ def _match_records(item) -> pd.DataFrame | None:
     passes = actions[(actions["type_id"] == 0) & (actions["result_id"] == 1)].copy()
     if passes.empty:
         return None
+    from silly_kicks.tracking._link_identity import linked_frame_rows
+
     pointers, _ = link_actions_to_frames(passes, frames, on_low_coverage="ignore")
-    ptr = pointers.set_index("action_id")["frame_id"]
     outf = frames[(~frames["is_ball"].astype(bool)) & (~frames["is_goalkeeper"].astype(bool))]
-    fg = outf.groupby(["period_id", "frame_id"])
+    # each pass reads its OWN game's frame BY POSITION (spec 2026-11-08 tracking-batch section 4.9 W9.4, R8)
+    frames_of = linked_frame_rows(passes, outf, pointers)
     records: list[dict] = []
-    for _, row in passes.iterrows():
-        fid = ptr.get(row["action_id"])
-        if pd.isna(fid):
-            continue
-        try:
-            fr = fg.get_group((int(row["period_id"]), int(fid)))
-        except KeyError:
+    for i, (_, row) in enumerate(passes.iterrows()):
+        fr = frames_of[i]
+        if fr.empty:
             continue
         opp = fr[fr["team_id"].astype(str) != str(row["team_id"])]
         dx = opp["x"].to_numpy(float)

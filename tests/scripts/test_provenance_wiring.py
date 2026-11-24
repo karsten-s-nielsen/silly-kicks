@@ -250,6 +250,10 @@ ARTIFACT_DRIVERS = (
     # per-provider ratio bar) -- the numbers that fix the shipped CROSS_START_X, over external data, so
     # provenance.
     "build_cross_definition",
+    # W5.7 of the 2026-11-08 tracking-batch cycle (spec section 4.5, owner ruling R15). A local-only stage pipeline
+    # over the 20 public SkillCorner matches (pining) that writes docs/research/shape-graph-positions/metrics.json --
+    # the role gate verdict over external data, so provenance (the scoped code identity).
+    "validate_shape_graph_roles",
 )
 
 

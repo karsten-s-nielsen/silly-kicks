@@ -93,6 +93,21 @@ def test_no_defender_no_row(fitted_xt):
     assert out.empty
 
 
+def test_frame_lookup_is_period_aware_within_one_game(fitted_xt):
+    # Spec W9.4 (owner ruling 2026-11-23, review A-02): the frame key is (period_id, frame_id). Frame 500 repeats
+    # in both periods of one game: period 1 has a near defender, period 2 only a far one. A period-2 shot must
+    # read period 2's frame, so no pressure credit fires.
+    actions, _ = _shot_scene(fitted_xt)
+    near_p1 = frame_with_defender(defender_x=96.0, defender_y=34.0, period_id=1)
+    far_p2 = frame_with_defender(defender_x=80.0, defender_y=34.0, period_id=2)
+    frames = pd.concat([near_p1, far_p2], ignore_index=True)
+    out = compute_defensive_credits(actions.assign(period_id=2), frames, xg_column="xg", xt=fitted_xt)
+    assert out.empty
+    # non-vacuity: the same shot in period 1 reads the near defender and is credited
+    out1 = compute_defensive_credits(actions.assign(period_id=1), frames, xg_column="xg", xt=fitted_xt)
+    assert (out1["rule"] == "pressure_on_missed_shot").any()
+
+
 def test_xg_column_missing_fails_loud(fitted_xt):
     actions, frames = _shot_scene(fitted_xt)
     actions = actions.drop(columns=["xg"])

@@ -125,7 +125,9 @@ def _compute_das(
     before ``add_das``, so the direction ``add_das`` pins is inferred on exactly the frame
     set the library would otherwise have inferred it on -- the DAS values are unchanged.
     """
+    from silly_kicks.id_compat import align_join_keys
     from silly_kicks.tracking import add_das, derive_team_in_possession, infer_ball_carrier
+    from silly_kicks.tracking._link_identity import frame_join_keys, pointers_with_action_columns
 
     carrier = infer_ball_carrier(
         frames,
@@ -135,10 +137,16 @@ def _compute_das(
     )
     frames_with_tip = derive_team_in_possession(frames, carrier)
     del carrier
-    linked = links[["action_id", "frame_id"]].dropna(subset=["frame_id"])
-    linked = linked.merge(actions[["action_id", "period_id"]], on="action_id", how="left")
-    linked_frame_ids = linked[["period_id", "frame_id"]].drop_duplicates()
-    das_frames = frames_with_tip.merge(linked_frame_ids, on=["period_id", "frame_id"], how="inner")
+    # Each pointer reads its action's frame keys BY POSITION, and the restriction keys on
+    # (game_id, period_id, frame_id) (spec 2026-11-08 tracking-batch section 4.9 W9.4): an action_id join
+    # pairs an action with another game's pointer, and (period_id, frame_id) names a frame of every game.
+    frame_keys = frame_join_keys(actions, frames_with_tip)
+    linked = pointers_with_action_columns(actions, links, frame_keys[:-1])
+    linked_frame_ids = linked.loc[linked["frame_id"].notna(), frame_keys].drop_duplicates()
+    if "game_id" in frame_keys and linked_frame_ids["game_id"].dtype != frames_with_tip["game_id"].dtype:
+        # ADR-019: an int game_id on one side and a str on the other (this branch copies the frames)
+        frames_with_tip, linked_frame_ids = align_join_keys(frames_with_tip, linked_frame_ids, ["game_id"])
+    das_frames = frames_with_tip.merge(linked_frame_ids, on=frame_keys, how="inner")
     del linked, frames_with_tip
     return add_das(actions, das_frames, links=links, chunk_size=10)
 

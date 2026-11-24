@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks.id_compat import canonical_id, ids_match
+from silly_kicks.tracking._link_identity import LinkedFrameRows, pointers_by_action_row, require_links_bound
 
 _WEIGHTS_ROOT = Path(__file__).parent / "_receiver_weights"
 _VARIANT_CACHE: dict[str, ReceiverModel] = {}
@@ -596,15 +597,12 @@ def _link_and_index(actions, frames, links):
 
     if links is None:
         links, _ = link_actions_to_frames(actions, frames)
-    # Canonicalize the action_id key on BOTH sides (ADR-019): a caller-supplied `links` whose action_id
-    # dtype differs from `actions` (e.g. links str, actions int64) would otherwise miss every lookup and
-    # return an all-NA receiver column with no error -- the exact silent id-dtype miss ADR-019 forbids.
-    frame_of = {
-        canonical_id(aid): fid
-        for aid, fid in zip(links["action_id"].to_numpy(), links["frame_id"].to_numpy(), strict=True)
-    }
-    by_frame = {canonical_id(fid): g for fid, g in frames.groupby("frame_id")}
-    return frame_of, by_frame
+    # Each action reads its pointer BY POSITION, and the frame of its OWN game and period (spec 2026-11-08
+    # tracking-batch section 4.9 W9.4). An action_id-keyed dict pairs an action with another game's pointer,
+    # and a frame_id-keyed dict reads the frame of another period or game. `links` must be built from exactly
+    # this `actions` frame, in this row order.
+    frame_ids = pointers_by_action_row(actions, links)["frame_id"].to_numpy()
+    return frame_ids, LinkedFrameRows(actions, frames)
 
 
 def resolve_intended_receiver(
@@ -629,23 +627,30 @@ def resolve_intended_receiver(
 
         receivers = resolve_intended_receiver(actions, frames, model=model)
     """
-    frame_of, by_frame = _link_and_index(actions, frames, links)
-    out: dict = {}
-    for _, act in actions.iterrows():
-        fr = by_frame.get(canonical_id(frame_of.get(canonical_id(act["action_id"]))))
-        if fr is None:
-            out[act["action_id"]] = pd.NA
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
+    frame_ids, frame_rows = _link_and_index(actions, frames, links)
+    # One value per action ROW, indexed by action_id: a dict keyed on action_id keeps one entry for an id
+    # that repeats (a second game, a gamestate slot).
+    action_ids: list = []
+    receivers: list = []
+    for i, (_, act) in enumerate(actions.iterrows()):
+        action_ids.append(act["action_id"])
+        fr = frame_rows.get(i, frame_ids[i])
+        if fr.empty:
+            receivers.append(pd.NA)
             continue
         if model is None:
             try:
                 rid = geometric_proxy_receiver(act, fr)
             except NoReleaseDirectionError:
                 rid = None  # per-frame ball gap -> pd.NA (Q5); missing vx/vy COLUMNS still raises loud
-            out[act["action_id"]] = pd.NA if rid is None else rid  # normalize proxy miss to pd.NA (L6)
+            receivers.append(pd.NA if rid is None else rid)  # normalize proxy miss to pd.NA (L6)
         else:
             ranked = model.rank(act, fr)
-            out[act["action_id"]] = ranked.index[0] if not ranked.empty else pd.NA
-    return pd.Series(out, name="intended_receiver_id")
+            receivers.append(ranked.index[0] if not ranked.empty else pd.NA)
+    if not action_ids:
+        return pd.Series({}, name="intended_receiver_id")
+    return pd.Series(receivers, index=pd.Index(action_ids), name="intended_receiver_id")
 
 
 def intended_receiver_positions(
@@ -665,15 +670,16 @@ def intended_receiver_positions(
         pos = intended_receiver_positions(actions, frames, model=model)
         # columns: action_id, receiver_id, x, y, source
     """
-    frame_of, by_frame = _link_and_index(actions, frames, links)
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
+    frame_ids, frame_rows = _link_and_index(actions, frames, links)
     source = "geometric_proxy" if model is None else "intended_receiver"
     rows = []
-    for _, act in actions.iterrows():
+    for i, (_, act) in enumerate(actions.iterrows()):
         aid = act["action_id"]
-        fr = by_frame.get(canonical_id(frame_of.get(canonical_id(aid))))
+        fr = frame_rows.get(i, frame_ids[i])
         x = y = np.nan
         rid = pd.NA
-        if fr is not None:
+        if not fr.empty:
             if model is None:
                 try:
                     rid = geometric_proxy_receiver(act, fr)

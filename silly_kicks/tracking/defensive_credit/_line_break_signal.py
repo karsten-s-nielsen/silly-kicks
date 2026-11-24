@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import ids_match
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking._line_breaking import LineBreakingParams, _straddle_core
@@ -28,6 +29,7 @@ def precompute_line_break_between_lines(
     fid_by_pos: np.ndarray,
     flip_by_pos: np.ndarray,
     lb_params: LineBreakingParams | None = None,
+    period_by_pos: np.ndarray | None = None,
 ) -> pd.arrays.BooleanArray:
     """Per-action nullable-boolean ``between_lines`` line-break signal.
 
@@ -40,6 +42,9 @@ def precompute_line_break_between_lines(
 
     ``fid_by_pos`` / ``flip_by_pos`` are the orchestrator's once-computed per-action linked frame
     id (NaN when unlinked) and action-LTR reprojection decision (``acting_team_attacks_rtl``).
+    ``period_by_pos`` is each action's period: with the frame id it names the linked frame (spec W9.4: a
+    provider can repeat ``frame_id`` across periods). ``None`` reads the frame id alone (the single-frame
+    unit-test path).
     """
     lb_params = lb_params or LineBreakingParams()
     n = len(act)
@@ -55,7 +60,7 @@ def precompute_line_break_between_lines(
     ey = act["end_y"].to_numpy(dtype="float64")
     team_ids = act["team_id"].to_numpy()
 
-    fr_by_frame = dict(iter(frames.groupby("frame_id", sort=False)))
+    frame_groups = group_rows(frames, "frame_id" if period_by_pos is None else ("period_id", "frame_id"))
 
     for i in range(n):
         if type_id[i] != _PASS or result_id[i] != _SUCCESS:
@@ -63,8 +68,8 @@ def precompute_line_break_between_lines(
         fid = fid_by_pos[i]
         if pd.isna(fid):
             continue  # unlinked -> pd.NA
-        fr = fr_by_frame.get(int(fid))
-        if fr is None:
+        fr = frame_groups.get(int(fid)) if period_by_pos is None else frame_groups.get(period_by_pos[i], int(fid))
+        if fr.empty:
             continue
         acting = team_ids[i]
         if pd.isna(acting):

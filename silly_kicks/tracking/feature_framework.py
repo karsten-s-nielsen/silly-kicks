@@ -12,8 +12,10 @@ docs/superpowers/specs/2026-04-30-action-context-pr1-design.md for full design.
 from __future__ import annotations
 
 import dataclasses
+import functools
 from collections.abc import Callable
 
+import numpy as np
 import pandas as pd
 
 from silly_kicks.vaep.feature_framework import (
@@ -43,13 +45,14 @@ class ActionFrameContext:
         Subset of input actions (index aligned with the per-feature output Series).
     pointers : pd.DataFrame
         link_actions_to_frames output: action_id, frame_id, time_offset_seconds,
-        n_candidate_frames, link_quality_score.
+        n_candidate_frames, link_quality_score, action_row, action_fingerprint.
     actor_rows : pd.DataFrame
         One row per linked action: the actor's frame row (player_id == action.player_id).
         Rows for unlinked actions or missing-actor cases have NaN x/y/speed.
+        Keyed on ``action_row``, the position of the action in ``actions``.
     opposite_rows_per_action : pd.DataFrame
-        Long-form: (action_id, opposite-team frame row) pairs. Used by geometric
-        feature kernels via groupby('action_id').
+        Long-form: (action_row, opposite-team frame row) pairs. Used by geometric
+        feature kernels via groupby('action_row').
     defending_gk_rows : pd.DataFrame
         Long-form: one row per (linked action, frame row) where
         ``frame.player_id == action.defending_gk_player_id`` AND ``not is_ball``.
@@ -58,9 +61,13 @@ class ActionFrameContext:
         the GK player is absent from the linked frame (substitution case).
         Consumed by ``silly_kicks.tracking._kernels._pre_shot_gk_position``.
     flip_by_action : pd.Series
-        Indexed by ``action_id``, True where the acting team attacks right-to-left and the
+        Indexed by ``action_row``, True where the acting team attacks right-to-left and the
         sampled frame geometry must be point-reflected into action-LTR (ADR-028). Computed
         once here so every consumer re-projects on the SAME decision (ADR-045).
+
+    Every per-action frame keys on ``action_row`` (the 0-based position of the action in
+    ``actions``), never on ``action_id``: ``action_id`` repeats across games and in VAEP
+    gamestate slots (spec 2026-11-08 tracking-batch section 4.9 W9.4).
 
     Direct construction of ``ActionFrameContext`` is not part of the public API;
     always build via ``silly_kicks.tracking.utils._resolve_action_frame_context``.
@@ -80,11 +87,30 @@ class ActionFrameContext:
     actor_rows: pd.DataFrame
     opposite_rows_per_action: pd.DataFrame
     # REQUIRED -- no default. An empty flip_by_action means "reflect nothing":
-    # out["action_id"].map(empty) is all-NaN, .fillna(False) makes it all-False, and the
+    # rows["action_row"].map(empty) is all-NaN, .fillna(False) makes it all-False, and the
     # ball is silently never re-projected -- D2 restored, with no error (ADR-045). Declared
     # before the defaulted defending_gk_rows so it stays positional-required.
     flip_by_action: pd.Series
     defending_gk_rows: pd.DataFrame = dataclasses.field(default_factory=pd.DataFrame)
+
+    @functools.cached_property
+    def linked_rows(self) -> np.ndarray:
+        """Boolean array, one value per ``actions`` row: True where the action has a linked frame.
+
+        The pointers are read by position (``pointers_by_action_row``), so they are verified against
+        ``actions`` and an ``action_id`` that repeats cannot mark another action as linked.
+
+        Examples
+        --------
+        Count the actions that link to a frame::
+
+            from silly_kicks.tracking.utils import _resolve_action_frame_context
+            ctx = _resolve_action_frame_context(actions, frames)
+            n_linked = int(ctx.linked_rows.sum())  # one boolean per row of ctx.actions
+        """
+        from ._link_identity import pointers_by_action_row
+
+        return pointers_by_action_row(self.actions, self.pointers)["frame_id"].notna().to_numpy()
 
 
 def lift_to_states(

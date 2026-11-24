@@ -5,9 +5,10 @@ Played-pass extraction + the ADR-028 orientation helper. Consumed by ``build_rq_
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
-from silly_kicks.id_compat import canonical_id, ids_match
+from silly_kicks.id_compat import ids_match
 from silly_kicks.spadl import config as spc
 from silly_kicks.spadl.utils import resolve_next_touch_receiver
 from silly_kicks.tracking import link_actions_to_frames
@@ -54,23 +55,32 @@ def extract_played_passes(
     (Task 8) -- intercepted -> the model's intended receiver, out -> the overshot (non-defender-selected)
     end direction, other -> the ``end_xy`` fallback. ``target_source`` records which.
     """
-    passes = actions[actions["type_id"].isin(_PASS_TYPES)].copy()
+    from silly_kicks.tracking._link_identity import linked_frame_rows, pointers_by_action_row
+
+    is_pass = actions["type_id"].isin(_PASS_TYPES).to_numpy()
+    passes = actions[is_pass].copy()
     if links is None:  # link_actions_to_frames returns (pointers, LinkReport) -- ADR-004
         links, _ = link_actions_to_frames(actions, frames)
-    passes["frame_id"] = passes["action_id"].map(links.set_index("action_id")["frame_id"])
+    # Each pass reads its pointer and its OWN game's frame BY POSITION (spec 2026-11-08 tracking-batch
+    # section 4.9 W9.4, R8): an action_id map or a frame_id-only lookup crosses games.
+    pass_rows = np.flatnonzero(is_pass)
+    passes["frame_id"] = pointers_by_action_row(actions, links)["frame_id"].to_numpy(dtype=object)[pass_rows]
+    passes["_row"] = pass_rows
     passes = passes[passes["frame_id"].notna()]
     receiver_id = resolve_next_touch_receiver(actions).reindex(passes.index)
-    fmode_of: dict = {}
+    fmode_by_row = None
     if model is not None:  # de-leaked path needs the failure-mode split (interception vs out)
-        from scripts._receiver_validation import classify_failure_mode
+        from scripts._receiver_validation import _failure_modes_by_row
 
-        fmode_of = dict(zip(actions["action_id"].to_numpy(), classify_failure_mode(actions).to_numpy(), strict=True))
-    by_frame = {canonical_id(fid): g for fid, g in frames.groupby("frame_id")}  # index ONCE per match
+        fmode_by_row = _failure_modes_by_row(actions)
+    frames_of = linked_frame_rows(actions, frames, links)  # index ONCE per match
     rows = []
     for idx, a in passes.iterrows():
-        fr = by_frame.get(canonical_id(a["frame_id"]))
-        if fr is None:
+        row = int(a["_row"])
+        fr = frames_of[row]
+        if fr.empty:
             continue
+        fmode = None if fmode_by_row is None else fmode_by_row[row]
         attacks_rtl = _acting_attacks_rtl(fr, a["team_id"])
         is_completed = int(a["result_id"]) == _SUCCESS
         rid = receiver_id.get(idx)
@@ -79,7 +89,7 @@ def extract_played_passes(
             tx, ty, src = rec_xy[0], rec_xy[1], "receiver"
         elif (not is_completed) and model is not None:  # DE-LEAKED failed-pass target (Task 8, M2)
             intended_xy = None
-            if fmode_of.get(a["action_id"]) == "intercepted":
+            if fmode == "intercepted":
                 ranked = model.rank(a, fr)  # model target is a frame position, NOT reflected
                 if not ranked.empty:
                     intended_xy = _player_frame_xy(fr, ranked.index[0])
@@ -87,7 +97,7 @@ def extract_played_passes(
                 tx, ty, src = intended_xy[0], intended_xy[1], "intended_receiver"
             else:  # out (overshot, not defender-selected) / other -> end direction, tagged by mode
                 tx, ty = to_frame_coords(float(a["end_x"]), float(a["end_y"]), attacks_rtl)
-                src = "trajectory" if fmode_of.get(a["action_id"]) == "out" else "end_xy_legacy"
+                src = "trajectory" if fmode == "out" else "end_xy_legacy"
         else:  # model=None -> 4.87.0 leaked behaviour, byte-identical. end_xy is action-LTR -> reflect for away
             tx, ty = to_frame_coords(float(a["end_x"]), float(a["end_y"]), attacks_rtl)
             src = "end_xy"

@@ -9,12 +9,16 @@ See docs/superpowers/specs/2026-05-05-tf7-pitch-control-design.md section 7.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
 
+from silly_kicks._frame_index import RowGroups, group_rows
+
 from ._fernandez_bornn import compute_fernandez_bornn
+from ._index import _SpearmanFrameIndex
 from ._params import (
     FernandezBornnParams,
     Method,
@@ -24,6 +28,7 @@ from ._params import (
     validate_params_for_method,
 )
 from ._spearman import compute_spearman
+from ._spearman_batch import _spearman_batch_core
 from ._surface import PitchControlSurface
 from ._voronoi import compute_voronoi
 
@@ -171,8 +176,50 @@ def compute_pitch_control_at_points(
     return surface.at_points(targets)
 
 
+#: The frame key of a batched request.
+_FRAME_KEYS = ("game_id", "period_id", "frame_id")
+
 #: One batched request: ``((game_id, period_id, frame_id), attacking_team_id, decompose)``.
 PitchControlRequest = tuple[tuple, "int | str", bool]
+
+
+@dataclasses.dataclass(frozen=True)
+class PitchControlFrameIndex:
+    """A match's frames grouped and indexed ONCE, for several request waves (spec 2026-11-08 tracking-batch §4.3).
+
+    Build it with :func:`build_pitch_control_index` and pass it to :func:`compute_pitch_control_batch_from_index`.
+    ``groups`` is the ``(game_id, period_id, frame_id)`` grouping (every method takes its frame slices from it);
+    ``_spearman`` is the columnar spearman index of every frame (private).
+
+    Examples
+    --------
+    Score one match in two request waves and pay the grouping once::
+
+        from silly_kicks.tracking.pitch_control import (
+            build_pitch_control_index,
+            compute_pitch_control_batch_from_index,
+        )
+        index = build_pitch_control_index(frames)
+        first = compute_pitch_control_batch_from_index(index, [((1, 1, 10), 1, False)])
+        second = compute_pitch_control_batch_from_index(index, [((1, 1, 11), 2, True)])
+    """
+
+    groups: RowGroups
+    _spearman: _SpearmanFrameIndex
+
+
+def build_pitch_control_index(frames: pd.DataFrame) -> PitchControlFrameIndex:
+    """Group and index ``frames`` once, by ``(game_id, period_id, frame_id)``.
+
+    Examples
+    --------
+    Build the index of a match's frames::
+
+        from silly_kicks.tracking.pitch_control import build_pitch_control_index
+        index = build_pitch_control_index(frames)
+    """
+    groups = group_rows(frames, _FRAME_KEYS)
+    return PitchControlFrameIndex(groups=groups, _spearman=_SpearmanFrameIndex.from_groups(groups))
 
 
 def compute_pitch_control_batch(
@@ -181,18 +228,26 @@ def compute_pitch_control_batch(
     *,
     method: Method = "spearman",
     params: PitchControlParams | None = None,
+    max_frames_per_chunk: int | None = 2048,
 ) -> list[PitchControlSurface]:
-    """Compute N pitch-control surfaces in one call (ADR-103 F2).
+    """Compute N pitch-control surfaces in one call (ADR-103 F2; spec 2026-11-08 tracking-batch §4.2-4.3).
 
     ``frames`` is a whole-unit long-form frame set; ``requests`` names the
-    ``((game_id, period_id, frame_id), attacking_team_id, decompose)`` surfaces to compute. The frame
-    set is grouped ONCE (``_frame_index.group_rows``) and DUPLICATE requests are computed once, so a
-    scorer that would otherwise re-group + recompute per action pays each distinct surface a single
-    time. **Byte-identical** to calling :func:`compute_pitch_control` per request over the same
-    per-frame slice (parity-gated, ADR-076 precedent) — no value change, no retrain. A vectorised
-    across-frame kernel is an allowed later optimisation ONLY under that parity gate.
+    ``((game_id, period_id, frame_id), attacking_team_id, decompose)`` surfaces to compute. The frame set is
+    grouped and indexed ONCE, and DUPLICATE requests are computed once. **Bit-identical** to calling
+    :func:`compute_pitch_control` per request over the same per-frame slice (parity-gated). Returns surfaces
+    aligned 1:1 with ``requests``.
 
-    Returns surfaces aligned 1:1 with ``requests``.
+    The kernel runs over the distinct frames the requests name, in chunks of at most ``max_frames_per_chunk``
+    frames (``None``: one chunk). A chunk holds every request on its frames. The values do not depend on the
+    chunk size: each surface depends only on its own frame. Memory: the spearman TTI intermediate is per distinct
+    frame, at most ``max_frames_per_chunk`` x 22 players x 1,600 targets (the default 50 x 32 grid) x 8 bytes,
+    about 0.58 GB at the default 2048. The measured ``tracemalloc`` peak is 7.1 GB with numba and 9.9 GB with
+    numpy (the default chunk size, one request per frame of the whole gradientsports match 10517: 254,242
+    requests, of which the returned surface arrays alone are about 3.3 GB). A memory-tight caller lowers the chunk
+    size. The chunk size does not bound the
+    result: the returned list holds every surface (1,600 targets x 8 bytes, about 12.8 kB each at the default
+    grid), so a caller with very many requests sends them in waves.
 
     Examples
     --------
@@ -201,12 +256,49 @@ def compute_pitch_control_batch(
         reqs = [((1, 1, 10), 1, True), ((1, 1, 11), 1, False)]
         surfaces = compute_pitch_control_batch(frames, reqs, method="spearman")
     """
-    from silly_kicks._frame_index import group_rows
-
+    _validate_chunk_size(max_frames_per_chunk)
     if not requests:
         return []
-    groups = group_rows(frames, ("game_id", "period_id", "frame_id"))
-    return _batch_from_groups(groups, requests, method=method, params=params)
+    return compute_pitch_control_batch_from_index(
+        build_pitch_control_index(frames),
+        requests,
+        method=method,
+        params=params,
+        max_frames_per_chunk=max_frames_per_chunk,
+    )
+
+
+def compute_pitch_control_batch_from_index(
+    index: PitchControlFrameIndex,
+    requests: Sequence[PitchControlRequest],
+    *,
+    method: Method = "spearman",
+    params: PitchControlParams | None = None,
+    max_frames_per_chunk: int | None = 2048,
+) -> list[PitchControlSurface]:
+    """:func:`compute_pitch_control_batch` over a prebuilt :class:`PitchControlFrameIndex` (no re-grouping).
+
+    Examples
+    --------
+    Several request waves over one index::
+
+        index = build_pitch_control_index(frames)
+        surfaces = compute_pitch_control_batch_from_index(index, reqs, max_frames_per_chunk=512)
+    """
+    _validate_chunk_size(max_frames_per_chunk)
+    if not requests:
+        return []
+    return _batch_from_index(index, requests, method=method, params=params, max_frames_per_chunk=max_frames_per_chunk)
+
+
+def _validate_chunk_size(max_frames_per_chunk: object) -> None:
+    ok = max_frames_per_chunk is None or (
+        isinstance(max_frames_per_chunk, int)
+        and not isinstance(max_frames_per_chunk, bool)
+        and max_frames_per_chunk > 0
+    )
+    if not ok:
+        raise ValueError(f"max_frames_per_chunk must be a positive int or None, got {max_frames_per_chunk!r}")
 
 
 def _batch_from_groups(
@@ -216,45 +308,63 @@ def _batch_from_groups(
     method: Method = "spearman",
     params: PitchControlParams | None = None,
 ) -> list[PitchControlSurface]:
-    """The batched kernel over a PRE-BUILT ``group_rows`` grouping (ADR-105 Task 5).
+    """The batched kernel over a PRE-BUILT ``group_rows`` grouping (ADR-105 Task 5): one chunk.
 
-    Byte-identical to :func:`compute_pitch_control_batch`, but takes an already-built ``RowGroups`` so a
-    caller that grouped ``frames`` itself (``PitchControlCache.warm``) does not re-group -- the fix for
-    the ADR-103 ``warm`` double-``group_rows``.
+    A caller that grouped ``frames`` itself (``PitchControlCache.warm``) does not re-group.
     """
-    from ._spearman_batch import compute_spearman_batch
-
     if not requests:
         return []
+    keys = list(dict.fromkeys(tuple(k) for k, _team, _dec in requests))
+    index = PitchControlFrameIndex(groups=groups, _spearman=_SpearmanFrameIndex.from_groups(groups, keys))
+    return _batch_from_index(index, requests, method=method, params=params, max_frames_per_chunk=None, keys=keys)
 
-    # Dedup DISTINCT (frame_key, team, decompose); preserve request order for the return.
+
+def _batch_from_index(
+    index: PitchControlFrameIndex,
+    requests: Sequence[PitchControlRequest],
+    *,
+    method: Method,
+    params: PitchControlParams | None,
+    max_frames_per_chunk: int | None,
+    keys: list[tuple] | None = None,
+) -> list[PitchControlSurface]:
+    """Dedup, chunk over distinct frames, run each chunk. ``keys`` are the frame keys of ``index._spearman`` when it
+    was built for exactly those keys (``_batch_from_groups``); otherwise it covers every group of ``index.groups``."""
+    # Dedup DISTINCT (frame_key, team, decompose); preserve request order for the return. The team is keyed by its
+    # exact type AND value (R2): team 1 and team "1" are two requests, each surface reporting its own team.
     order: list[tuple] = []
     distinct: dict[tuple, tuple] = {}
     for frame_key, attacking_team_id, decompose in requests:
-        dedup_key = (tuple(frame_key), str(attacking_team_id), bool(decompose))
+        dedup_key = (tuple(frame_key), type(attacking_team_id), attacking_team_id, bool(decompose))
         order.append(dedup_key)
         if dedup_key not in distinct:
             distinct[dedup_key] = (tuple(frame_key), attacking_team_id, bool(decompose))
 
+    groups = index.groups
     computed: dict[tuple, PitchControlSurface] = {}
     if method == "spearman":
-        # Vectorized kernel (ADR-105 Task 1): byte-identical to the per-frame loop below.
         validate_params_for_method(method, params)
         sp = params if isinstance(params, SpearmanParams) else SpearmanParams()
-        keys = list(distinct)
-        frame_slices = [groups.get(*distinct[k][0]) for k in keys]
-        for fs in frame_slices:  # preserve compute_pitch_control's velocity-required raise
-            if "vx" not in fs.columns or "vy" not in fs.columns:
-                raise ValueError(
-                    "method='spearman' requires velocity columns ('vx', 'vy') in the tracking frame. "
-                    "Use derive_velocities() or smooth_frames() to add them, or use method='voronoi' "
-                    "for position-only pitch control."
-                )
-        teams = [distinct[k][1] for k in keys]
-        decs = [distinct[k][2] for k in keys]
-        balls = [_resolve_ball_position(fs, None) for fs in frame_slices]
-        surfaces = compute_spearman_batch(frame_slices, teams, decs, balls, params=sp)
-        computed = dict(zip(keys, surfaces, strict=True))
+        columns = groups.frame.columns  # every frame slice carries the grouped frame's columns
+        if "vx" not in columns or "vy" not in columns:  # preserve compute_pitch_control's velocity-required raise
+            raise ValueError(
+                "method='spearman' requires velocity columns ('vx', 'vy') in the tracking frame. "
+                "Use derive_velocities() or smooth_frames() to add them, or use method='voronoi' "
+                "for position-only pitch control."
+            )
+        position = _frame_positions(index, keys)
+        distinct_keys = list(distinct)
+        request_frames = [distinct[k][0] for k in distinct_keys]
+        chunks = list(_chunks(list(dict.fromkeys(request_frames)), max_frames_per_chunk))
+        for chunk, rows in zip(chunks, _requests_per_chunk(request_frames, chunks), strict=True):
+            chunk_requests = [distinct_keys[i] for i in rows]
+            local = {fk: i for i, fk in enumerate(chunk)}
+            sub = index._spearman.select([position(fk) for fk in chunk])
+            core_requests = [
+                (local[distinct[k][0]], distinct[k][1], distinct[k][2], sub.ball(local[distinct[k][0]]))
+                for k in chunk_requests
+            ]
+            computed.update(zip(chunk_requests, _spearman_batch_core(sub, core_requests, sp), strict=True))
     else:
         for dedup_key, (frame_key, attacking_team_id, decompose) in distinct.items():
             frame = groups.get(*frame_key)
@@ -263,6 +373,36 @@ def _batch_from_groups(
             )
 
     return [computed[k] for k in order]
+
+
+def _frame_positions(index: PitchControlFrameIndex, keys: list[tuple] | None):
+    """A function: frame key -> its frame number in ``index._spearman``, or ``-1`` for a key that names no frame
+    (``select`` makes it an empty frame: the per-request path scores an empty slice as the uniform 0.5 surface)."""
+    if keys is not None:
+        where = {tuple(k): i for i, k in enumerate(keys)}
+        return lambda fk: where[tuple(fk)]
+    where_canon = {k: i for i, k in enumerate(index.groups.keys())}
+    return lambda fk: where_canon.get(index.groups.canonical_key(*fk), -1)
+
+
+def _requests_per_chunk(request_frames: list, chunks: list[list]) -> list[list[int]]:
+    """For each chunk, the positions in ``request_frames`` whose frame key is in that chunk, in request order.
+
+    One pass over the chunks and one over the requests: never one scan of every request per chunk, which grew with
+    requests x chunks (reviewer C TBC-IMPL-10). Each frame key is in exactly one chunk."""
+    chunk_of = {fk: c for c, chunk in enumerate(chunks) for fk in chunk}
+    out: list[list[int]] = [[] for _ in chunks]
+    for i, fk in enumerate(request_frames):
+        out[chunk_of[fk]].append(i)
+    return out
+
+
+def _chunks(items: list, size: int | None):
+    if size is None or size >= len(items):
+        yield items
+        return
+    for lo in range(0, len(items), size):
+        yield items[lo : lo + size]
 
 
 def _resolve_ball_position(

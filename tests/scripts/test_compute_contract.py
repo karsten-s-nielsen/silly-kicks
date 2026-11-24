@@ -34,6 +34,18 @@ _NOT_A_PIPELINE: dict[str, str] = {
     ),
 }
 
+#: Compliant pipelines that are LOCAL-ONLY: they declare PIPELINE, plan on a toy and carry a W1N1-vs-W2N2 parity
+#: test, but read pining and run only where the pining token lives, so they have NO HF registry entry (and the I1
+#: gate, which covers every registered module, never sees them). Every entry cites a dated owner ruling.
+_LOCAL_ONLY: dict[str, str] = {
+    "validate_shape_graph_roles": (
+        "owner ruling 2026-11-11: the W5.7 role gate (spec 2026-11-08 tracking-batch) reads the 20 public "
+        "SkillCorner matches and their match.json rosters through pining and runs on the DGX (spec R22); no "
+        "staged dataset carries the rosters, so it is a local-only pipeline, never launched on HF."
+    ),
+}
+
+
 #: Non-compliant members on the day the gate lands. Every entry carries a reason and an approval; a later
 #: addition must cite a dated owner ruling ("owner ruling YYYY-MM-DD: ..."). The PR diff is the review
 #: point for growth (no in-repo test can see history).
@@ -179,9 +191,17 @@ def test_member_registers_a_parity_fixture_and_a_job_entry(name):
     assert any(f'"{mod.PIPELINE.module}"' in t.read_text(encoding="utf-8") for t in tests), (
         f"{name}: no W1N1-vs-W2N2 parity test"
     )
-    assert any(s.pipeline == mod.PIPELINE.module for s in REGISTRY.values()) or any(
+    registered = any(s.pipeline == mod.PIPELINE.module for s in REGISTRY.values()) or any(
         d.module == mod.PIPELINE.module for d in DRIVERS.values()
     )
+    assert registered != (name in _LOCAL_ONLY), (
+        f"{name}: a local-only pipeline has no HF job entry; every other compliant member has one"
+    )
+
+
+def test_local_only_entries_are_compliant_and_cite_a_ruling():
+    assert set(_LOCAL_ONLY) <= set(_compliant())
+    assert all(_RULING.match(reason) for reason in _LOCAL_ONLY.values())
 
 
 def test_the_gate_FLAGS_a_member_without_PIPELINE():
@@ -207,4 +227,5 @@ def test_the_compliant_set_is_the_cycle1_migration():
         "train_xsuccess",
         "build_territory_ranking_census",
         "build_cross_definition",  # ADR-133: born ready (scaffolded)
+        "validate_shape_graph_roles",  # local-only (owner ruling 2026-11-11)
     }

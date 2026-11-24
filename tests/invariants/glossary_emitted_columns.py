@@ -627,5 +627,19 @@ def emitted_columns() -> set[str]:
         | _positioning_columns()
         | _coordination_columns()
         | _corners_columns()
+        | _shape_graph_batch_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()
+
+
+def _shape_graph_batch_columns() -> set[str]:
+    """Derived columns of ``tracking.compute_shape_graphs`` (spec 2026-11-08 tracking-batch W5.2/W5.5): the
+    ``frames_summary`` metrics and source, and the ``players`` labels and source.
+
+    A ``compute_*`` the name-shape discovery misses; run on a tiny production-shaped fixture. The team-frame keys
+    and ``player_id`` are schema columns (subtracted by ``_base_schema_and_provenance``)."""
+    from silly_kicks.tracking import compute_shape_graphs
+    from tests._prod_fixtures import make_production_frames
+
+    batch = compute_shape_graphs(make_production_frames(n_frames=3, n_periods=1))
+    return set(batch.frames_summary.columns) | set(batch.players.columns)

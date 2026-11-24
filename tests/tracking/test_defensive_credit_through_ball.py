@@ -85,6 +85,31 @@ def test_through_ball_fires_on_between_lines_break(fitted_xt):
     assert _fired(_run(actions, frames, fitted_xt))
 
 
+def test_through_ball_reads_the_frame_of_its_own_period(fitted_xt):
+    # Spec W9.4 (owner ruling 2026-11-23, review A-02): the frame key is (period_id, frame_id). Frame 500 repeats
+    # in one game: period 1 holds a between-lines scene, period 2 a defensive line behind the pass. The period-2
+    # pass must read period 2's frame, so the through-ball rule does not fire.
+    fire_actions, fire_frames = _scene(
+        away_xs=[50.0, 50.0, 50.0, 70.0, 70.0, 70.0, 90.0, 90.0, 90.0, 90.0],
+        away_ys=[15.0, 34.0, 53.0, 15.0, 34.0, 53.0, 10.0, 24.0, 44.0, 58.0],
+        pass_start=(48.0, 34.0),
+        pass_end=(95.0, 34.0),
+    )
+    _, quiet_frames = _scene(
+        away_xs=[20.0, 20.0, 20.0, 30.0],
+        away_ys=[20.0, 34.0, 48.0, 34.0],
+        pass_start=(48.0, 34.0),
+        pass_end=(95.0, 34.0),
+        frame_period=2,
+    )
+    frames = pd.concat([fire_frames, quiet_frames], ignore_index=True)
+    period_2 = fire_actions.assign(period_id=2)
+    assert not _fired(_run(period_2, quiet_frames, fitted_xt))  # control: period 2's frame alone is quiet
+    assert not _fired(_run(period_2, frames, fitted_xt))
+    # non-vacuity: the same pass in period 1 reads the between-lines frame and fires
+    assert _fired(_run(fire_actions, frames, fitted_xt))
+
+
 def test_through_ball_does_not_fire_on_progressive_non_linebreak(fitted_xt):
     # A high-ΔxT forward pass (v1 WOULD fire on the ΔxT gate) that does NOT break a line between-lines:
     # a defensive line behind the origin (not crossed) + a lone defender ahead (around_line only).

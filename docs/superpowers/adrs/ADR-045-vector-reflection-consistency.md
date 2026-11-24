@@ -79,6 +79,8 @@ actions). D3/D3b/D4/D5/D7/D8 are LATENT; D6 was a false documentation claim.
   but not `y`, so the lateral L/LC/C/RC/R label is **pitch-absolute**. It has **no in-library
   consumer**, so no behaviour validates either convention; settled pitch-absolute by default and
   documented, with a both-sides test that goes red if a future consumer makes it team-relative.
+  **Superseded by ADR-137 (2026-11-12, owner ruling R14):** the lakehouse v2 is now a consumer, so the lateral
+  label is team-relative, with SPADL handedness; the pitch-absolute test is replaced by an exact mirror test.
 - **D6 — DOCUMENTATION.** ADR-042's "TF-4 was the last module keyed on home/away identity" was
   false — other action-coupled aggregators still take `home_team_id` by design. Corrected here
   and in CLAUDE.md.

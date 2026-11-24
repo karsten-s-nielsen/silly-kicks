@@ -539,3 +539,36 @@ def test_align_join_keys_category_merges():
     right = pd.DataFrame({"team_id": ["366", "512"], "w": [3, 4]})
     lt, rt = idc.align_join_keys(left, right, ["team_id"])
     assert lt.merge(rt, on="team_id")["w"].tolist() == [3, 4]
+
+
+def test_ids_match_path_is_content_free_decision_table():
+    """True when ``ids_match`` picks its path from the dtypes alone, or the object column holds only strings."""
+    free = idc._ids_match_path_is_content_free
+    assert free(pd.Series([1, 2, None], dtype="Int64"))
+    assert free(pd.Series([1.0, np.nan]))
+    assert free(pd.Series(["a", None], dtype=object))
+    assert free(pd.Series([5, 6]).astype("category"))
+    assert free(pd.Series(["5", "6"]).astype("category"))
+    assert free(pd.Series(["5", None], dtype="string"))
+    assert not free(pd.Series([2.0, "3"], dtype=object))
+    assert not free(pd.Series([2, 3], dtype=object))
+
+
+def test_ids_match_path_content_free_means_every_slice_equals_the_whole():
+    """The property the batched pitch control relies on (owner ruling 2026-11-18, TBC-PERF-03): when the helper says
+    True, ``ids_match`` on any slice equals that slice of ``ids_match`` on the whole column, for every scalar kind."""
+    columns = [
+        pd.Series([5, 6, None, 5], dtype="Int64"),
+        pd.Series([5.0, 6.0, np.nan, 5.5]),
+        pd.Series(["5", None, "6", "x"], dtype=object),
+        pd.Series([5, 6, 6, 5]).astype("category"),
+        pd.Series(["5", "6", None, "5"], dtype="string"),
+    ]
+    for column in columns:
+        assert idc._ids_match_path_is_content_free(column)
+        for scalar in (5, "5", 5.0, 5.5, None, "x"):
+            whole = idc.ids_match(column, scalar).to_numpy()
+            for lo, hi in ((0, 1), (1, 3), (2, 3), (0, len(column)), (2, 2)):
+                part = idc.ids_match(column.iloc[lo:hi], scalar).to_numpy()
+                assert part.dtype == whole.dtype == bool
+                assert np.array_equal(part, whole[lo:hi]), (column.dtype, scalar, lo, hi)

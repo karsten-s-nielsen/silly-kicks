@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
-from silly_kicks.id_compat import canonical_id
+from silly_kicks._visible_area import polygons_by_action_row
 from silly_kicks.tracking import (
     VISIBLE_AREA_UNLINKED,
     classify_region_observation,
@@ -97,17 +97,6 @@ def _num(v) -> float:
     return float(v) if pd.notna(v) else float("nan")
 
 
-def polygons_by_action(visible_area: pd.DataFrame | None) -> dict:
-    """``canonical_id(action_id) -> polygon`` -- the ADR-019-safe visible-area join (a private-free
-    re-implementation of tracking's ``_polygons_by_action``; the canonical key is load-bearing:
-    a raw-id dict misses SILENTLY across dtypes, indistinguishable from a genuine absence)."""
-    out: dict = {}
-    if visible_area is not None and len(visible_area) > 0:
-        for row in visible_area[["action_id", "polygon"]].itertuples(index=False):
-            out[canonical_id(row.action_id)] = row.polygon
-    return out
-
-
 def append_fov_companions(samples: pd.DataFrame, keep: pd.DataFrame, *, visible_area, params) -> pd.DataFrame:
     """Emit the ``<col>_observed_fraction`` / ``_observed_source`` companions (``samples`` order == ``keep`` order).
 
@@ -117,13 +106,12 @@ def append_fov_companions(samples: pd.DataFrame, keep: pd.DataFrame, *, visible_
     ``degenerate_region``; otherwise the region is scored against the action's polygon (absent ->
     ``no_polygon``). Never a fabricated 1.0 / 0.0 on a non-``observed`` row.
     """
-    polys = polygons_by_action(visible_area)
+    polygons = polygons_by_action_row(keep, visible_area)  # the ONE visible-area join, by row (W9.4)
     n = len(keep)
     fracs = {c: np.full(n, np.nan) for c in FOV_SENSITIVE_COLUMNS}
     sources = {c: [] for c in FOV_SENSITIVE_COLUMNS}
     for i, row in enumerate(keep.itertuples(index=False)):
-        aid = canonical_id(row.action_id)
-        poly = polys.get(aid)
+        poly = polygons[i]
         linked = pd.notna(row.frame_id)
         own = _num(row.own_goal_x)
         gr_ball = abs(_num(row.ball_x) - own)  # NaN if either is NA

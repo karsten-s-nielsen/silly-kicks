@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 import silly_kicks.tracking.pitch_control._fernandez_bornn as _fb
-import silly_kicks.tracking.pitch_control._spearman as _sp
+import silly_kicks.tracking.pitch_control._spearman_batch as _spb
 from silly_kicks.tracking.pitch_control import compute_pitch_control
 from tests._perf_structural import call_counter
 
@@ -68,16 +68,17 @@ def full_frame_22():
 
 
 def test_spearman_influence_kernel_is_grid_vectorised(full_frame_22, monkeypatch) -> None:
-    """Spearman: ``_compute_influence`` runs once per team (2), not once per grid cell."""
-    calls = call_counter(monkeypatch, _sp, "_compute_influence")
+    """Spearman: the influence kernel runs once for both teams over the whole grid, not once per grid cell (the
+    batched core's one elementwise ``_influence_rows`` pass; spec 2026-11-08 tracking-batch section 4.2 W2.5)."""
+    calls = call_counter(monkeypatch, _spb, "_influence_rows")
 
     result = compute_pitch_control(full_frame_22, 1, method="spearman")
 
     n_cells = result.surface.size
     assert result.surface.shape[0] > 0
-    assert calls["n"] == 2, (
-        f"Spearman ran the influence kernel {calls['n']}x for a {n_cells}-cell grid (expected 2, "
-        "one vectorised pass per team). A per-cell regression makes this scale with grid cells."
+    assert calls["n"] == 1, (
+        f"Spearman ran the influence kernel {calls['n']}x for a {n_cells}-cell grid (expected 1, "
+        "one vectorised pass for both teams). A per-cell regression makes this scale with grid cells."
     )
 
 

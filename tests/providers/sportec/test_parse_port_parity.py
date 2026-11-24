@@ -16,6 +16,8 @@ import pandas as pd
 import pytest
 
 from silly_kicks.providers.sportec import (
+    _dfl_tables,
+    parse,
     parse_dfl_events,
     parse_dfl_match_info,
     parse_dfl_tracking,
@@ -63,6 +65,12 @@ def _assert_parity(got: pd.DataFrame, golden_name: str, *, sort_keys: list[str])
 @pytest.fixture(scope="module")
 def match_info():
     return parse_dfl_match_info(str(_FIX / "info.xml"))
+
+
+def test_parse_keeps_the_game_section_table_that_the_lakehouse_reads():
+    # docs/PRIVATE_CONSUMERS.md: the lakehouse v2 parser reads parse._SECTION_TO_PERIOD by getattr for its
+    # game-section parity test. The table lives in _dfl_tables since ADR-137, and parse.py must keep the name.
+    assert parse._SECTION_TO_PERIOD is _dfl_tables._SECTION_TO_PERIOD
 
 
 def test_match_info_basic(match_info):

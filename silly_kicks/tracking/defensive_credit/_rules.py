@@ -99,8 +99,11 @@ class RuleContext:
     line_break_between_lines: Any = None
     # ADR-068: an O(1) per-frame lookup built ONCE by compute_defensive_credits and shared across
     # every action x rule. None on the unit-test path (build_single) -> resolve falls back to the
-    # per-call boolean filter. Keyed on frame_id ALONE, matching the filter it replaces exactly.
+    # per-call boolean filter. Keyed on (period_id, frame_id) (spec W9.4), matching that filter exactly.
     frame_groups: RowGroups | None = None
+    # the action's period: with frame_id it names the linked frame (spec W9.4). None on the single-frame
+    # unit-test path (build_single), where the one frame is read by frame_id alone.
+    period_id: object = None
 
     @property
     def action(self) -> pd.Series:
@@ -118,6 +121,7 @@ class RuleContext:
             frame_id=self.frame_id,
             flip=self.flip,
             frame_groups=self.frame_groups,
+            period_id=self.period_id,
         )
 
     @classmethod

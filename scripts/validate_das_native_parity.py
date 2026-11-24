@@ -358,16 +358,24 @@ def _scored_frames(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.DataFrame:
             else frames.reset_index(drop=True)
         )
 
+    from silly_kicks.id_compat import align_join_keys
     from silly_kicks.tracking import link_actions_to_frames
+    from silly_kicks.tracking._link_identity import frame_join_keys, pointers_with_action_columns
 
     pointers, _report = link_actions_to_frames(actions, frames, on_low_coverage="ignore")
-    linked = pointers.merge(actions[["action_id", "period_id"]], on="action_id", how="left")
-    linked = linked.loc[linked["frame_id"].notna(), ["period_id", "frame_id"]].drop_duplicates()
+    # each pointer reads its action's frame keys BY POSITION, and the restriction keys on (game_id, period_id,
+    # frame_id) (spec 2026-11-08 tracking-batch section 4.9 W9.4, R8): (period_id, frame_id) names a frame of
+    # every game in `frames`
+    keys = frame_join_keys(actions, frames)
+    linked = pointers_with_action_columns(actions, pointers, keys[:-1])
+    linked = linked.loc[linked["frame_id"].notna(), keys].drop_duplicates()
     if linked.empty:
         return frames.iloc[0:0].reset_index(drop=True)
     linked["period_id"] = linked["period_id"].astype(frames["period_id"].dtype)
     linked["frame_id"] = linked["frame_id"].astype(frames["frame_id"].dtype)
-    return frames.merge(linked, on=["period_id", "frame_id"], how="inner").reset_index(drop=True)
+    if "game_id" in keys:
+        frames, linked = align_join_keys(frames, linked, ["game_id"])
+    return frames.merge(linked, on=keys, how="inner").reset_index(drop=True)
 
 
 def _prepare_possession(frames: pd.DataFrame) -> pd.DataFrame:

@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 import silly_kicks.coordination._compute as CC
+from scripts._bitwise import bits_equal
 from silly_kicks.coordination._catalog import METHODS_BY_LEVEL, resolve_pairs
 from silly_kicks.coordination._columns import DEFAULT_LEVELS
 from silly_kicks.coordination._config import CoordinationParams
@@ -178,10 +179,6 @@ def _metrics_for(family, ctx, spec, params, fs):
     return _coh_metrics(ctx, params, fs), [(lo, hi) for lo, hi in ctx.runs if hi - lo >= nperseg]
 
 
-def _bits_equal(have: float, want: float) -> bool:
-    return (np.isnan(have) and np.isnan(want)) or np.float64(have).view(np.int64) == np.float64(want).view(np.int64)
-
-
 @pytest.mark.parametrize("family", list(_FAMILIES))
 def test_pair_surrogate_equals_the_per_draw_loop(pair_signals, family, monkeypatch):
     # The DIRECT (reference) nulls stay the batched per-draw loop bit for bit; relative phase and cross-correlation
@@ -220,9 +217,9 @@ def test_pair_surrogate_equals_the_per_draw_loop(pair_signals, family, monkeypat
                 )
                 assert row[source_col] == src, (family, key)
                 for m, (sm, pc, ex) in triples.items():
-                    assert _bits_equal(float(row[f"{m}_surrogate_mean"]), sm), (family, key, m)
-                    assert _bits_equal(float(row[f"{m}_percentile"]), pc), (family, key, m)
-                    assert _bits_equal(float(row[f"{m}_excess"]), ex), (family, key, m)
+                    assert bits_equal(np.float64(float(row[f"{m}_surrogate_mean"])), np.float64(sm)), (family, key, m)
+                    assert bits_equal(np.float64(float(row[f"{m}_percentile"])), np.float64(pc)), (family, key, m)
+                    assert bits_equal(np.float64(float(row[f"{m}_excess"])), np.float64(ex)), (family, key, m)
                 checked[src] = checked.get(src, 0) + 1
     assert checked.get("computed", 0) > 0, checked  # non-vacuity: real nulls were compared
 

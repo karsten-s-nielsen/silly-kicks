@@ -549,6 +549,9 @@ _KEY_EXCEPTIONS: dict[str, str] = {
     # Keeps its pre-migration f"{comp}_{season}_{mid}" key (NOT ref.key -- which would be
     # "statsbomb__<mid>"), so finished coverage-shard generations resume across the migration.
     "build_sb360_coverage": "f'{ref.competition_id}_{ref.season_id}_{ref.match_id}'",
+    # A new local-only driver (owner ruling 2026-11-11) with no pre-migration key: its refs are the public
+    # SkillCorner match ids themselves (sorted strings), so the ref IS the key.
+    "validate_shape_graph_roles": "ref",
 }
 
 

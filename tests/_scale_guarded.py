@@ -8,9 +8,8 @@ by design (e.g. a fully-vectorized primitive); each MUST carry a discriminating 
 from __future__ import annotations
 
 import ast
-import pathlib
 
-_ROOT = pathlib.Path(__file__).resolve().parents[1]
+from tests.scripts._script_population import iter_package_modules, iter_script_modules
 
 #: All guard tests live in this module (values below are function names within it).
 SCALE_GUARD_MODULE = "tests.test_scale_guards"
@@ -88,6 +87,38 @@ SCALE_GUARDED: dict[str, str] = {
     # growth fixture is a zigzag whose candidate count scales with the frame count, so a per-candidate
     # `frames[frames.frame_id==fid]` rescan would be O(candidates*frames) == quadratic; group_rows keeps it linear.
     "silly_kicks.tracking._ball_contact.detect_ball_contacts": "test_detect_ball_contacts_is_subquadratic",
+    # W9.1 (Task 4): the game-aware linker groups frames per (game, period) once; the candidate counter is one
+    # searchsorted pass per (game, period) instead of a per-action rescan.
+    "silly_kicks.tracking.utils.link_actions_to_frames": "test_link_actions_to_frames_is_subquadratic",
+    "silly_kicks.tracking.utils._count_candidates_within_tolerance": (
+        "test__count_candidates_within_tolerance_is_subquadratic"
+    ),
+    # W9.4 (Task 5): LinkedFrameRows groups the (game, period, frame) keys once and takes each action's frame by
+    # position; the guard scales the frame count in two games.
+    "silly_kicks.tracking._link_identity.__init__": "test_linked_frame_rows_is_subquadratic",
+    # W9 (Task 5): compute_defensive_credits runs per game; the per-game body is now the group_rows caller, driven
+    # by the public entry's guard.
+    "silly_kicks.tracking.defensive_credit._orchestration._credit_rows_one_game": (
+        "test_compute_defensive_credits_is_subquadratic"
+    ),
+    # Review A-02a (owner ruling 2026-11-23): the through-ball signal groups the frames once on (period_id,
+    # frame_id) and looks each candidate up; the public entry's guard drives it.
+    "silly_kicks.tracking.defensive_credit._line_break_signal.precompute_line_break_between_lines": (
+        "test_compute_defensive_credits_is_subquadratic"
+    ),
+    # W3 (Task 8): compute_pitch_control_batch groups through build_pitch_control_index (once per call, whatever
+    # the chunk count); the batch guard drives it.
+    "silly_kicks.tracking.pitch_control._dispatch.build_pitch_control_index": (
+        "test_compute_pitch_control_batch_is_subquadratic"
+    ),
+    # Reviewer C TBC-IMPL-10: the batch splits its distinct requests over the frame chunks in one pass, never one
+    # scan of every request per chunk (that grew with requests x chunks, the square of the match length).
+    "silly_kicks.tracking.pitch_control._dispatch._requests_per_chunk": "test_requests_per_chunk_is_subquadratic",
+    # W5.2 (Task 11): the shape-graph core groups the outfield selection once by (game, period, frame, team);
+    # compute_shape_graphs, add_shape_graph and shape_graph_xfns all run through it.
+    "silly_kicks.tracking._shape_graph._team_frame_graphs": "test_compute_shape_graphs_is_subquadratic",
+    # W6 (Task 12): detect_line_breaking groups the outfield opponents once by (game, period, frame, team).
+    "silly_kicks.tracking._line_breaking.detect_line_breaking": "test_detect_line_breaking_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.
@@ -97,12 +128,12 @@ DEGENERATE_OK: dict[str, str] = {
 
 
 def group_rows_callers() -> set[str]:
-    """Every function that CALLS group_rows in silly_kicks/ + scripts/ (AST; excludes the def site)."""
+    """Every function that CALLS group_rows in silly_kicks/ + scripts/ (AST; excludes the def site).
+
+    The modules come from the shared walkers in ``tests/scripts/_script_population.py`` (one parse, R12)."""
     out: set[str] = set()
-    for base in ("silly_kicks", "scripts"):
-        for py in (_ROOT / base).rglob("*.py"):
-            tree = ast.parse(py.read_text(encoding="utf-8"))
-            mod = str(py.relative_to(_ROOT).with_suffix("")).replace("/", ".").replace("\\", ".")
+    for modules in (iter_package_modules(), iter_script_modules()):
+        for mod, tree in modules.items():
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     for sub in ast.walk(node):

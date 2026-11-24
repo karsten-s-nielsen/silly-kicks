@@ -28,6 +28,11 @@ from silly_kicks.tracking._ball_carrier import (
     infer_ball_carrier,
 )
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
+from silly_kicks.tracking._link_identity import (
+    append_columns_by_action_row,
+    pointers_with_action_columns,
+    require_links_bound,
+)
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking._stoppages import training_frame_mask
 from silly_kicks.tracking._velocity_availability import (
@@ -1032,6 +1037,7 @@ def add_xcross_attempt(
     """
     # Do NOT pre-resolve: pass the ORIGINAL `model` to compute so velocity-keyed auto-select fires
     # (a pre-resolved instance would be seen as a "custom" override and bypass it).
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     out = actions.copy()
     pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
 
@@ -1053,16 +1059,17 @@ def add_xcross_attempt(
     xcol = scored[scored["xcross_attempt"].notna()][
         ["game_id", "period_id", "frame_id", "team_id", "xcross_attempt"]
     ].copy()
-    linked = pointers.merge(actions[["action_id", "game_id", "period_id", "team_id"]], on="action_id", how="left")
+    # each pointer reads its action's game, period, and team BY POSITION (spec 2026-11-08
+    # tracking-batch section 4.9 W9.4), never by action_id
+    linked = pointers_with_action_columns(actions, pointers, ["game_id", "period_id", "team_id"])
     # ADR-019: action-side ids (e.g. int64 team_id) vs frame-derived ids (Int64/object) on the
     # merge keys. align_join_keys no-ops when both sides are merge-compatible (both numeric or both
     # object) and canonicalizes only the numeric-vs-object keys -- fixing the silent cross-dtype miss.
     merge_keys = ["game_id", "period_id", "frame_id", "team_id"]
     linked, xcol = align_join_keys(linked, xcol, merge_keys)
     merged = linked.merge(xcol, on=merge_keys, how="left")
-    deduped = merged.drop_duplicates(subset=["action_id"], keep="first")
-    col = deduped.set_index("action_id")["xcross_attempt"]
-    out = out.merge(col.rename("xcross_attempt"), left_on="action_id", right_index=True, how="left")
+    deduped = merged.drop_duplicates(subset=["action_row"], keep="first")
+    out = append_columns_by_action_row(out, deduped.set_index("action_row")[["xcross_attempt"]])
     # Provenance (closed set {default, position_only, custom}, D5): which variant auto-select served.
     out["xcross_attempt_variant"] = "custom" if model is not None else _variant_key_for_velocity(frames)
     return out

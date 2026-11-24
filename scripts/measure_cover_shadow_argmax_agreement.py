@@ -115,9 +115,11 @@ def measure_match(actions, frames, home_team_id, xt, *, match_id: str) -> list[d
     derived from ``frames`` (ADR-055).
     """
     goal_map = resolve_defended_goals(frames)
+    from silly_kicks.tracking._link_identity import linked_frame_rows
+
     pointers, _ = link_actions_to_frames(actions, frames)
-    pointer_lookup = pointers.set_index("action_id")
-    frame_groups = frames.groupby(["period_id", "frame_id"])
+    # each action reads its OWN game's frame BY POSITION (spec 2026-11-08 tracking-batch section 4.9 W9.4, R8)
+    frames_of = linked_frame_rows(actions, frames, pointers)
 
     # ADR-028 (RC1). `start_x`/`start_y` are ACTION-LTR while every position they are compared
     # against inside `_compute_cover_shadow_dict` -- defenders, receivers, the ball -- is FRAME-LTR,
@@ -151,14 +153,10 @@ def measure_match(actions, frames, home_team_id, xt, *, match_id: str) -> list[d
     records: list[dict] = []
     for j, (_idx, row) in enumerate(actions.iterrows()):
         aid, tid = row["action_id"], row["team_id"]
-        if pd.isna(tid) or aid not in pointer_lookup.index:
+        if pd.isna(tid):
             continue
-        fid_raw = pointer_lookup.at[aid, "frame_id"]
-        if pd.isna(fid_raw):
-            continue
-        try:
-            frame_data = frame_groups.get_group((row["period_id"], int(float(fid_raw))))  # type: ignore[arg-type]
-        except KeyError:
+        frame_data = frames_of[j]
+        if frame_data.empty:
             continue
 
         passer_xy = (float(row["start_x"]), float(row["start_y"]))

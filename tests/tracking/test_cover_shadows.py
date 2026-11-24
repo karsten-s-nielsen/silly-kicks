@@ -1690,3 +1690,30 @@ def test_ungated_cheap_identity_hatch_still_works():
         "no action produced an ungated cheap identity -- the hatch was never exercised, so this "
         "test proves nothing. FIX THE FIXTURE, do not skip."
     )
+
+
+@pytest.mark.parametrize("backend", ["numba", "numpy"])
+def test_cover_shadows_threat_pc_batch_bit_identical(backend, monkeypatch):
+    """W2 (spec 2026-11-08 tracking-batch section 4.2, TB-PLAN-07c): ``compute_threat_pc_batch`` over the frame
+    index equals the per-item public call ``compute_threat_pc`` (its per-frame ``compute_pitch_control`` path) bit
+    for bit, in the same run, on the cover-shadow fixture frames and their keeper-removed counterfactuals (two slices
+    with one frame key). The frozen oracle ended with ruling C5."""
+    from scripts._bitwise import assert_bits_equal
+    from silly_kicks.tracking._cover_shadows import compute_threat_pc, compute_threat_pc_batch
+    from tests.tracking._cover_shadow_inputs import fitted_xt, goal_map, iter_scoreable
+
+    if backend == "numpy":
+        monkeypatch.setenv("SILLY_KICKS_PITCH_CONTROL_FORCE_NUMPY", "1")
+    else:
+        monkeypatch.delenv("SILLY_KICKS_PITCH_CONTROL_FORCE_NUMPY", raising=False)
+    gm = goal_map()
+    items = []
+    for frame_data, _passer, team in list(iter_scoreable())[:6]:
+        no_gk = frame_data[~frame_data["is_goalkeeper"].astype(bool)]
+        items += [(frame_data, team, gm, None), (no_gk, team, gm, None)]
+    assert len(items) >= 4  # non-vacuity: several frames and their counterfactuals
+    xt = fitted_xt()
+    new = compute_threat_pc_batch(items, xt=xt)
+    old = [compute_threat_pc(f, attacking_team_id=t, xt=xt, goal_map=g, field_weight=w) for f, t, g, w in items]
+    assert_bits_equal(np.asarray(new), np.asarray(old))
+    assert len(set(new)) > 1  # non-vacuity: the values differ across items

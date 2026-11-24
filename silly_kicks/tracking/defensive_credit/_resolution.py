@@ -42,6 +42,7 @@ def resolve_responsible_defenders(
     frame_id: int | None = None,
     flip: bool | None = None,
     frame_groups: RowGroups | None = None,
+    period_id=None,
 ) -> pd.DataFrame:
     """Return opponents responsible for an action-LTR ``(anchor_x, anchor_y)`` anchor.
 
@@ -50,16 +51,21 @@ def resolve_responsible_defenders(
     threshold; ``lane_blocker`` (Item 2) uses the shot->goal corridor, excludes the GK, and does NOT
     origin-threshold (with a nearest-to-origin fallback).
     ``frame_id``: the linked frame for the triggering action; if None, uses the single frame present.
+    ``period_id``: the action's period. With ``frame_id`` it names the frame (spec W9.4: a provider can repeat
+    ``frame_id`` across periods); None reads ``frame_id`` alone (the single-frame unit-test path).
     ``flip``: the precomputed action-LTR reprojection decision; if None, computed here (unit-test path).
-    ``frame_groups``: an optional ADR-068 ``RowGroups`` prebuilt over ``frames`` keyed on ``frame_id``
-    (passed by ``compute_defensive_credits`` to avoid re-scanning ``frames`` per action x rule). When
-    ``None`` (unit-test path) the per-call boolean filter is used -- byte-identical, since the lookup
-    keys on ``frame_id`` ALONE, exactly matching the filter.
+    ``frame_groups``: an optional ADR-068 ``RowGroups`` prebuilt over ``frames`` keyed on
+    ``(period_id, frame_id)`` (passed by ``compute_defensive_credits`` with ``period_id``, to avoid
+    re-scanning ``frames`` per action x rule). When ``None`` the per-call boolean filter is used --
+    byte-identical, since the lookup keys exactly as the filter does.
     """
     if frame_groups is not None and frame_id is not None:
-        fr = frame_groups.get(frame_id)
+        fr = frame_groups.get(period_id, frame_id)
     elif frame_id is not None:
-        fr = frames[frames["frame_id"] == frame_id]
+        mask = frames["frame_id"] == frame_id
+        if period_id is not None:
+            mask &= frames["period_id"] == period_id
+        fr = frames[mask]
     else:
         fr = frames
     if flip is None:

@@ -26,6 +26,7 @@ from silly_kicks.id_compat import canonical_id, ids_match
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.territory import build_trimmed_hull
 from silly_kicks.tracking import GoalEndUnresolvedError, resolve_defended_goals
+from silly_kicks.tracking.utils import resolve_link_positions
 from silly_kicks.xthreat import require_fitted_xt
 
 from ._arms import arm_a_threat_suppressed, arm_b_threat_suppressed, contesting_defender_is_d
@@ -98,6 +99,9 @@ def compute_territorial_defense(
     if frame_convention not in FRAME_CONVENTIONS:
         raise ValueError(f"frame_convention={frame_convention!r} not in {FRAME_CONVENTIONS}.")
     # L7: build the per-(game, period, frame) row-group index ONCE and thread it into every stage.
+    if links is not None:
+        # W9.5: a `links=` acceptor verifies caller pointers against `actions`, whether it joins them or not
+        resolve_link_positions(actions, links)
     groups = group_rows(frames, _FRAME_KEYS)
     goal_map_for = _make_goal_map_for(frames, frame_convention)
 
@@ -305,6 +309,10 @@ def _distinct_defenders(domain, actions, params):
 
 def _assemble_samples(classified, arm_a, arm_b) -> pd.DataFrame:
     """One row per (game_id, canonical defender id): a_/b_ aggregates + slippage + td_source."""
+    if arm_a.empty:
+        # Owner ruling R17: an action set with no defensive action has an empty Arm-A domain. Return the
+        # empty table with the dtypes the non-empty path gives, so a concat with a real result stays typed.
+        return _empty_samples(classified)
     a = arm_a.copy()
     a["_ck"] = list(zip(a["game_id"].map(canonical_id), a["defender_id"].map(canonical_id), strict=True))
     # Build the per-defender lookups ONCE (ADR-068), not a full-table rescan per group.
@@ -350,3 +358,33 @@ def _assemble_samples(classified, arm_a, arm_b) -> pd.DataFrame:
     out["a_frames_scored"] = out["a_frames_scored"].astype("Int64")
     out["b_frames_scored"] = out["b_frames_scored"].astype("Int64")
     return out
+
+
+def _row_inferred_dtype(dtype):
+    """The dtype pandas infers when a table is built from non-null scalars of a column with ``dtype``.
+
+    The non-empty ``_assemble_samples`` path builds its id columns from ``.iloc[0]`` scalars, so a nullable
+    ``Int64`` source becomes ``int64`` and a string source becomes the default string dtype. The empty path
+    uses this mapping to give the same dtypes without any row to infer from.
+    """
+    if isinstance(dtype, pd.CategoricalDtype):
+        return _row_inferred_dtype(dtype.categories.dtype)
+    if pd.api.types.is_string_dtype(dtype):  # True for object and for every string dtype
+        return str  # object on pandas 2, the default str dtype on pandas 3 -- as row inference gives
+    numpy_dtype = getattr(dtype, "numpy_dtype", None)
+    return numpy_dtype if numpy_dtype is not None else dtype
+
+
+def _empty_samples(classified) -> pd.DataFrame:
+    """The zero-row samples table, typed as the non-empty path types it (owner ruling R17)."""
+    dtypes = {
+        "game_id": _row_inferred_dtype(classified["game_id"].dtype),
+        "player_id": _row_inferred_dtype(classified["defender_id"].dtype),
+        "a_threat_suppressed": "float64",
+        "a_frames_scored": "Int64",
+        "b_threat_suppressed": "float64",
+        "b_frames_scored": "Int64",
+        "b_attribution_slippage": "float64",
+        "td_source": str,
+    }
+    return pd.DataFrame({c: pd.Series(dtype=dtypes[c]) for c in ["game_id", "player_id", *TD_SAMPLE_COLUMNS]})

@@ -62,6 +62,29 @@ def test_tracking_ball_xy_selects_ball_row():
     assert xy[0, 1] == pytest.approx(0.5)
 
 
+def test_tracking_ball_xy_reads_the_frame_of_its_own_period():
+    # Review A-01 item 3 (owner ruling 2026-11-23): inside one game the frame key is (period_id, frame_id). Frame 1250
+    # repeats in both periods; a period-2 corner reads period 2's ball, not the first frame-1250 row of any period.
+    frames = pd.concat([_frame(), _frame(period_id=[2, 2], y=[20.0, 67.5])], ignore_index=True)
+    corner = pd.DataFrame(
+        dict(
+            game_id=[9],
+            period_id=[2],
+            action_id=[7],
+            team_id=[1],
+            type_id=[_CORNER_C],
+            time_seconds=[50.0],
+            start_x=[np.nan],
+            start_y=[np.nan],
+            end_x=[95.0],
+            end_y=[60.0],
+        )
+    )
+    assert _tracking_ball_xy(corner, frames, links=None)[0, 1] == pytest.approx(67.5)
+    # non-vacuity: the same corner in period 1 reads period 1's ball
+    assert _tracking_ball_xy(corner.assign(period_id=[1]), frames, links=None)[0, 1] == pytest.approx(0.5)
+
+
 def test_tracking_ball_xy_coerces_string_is_ball():
     # ADR-019: object/string is_ball must be coerced, not assumed bool (~is_ball no-op bug).
     a = pd.DataFrame(

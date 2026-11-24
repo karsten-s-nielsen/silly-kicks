@@ -23,6 +23,7 @@ from silly_kicks.id_compat import (
 
 from ._action_orientation import acting_team_attacks_rtl, validate_period_directions
 from ._gk_resolve import GoalMap
+from ._link_identity import pointers_with_action_columns
 
 _OFF_BALL_RUNS_COLS = [
     "n_off_ball_runners_pre_window",
@@ -318,7 +319,7 @@ def _line_break_kernel(
         return empty
     # Direction per ACTION from the single orientation authority (ADR-028/041), resolved
     # ONCE here at the edge; the two sites below consume the resolved bool.
-    _flip_by_aid = dict(zip(actions["action_id"], acting_team_attacks_rtl(actions, frames), strict=False))
+    _flip_by_row = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=object)  # by action ROW
     if dl.empty:
         return empty
 
@@ -333,12 +334,9 @@ def _line_break_kernel(
 
     linked["frame_id_int"] = linked["frame_id"].astype("int64")
 
-    # Join with actions to get team_id, end_x, period_id, game_id
-    linked = linked.merge(
-        actions[["action_id", "team_id", "end_x", "period_id", "game_id"]],
-        on="action_id",
-        how="left",
-    )
+    # Each pointer reads its action's team_id, end_x, period_id, game_id BY POSITION (action_row;
+    # spec 2026-11-08 tracking-batch section 4.9 W9.4), never by action_id
+    linked = pointers_with_action_columns(actions, linked, ["team_id", "end_x", "period_id", "game_id"])
 
     # Align game_id dtype between linked (from actions) and dl (from frames)
     # before the merge — pandas rejects merge on object vs int64 keys.
@@ -363,15 +361,12 @@ def _line_break_kernel(
     )
     # Keep only rows where dl team != action team (opposing team's line)
     opposing = merged[ids_differ(merged["team_id_dl"], merged["team_id_action"])].copy()
-    opposing = opposing.drop_duplicates("action_id", keep="first")
+    opposing = opposing.drop_duplicates("action_row", keep="first")
 
     # Use positional arrays to avoid .at assignment issues with nullable dtypes
     n_act = len(actions)
     line_break_arr = np.full(n_act, np.nan)  # will map to boolean
     n_behind_arr = np.full(n_act, np.nan)  # will map to Int64
-
-    # Build positional lookup: action_id -> positional index in actions
-    aid_to_pos = {aid: pos for pos, aid in enumerate(actions["action_id"].values)}
 
     # Pre-build grouped dict for O(1) frame-player lookups. Canonicalize the id-valued group
     # keys (game_id, team_id) so the lookup matches the action-side key regardless of caller
@@ -384,10 +379,7 @@ def _line_break_kernel(
     )
 
     for _, row in opposing.iterrows():
-        aid = row["action_id"]
-        if aid not in aid_to_pos:
-            continue
-        pos = aid_to_pos[aid]
+        pos = int(row["action_row"])
 
         def_line_x = row["defensive_line_x"]
         if pd.isna(def_line_x):
@@ -401,7 +393,7 @@ def _line_break_kernel(
         # `compute_defensive_line`: re-keying the producer while leaving this identity-keyed
         # would MOVE the bug rather than fix it, with `line_break` and
         # `n_attackers_behind_line` as the affected outputs.
-        _flip = _flip_by_aid.get(aid)
+        _flip = _flip_by_row[pos]
         if pd.isna(_flip):
             # Unresolved direction -> stays pd.NA, the same route a NaN defensive line takes
             # above. Unlike the pre-window metrics, BOTH outputs here depend on the flip

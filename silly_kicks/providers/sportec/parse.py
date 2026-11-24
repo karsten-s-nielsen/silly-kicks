@@ -54,11 +54,27 @@ import warnings
 import xml.etree.ElementTree as ET  # nosemgrep: use-defused-xml -- trusted local DFL XML files, not untrusted input
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
+
+from silly_kicks.id_compat import ids_equal
+
+from ._dfl_tables import (
+    _EVENT_TYPE_PREFIX,
+    _NESTED_PREFIX_MAP,
+    _SECTION_TO_PERIOD,
+    _to_snake_case,
+)
+from ._event_derivation import (
+    _collect_kickoffs,
+    _dfl_actor_rule,
+    _parse_event_time,
+    _period_outcome,
+    _second_half_unseen,
+    _timestamp_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,44 +143,9 @@ def finalize_bronze_df(
     return df
 
 
-# --- lifted: idsse.py L135-141 (luxury-lakehouse @ 0efac60) ---
-_SECTION_TO_PERIOD: dict[str, int] = {
-    "firstHalf": 1,
-    "secondHalf": 2,
-    "extraTimeFirstHalf": 3,
-    "extraTimeSecondHalf": 4,
-    "penaltyShootout": 5,
-}
-
 # --- lifted: idsse.py L144-145 (luxury-lakehouse @ 0efac60) ---
 # Frame rate for all IDSSE matches (DFL position data is 25fps)
 _FRAME_RATE = 25
-
-# --- lifted: idsse.py L150-156 (luxury-lakehouse @ 0efac60) ---
-# Player attribute lookup order per event child tag.
-# For most event types, the primary actor is in the ``Player`` attribute.
-# TacklingGame uses ``Winner`` as the primary actor.
-_PLAYER_ATTR_ORDER: dict[str, list[str]] = {
-    "TacklingGame": ["Winner", "Player"],
-}
-_DEFAULT_PLAYER_ATTRS: list[str] = ["Player"]
-
-# --- lifted: idsse.py L172-185 (luxury-lakehouse @ 0efac60) ---
-# Pre-compiled regex for splitting CamelCase / PascalCase at word boundaries.
-# Matches (lower→Upper) and (Upper→Upper-before-lower). Shared conceptually
-# with src/tests/coverage_utils.to_snake_case — the mirror lives there for
-# the coverage-test infrastructure.
-_ATTR_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-
-
-def _to_snake_case(name: str) -> str:
-    """Normalise a DFL XML attribute name to a bronze column suffix.
-
-    Handles CamelCase (``PlayAngle`` → ``play_angle``) and hyphenated
-    (``X-Position`` → ``x_position``) attribute names consistently.
-    """
-    return _ATTR_CAMEL_BOUNDARY.sub("_", name.replace("-", "_")).lower()
-
 
 # --- lifted: idsse.py L188-213 (luxury-lakehouse @ 0efac60) ---
 # Raw DFL <Event>-level XML attribute names → bronze column names.
@@ -193,65 +174,6 @@ _EVENT_LEVEL_FLOAT_COLS: frozenset[str] = frozenset(
     {"x", "y", "x_source_position", "y_source_position", "x_position_from_tracking", "y_position_from_tracking"},
 )
 _EVENT_LEVEL_INT_COLS: frozenset[str] = frozenset({"start_frame", "end_frame", "calculated_frame"})
-
-# --- lifted: idsse.py L215-251 (luxury-lakehouse @ 0efac60) ---
-# First-child tag → bronze column prefix. Every attribute on a first-child
-# element lands as ``{prefix}_{to_snake_case(attr)}``. Prefixes are short,
-# readable, and distinct across all first-child types.
-_EVENT_TYPE_PREFIX: dict[str, str] = {
-    "BallClaiming": "claim",
-    "BallDeflection": "deflection",
-    "Caution": "caution",
-    "CautionTeamofficial": "caution_official",
-    "ChanceWithoutShot": "chance",
-    "CornerKick": "corner",
-    "Delete": "delete",
-    "FairPlay": "fairplay",
-    "FinalWhistle": "whistle",
-    "Foul": "foul",
-    "FreeKick": "freekick",
-    "GoalDisallowed": "goaldis",
-    "GoalKick": "goalkick",
-    "KickOff": "kickoff",
-    "Nutmeg": "nutmeg",
-    "Offside": "offside",
-    "OtherBallAction": "otherball",
-    "OtherPlayerAction": "other_action",
-    "Penalty": "penalty",
-    "PenaltyNotAwarded": "penalty_not",
-    "Play": "play",
-    "PlayerNotSentOff": "not_sent_off",
-    "PossessionLossBeforeGoal": "possloss",
-    "RefereeBall": "refball",
-    "Run": "run",
-    "ShotAtGoal": "shot",
-    "SitterPrevented": "sitter_prev",
-    "SpectacularPlay": "spectacular",
-    "Substitution": "sub",
-    "TacklingGame": "tackle",
-    "ThrowIn": "throwin",
-    "VideoAssistantAction": "var",
-}
-
-# --- lifted: idsse.py L253-281 (luxury-lakehouse @ 0efac60) ---
-# Nested tag → bronze column prefix. Nested children that reuse a top-level
-# event type keep the same prefix (a Play nested inside KickOff writes to
-# ``play_*`` — same as a standalone Play). Shot-outcome variants share the
-# ``shot_outcome_*`` prefix and use ``shot_outcome_type`` to disambiguate.
-_NESTED_PREFIX_MAP: dict[str, str] = {
-    "Pass": "pass",
-    "Cross": "cross",
-    "Play": "play",
-    "ShotAtGoal": "shot",
-    "FairPlay": "fairplay",
-    "FaultExecution": "fault_execution",
-    "SuccessfulShot": "shot_outcome",
-    "SavedShot": "shot_outcome",
-    "ShotWide": "shot_outcome",
-    "ShotWoodWork": "shot_outcome",
-    "BlockedShot": "shot_outcome",
-    "OtherShot": "shot_outcome",
-}
 
 # Shot-outcome nested tag name → disambiguator value emitted on
 # ``shot_outcome_type`` when a ShotAtGoal event has one of these nested.
@@ -752,18 +674,36 @@ _IDSSE_TRACKING_DTYPE_OVERRIDES: dict[str, str] = {
 }
 
 
+@dataclass(frozen=True)
+class _EventSnapshot:
+    """One DFL ``<Event>`` captured during the single XML pass (spec 2026-11-08 tracking-batch W8.5): its attributes,
+    its first child's tag and attributes, and the first child's children, so the element can be cleared at once."""
+
+    attrs: dict[str, str]
+    tag: str
+    child_attrs: dict[str, str]
+    nested: list[tuple[str, dict[str, str]]]
+
+    def actor_attrs(self) -> dict[str, str]:
+        """The attributes the actor rule reads: for a KickOff the FIRST nested ``Play`` whenever one exists (even
+        without a ``Player``), else the KickOff itself; for every other type the first child."""
+        if self.tag == "KickOff":
+            for nested_tag, nested_attrs in self.nested:
+                if nested_tag == "Play":
+                    return nested_attrs
+        return self.child_attrs
+
+
 # --- lifted: idsse.py L1147-1268 (luxury-lakehouse @ 0efac60) ---
 def _build_event_row(
-    elem: ET.Element,
-    first_child: ET.Element,
-    event_type: str,
+    snap: _EventSnapshot,
     canonical_match_id: str,
     current_period: int,
+    timestamp_seconds: float,
     player_team_map: dict[str, str],
-    period_start_time: dict[int, datetime],
     metadata: _MatchMetadata = _EMPTY_MATCH_METADATA,
 ) -> dict[str, object]:
-    """Build one bronze row from a DFL <Event> element + its first child.
+    """Build one bronze row from a DFL <Event> snapshot.
 
     Per the bronze-completeness principle, this extracts EVERY XML attribute
     on the Event + first-child + nested-child elements into a prefixed
@@ -773,12 +713,15 @@ def _build_event_row(
 
     Args:
         ...
+        current_period, timestamp_seconds: from the shared period rule
+            (``_event_derivation``; spec 2026-11-08 tracking-batch W8.1).
         metadata: Match-level metadata from ``_parse_match_metadata``.
             PR-LL2 Path B: lifts ``competition_native_id`` /
             ``season_native_id`` / ``home_team_id_native`` /
             ``away_team_id_native`` onto every row. ``team_id_native`` is
             derived per-row from the ``team`` label.
     """
+    event_type = snap.tag
     row: dict[str, object] = {
         "match_id": canonical_match_id,
         "event_type": event_type,
@@ -795,7 +738,7 @@ def _build_event_row(
 
     # --- Event-level attrs → bronze cols via EVENT_LEVEL_ATTR_MAP ---
     for dfl_attr, bronze_col in _EVENT_LEVEL_ATTR_MAP.items():
-        raw_val = elem.get(dfl_attr)
+        raw_val = snap.attrs.get(dfl_attr)
         if raw_val is None or raw_val == "":
             row[bronze_col] = None
             continue
@@ -814,35 +757,11 @@ def _build_event_row(
         else:
             row[bronze_col] = raw_val
 
-    # --- timestamp_seconds: period-relative from EventTime ---
-    event_time_str = elem.get("EventTime", "")
-    timestamp_seconds: float | None = None
-    if event_time_str:
-        try:
-            event_dt = datetime.fromisoformat(event_time_str)
-            if event_dt.tzinfo is not None:
-                event_dt = event_dt.astimezone(timezone.utc)
-            if current_period not in period_start_time:
-                period_start_time[current_period] = event_dt
-            delta = event_dt - period_start_time[current_period]
-            timestamp_seconds = round(delta.total_seconds(), 4)
-        except (ValueError, TypeError):
-            pass
+    # --- timestamp_seconds: period-relative, from the shared period rule ---
     row["timestamp_seconds"] = timestamp_seconds
 
-    # --- Primary player_id + team label (preserving KickOff nested-Play lookup) ---
-    search_elem = first_child
-    if event_type == "KickOff":
-        for ko_child in first_child:
-            if ko_child.tag == "Play":
-                search_elem = ko_child
-                break
-    player_attr_names = _PLAYER_ATTR_ORDER.get(event_type, _DEFAULT_PLAYER_ATTRS)
-    for attr_name in player_attr_names:
-        pid = search_elem.get(attr_name, "")
-        if pid:
-            row["player_id"] = pid
-            break
+    # --- Primary player_id + team label (the shared actor rule; KickOff reads its first nested Play) ---
+    row["player_id"] = _dfl_actor_rule(event_type, snap.actor_attrs())
     pid_val = row["player_id"]
     if isinstance(pid_val, str) and pid_val:
         row["team"] = player_team_map.get(pid_val, "unknown")
@@ -860,110 +779,24 @@ def _build_event_row(
     # --- First-child attrs → {prefix}_{snake(attr)} bronze cols ---
     prefix = _EVENT_TYPE_PREFIX.get(event_type)
     if prefix is not None:
-        for attr_name, attr_val in first_child.attrib.items():
+        for attr_name, attr_val in snap.child_attrs.items():
             row[f"{prefix}_{_to_snake_case(attr_name)}"] = attr_val
 
-    # --- Nested children attrs → {nested_prefix}_{snake(attr)} bronze cols ---
-    for nested_child in first_child:
-        nested_prefix = _NESTED_PREFIX_MAP.get(nested_child.tag)
+    # --- Nested children attrs → {nested_prefix}_{snake(attr)} bronze cols (a later Play overwrites an earlier) ---
+    for nested_tag, nested_attrs in snap.nested:
+        nested_prefix = _NESTED_PREFIX_MAP.get(nested_tag)
         if nested_prefix is None:
             continue
-        for attr_name, attr_val in nested_child.attrib.items():
+        for attr_name, attr_val in nested_attrs.items():
             row[f"{nested_prefix}_{_to_snake_case(attr_name)}"] = attr_val
         # Disambiguator for ShotAtGoal's six mutually-exclusive outcome tags.
-        if event_type == "ShotAtGoal" and nested_child.tag in _SHOT_OUTCOME_NAMES:
-            row["shot_outcome_type"] = _SHOT_OUTCOME_NAMES[nested_child.tag]
+        if event_type == "ShotAtGoal" and nested_tag in _SHOT_OUTCOME_NAMES:
+            row["shot_outcome_type"] = _SHOT_OUTCOME_NAMES[nested_tag]
 
     return row
 
 
-# --- lifted: idsse.py L1271-1353 (luxury-lakehouse @ 0efac60) ---
-def _scan_kickoff_times(event_path: str) -> dict[int, datetime]:
-    """Pass 1 of the 2-pass DFL event parser (ADR-018 / Bug #6 fix).
-
-    Scans ONLY KickOff events to build a ``{period: kickoff_event_time}`` map.
-    Pass 2 uses this map to derive each event's period by comparing its
-    EventTime to kickoff times — NOT by relying on XML stream-order
-    ``current_period`` state, which DFL XML's secondary blocks (BallClaiming,
-    RefereeBall, etc., emitted after the secondHalf KickOff) violate.
-
-    Returns:
-        Mapping period_id → first KickOff EventTime for that period (UTC).
-        Includes only periods whose ``<KickOff GameSection=...>`` has a
-        recognized GameSection per ``_SECTION_TO_PERIOD``. Empty dict for
-        inputs with no KickOffs.
-
-    Memory: O(periods) — typically O(2). Pass cost is O(events) but
-    we use ET.iterparse so the parsed tree never lives in memory.
-    """
-    kickoff_times: dict[int, datetime] = {}
-
-    for _ev, elem in ET.iterparse(event_path, events=("end",)):  # noqa: S314
-        if elem.tag != "Event":
-            if elem.tag == "PutDataRequest":
-                elem.clear()
-            continue
-
-        first_child: ET.Element | None = None
-        for child in elem:
-            first_child = child
-            break
-
-        if first_child is None or first_child.tag != "KickOff":
-            elem.clear()
-            continue
-
-        section = first_child.get("GameSection", "")
-        period = _SECTION_TO_PERIOD.get(section)
-        if period is None:
-            logger.warning(
-                "Unrecognized GameSection %r in %s — skipping KickOff event",
-                section,
-                event_path,
-            )
-            elem.clear()
-            continue
-
-        event_time_str = elem.get("EventTime", "")
-        if event_time_str:
-            try:
-                event_dt = datetime.fromisoformat(event_time_str)
-                if event_dt.tzinfo is not None:
-                    event_dt = event_dt.astimezone(timezone.utc)
-                # First KickOff for a period wins (defensively — DFL XML
-                # should have only one per period anyway).
-                if period not in kickoff_times:
-                    kickoff_times[period] = event_dt
-            except (ValueError, TypeError):
-                pass
-
-        elem.clear()
-
-    return kickoff_times
-
-
-def _derive_period_from_kickoffs(
-    event_dt: datetime,
-    kickoff_times: dict[int, datetime],
-) -> tuple[int | None, datetime | None]:
-    """Given an event's EventTime, return ``(period, period_kickoff_time)``.
-
-    Period = the largest period whose ``kickoff_time`` ≤ ``event_dt``.
-    Returns ``(None, None)`` if event_dt precedes all kickoffs (legitimate
-    edge case — pre-match warmup events; downstream skips them).
-    """
-    if not kickoff_times:
-        return None, None
-    best_period: int | None = None
-    best_start: datetime | None = None
-    for p, p_start in kickoff_times.items():
-        if event_dt >= p_start and (best_start is None or p_start > best_start):
-            best_period = p
-            best_start = p_start
-    return best_period, best_start
-
-
-# --- lifted: idsse.py L1356-1469 (luxury-lakehouse @ 0efac60) ---
+# --- lifted: idsse.py L1356-1469 (luxury-lakehouse @ 0efac60); single XML pass since 2026-11 (W8.5) ---
 def _parse_events_xml(
     event_path: str,
     player_team_map: dict[str, str],
@@ -973,19 +806,11 @@ def _parse_events_xml(
 ) -> list[dict[str, object]]:
     """Parse DFL event XML (DFL_03_02 series) into bronze-completeness row dicts.
 
-    Two-pass implementation (ADR-018 / Bug #6 fix, 2026-04-29):
-
-    - **Pass 1** (``_scan_kickoff_times``): scan KickOff events to build
-      ``{period: kickoff_event_time}`` map.
-    - **Pass 2** (this function body): emit per-event rows with period
-      derived from ``event_time`` via ``_derive_period_from_kickoffs``.
-
-    Pre-2026-04-29 used a state-machine ``current_period`` updated at each
-    KickOff in stream order. DFL XML emits secondary blocks (BallClaiming,
-    RefereeBall, etc.) AFTER the secondHalf KickOff in stream order with
-    first-half event_times — these were misclassified as period=2 with
-    negative period-relative ``timestamp_seconds``. The 2-pass approach
-    derives period from event_time, not stream-order.
+    ONE XML pass (spec 2026-11-08 tracking-batch W8.5) snapshots every ``<Event>``; the periods then come from the
+    shared period rule (``_event_derivation``, the same code path as ``derive_dfl_event_periods``) and the actors
+    from the shared actor rule. The rule is the ADR-018 / Bug #6 one: an event's period is derived from its
+    ``event_time`` against the KickOff times, NOT from stream order -- DFL XML emits secondary blocks
+    (BallClaiming, RefereeBall, etc.) AFTER the secondHalf KickOff with first-half event_times.
 
     Each ``<Event>`` in the DFL XML has exactly one first-child element
     whose tag name determines the event type (``Play``, ``ShotAtGoal``,
@@ -999,83 +824,90 @@ def _parse_events_xml(
       ``shot_outcome_type`` as the disambiguator.
     - **Derived cols**: ``match_id`` (canonical bare DFL MatchId per
       ``shared.identifiers.idsse_native_match_id``), ``event_type``,
-      ``period`` (derived from event_time vs Pass-1 kickoff map),
-      ``timestamp_seconds`` (period-relative), ``player_id`` (primary actor
-      via ``_PLAYER_ATTR_ORDER``), ``team`` (``home``/``away``/``unknown``
-      via ``player_team_map``).
+      ``period`` and ``timestamp_seconds`` (the period rule),
+      ``player_id`` (primary actor via ``_PLAYER_ATTR_ORDER``), ``team``
+      (``home``/``away``/``unknown`` via ``player_team_map``).
 
-    Events whose ``event_time`` precedes all KickOffs (pre-match warmup) are
-    skipped — they cannot be period-attributed. Events without an EventTime
-    attribute are also skipped (cannot derive period or timestamp).
+    Rows are dropped, and counted in the log: an Event with no first child, an event before every KickOff
+    (pre-match warmup; INFO), and an event whose time is missing, unparseable, or incomparable with the kickoffs
+    (WARNING). No KickOff at all returns no rows.
 
     Coordinate system: DFL pitch-origin meters (x 0-105, y 0-68). Staging
     transforms to the shared 120x80 system.
     """
     canonical_match_id = idsse_native_match_id(match_id)
 
-    # PASS 1: build {period: kickoff_time} map.
-    kickoff_times = _scan_kickoff_times(event_path)
-    if not kickoff_times:
-        logger.warning("No KickOff events found in %s — skipping match", event_path)
-        return []
-
-    # PASS 2: emit per-event rows.
-    rows: list[dict[str, object]] = []
-
+    snapshots: list[_EventSnapshot] = []
+    n_no_first_child = 0
     for _ev, elem in ET.iterparse(event_path, events=("end",)):  # noqa: S314
         if elem.tag != "Event":
             if elem.tag == "PutDataRequest":
                 elem.clear()
             continue
-
         first_child: ET.Element | None = None
         for child in elem:
             first_child = child
             break
-
         if first_child is None:
+            n_no_first_child += 1
             elem.clear()
             continue
-
-        event_type = first_child.tag
-
-        # Derive period from event_time using pass-1 map.
-        event_time_str = elem.get("EventTime", "")
-        period: int | None = None
-        period_start: datetime | None = None
-        if event_time_str:
-            try:
-                event_dt = datetime.fromisoformat(event_time_str)
-                if event_dt.tzinfo is not None:
-                    event_dt = event_dt.astimezone(timezone.utc)
-                period, period_start = _derive_period_from_kickoffs(event_dt, kickoff_times)
-            except (ValueError, TypeError):
-                pass
-
-        # Skip events that predate all kickoffs (pre-match warmup) or that lack
-        # a parseable EventTime — neither can be period-attributed.
-        if period is None or period_start is None:
-            elem.clear()
-            continue
-
-        # Seed _build_event_row's period_start_time dict directly with the
-        # derived value (it would otherwise compute it from the first event
-        # of the period it sees, which on a single call is just this event).
-        period_start_time: dict[int, datetime] = {period: period_start}
-
-        row = _build_event_row(
-            elem,
-            first_child,
-            event_type,
-            canonical_match_id,
-            period,
-            player_team_map,
-            period_start_time,
-            metadata,
+        snapshots.append(
+            _EventSnapshot(
+                attrs=dict(elem.attrib),
+                tag=first_child.tag,
+                child_attrs=dict(first_child.attrib),
+                nested=[(c.tag, dict(c.attrib)) for c in first_child],
+            )
         )
-        rows.append(row)
         elem.clear()
 
+    times = [_parse_event_time(snap.attrs.get("EventTime", "")) for snap in snapshots]
+    kickoffs, _skipped, unrecognized, n_restart = _collect_kickoffs(
+        [snap.tag for snap in snapshots], [snap.child_attrs.get("GameSection", "") for snap in snapshots], times
+    )
+    for section in unrecognized:  # a section-less restart after a period start is routine and not logged
+        logger.warning("Unrecognized GameSection %r in %s — skipping KickOff event", section, event_path)
+    if _second_half_unseen(kickoffs, n_restart):
+        logger.warning(
+            "No recognised secondHalf KickOff in %s, but %d section-less KickOff(s): one may be the second-half "
+            "start without its GameSection",
+            event_path,
+            n_restart,
+        )
+    if not kickoffs:
+        logger.warning("No KickOff events found in %s — skipping match", event_path)
+        return []
+
+    rows: list[dict[str, object]] = []
+    dropped = {"unparseable": 0, "incomparable": 0, "pre_kickoff": 0}
+    for snap, t in zip(snapshots, times, strict=True):
+        period, start, outcome = _period_outcome(t, kickoffs)
+        if outcome != "ok":
+            dropped[outcome] += 1
+            continue
+        rows.append(
+            _build_event_row(
+                snap,
+                canonical_match_id,
+                period,  # type: ignore[arg-type]
+                _timestamp_seconds(t, start),  # type: ignore[arg-type]
+                player_team_map,
+                metadata,
+            )
+        )
+
+    if dropped["pre_kickoff"]:
+        logger.info("Dropped %d pre-kickoff event(s) in %s", dropped["pre_kickoff"], event_path)
+    if dropped["unparseable"] or dropped["incomparable"] or n_no_first_child:
+        logger.warning(
+            "Dropped events in %s: %d with an unparseable or missing time, %d with a time incomparable with the "
+            "kickoffs, %d with no first child",
+            event_path,
+            dropped["unparseable"],
+            dropped["incomparable"],
+            n_no_first_child,
+        )
     logger.info("Parsed %d events for IDSSE match %s", len(rows), match_id)
     return rows
 
@@ -1388,8 +1220,10 @@ def _resolve_idsse_team_from_qualifiers(df: pd.DataFrame) -> None:
         still_unknown = (df["team"] == "unknown") & df[qual_col].notna() & (df[qual_col] != "")
         if not still_unknown.any():
             continue
-        is_home = still_unknown & (df[qual_col] == df["home_team_id_native"])
-        is_away = still_unknown & (df[qual_col] == df["away_team_id_native"])
+        # ADR-019 (spec 2026-11-08 tracking-batch W8.6, R2): a dtype-safe comparison. A raw `==` silently missed an
+        # int CLU id against a str one.
+        is_home = still_unknown & ids_equal(df[qual_col], df["home_team_id_native"]).to_numpy()
+        is_away = still_unknown & ids_equal(df[qual_col], df["away_team_id_native"]).to_numpy()
         df.loc[is_home, "team"] = "home"
         df.loc[is_away, "team"] = "away"
 

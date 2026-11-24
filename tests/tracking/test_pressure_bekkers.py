@@ -94,7 +94,7 @@ def _build_ctx_with_velocities_and_ball(
     )
     actor_rows = pd.DataFrame(
         {
-            "action_id": [1],
+            "action_row": [0],
             "x": [actor_xy[0]],
             "y": [actor_xy[1]],
             "vx": [actor_vxvy[0]],
@@ -105,7 +105,7 @@ def _build_ctx_with_velocities_and_ball(
     defender_rows = pd.DataFrame(
         [
             {
-                "action_id": 1,
+                "action_row": 0,
                 "team_id_action": "home",
                 "team_id_frame": "away",
                 "player_id_action": 10,
@@ -141,7 +141,7 @@ def _build_ctx_with_velocities_and_ball(
         ball_per_action = pd.DataFrame(
             [
                 {
-                    "action_id": 1,
+                    "action_row": 0,
                     "x": ball_xyvxvy[0],
                     "y": ball_xyvxvy[1],
                     "vx": ball_xyvxvy[2],
@@ -150,7 +150,7 @@ def _build_ctx_with_velocities_and_ball(
             ]
         )
     else:
-        ball_per_action = pd.DataFrame(columns=["action_id", "x", "y", "vx", "vy"])
+        ball_per_action = pd.DataFrame(columns=["action_row", "x", "y", "vx", "vy"])
     return actions["start_x"], actions["start_y"], ctx, ball_per_action
 
 
@@ -529,8 +529,8 @@ def test_bekkers_kernel_tolerates_duplicate_ball_rows_per_action() -> None:
         defenders=[(60.0, 34.0, -3.0, 0.0)],
         ball_xyvxvy=(52.0, 34.0, 0.0, 0.0),
     )
-    ball_dup = pd.concat([ball, ball, ball], ignore_index=True)  # same action_id appears 3x
-    assert int((ball_dup["action_id"] == 1).sum()) == 3
+    ball_dup = pd.concat([ball, ball, ball], ignore_index=True)  # same action_row appears 3x
+    assert int((ball_dup["action_row"] == 0).sum()) == 3
     out = _pressure_bekkers(ax, ay, ctx, params=BekkersParams(use_ball_carrier_max=True), ball_xy_v_per_action=ball_dup)
     single = _pressure_bekkers(ax, ay, ctx, params=BekkersParams(use_ball_carrier_max=True), ball_xy_v_per_action=ball)
     assert 0.0 <= float(out.iloc[0]) <= 1.0  # finite, bounded — never a broadcast crash

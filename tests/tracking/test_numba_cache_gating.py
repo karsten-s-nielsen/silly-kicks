@@ -35,6 +35,7 @@ import silly_kicks
 MODULES = [
     "silly_kicks.tracking._ball_carrier_numba",
     "silly_kicks.tracking.pitch_control._numba_kernels",
+    "silly_kicks.tracking.pitch_control._batch_numba_kernels",  # the batched spearman core (tracking-batch W2)
     # TF-58 coordination: the SampEn pair counters + the spec 7.9 surrogate-identity kernels (eager signatures,
     # so they decorate -- and would resolve a cache locator -- at `import silly_kicks.coordination`).
     "silly_kicks.coordination._kernels._numba",
@@ -51,6 +52,7 @@ KERNELS = [
     ("silly_kicks.tracking.pitch_control._numba_kernels", "tti_numba"),
     ("silly_kicks.tracking.pitch_control._numba_kernels", "influence_numba"),
     ("silly_kicks.tracking.pitch_control._numba_kernels", "gaussian_influence_numba"),
+    ("silly_kicks.tracking.pitch_control._batch_numba_kernels", "influence_rows_numba"),
     ("silly_kicks.coordination._kernels._numba", "_pairs_within_sorted_nb"),
     ("silly_kicks.coordination._kernels._numba", "_dominance_count_self_nb"),
     ("silly_kicks.coordination._kernels._numba", "_dominance_count_cross_nb"),

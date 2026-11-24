@@ -10,11 +10,12 @@ Includes:
 from __future__ import annotations
 
 import warnings
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
 
+from silly_kicks._frame_index import group_rows
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.id_compat import (
     _as_bool,
@@ -27,6 +28,22 @@ from silly_kicks.id_compat import (
 from silly_kicks.reflection import TRACKING_REFLECTION_KINDS, reflect
 
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
+from ._link_identity import FINGERPRINT_RECORD_FORMAT as FINGERPRINT_RECORD_FORMAT  # public re-export (W9.2)
+from ._link_identity import (
+    NA_TOKEN,
+    _cached_fingerprints,
+    append_pointer_columns,
+    frame_join_keys,
+    game_keys,
+    has_game_key,
+    iter_games,
+    pointers_with_action_columns,
+    require_unambiguous_action_ids,
+)
+from ._link_identity import action_fingerprints as action_fingerprints  # public re-export (W9.2)
+from ._link_identity import link_identity_scope as link_identity_scope  # public re-export (W9.5)
+from ._link_identity import remap_links as remap_links  # public re-export (W9.5)
+from ._link_identity import resolve_link_positions as resolve_link_positions  # public re-export (W9.5)
 from ._provider_visibility import detected_mask, detection_aware_provider
 from ._visibility import VISIBLE_AREA_OBSERVED
 from ._warnings import GoalkeeperClampWarning, ZProvenanceWarning
@@ -373,20 +390,42 @@ def link_actions_to_frames(
     inputs --- the guard here cannot see actions a pre-filter already dropped.
     See ADR-017.
 
+    **Multi-game input.** Each action links only to frames of its own game:
+    the frame index is built on (game_id, period_id, frame_id) and linking
+    runs within each (game_id, period_id). The game keys are canonicalised
+    (ADR-019), so an int ``game_id`` on one side and a str on the other still
+    link; an NA game links only to NA-game frames. If either input has no
+    ``game_id`` column, the call is treated as one game.
+
+    **Binding contract.** ``links`` must be built from exactly this
+    ``actions`` frame, in this row order. Every consumer that accepts
+    ``links=`` finds each pointer's action by ``action_row`` and verifies
+    ``action_fingerprint`` at that row; a mismatch raises ``ValueError``.
+
     Returns
     -------
     pointers : pd.DataFrame
-        Columns:
+        Rows in a stable (period_id, time_seconds, game rank) order, where the
+        game rank is the game's first appearance in ``actions`` and only breaks
+        ties in time. Columns:
         - ``action_id`` (int64)
         - ``frame_id`` (Int64; NaN if unlinked)
         - ``time_offset_seconds`` (float64; ``action_time - frame_time``;
           NaN if unlinked)
-        - ``n_candidate_frames`` (int64; frames in same period within
-          tolerance)
+        - ``n_candidate_frames`` (int64; frames in the same game and period
+          within tolerance)
         - ``link_quality_score`` (float64; ``1 - |dt|/tolerance``;
           NaN if unlinked)
+        - ``action_row`` (int64): the action's 0-based row position in
+          ``actions``. Join pointers to actions by this position, never by
+          ``action_id`` alone (VAEP gamestate slots repeat ``action_id``).
+        - ``action_fingerprint`` (uint64): the frozen BLAKE2b-64 of the
+          action's ``"{game}|{period}|{action}|{time}"`` record
+          (:func:`action_fingerprints`). A change to this algorithm is a
+          contract change.
     report : LinkReport
-        Audit trail.
+        Audit trail. ``per_game_period_link_rate`` holds the rate per
+        (game, period); the coverage floor applies to the worst one.
 
     Examples
     --------
@@ -399,33 +438,37 @@ def link_actions_to_frames(
         assert report.link_rate >= 0.95
     """
     if len(actions) == 0:
-        empty = pd.DataFrame(
-            {
-                "action_id": pd.Series([], dtype="int64"),
-                "frame_id": pd.Series([], dtype="Int64"),
-                "time_offset_seconds": pd.Series([], dtype="float64"),
-                "n_candidate_frames": pd.Series([], dtype="int64"),
-                "link_quality_score": pd.Series([], dtype="float64"),
-            }
-        )
-        return empty, LinkReport(0, 0, 0, 0, {}, 0.0, tolerance_seconds)
+        return _empty_pointers(), LinkReport(0, 0, 0, 0, {}, 0.0, tolerance_seconds)
 
+    action_games, frame_games = _link_game_keys(actions, frames)
+    multi_game = len(set(action_games)) > 1
+
+    # One row per (game, period, frame): the index never folds one game's frames into another's (W9.1).
     frame_index = (
         frames[["period_id", "frame_id", "time_seconds", "source_provider"]]
-        .drop_duplicates(["period_id", "frame_id"])
-        .sort_values(["period_id", "time_seconds"], kind="mergesort")
+        .assign(_gk=frame_games)
+        .drop_duplicates(["_gk", "period_id", "frame_id"])
+        .sort_values(["_gk", "period_id", "time_seconds"], kind="mergesort")
         .reset_index(drop=True)
     )
+    frame_groups = group_rows(frame_index, ("_gk", "period_id"))
 
+    # Row order: a stable sort on (period_id, time_seconds, game rank); the game rank (first appearance in
+    # ``actions``) only breaks ties in time, so a single-game input keeps today's (period_id, time_seconds) order.
     actions_sorted = (
         actions[["action_id", "period_id", "time_seconds"]]
-        .sort_values(["period_id", "time_seconds"], kind="mergesort")
+        .assign(
+            _gk=action_games,
+            _grank=pd.factorize(action_games)[0],
+            _row=np.arange(len(actions), dtype=np.int64),
+        )
+        .sort_values(["period_id", "time_seconds", "_grank"], kind="mergesort")
         .reset_index(drop=True)
     )
 
     parts: list[pd.DataFrame] = []
-    for period, a_group in actions_sorted.groupby("period_id", sort=False):
-        f_group = frame_index[frame_index["period_id"] == period]
+    for (_period, _grank), a_group in actions_sorted.groupby(["period_id", "_grank"], sort=False):
+        f_group = frame_groups.get(a_group["_gk"].iloc[0], _period)
         if len(f_group) == 0:
             unlinked = a_group.copy()
             unlinked["frame_id"] = pd.array([pd.NA] * len(a_group), dtype="Int64")
@@ -446,6 +489,9 @@ def link_actions_to_frames(
         parts.append(merged)
 
     merged_all = pd.concat(parts, ignore_index=True)
+    if multi_game:  # interleave the games by time; a single game is already in this order
+        merged_all = merged_all.sort_values(["period_id", "time_seconds", "_grank"], kind="mergesort")
+        merged_all = merged_all.reset_index(drop=True)
 
     time_offset = merged_all["time_seconds"] - merged_all["frame_time"]
     quality = 1.0 - time_offset.abs() / tolerance_seconds
@@ -453,11 +499,12 @@ def link_actions_to_frames(
     time_offset = time_offset.where(merged_all["frame_id"].notna(), other=float("nan"))
 
     n_cand = _count_candidates_within_tolerance(
-        actions_sorted,
+        merged_all,
         frame_index,
         tolerance_seconds,
     )
 
+    rows = merged_all["_row"].to_numpy(dtype=np.int64)
     pointers = pd.DataFrame(
         {
             "action_id": merged_all["action_id"].astype("int64"),
@@ -465,6 +512,8 @@ def link_actions_to_frames(
             "time_offset_seconds": time_offset.astype("float64"),
             "n_candidate_frames": n_cand.astype("int64"),
             "link_quality_score": quality.astype("float64"),
+            "action_row": rows,
+            "action_fingerprint": _cached_fingerprints(actions)[rows],
         }
     )
 
@@ -472,6 +521,9 @@ def link_actions_to_frames(
         int(p): float(s.notna().mean())  # type: ignore[arg-type]  # groupby key is Hashable; period_id is int
         for p, s in merged_all.groupby("period_id")["frame_id"]
     }
+    per_game_period_link_rate = _per_game_period_rate(
+        merged_all["_gk"], merged_all["period_id"], merged_all["frame_id"].notna()
+    )
 
     n_in = len(actions)
     n_linked = int(pointers["frame_id"].notna().sum())
@@ -493,6 +545,7 @@ def link_actions_to_frames(
         max_time_offset_seconds=max_off,
         tolerance_seconds=tolerance_seconds,
         per_period_link_rate=per_period_link_rate,
+        per_game_period_link_rate=per_game_period_link_rate,
     )
     _enforce_link_coverage(
         actions,
@@ -502,6 +555,46 @@ def link_actions_to_frames(
         on_low_coverage=on_low_coverage,
     )
     return pointers, report
+
+
+#: The pointer schema (W9.2): the five pre-W9 columns, then ``action_row`` and ``action_fingerprint``.
+_POINTER_DTYPES: dict[str, str] = {
+    "action_id": "int64",
+    "frame_id": "Int64",
+    "time_offset_seconds": "float64",
+    "n_candidate_frames": "int64",
+    "link_quality_score": "float64",
+    "action_row": "int64",
+    "action_fingerprint": "uint64",
+}
+
+
+def _empty_pointers() -> pd.DataFrame:
+    """Zero pointers with the full W9.2 schema and dtypes."""
+    return pd.DataFrame({c: pd.Series([], dtype=t) for c, t in _POINTER_DTYPES.items()})
+
+
+def _link_game_keys(actions: pd.DataFrame, frames: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """The canonical game key of each action and each frame row (``"<NA>"`` for an NA game), so an int ``game_id``
+    on one side and a str on the other still link (ADR-019). When either side has no ``game_id`` column, every row
+    gets the one key ``"<NA>"``: the call is treated as one game, as before W9."""
+    if not has_game_key(actions, frames):
+        return np.full(len(actions), NA_TOKEN, dtype=object), np.full(len(frames), NA_TOKEN, dtype=object)
+    return game_keys(actions["game_id"]), game_keys(frames["game_id"])
+
+
+def _candidate_game_key(game: object) -> str:
+    """The linker game key of an elastic candidate key's ``canonical_id`` game (``"<NA>"`` for an NA game)."""
+    return NA_TOKEN if game is pd.NA or game is None else str(game)
+
+
+def _per_game_period_rate(games: pd.Series, periods: pd.Series, linked: pd.Series) -> dict[tuple[str, int], float]:
+    """(game key, period_id) -> linked share, over the rows given (W9.1 ``per_game_period_link_rate``)."""
+    frame = pd.DataFrame({"_gk": games.to_numpy(), "period_id": periods.to_numpy(), "_lk": linked.to_numpy()})
+    return {
+        (str(g), int(p)): float(v)  # type: ignore[arg-type]  # groupby key Hashable; period_id is int
+        for (g, p), v in frame.groupby(["_gk", "period_id"], sort=False)["_lk"].mean().items()  # type: ignore[misc]
+    }
 
 
 def link_actions_to_frames_elastic(
@@ -530,6 +623,11 @@ def link_actions_to_frames_elastic(
       stays meaningful (it is NOT the canonical "frames within a time tolerance").
     - ``LinkReport.tolerance_seconds`` is ``NaN``: elastic linking is confidence-gated, not
       time-tolerance-gated.
+    - Pointer rows are in ``actions`` row order (``action_row`` is ``0 .. len(actions) - 1``).
+
+    Shared with the time-based linker (W9): each action links only to frames of its own game,
+    the pointers carry ``action_row`` and ``action_fingerprint``, and ``links`` must be built
+    from exactly this ``actions`` frame, in this row order.
 
     Examples
     --------
@@ -557,23 +655,29 @@ def link_actions_to_frames_elastic(
     if params is None:
         params = ElasticSyncParams()
 
-    empty_ptr = pd.DataFrame(
-        {
-            "action_id": pd.Series([], dtype="int64"),
-            "frame_id": pd.Series([], dtype="Int64"),
-            "time_offset_seconds": pd.Series([], dtype="float64"),
-            "n_candidate_frames": pd.Series([], dtype="int64"),
-            "link_quality_score": pd.Series([], dtype="float64"),
-        }
-    )
     if len(actions) == 0:
-        return empty_ptr, LinkReport(0, 0, 0, 0, {}, 0.0, float("nan"))
+        return _empty_pointers(), LinkReport(0, 0, 0, 0, {}, 0.0, float("nan"))
 
     # Detect candidates ONCE and thread them into the aligner (which would otherwise re-detect
     # internally) -- we need them here anyway for n_candidate_frames. Byte-identical, one fewer pass.
     candidates = _detect_candidate_frames(frames, params=params)
-    align = align_events_to_frames(actions, frames, params=params, _candidates=candidates)
-    align_idx = align.set_index("action_id") if len(align) else None
+    action_games, frame_games = _link_game_keys(actions, frames)
+    games = list(dict.fromkeys(action_games.tolist()))
+    # The aligner keys its result on action_id alone, so each game is aligned on its own frames (W9.1). One game
+    # whose frames are all its own is aligned in one call on the inputs as given (the pre-W9 call, byte-identical).
+    if len(games) == 1 and set(frame_games.tolist()) <= set(games):
+        aligned_by_game = {games[0]: align_events_to_frames(actions, frames, params=params, _candidates=candidates)}
+    else:
+        aligned_by_game = {
+            g: align_events_to_frames(
+                actions[action_games == g],
+                frames[frame_games == g],
+                params=params,
+                _candidates={k: v for k, v in candidates.items() if _candidate_game_key(k[0]) == g},
+            )
+            for g in games
+        }
+    align_idx_by_game = {g: a.set_index("action_id") if len(a) else None for g, a in aligned_by_game.items()}
     fits = _fit_frame_time_relationship(frames)
     margin = params.frame_rate * _WINDOW_MARGIN_SECONDS
 
@@ -602,6 +706,7 @@ def link_actions_to_frames_elastic(
         frame: object = pd.NA
         conf = float("nan")
         offset = float("nan")
+        align_idx = align_idx_by_game[action_games[i]]
         if align_idx is not None and a_id in align_idx.index:
             fv = align_idx.at[a_id, "elastic_frame_id"]
             if pd.notna(fv):
@@ -631,6 +736,8 @@ def link_actions_to_frames_elastic(
     ptr["time_offset_seconds"] = ptr["time_offset_seconds"].astype("float64")
     ptr["n_candidate_frames"] = ptr["n_candidate_frames"].astype("int64")
     ptr["link_quality_score"] = ptr["link_quality_score"].astype("float64")
+    ptr["action_row"] = np.arange(len(actions), dtype=np.int64)  # input order: row i is actions.iloc[i]
+    ptr["action_fingerprint"] = _cached_fingerprints(actions)
 
     n_in = len(actions)
     linked_mask = ptr["frame_id"].notna()
@@ -639,6 +746,7 @@ def link_actions_to_frames_elastic(
     max_off = float(ptr.loc[linked_mask, "time_offset_seconds"].abs().max()) if n_linked else 0.0
     _lk_by_period = actions.assign(_lk=linked_mask.to_numpy()).groupby("period_id")["_lk"].mean()
     per_period = {int(p): float(v) for p, v in _lk_by_period.items()}  # type: ignore[arg-type]  # groupby key Hashable
+    per_game_period = _per_game_period_rate(pd.Series(action_games), actions["period_id"], linked_mask)
     per_provider: dict[str, float] = {}
     if n_linked and "source_provider" in frames.columns:
         prov = frames["source_provider"].dropna()
@@ -653,6 +761,7 @@ def link_actions_to_frames_elastic(
         max_time_offset_seconds=max_off,
         tolerance_seconds=float("nan"),
         per_period_link_rate=per_period,
+        per_game_period_link_rate=per_game_period,
     )
     _enforce_link_coverage(
         actions,
@@ -682,8 +791,22 @@ def _enforce_link_coverage(
     signal, not a time-base problem, so that hint would misattribute the cause. **The default path
     is byte-identical** (TF57-SPEC-08): with the default False the diagnosis runs and the hint fires
     exactly as before.
+
+    A multi-game call (more than one game key in ``report.per_game_period_link_rate``) applies the
+    floor to each (game, period) and names the game in each message (W9.1). A single-game call
+    keeps the per-period messages unchanged.
     """
     if on_low_coverage == "ignore" or not report.per_period_link_rate:
+        return
+    if len({g for g, _ in report.per_game_period_link_rate}) > 1:
+        _enforce_multigame_coverage(
+            actions,
+            frames,
+            report,
+            min_link_rate=min_link_rate,
+            on_low_coverage=on_low_coverage,
+            suppress_time_base_hint=suppress_time_base_hint,
+        )
         return
     offending = {p: r for p, r in report.per_period_link_rate.items() if r < min_link_rate}
     if not offending:
@@ -727,8 +850,92 @@ def _enforce_link_coverage(
         warnings.warn(_line(p), UserWarning, stacklevel=3)
 
 
+def _enforce_multigame_coverage(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    report: LinkReport,
+    *,
+    min_link_rate: float,
+    on_low_coverage: Literal["warn", "raise"],
+    suppress_time_base_hint: bool,
+) -> None:
+    """The W9.1 floor on the worst (game, period) of a multi-game call; one message per offending (game, period)."""
+    offending = {gp: r for gp, r in report.per_game_period_link_rate.items() if r < min_link_rate}
+    if not offending:
+        return
+    action_games, frame_games = _link_game_keys(actions, frames)
+    diags: dict[str, TimeBaseDiagnosis] = {}
+
+    def _diag(game: str) -> TimeBaseDiagnosis:  # lazy, once per game: only on a tripped guard
+        if game not in diags:
+            diags[game] = _diagnose_time_base(actions[action_games == game], frames[frame_games == game])
+        return diags[game]
+
+    def _line(gp: tuple[str, int]) -> str:
+        game, p = gp
+        n_total = int(((action_games == game) & (actions["period_id"] == p).to_numpy()).sum())
+        n_unlinked = round((1.0 - offending[gp]) * n_total)
+        msg = (
+            f"link_actions_to_frames: game {game} period {p} link_rate {offending[gp]:.2f} "
+            f"({n_total} actions, {n_unlinked} unlinked) below min_link_rate {min_link_rate:g}."
+        )
+        if suppress_time_base_hint:
+            return msg
+        diag = _diag(game)
+        if p in diag.suspected_mismatch_periods:
+            a_min, a_max = diag.per_period_action_range[p]
+            frng = diag.per_period_frame_range.get(p)
+            frames_desc = f"frames [{frng[0]:g}, {frng[1]:g}]" if frng else "no frames"
+            msg += (
+                f" game {game} period {p}: actions [{a_min:g}, {a_max:g}] vs {frames_desc} — "
+                f"near-disjoint (overlap {diag.per_period_overlap_fraction[p]:.2f}); "
+                "suspected period-relative/absolute time-base mismatch. "
+                "See the time-base contract in the docstring."
+            )
+        return msg
+
+    worst_first = sorted(offending, key=lambda gp: offending[gp])
+    if on_low_coverage == "raise":
+        raise ValueError(" ".join(_line(gp) for gp in worst_first))
+    for gp in worst_first:  # one warning per offending (game, period)
+        # stacklevel=4: _enforce_multigame_coverage (1) -> _enforce_link_coverage (2) -> the linker (3) -> caller (4)
+        warnings.warn(_line(gp), UserWarning, stacklevel=4)
+
+
 def _diagnose_time_base(actions: pd.DataFrame, frames: pd.DataFrame) -> TimeBaseDiagnosis:
     """Pure per-period action-vs-frame time-range diagnosis. No warn/raise/I/O.
+
+    Game-aware (W9.1): each game's actions are compared with that game's frames only. For a
+    multi-game input each period reports the game with the lowest overlap, so one game's
+    disjoint clock is never masked by another game's frames. A single-game input is diagnosed
+    exactly as before.
+    """
+    action_games, frame_games = _link_game_keys(actions, frames)
+    games = list(dict.fromkeys(action_games.tolist()))
+    if len(games) <= 1 and set(frame_games.tolist()) <= set(games):
+        return _diagnose_one_game(actions, frames)
+    per_game = [_diagnose_one_game(actions[action_games == g], frames[frame_games == g]) for g in games]
+    per_action: dict[int, tuple[float, float]] = {}
+    per_frame: dict[int, tuple[float, float]] = {}
+    overlap_frac: dict[int, float] = {}
+    for diag in per_game:
+        for p, frac in diag.per_period_overlap_fraction.items():
+            if p not in overlap_frac or frac < overlap_frac[p]:
+                overlap_frac[p] = frac
+                per_action[p] = diag.per_period_action_range[p]
+                if p in diag.per_period_frame_range:
+                    per_frame[p] = diag.per_period_frame_range[p]
+                else:
+                    per_frame.pop(p, None)
+    suspected = sorted(
+        (p for p, f in overlap_frac.items() if f < MISMATCH_OVERLAP_FLOOR), key=lambda p: overlap_frac[p]
+    )
+    message = _format_diagnosis(per_action, per_frame, overlap_frac, tuple(suspected))
+    return TimeBaseDiagnosis(per_action, per_frame, overlap_frac, tuple(suspected), message)
+
+
+def _diagnose_one_game(actions: pd.DataFrame, frames: pd.DataFrame) -> TimeBaseDiagnosis:
+    """The per-period action-vs-frame time-range diagnosis of one game's actions and frames.
 
     Vectorized: per-period ranges via a single groupby().agg on each side
     (NOT the iterrows pattern in _count_candidates_within_tolerance). NaN
@@ -1259,15 +1466,50 @@ def _count_candidates_within_tolerance(
     frame_index: pd.DataFrame,
     tolerance: float,
 ) -> pd.Series:
-    """For each action, count distinct frame_ids within +/-tolerance in same period."""
+    """For each action, count distinct frame_ids within +/-tolerance in the same (game, period).
+
+    Both inputs carry the linker's game key ``_gk``; ``frame_index`` holds one row per (game, period, frame), sorted
+    by time within each (game, period). Each (game, period) is one vectorised ``searchsorted`` pass (ADR-068: the
+    frame groups are built once), never a per-action rescan.
+    """
     counts = np.zeros(len(actions_sorted), dtype="int64")
-    for i, row in actions_sorted.iterrows():
-        f_period = frame_index[frame_index["period_id"] == row["period_id"]]
-        if len(f_period) == 0:
-            continue
-        in_window = (f_period["time_seconds"] - row["time_seconds"]).abs() <= tolerance
-        counts[int(i)] = int(in_window.sum())  # type: ignore[arg-type]  # iterrows returns Hashable label
+    frame_groups = group_rows(frame_index, ("_gk", "period_id"))
+    times = actions_sorted["time_seconds"].to_numpy(dtype=np.float64)
+    for key, positions in actions_sorted.groupby(["_gk", "period_id"], sort=False).indices.items():
+        game, period = cast(tuple, key)  # a two-key groupby gives tuple keys; the stubs type them Hashable
+        frame_times = frame_groups.get(game, period)["time_seconds"].to_numpy(dtype=np.float64)
+        if len(frame_times):
+            counts[positions] = _count_within(frame_times, times[positions], tolerance)
     return pd.Series(counts, index=actions_sorted.index)
+
+
+def _count_within(frame_times: np.ndarray, times: np.ndarray, tolerance: float) -> np.ndarray:
+    """Per time ``t``: the number of ``frame_times`` (sorted; NaN last) with ``abs(f - t) <= tolerance``.
+
+    The predicate is evaluated exactly as written, in float64. ``fl(f - t)`` is monotone in ``f``, so the matches form
+    one contiguous run. ``searchsorted`` on ``t -/+ tolerance`` finds it to within rounding, and the edges are then
+    moved one element at a time until the predicate holds at the run's edges and fails just outside them.
+    """
+    n = len(frame_times)
+
+    def holds(idx: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        ok = np.zeros(len(idx), dtype=bool)
+        sel = mask & (idx >= 0) & (idx < n)
+        ok[sel] = np.abs(frame_times[idx[sel]] - times[sel]) <= tolerance
+        return ok
+
+    every = np.ones(len(times), dtype=bool)
+    lo = np.searchsorted(frame_times, times - tolerance, side="left").astype(np.int64)
+    hi = np.searchsorted(frame_times, times + tolerance, side="right").astype(np.int64)
+    while (move := (lo > 0) & holds(lo - 1, lo > 0)).any():  # the run starts earlier
+        lo[move] -= 1
+    while (move := (lo < hi) & ~holds(lo, every)).any():  # the run starts later
+        lo[move] += 1
+    while (move := (hi < n) & holds(hi, hi < n)).any():  # the run ends later
+        hi[move] += 1
+    while (move := (hi > lo) & ~holds(hi - 1, every)).any():  # the run ends earlier
+        hi[move] -= 1
+    return np.maximum(hi - lo, 0)
 
 
 def _resolve_action_frame_context(
@@ -1280,8 +1522,13 @@ def _resolve_action_frame_context(
 
     Calls link_actions_to_frames once, then derives:
       - actor_rows: one row per action where the actor's player_id appears in the linked frame.
-      - opposite_rows_per_action: long-form (action_id, opposite-team frame row) pairs,
+      - opposite_rows_per_action: long-form (action_row, opposite-team frame row) pairs,
         excluding ball rows (is_ball=True).
+
+    Every pointer finds its action BY POSITION (``action_row``), and its frame on
+    ``(game_id, period_id, frame_id)`` with the action's own ``game_id`` (spec 2026-11-08
+    tracking-batch section 4.9 W9.4). ``links`` must be built from exactly this ``actions``
+    frame, in this row order.
 
     After the inner join with frames using ``suffixes=("_action", "_frame")``, the
     overlapping columns ``team_id`` and ``player_id`` are renamed to
@@ -1306,17 +1553,19 @@ def _resolve_action_frame_context(
     else:
         pointers, _report = link_actions_to_frames(actions, frames)
 
-    # Inner-join pointers <-> frames on (period_id, frame_id) to materialize linked frames per action
-    projection_cols = ["action_id", "period_id", "team_id", "player_id"]
+    # Inner-join pointers <-> frames on (game_id, period_id, frame_id) to materialize linked frames per
+    # action. Each pointer reads its action's keys BY POSITION (W9.4): an action_id join pairs an action
+    # with another game's pointer, and it multiplies the rows of a repeated id (gamestate slots).
+    frame_keys = frame_join_keys(actions, frames)
+    projection_cols = [*frame_keys[:-1], "team_id", "player_id"]
     if "defending_gk_player_id" in actions.columns:
         projection_cols.append("defending_gk_player_id")
-    actions_with_period = actions[projection_cols]
-    pointer_with_period = pointers.merge(actions_with_period, on="action_id", how="left", suffixes=("", "_action"))
+    pointer_with_period = pointers_with_action_columns(actions, pointers, projection_cols)
     # Align id-valued join keys before the merge so a string-id caller does not raise (ADR-019).
-    pointer_with_period, frames = align_join_keys(pointer_with_period, frames, ["period_id", "frame_id"])
+    pointer_with_period, frames = align_join_keys(pointer_with_period, frames, frame_keys)
     long = pointer_with_period.merge(
         frames,
-        on=["period_id", "frame_id"],
+        on=frame_keys,
         how="inner",
         suffixes=("_action", "_frame"),
     )
@@ -1361,8 +1610,10 @@ def _resolve_action_frame_context(
     else:
         actor_long = long.iloc[0:0].copy()
 
-    # Build per-action actor row; left-join on action_id so unlinked actions also appear (with NaN cols)
-    actor_rows = pd.DataFrame({"action_id": actions["action_id"]}).merge(actor_long, on="action_id", how="left")
+    # Build per-action actor row; left-join on action_row so unlinked actions also appear (with NaN cols)
+    actor_rows = pd.DataFrame(
+        {"action_row": np.arange(len(actions)), "action_id": actions["action_id"].to_numpy()}
+    ).merge(actor_long.drop(columns="action_id"), on="action_row", how="left")
 
     # opposite_rows_per_action: filter to rows where frame.team_id != action.team_id and not ball.
     # ids_differ requires BOTH present, so an unmatched/NaN id is never mis-classified as opponent.
@@ -1396,20 +1647,17 @@ def _resolve_action_frame_context(
     # 180-degree mirror apart for away-team actions. After this, the kernels'
     # hardcoded goal at (105, 34) is correct because the acting team attacks x=105.
     flip = acting_team_attacks_rtl(actions, frames)  # index: actions.index
-    # Key by action_id (same precondition as the action_id merges above). Dedupe defensively:
-    # gamestate-shifted slots repeat the SAME action (identical game/period/team) so first-wins
-    # is correct, and a duplicate index would otherwise make .map() raise.
+    # Key by action_row, the position in `actions` (the key of the frames above), which is unique.
     # NULLABLE boolean, deliberately not coerced: <NA> marks an action whose direction the frames
     # do not resolve, and _reproject_rows below NaNs that action's sampled geometry instead of
     # leaving it in the frame convention. This is the shared context behind eight kernels, so a
     # .fillna(False) here would reinstate the ADR-028 defect at all eight in one line.
-    flip_by_action = pd.Series(flip.to_numpy(dtype=object), index=actions["action_id"].to_numpy(), dtype="boolean")
-    flip_by_action = flip_by_action[~flip_by_action.index.duplicated(keep="first")]
+    flip_by_action = pd.Series(flip.to_numpy(dtype=object), index=pd.RangeIndex(len(actions)), dtype="boolean")
 
     def _reproject_rows(rows: pd.DataFrame) -> pd.DataFrame:
-        if rows.empty or "action_id" not in rows.columns:
+        if rows.empty or "action_row" not in rows.columns:
             return rows
-        row_flip = rows["action_id"].map(flip_by_action)
+        row_flip = rows["action_row"].map(flip_by_action)
         # Rows whose action has no resolvable direction. Their POSITIONS are nulled after the
         # re-projection below, so every kernel downstream produces NaN for that action by
         # ordinary arithmetic -- the same result it already gives an action with no frame rows.
@@ -1471,7 +1719,10 @@ def slice_around_event(
 ) -> pd.DataFrame:
     """Return all frames within ``[t - pre_seconds, t + post_seconds]`` per action.
 
-    Constrained to the same period; window does not cross period boundaries.
+    Constrained to the same period; window does not cross period boundaries. When ``actions`` and ``frames``
+    both have a ``game_id`` column, a window reads only the frames of its own game (canonical game keys,
+    ADR-019), so a call over several games equals one call per game. Without ``game_id`` on both, the call
+    must cover one game.
     Output is long-form (one row per (action_id, frame_id, player_or_ball))
     with ``action_id`` and ``time_offset_seconds`` joined in. Assumes the
     per-period ``time_seconds`` convention (resets each period); see
@@ -1507,6 +1758,21 @@ def slice_around_event(
         cols = [*frames.columns, "action_id", "time_offset_seconds"]
         return pd.DataFrame(columns=cols)
 
+    parts: list[pd.DataFrame] = []
+    for _rows, game_actions, game_frames in iter_games(actions, frames):
+        parts.extend(_slice_periods(game_actions, game_frames, pre_seconds, post_seconds))
+
+    if not parts:
+        cols = [*frames.columns, "action_id", "time_offset_seconds"]
+        return pd.DataFrame(columns=cols)
+
+    return pd.concat(parts, ignore_index=True)
+
+
+def _slice_periods(
+    actions: pd.DataFrame, frames: pd.DataFrame, pre_seconds: float, post_seconds: float
+) -> list[pd.DataFrame]:
+    """The window rows of :func:`slice_around_event` for the actions and frames of one game, per period."""
     parts: list[pd.DataFrame] = []
     a_proj = actions[["action_id", "period_id", "time_seconds"]]
 
@@ -1561,12 +1827,7 @@ def slice_around_event(
         merged["time_offset_seconds"] = (merged["time_seconds"] - merged["_action_time"]).astype("float64")
         merged = merged.drop(columns=["_action_time", "_frame_id_key"])
         parts.append(merged)
-
-    if not parts:
-        cols = [*frames.columns, "action_id", "time_offset_seconds"]
-        return pd.DataFrame(columns=cols)
-
-    return pd.concat(parts, ignore_index=True)
+    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -1587,6 +1848,12 @@ def sync_score(
       - ``sync_score_high_quality_frac`` -- fraction of links with
         ``link_quality_score >= high_quality_threshold``.
 
+    One row per ACTION. Pointers from the current linker carry ``action_row``, and the links of one
+    action are the rows with one ``action_row``: an ``action_id`` repeats across games and in VAEP
+    gamestate slots, so it does not name one action (spec 2026-11-08 tracking-batch section 4.9
+    W9.4). The rows are then in ``action_row`` order, and the index holds each action's
+    ``action_id``. Legacy links without ``action_row`` group on ``action_id``, as before.
+
     Examples
     --------
     >>> import pandas as pd
@@ -1604,7 +1871,8 @@ def sync_score(
     """
     if "link_quality_score" not in links.columns or "action_id" not in links.columns:
         raise ValueError("sync_score: links must contain 'action_id' and 'link_quality_score'")
-    grp = links.groupby("action_id", dropna=False)["link_quality_score"]
+    by_row = "action_row" in links.columns
+    grp = links.groupby("action_row" if by_row else "action_id", dropna=False)["link_quality_score"]
     out = pd.DataFrame(
         {
             "sync_score_min": grp.min(),
@@ -1612,6 +1880,8 @@ def sync_score(
             "sync_score_high_quality_frac": grp.apply(lambda s: float((s >= high_quality_threshold).mean())),
         }
     )
+    if by_row:
+        out.index = pd.Index(links.groupby("action_row")["action_id"].first().to_numpy(), name="action_id")
     return out
 
 
@@ -1622,13 +1892,26 @@ def add_sync_score(
     *,
     high_quality_threshold: float = 0.85,
 ) -> pd.DataFrame:
-    """Enrich ``actions`` with three ``sync_score_*`` columns merged on ``action_id``.
+    """Enrich ``actions`` with three ``sync_score_*`` columns.
+
+    Each action reads the score of its own links by position (``action_row``; spec 2026-11-08
+    tracking-batch section 4.9 W9.4). ``links`` must be built from exactly this ``actions`` frame,
+    in this row order. Legacy links without ``action_row`` merge on ``action_id``, and only when
+    that join is unambiguous: one game, and ``action_id`` unique in ``actions``.
 
     Examples
     --------
     >>> # See tests/test_sync_score.py for runnable example.
     """
+    # No generic entry check: legacy links may carry several rows per action (sync_score aggregates them), so the
+    # W9.5 binding is checked below -- by position for current links, by an unambiguous action_id for legacy ones.
     if "action_id" not in actions.columns:
         raise ValueError("add_sync_score: actions must contain 'action_id'")
     scores = sync_score(links, high_quality_threshold=high_quality_threshold)
-    return actions.merge(scores, left_on="action_id", right_index=True, how="left")
+    if "action_row" not in links.columns:
+        require_unambiguous_action_ids(actions)  # W9.5: refuse an ambiguous action_id join
+        return actions.merge(scores, left_on="action_id", right_index=True, how="left")
+    # one identity row per action, in the row order of `scores` (action_row ascending)
+    per_action = links.drop_duplicates("action_row").sort_values("action_row", kind="stable")
+    scored = pd.concat([per_action.reset_index(drop=True), scores.reset_index(drop=True)], axis=1)
+    return append_pointer_columns(actions, actions, scored, list(scores.columns))

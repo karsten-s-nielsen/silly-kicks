@@ -88,7 +88,10 @@ _OUT_OF_SCOPE: dict[str, str] = {
     "vaep/features/core.py": "empty-frame schema for xfn column discovery; no row data",
     # -- physics over ALL players (keeper is one of 22; detection handled at corpus admission) --
     "tracking/_das_pack.py": "DAS native physics input port; all-player simulation (ADR-107)",
-    "tracking/pitch_control/_spearman.py": "pitch-control physics; keeper is one simulated player (TF-7)",
+    # the shape graph reads is_goalkeeper only to EXCLUDE keepers from its outfield selection (tracking-batch W5.2)
+    "tracking/_shape_graph.py": "shape graph: keepers excluded from the outfield selection; no keeper position read",
+    # the spearman player extraction moved from _spearman.py into the columnar frame index (tracking-batch W2)
+    "tracking/pitch_control/_index.py": "pitch-control physics; keeper is one simulated player (TF-7)",
     # -- model training targets / validation harnesses (keeper position is the TARGET, not an input) --
     "tracking/_ghost_outfield.py": "ghost-outfield model: keeper separated from the modeled outfield pool",
     "tracking/_model_eval.py": "ghost-GK substitution-delta validation harness, not a production metric",
