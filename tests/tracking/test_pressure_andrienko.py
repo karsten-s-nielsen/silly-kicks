@@ -35,7 +35,7 @@ def _build_ctx(
     defenders = pd.DataFrame(
         [
             {
-                "action_id": 1,
+                "action_row": 0,
                 "team_id_action": "home",
                 "team_id_frame": "away",
                 "player_id_action": 10,
@@ -61,7 +61,7 @@ def _build_ctx(
     )
     actor_rows = pd.DataFrame(
         {
-            "action_id": [1],
+            "action_row": [0],
             "x": [actor_xy[0]],
             "y": [actor_xy[1]],
             "speed": [0.0],

@@ -634,7 +634,8 @@ def add_pre_shot_gk_context(
     if lookback_actions < 1:
         raise ValueError(f"add_pre_shot_gk_context: lookback_actions must be >= 1, got {lookback_actions}")
 
-    sorted_actions = _sort_actions_chronological_or_action_id(actions)
+    order = _chronological_order(actions)
+    sorted_actions = actions.iloc[order].reset_index(drop=True)
 
     n = len(sorted_actions)
     gk_was_distributing = np.zeros(n, dtype=bool)
@@ -748,8 +749,12 @@ def add_pre_shot_gk_context(
     # PR-S24: also lazy-import + merge GK-angle columns (umbrella emits 6 cols total).
     # Lazy import preserves ADR-005 § 5 contract (no module-import-time spadl→tracking cycle).
     if frames is not None:
+        from silly_kicks.tracking._link_identity import remap_links
         from silly_kicks.tracking.features import add_pre_shot_gk_angle, add_pre_shot_gk_position
 
+        # W9.5: the caller's links bind to the row order of `actions`: verify them against it, then map them
+        # through the re-sort.
+        links = remap_links(links, order, sorted_actions, actions=actions)
         sorted_actions = add_pre_shot_gk_position(sorted_actions, frames, links=links)
         sorted_actions = add_pre_shot_gk_angle(sorted_actions, frames=frames, links=links)
 
@@ -829,14 +834,15 @@ def add_restart_coordinates(
     # for fresh conversions), so key on time_seconds when present, with action_id as the tiebreak --
     # NOT action_id alone (spec §3d; mirrors retains()'s robust key). On chronological input this is
     # identical to the old action_id sort. time_seconds is not a required column, so fall back.
-    _sort_cols = ["game_id", "period_id"]
-    if "time_seconds" in actions.columns:
-        _sort_cols.append("time_seconds")
-    _sort_cols.append("action_id")
-    sorted_actions = actions.sort_values(_sort_cols, kind="mergesort").reset_index(drop=True)
+    order = _chronological_order(actions)
+    sorted_actions = actions.iloc[order].reset_index(drop=True)
 
     from silly_kicks.tracking._gk_geometry import apply_restart_tripwire, resolve_restart_geometry
+    from silly_kicks.tracking._link_identity import remap_links
 
+    # W9.5: the caller's links bind to the row order of `actions`: verify them against it, then map them
+    # through the re-sort.
+    links = remap_links(links, order, sorted_actions, actions=actions)
     geom = resolve_restart_geometry(sorted_actions, frames=frames, links=links)  # PURE: no tripwire
     geom["type_id"] = sorted_actions["type_id"].to_numpy()  # apply_restart_tripwire needs type_id
     apply_restart_tripwire(geom)  # feature-policy step at the EDGE (spec section 6); mutates geom in place
@@ -1624,11 +1630,21 @@ def _sort_actions_chronological_or_action_id(actions: pd.DataFrame) -> pd.DataFr
     fallback. Resets the index (drop) like the action_id-alone sorts it replaces. ``mergesort`` is
     stable, so co-timestamped rows keep their native adjacency.
     """
+    return actions.iloc[_chronological_order(actions)].reset_index(drop=True)
+
+
+def _chronological_order(actions: pd.DataFrame) -> np.ndarray:
+    """The row positions of ``actions`` in the order of :func:`_sort_actions_chronological_or_action_id`.
+
+    ``actions.iloc[order]`` is the sorted frame. A function that re-sorts ``actions`` and then passes caller
+    ``links`` on maps them through this permutation with ``remap_links`` (spec 2026-11-08 tracking-batch
+    section 4.9 W9.5): pointers bind to the row order of the frame they were built on.
+    """
     cols = ["game_id", "period_id"]
     if "time_seconds" in actions.columns:
         cols.append("time_seconds")
     cols.append("action_id")
-    return actions.sort_values(cols, kind="mergesort").reset_index(drop=True)
+    return actions[cols].reset_index(drop=True).sort_values(cols, kind="mergesort").index.to_numpy()
 
 
 def _assert_chronological_action_id(actions: pd.DataFrame) -> None:

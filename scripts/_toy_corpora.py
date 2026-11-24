@@ -1070,6 +1070,111 @@ def scaffold_flat_toy(dataset: str) -> Callable[[pathlib.Path], pathlib.Path]:
 
 
 #: Module -> the CLI arguments its toy `--run-all` needs (Tasks 10-16 add one entry each).
+
+# --- the W5.7 role-gate toy (scripts.validate_shape_graph_roles): an offline pining tree --------------------------
+
+#: The toy's pining layout under the data root: the staged manifest dir and the artifact cache root.
+SHAPE_ROLES_MANIFEST = "pining_manifest"
+SHAPE_ROLES_CACHE = "pining_cache"
+
+_SC_ROLES = ("GK", "LB", "LCB", "RCB", "RB", "LM", "LDM", "RDM", "RM", "LW", "CF")  # a 4-4-2-ish sheet
+_SC_SHAPE = np.array(  # the home team attacking +x, centre-origin metres (SkillCorner V3 coordinates)
+    [
+        [-48.0, 0.0],
+        [-30.0, 22.0], [-33.0, 7.0], [-33.0, -7.0], [-30.0, -22.0],
+        [-12.0, 20.0], [-15.0, 6.0], [-15.0, -6.0], [-12.0, -20.0],
+        [3.0, 12.0], [5.0, -8.0],
+    ]
+)  # fmt: skip
+
+
+def _shape_roles_match(match_id: str, seed: int, n_frames: int = 120) -> tuple[dict, list[dict]]:
+    """``(match.json, tracking records)`` of one toy SkillCorner match: two 11-player teams over two periods at
+    10 fps, the home team attacking +x in period 1, an unused substitute per team."""
+    rng = np.random.default_rng(seed)
+    home, away = 9100 + seed, 9200 + seed
+    players = []
+    for team, base in ((home, 100), (away, 200)):
+        for k, acronym in enumerate(_SC_ROLES):
+            players.append(
+                {"id": base + k, "team_id": team, "player_role": {"acronym": acronym}, "start_time": "00:00"}
+            )
+        players.append({"id": base + 50, "team_id": team, "player_role": {"acronym": "SUB"}, "start_time": None})
+    meta = {
+        "id": int(match_id),
+        "home_team": {"id": home},
+        "away_team": {"id": away},
+        "pitch_length": 105,
+        "pitch_width": 68,
+        "players": players,
+    }
+    records = []
+    for period, start in ((1, 0.0), (2, 2700.0)):
+        sign = 1.0 if period == 1 else -1.0  # the teams swap ends at half time
+        for i in range(n_frames):
+            frame = (period - 1) * 100_000 + i
+            pdata = []
+            for team_sign, base in ((sign, 100), (-sign, 200)):
+                for k in range(11):
+                    x, y = _SC_SHAPE[k] * np.array([team_sign, team_sign])
+                    jitter = rng.normal(0.0, 0.6, 2)
+                    pdata.append(
+                        {
+                            "player_id": base + k,
+                            "x": float(x + jitter[0]),
+                            "y": float(y + jitter[1]),
+                            "is_detected": True,
+                        }
+                    )
+            records.append(
+                {
+                    "frame": frame,
+                    "period": period,
+                    "timestamp": start + i / 10.0,
+                    "ball_data": {"x": float(rng.normal(0.0, 5.0)), "y": float(rng.normal(0.0, 5.0)), "z": 0.0},
+                    "player_data": pdata,
+                }
+            )
+    return meta, records
+
+
+def _shape_roles_toy(root: pathlib.Path) -> pathlib.Path:
+    """Four of the 20 public SkillCorner ids (the first one heavy) as an offline pining tree: the staged manifest
+    (``$SILLY_KICKS_PINING_MANIFEST_DIR``) and the artifact cache (``$SILLY_KICKS_CORPUS_CACHE_DIR``) that
+    ``_loader_pining`` reads with no network."""
+    from scripts import _loader_pining as lp
+    from scripts._corpus import RAW_REDISTRIBUTABLE
+
+    matches = []
+    for seed, mid in enumerate(sorted(str(m) for m in RAW_REDISTRIBUTABLE["skillcorner"])[:4]):
+        # the first match is the heavy one, so a fanned run completes out of key order (the parity non-vacuity)
+        meta, records = _shape_roles_match(mid, seed, n_frames=3000 if seed == 0 else 120)
+        files = {
+            f"{mid}_match.json": json.dumps(meta),
+            f"{mid}_dynamic_events.csv": "event_id\n",
+            f"{mid}_tracking_extrapolated.jsonl": "\n".join(json.dumps(r) for r in records) + "\n",
+        }
+        dest = root / SHAPE_ROLES_CACHE / "skillcorner" / mid
+        dest.mkdir(parents=True, exist_ok=True)
+        for name, text in files.items():
+            (dest / lp._dest_name("skillcorner", mid, name, name)).write_text(text, encoding="utf-8")
+        matches.append({"id": mid, "artifacts": {name: name for name in files}})
+    manifest = root / SHAPE_ROLES_MANIFEST / "skillcorner"
+    manifest.mkdir(parents=True, exist_ok=True)
+    (manifest / "matches.json").write_text(json.dumps({"matches": matches}), encoding="utf-8")
+    return root
+
+
+def toy_env(module: str, data: pathlib.Path) -> dict[str, str]:
+    """Extra environment a module's toy run needs (beyond the served open data)."""
+    if module == "scripts.validate_shape_graph_roles":
+        return {
+            "SILLY_KICKS_PINING_MANIFEST_DIR": str(data / SHAPE_ROLES_MANIFEST),
+            "SILLY_KICKS_CORPUS_CACHE_DIR": str(data / SHAPE_ROLES_CACHE),
+        }
+    return {}
+
+
 TOY_PARAMS: dict[str, tuple[str, ...]] = {
     "scripts.train_win_probability": ("--competition-id", "43", "--season-id", "106"),
     "scripts.train_match_outcome_dependence": (),  # every release the served toy manifest lists
@@ -1143,6 +1248,7 @@ TOY_PARAMS: dict[str, tuple[str, ...]] = {
         "0.4",
     ),
     "scripts.build_cross_definition": ("--dataset", "toyxc"),
+    "scripts.validate_shape_graph_roles": ("--max-matches", "4", "--n-draws", "200"),
     # --- scaffold: toys above ---
 }
 
@@ -1159,6 +1265,7 @@ TOY_BUILDERS: dict[str, Callable[[pathlib.Path], pathlib.Path]] = {
     "scripts.train_xcross_attempt": _xcross_toy,
     "scripts.build_territory_ranking_census": _census_toy,
     "scripts.build_cross_definition": _xcross_toy,
+    "scripts.validate_shape_graph_roles": _shape_roles_toy,
     # --- scaffold: toy builders above ---
 }
 
@@ -1179,10 +1286,10 @@ def toy_session(module: str, root: str | pathlib.Path) -> Iterator[tuple[pathlib
     """Build ``module``'s toy input under ``root`` and yield ``(data_root, extra_env)`` for its CLI run."""
     data = build_toy_for(module, root)
     if module not in TOY_OPEN_DATA:
-        yield data, {}
+        yield data, toy_env(module, data)
         return
     with serve_open_data(data / _OPEN_DATA_DIR) as url:
-        yield data, {"SILLY_KICKS_OPEN_DATA_BASE": url}
+        yield data, {"SILLY_KICKS_OPEN_DATA_BASE": url, **toy_env(module, data)}
 
 
 def build_toy_for(module: str, root: str | pathlib.Path) -> pathlib.Path:

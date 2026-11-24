@@ -542,6 +542,37 @@ def add_ball_contacts(
     ``[action.time_seconds, next_action.time_seconds)`` within a period (the last
     action runs to ``+inf``). ``frames`` is positional-or-keyword; ``params`` is
     keyword-only (ADR-078). Fails loud if ``actions`` carries no time base.
+
+    A multi-game input runs one game at a time (spec 2026-11-08 tracking-batch section 4.9 W9.6, the
+    game-split property): a period's ball trajectory and an action's window never mix two games.
+
+    Examples
+    --------
+    The first ball contact after each action::
+
+        from silly_kicks.tracking import add_ball_contacts
+        enriched = add_ball_contacts(actions, frames)
+        enriched[["action_id", "first_contact_time", "first_contact_player_id"]].head()
+    """
+    from ._link_identity import assemble_by_game, iter_games
+
+    parts = [
+        (rows, _add_ball_contacts_one_game(game_actions, game_frames, params=params))
+        for rows, game_actions, game_frames in iter_games(actions, frames)
+    ]
+    return assemble_by_game(parts)
+
+
+def _add_ball_contacts_one_game(
+    actions: pd.DataFrame, frames: pd.DataFrame, *, params: BallContactParams = _DEFAULT_PARAMS
+) -> pd.DataFrame:
+    """The body of :func:`add_ball_contacts` for the actions and frames of ONE game.
+
+    Pure: returns a copy of ``actions`` with the ``first_contact_*`` columns added
+    (all NaN/``<NA>`` where no resolved contact falls in the window). The window is
+    ``[action.time_seconds, next_action.time_seconds)`` within a period (the last
+    action runs to ``+inf``). ``frames`` is positional-or-keyword; ``params`` is
+    keyword-only (ADR-078). Fails loud if ``actions`` carries no time base.
     """
     from silly_kicks.id_compat import restore_id_dtype
 
@@ -603,7 +634,9 @@ def add_ball_contacts(
 
     pid_dtype = contacts["player_id"].dtype if len(contacts) else "Int64"
     out["first_contact_time"] = ft
-    out["first_contact_player_id"] = restore_id_dtype(fpid, pid_dtype)
+    # `.array`: positional. restore_id_dtype returns a fresh RangeIndex Series, which would align on the
+    # index and turn every id NA on an actions frame indexed otherwise.
+    out["first_contact_player_id"] = restore_id_dtype(fpid, pid_dtype).array
     out["first_contact_x"] = fx
     out["first_contact_y"] = fy
     out["first_contact_velocity_change_ms"] = fdv

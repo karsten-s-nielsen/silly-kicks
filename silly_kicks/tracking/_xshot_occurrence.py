@@ -30,6 +30,11 @@ from silly_kicks.tracking._ball_carrier import (
     derive_team_in_possession,
     infer_ball_carrier,
 )
+from silly_kicks.tracking._link_identity import (
+    append_columns_by_action_row,
+    pointers_with_action_columns,
+    require_links_bound,
+)
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking._stoppages import training_frame_mask
 from silly_kicks.tracking._velocity_availability import (
@@ -1136,6 +1141,7 @@ def add_xshot_occurrence(
     # Do NOT pre-resolve the model: pass the ORIGINAL `model` to compute so its velocity-keyed
     # auto-select fires (a pre-resolved instance would be seen as a "custom" override and bypass it,
     # serving the default velocity model on declared freeze frames -- the fabrication risk).
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     out = actions.copy()
     pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
 
@@ -1152,7 +1158,9 @@ def add_xshot_occurrence(
     xcol = scored[scored["xshot_occurrence"].notna()][
         ["game_id", "period_id", "frame_id", "team_id", "xshot_occurrence"]
     ].copy()
-    linked = pointers.merge(actions[["action_id", "game_id", "period_id", "team_id"]], on="action_id", how="left")
+    # each pointer reads its action's game, period, and team BY POSITION (spec 2026-11-08
+    # tracking-batch section 4.9 W9.4), never by action_id
+    linked = pointers_with_action_columns(actions, pointers, ["game_id", "period_id", "team_id"])
     # P2: align BOTH game_id AND team_id dtypes (provider asymmetry: int64 vs object).
     #
     # Routed through align_join_keys, NOT a raw .astype(str). The bare cast was an ADR-019
@@ -1164,9 +1172,8 @@ def add_xshot_occurrence(
     merge_keys = ["game_id", "period_id", "frame_id", "team_id"]
     linked, xcol = align_join_keys(linked, xcol, merge_keys)
     merged = linked.merge(xcol, on=merge_keys, how="left")
-    deduped = merged.drop_duplicates(subset=["action_id"], keep="first")
-    col = deduped.set_index("action_id")["xshot_occurrence"]
-    out = out.merge(col.rename("xshot_occurrence"), left_on="action_id", right_index=True, how="left")
+    deduped = merged.drop_duplicates(subset=["action_row"], keep="first")
+    out = append_columns_by_action_row(out, deduped.set_index("action_row")[["xshot_occurrence"]])
     # Provenance (closed set {default, position_only, custom}, ADR/D5): which variant auto-select
     # served. Re-resolved deterministically from the frames' velocity-availability (compute uses the
     # same key); an explicit model= is "custom". The xfns/VAEP path stays numeric (it never calls

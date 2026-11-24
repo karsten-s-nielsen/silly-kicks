@@ -28,8 +28,9 @@ Discriminating power, MEASURED -- a green gate is worth only what a plant can mo
   the identical mean stability to full precision, because Delaunay connectivity and unsigned angles
   are preserved by any isometry. No ADR-028 defect is expressible in these columns -- the entry is
   registered for completeness and to hold the classification if a future column does emit an
-  absolute coordinate (``infer_positions``' pitch-absolute lateral label is not surfaced by any
-  ``add_*`` today; see ``_shape_graph.py:877-880``).
+  absolute coordinate. ``infer_positions``' labels are team-relative (spec 2026-11-08 tracking-batch
+  W5.6, owner ruling R14: a point-reflected frame with the opposite direction gets the same labels) and
+  are not surfaced by any ``add_*`` today.
 """
 
 from __future__ import annotations

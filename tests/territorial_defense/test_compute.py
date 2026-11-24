@@ -139,3 +139,22 @@ def test_match_ltr_uses_the_per_match_resolution():
             1, 1, team, allow_guess=True
         )
     assert len(got) == 1 and int(got.iloc[0]["a_frames_scored"]) == 3  # match-oriented mode still scores
+
+
+def test_no_defensive_actions_returns_empty_typed_samples():
+    # owner ruling R17 (2026-11-09): an action set with no defensive action (types 9/10/18) has an empty Arm-A
+    # domain. It must return an empty, correctly typed per-defender table and a zero-domain report, not raise
+    # KeyError('game_id') in _assemble_samples (found by the W9 population fixture, plan Task 3).
+    actions, frames = make_e2e_fixture()
+    params_types = (9, 10, 18)
+    no_defense = actions[~actions["type_id"].isin(params_types)].reset_index(drop=True)
+    assert len(no_defense) < len(actions)  # non-vacuity: the fixture had defensive actions to remove
+    xt = make_fitted_xt()
+    full, _ = compute_territorial_defense(actions, frames, xt=xt, frame_convention="match_ltr")
+    assert len(full) > 0  # the dtype reference is a real, non-empty result
+    samples, report = compute_territorial_defense(no_defense, frames, xt=xt, frame_convention="match_ltr")
+    assert list(samples.columns) == ["game_id", "player_id", *TD_SAMPLE_COLUMNS]
+    assert len(samples) == 0
+    # TB-PLAN-41: every column keeps the non-empty dtype, so a concat with a non-empty result stays typed
+    assert samples.dtypes.astype(str).to_dict() == full.dtypes.astype(str).to_dict()
+    assert report.n_frames_in == 0 and report.n_frames_scored == 0

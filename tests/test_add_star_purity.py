@@ -655,9 +655,15 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ),
     ],
     "tracking:add_structural_pass": _one(_std_inputs, _std_invoke(F.add_structural_pass)),
-    "tracking:add_sync_score": _one(
-        lambda: [make_actions(), _fresh_links()], lambda i: tracking.add_sync_score(i[0], i[1])
-    ),
+    # Two variants: current pointers join by action_row; legacy pointers (no action_row) take the action_id branch.
+    "tracking:add_sync_score": [
+        ("current_links", lambda: [make_actions(), _fresh_links()], lambda i: tracking.add_sync_score(i[0], i[1])),
+        (
+            "legacy_links",
+            lambda: [make_actions(), _fresh_links().drop(columns=["action_row", "action_fingerprint"])],
+            lambda i: tracking.add_sync_score(i[0], i[1]),
+        ),
+    ],
     # ADR-077/ADR-033: the visible_area companion path reads a caller-supplied polygon ndarray,
     # so the conditional-column branch needs its own purity variant alongside the default.
     "tracking:add_team_shape": [
@@ -685,10 +691,22 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ),
     ],
     # ---- atomic.tracking (add_sync_score at the package level; 15 feature mirrors below) ----
-    "atomic.tracking:add_sync_score": _one(
-        lambda: [_atomic_actions(with_gk_role=False), _fresh_atomic_links()],
-        lambda i: atr.add_sync_score(i[0], i[1]),
-    ),
+    # Two variants, as the standard entry: current pointers (action_row) and legacy pointers (action_id branch).
+    "atomic.tracking:add_sync_score": [
+        (
+            "current_links",
+            lambda: [_atomic_actions(with_gk_role=False), _fresh_atomic_links()],
+            lambda i: atr.add_sync_score(i[0], i[1]),
+        ),
+        (
+            "legacy_links",
+            lambda: [
+                _atomic_actions(with_gk_role=False),
+                _fresh_atomic_links().drop(columns=["action_row", "action_fingerprint"]),
+            ],
+            lambda i: atr.add_sync_score(i[0], i[1]),
+        ),
+    ],
     "atomic.tracking:add_action_context": _one(_astd_inputs, _std_invoke(atf.add_action_context)),
     "atomic.tracking:add_actor_pre_window": _one(_astd_inputs, _std_invoke(atf.add_actor_pre_window)),
     "atomic.tracking:add_cover_shadows": _one(_axtf_inputs, _xtf_map_invoke(atf.add_cover_shadows)),

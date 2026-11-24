@@ -8,7 +8,11 @@ import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.reflection import ATOMIC_SPADL_REFLECTION_KINDS, reflect
-from silly_kicks.spadl.utils import CoverageMetrics, _sort_actions_chronological_or_action_id
+from silly_kicks.spadl.utils import (
+    CoverageMetrics,
+    _chronological_order,
+    _sort_actions_chronological_or_action_id,
+)
 
 from . import config as spadlconfig
 from .schema import ATOMIC_SPADL_COLUMNS
@@ -897,7 +901,8 @@ def add_pre_shot_gk_context(
     if lookback_actions < 1:
         raise ValueError(f"add_pre_shot_gk_context: lookback_actions must be >= 1, got {lookback_actions}")
 
-    sorted_actions = _sort_actions_chronological_or_action_id(actions)
+    order = _chronological_order(actions)
+    sorted_actions = actions.iloc[order].reset_index(drop=True)
 
     n = len(sorted_actions)
     gk_was_distributing = np.zeros(n, dtype=bool)
@@ -986,7 +991,11 @@ def add_pre_shot_gk_context(
     # PR-S24: also lazy-import + merge GK-angle columns (umbrella emits 6 cols total).
     if frames is not None:
         from silly_kicks.atomic.tracking.features import add_pre_shot_gk_angle, add_pre_shot_gk_position
+        from silly_kicks.tracking._link_identity import remap_links
 
+        # W9.5: the caller's links bind to the row order of `actions`: verify them against it, then map them
+        # through the re-sort.
+        links = remap_links(links, order, sorted_actions, actions=actions)
         sorted_actions = add_pre_shot_gk_position(sorted_actions, frames, links=links)
         sorted_actions = add_pre_shot_gk_angle(sorted_actions, frames=frames, links=links)
 

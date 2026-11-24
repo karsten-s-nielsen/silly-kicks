@@ -104,7 +104,11 @@ def test_pointer_schema_and_dtypes():
         "time_offset_seconds",
         "n_candidate_frames",
         "link_quality_score",
+        "action_row",  # W9.2: the action's row in `actions`
+        "action_fingerprint",  # W9.2 (R9): binds the pointer to that action
     ]
+    assert str(ptr["action_row"].dtype) == "int64"
+    assert str(ptr["action_fingerprint"].dtype) == "uint64"
     assert str(ptr["action_id"].dtype) == "int64"
     assert str(ptr["frame_id"].dtype) == "Int64"
     assert str(ptr["time_offset_seconds"].dtype) == "float64"
@@ -151,6 +155,8 @@ def test_links_are_usable_as_add_star_pointers():
         "time_offset_seconds",
         "n_candidate_frames",
         "link_quality_score",
+        "action_row",  # W9.2
+        "action_fingerprint",  # W9.2 (R9)
     }
 
 

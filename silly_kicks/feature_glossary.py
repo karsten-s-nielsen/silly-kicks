@@ -960,6 +960,76 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_SHAPE_GRAPH,
         attribution=_A_SOTUDEH,
     ),
+    # -- Shape graph batch (compute_shape_graphs, spec 2026-11-08 tracking-batch W5.2) ----------------------------
+    FeatureColumn(
+        name="n_players",
+        definition="Selected outfield players of the team-frame (not the ball, not a goalkeeper, a known position).",
+        unit="count",
+        emitting_module=_M_SHAPE_GRAPH,
+        attribution=_A_SOTUDEH,
+    ),
+    FeatureColumn(
+        name="n_edges",
+        definition="Number of edges in the team-frame's stable shape graph.",
+        unit="count",
+        emitting_module=_M_SHAPE_GRAPH,
+        attribution=_A_SOTUDEH,
+    ),
+    FeatureColumn(
+        name="density",
+        definition="Edge density of the team-frame's shape graph: n_edges / (n_players * (n_players - 1) / 2).",
+        unit="ratio",
+        emitting_module=_M_SHAPE_GRAPH,
+        attribution=_A_SOTUDEH,
+    ),
+    FeatureColumn(
+        name="mean_stability",
+        definition="Mean angular stability (degrees) of the team-frame's shape-graph edges; NaN with no edges.",
+        unit="degrees",
+        emitting_module=_M_SHAPE_GRAPH,
+        attribution=_A_SOTUDEH,
+    ),
+    FeatureColumn(
+        name="shape_graph_source",
+        definition=(
+            "Provenance of the team-frame's graph and labels: ok / too_few_players / degenerate / "
+            "direction_unresolved (SHAPE_GRAPH_SOURCE_VALUES); labels are set only for ok."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_SHAPE_GRAPH,
+        attribution=_A_SOTUDEH,
+    ),
+    FeatureColumn(
+        name="vertical",
+        definition=(
+            "Vertical role level B / DM / M / AM / F. Team-relative (spec 2026-11-08 tracking-batch W5.6): "
+            "in the team's own frame with SPADL handedness, B is the team's own goal end."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_SHAPE_GRAPH,
+        attribution=_A_SOTUDEH,
+    ),
+    FeatureColumn(
+        name="horizontal",
+        definition=(
+            "Lateral role level L / LC / C / RC / R. Team-relative (spec 2026-11-08 tracking-batch W5.6): "
+            "in the team's own frame with SPADL handedness, L is the left of a player who faces the attacked "
+            "goal (high y for a team attacking +x, low y for -x)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_SHAPE_GRAPH,
+        attribution=_A_SOTUDEH,
+    ),
+    FeatureColumn(
+        name="position_label",
+        definition=(
+            "Tactical position (e.g. LB, CDM, RCF) from the vertical and lateral levels. Team-relative "
+            "(spec 2026-11-08 tracking-batch W5.6): in the team's own frame with SPADL handedness."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_SHAPE_GRAPH,
+        attribution=_A_SOTUDEH,
+    ),
     # -- Defensive line geometry (TF-14) --------------------------------------------------------
     FeatureColumn(
         name="defensive_line_x",

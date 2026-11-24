@@ -29,9 +29,11 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 
-from silly_kicks.id_compat import same_id
+from silly_kicks._frame_index import group_rows
+from silly_kicks.id_compat import canonical_id
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking._action_orientation import acting_team_attacks_rtl
+from silly_kicks.tracking._link_identity import pointers_with_action_columns, require_links_bound
 
 _PASS_CROSS_TYPE_IDS = frozenset(
     spadlconfig.actiontype_id[n] for n in ("pass", "cross") if n in spadlconfig.actiontype_id
@@ -44,7 +46,7 @@ class LineBreakingParams:
 
     Examples
     --------
-    >>> from silly_kicks.tracking._line_breaking import LineBreakingParams
+    >>> from silly_kicks.tracking import LineBreakingParams
     >>> params = LineBreakingParams(min_opponents=3, n_clusters=3)
     """
 
@@ -94,11 +96,12 @@ def detect_line_breaking(
     --------
     Detect line-breaking passes::
 
-        from silly_kicks.tracking._line_breaking import detect_line_breaking
+        from silly_kicks.tracking import detect_line_breaking
         lb = detect_line_breaking(actions, frames)
 
     See NOTICE for full bibliographic citations.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     if params is None:
         params = LineBreakingParams()
 
@@ -126,61 +129,37 @@ def detect_line_breaking(
     if linked.empty:
         return empty
 
-    linked["frame_id_int"] = linked["frame_id"].astype("int64")
-    linked = linked.merge(
-        actions[
-            [
-                "action_id",
-                "team_id",
-                "type_id",
-                "start_x",
-                "start_y",
-                "end_x",
-                "end_y",
-                "period_id",
-                "game_id",
-            ]
-        ],
-        on="action_id",
-        how="left",
+    # each pointer reads its action's columns BY POSITION (action_row; spec 2026-11-08 tracking-batch section 4.9
+    # W9.4), never by action_id, so a duplicate action id (a VAEP gamestate slot) gets its own row's result
+    linked = pointers_with_action_columns(
+        actions, linked, ["team_id", "type_id", "start_x", "start_y", "end_x", "end_y", "period_id", "game_id"]
     )
-    linked = linked.drop_duplicates("action_id", keep="first")
-
-    # Pre-build grouped outfield opponent positions
-    non_ball_non_gk = frames[(~frames["is_ball"].astype(bool)) & (~frames["is_goalkeeper"].astype(bool))]
-    frame_groups: dict = dict(
-        iter(non_ball_non_gk.groupby(["game_id", "period_id", "frame_id", "team_id"], sort=False, observed=True))
-    )
-
-    # Pre-build (game, period, frame) -> list of team_ids for O(1) opposing lookup
-    frame_to_teams: dict[tuple, list] = {}
-    for key in frame_groups:
-        frame_key = key[:3]
-        frame_to_teams.setdefault(frame_key, []).append(key[3])
-
-    # Align game_id dtype between linked (from actions) and frame groupby keys.
-    # Actions may carry int game_id while frames carry str (or vice versa),
-    # causing the dict lookup to silently miss all frames.
-    # Cast linked game_id to str for comparison, and rebuild frame dicts
-    # with str keys if needed, since str is the universal safe direction.
-    if len(frame_to_teams) > 0:
-        sample_frame_gid = next(iter(frame_to_teams))[0]
-        linked_gid_sample = linked["game_id"].iloc[0]
-        if not isinstance(linked_gid_sample, type(sample_frame_gid)):
-            # Rebuild dicts with str game_id keys
-            frame_groups = {(str(k[0]), k[1], k[2], k[3]): v for k, v in frame_groups.items()}
-            frame_to_teams = {}
-            for key in frame_groups:
-                frame_key = key[:3]
-                frame_to_teams.setdefault(frame_key, []).append(key[3])
-            linked["game_id"] = linked["game_id"].astype(str)
-
-    # Build positional lookup
-    aid_to_pos = {aid: pos for pos, aid in enumerate(actions["action_id"].values)}
 
     lb_arr = np.full(n_actions, np.nan)
     count_arr = np.full(n_actions, np.nan)
     type_arr: list[str | None] = [None] * n_actions
+
+    # Vectorised routes (spec W6): a NaN actor and a non-pass action leave the row <NA>.
+    # NaN-actor action (e.g. the Gradient Sports null-actor duel/foul residue, team_id <NA>): NaN-route to the
+    # pd.NA default -- never let an NA reach the opponent selection (`t != <NA>` is ambiguous).
+    team_known = linked["team_id"].notna().to_numpy()
+    type_ids = linked["type_id"]
+    is_pass = (type_ids.isna() | type_ids.isin(list(_PASS_CROSS_TYPE_IDS))).to_numpy()
+    candidates = linked[team_known & is_pass]
+    if candidates.empty:
+        return _result(lb_arr, count_arr, type_arr, actions.index)
+
+    # Outfield opponents grouped ONCE by (game, period, frame, team) (group_rows, ADR-068). The keys are canonical
+    # (ADR-019; spec R2): an int game_id on one side and a str or float on the other is the same game -- never an
+    # astype(str) re-key, which made a gamestate slot's float game_id 7.0 miss the frames' game 7.
+    outfield = frames[(~frames["is_ball"].astype(bool)).to_numpy() & (~frames["is_goalkeeper"].astype(bool)).to_numpy()]
+    groups = group_rows(
+        outfield[["game_id", "period_id", "frame_id", "team_id"]], ("game_id", "period_id", "frame_id", "team_id")
+    )
+    teams_at_frame: dict[tuple, list] = {}
+    for game_c, period_c, frame_c, team_c in groups.keys():  # first-appearance order: the first opponent team
+        teams_at_frame.setdefault((game_c, period_c, frame_c), []).append(team_c)
+    opp_xy = outfield[["x", "y"]].to_numpy(dtype=np.float64)
 
     # Direction per ACTION, from the frames' own labels -- never from team identity
     # (ADR-051 D3). This function holds both `actions` and `frames`, so it IS the edge where
@@ -191,51 +170,35 @@ def detect_line_breaking(
     # row NaN -- `.to_numpy(dtype=bool)` cannot represent the third state at all, and an
     # na_value=False would restore the exact defect this re-key removes (an unresolved
     # direction rendered indistinguishable from a resolved "does not flip").
-    _flip_by_aid = dict(zip(actions["action_id"], acting_team_attacks_rtl(actions, frames), strict=False))
+    _flip_by_row = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=object)
 
-    for _, row in linked.iterrows():
-        aid = row["action_id"]
-        if aid not in aid_to_pos:
-            continue
-        pos = aid_to_pos[aid]
+    rows = candidates["action_row"].to_numpy(dtype=np.int64)
+    games = candidates["game_id"].to_numpy(dtype=object)
+    periods = candidates["period_id"].to_numpy(dtype=object)
+    frame_ids = candidates["frame_id"].to_numpy(dtype=np.float64).astype(np.int64)
+    teams = candidates["team_id"].to_numpy(dtype=object)
+    starts_x = candidates["start_x"].to_numpy(dtype=np.float64)
+    starts_y = candidates["start_y"].to_numpy(dtype=np.float64)
+    ends_x = candidates["end_x"].to_numpy(dtype=np.float64)
+    ends_y = candidates["end_y"].to_numpy(dtype=np.float64)
 
-        action_team = row["team_id"]
-        # NaN-actor action (e.g. the Gradient Sports null-actor duel/foul residue,
-        # team_id <NA>): NaN-route to the pd.NA default -- never let an NA reach the
-        # opponent-set `!=` below (`t != <NA>` -> "boolean value of NA is ambiguous").
-        if pd.isna(action_team):
-            continue
-        action_type = row.get("type_id")
-        if pd.notna(action_type) and int(action_type) not in _PASS_CROSS_TYPE_IDS:
-            continue  # Non-pass/cross -> leave as pd.NA
-
-        game_id = row["game_id"]
-        period_id = row["period_id"]
-        frame_id = int(row["frame_id_int"])
-        start_x = float(row["start_x"])
-        start_y = float(row["start_y"])
-        end_x = float(row["end_x"])
-        end_y = float(row["end_y"])
-
-        # Find opposing team via O(1) lookup
-        frame_key = (game_id, period_id, frame_id)
-        teams_at_frame = frame_to_teams.get(frame_key, [])
-        # ADR-019: dtype-safe id comparison (Int64 action team_id vs object-string
-        # frame team_id -- e.g. GS-on-tracking -- where a raw `!=` is always True and
-        # silently keeps the actor's OWN team as the "opponent"). action_team is
-        # guaranteed non-NA here (NaN-routed above). Mirrors same_id below.
-        opp_teams = [t for t in teams_at_frame if not same_id(t, action_team)]
-
+    # A loop only over the rows that need the opponent set and the straddle.
+    for i, pos in enumerate(rows):
+        frame_key = (canonical_id(games[i]), canonical_id(periods[i]), canonical_id(frame_ids[i]))
+        actor = canonical_id(teams[i])
+        # ADR-019: canonical team keys (Int64 action team_id vs object-string frame team_id -- e.g.
+        # GS-on-tracking -- where a raw `!=` is always True and silently keeps the actor's OWN team as the
+        # "opponent").
+        opp_teams = [t for t in teams_at_frame.get(frame_key, []) if t != actor]
         if not opp_teams:
             lb_arr[pos] = 0.0
             count_arr[pos] = 0
             continue
 
-        opp_df = frame_groups[(game_id, period_id, frame_id, opp_teams[0])]
-        valid_mask = opp_df["x"].notna() & opp_df["y"].notna()
-        valid_opp = opp_df[valid_mask]
-        opp_x = valid_opp["x"].to_numpy(dtype="float64")
-        opp_y = valid_opp["y"].to_numpy(dtype="float64")
+        xy = opp_xy[groups.positions(*frame_key, opp_teams[0])]
+        xy = xy[~np.isnan(xy[:, 0]) & ~np.isnan(xy[:, 1])]
+        opp_x = np.ascontiguousarray(xy[:, 0])
+        opp_y = np.ascontiguousarray(xy[:, 1])
 
         # Convert SPADL action coords to tracking coords for intersection (opponents are
         # already tracking coords). An action-LTR point for a team attacking LEFT-TO-RIGHT in
@@ -248,12 +211,13 @@ def detect_line_breaking(
         # 180-degree rotation recorded in `_geometry.py`). Stated because a future reader who
         # checks the helper's contract against this use will find them opposed, and the
         # natural "fix" is to invert something that is already correct.
-        _flip = _flip_by_aid.get(aid)
+        _flip = _flip_by_row[pos]
         if pd.isna(_flip):
             # Unresolved direction -> leave this action's row NaN, the same route every other
             # uncomputable row above takes. Guessing "no flip" would mirror away-team geometry
             # into the wrong convention silently.
             continue
+        start_x, start_y, end_x, end_y = float(starts_x[i]), float(starts_y[i]), float(ends_x[i]), float(ends_y[i])
         if _flip:
             track_start_x = 105.0 - start_x
             track_start_y = 68.0 - start_y
@@ -275,6 +239,11 @@ def detect_line_breaking(
         count_arr[pos] = n_lines
         type_arr[pos] = break_type
 
+    return _result(lb_arr, count_arr, type_arr, actions.index)
+
+
+def _result(lb_arr: np.ndarray, count_arr: np.ndarray, type_arr: list, index: pd.Index) -> pd.DataFrame:
+    """The three output columns from the per-row arrays (NaN -> <NA>)."""
     return pd.DataFrame(
         {
             "line_break__ward": pd.array(
@@ -287,7 +256,7 @@ def detect_line_breaking(
             ),
             "line_breaking_type__ward": pd.array(type_arr, dtype="object"),
         },
-        index=actions.index,
+        index=index,
     )
 
 

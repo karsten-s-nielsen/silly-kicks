@@ -20,6 +20,8 @@ This is a private leaf utility (the ``_geometry`` / ``_polygon`` position), cons
 
 from __future__ import annotations
 
+from collections.abc import Hashable
+
 import numpy as np
 import pandas as pd
 
@@ -57,16 +59,39 @@ class RowGroups:
             return canonical_id(key)
         return tuple(canonical_id(k) for k in key)  # multi-key: `key` is a tuple
 
+    def _lookup_key(self, key: tuple):
+        """``key`` as the lookups form it: the scalar for a single-key grouping, else the tuple."""
+        return key[0] if (len(key) == 1 and len(self._by) == 1) else tuple(key)
+
     def get(self, *key) -> pd.DataFrame:
         """Rows for ``key`` (O(1)); an empty frame (``df``'s columns/dtypes) on a miss.
 
         Single-key: ``get(fid)``. Multi-key: ``get(period_id, frame_id)`` (positional).
         """
-        k = key[0] if (len(key) == 1 and len(self._by) == 1) else tuple(key)
-        pos = self._indices.get(self._canon(k))
+        pos = self._indices.get(self._canon(self._lookup_key(key)))
         if pos is None:
             return self._df.iloc[:0]
         return self._df.take(np.asarray(pos, dtype=np.intp))
+
+    def positions(self, *key) -> np.ndarray:
+        """Row positions of ``key`` in :attr:`frame` (O(1), ``intp``); an empty array on a miss.
+
+        The positions behind :meth:`get`: ``groups.frame.take(groups.positions(*key))`` equals ``groups.get(*key)``.
+        A caller that gathers many groups at once concatenates the positions and takes once.
+        """
+        pos = self._indices.get(self._canon(self._lookup_key(key)))
+        if pos is None:
+            return np.empty(0, dtype=np.intp)
+        return np.asarray(pos, dtype=np.intp)
+
+    @property
+    def frame(self) -> pd.DataFrame:
+        """The frame the groups were built over; :meth:`positions` index into it."""
+        return self._df
+
+    def canonical_key(self, *key) -> Hashable:
+        """The canonical form of ``key`` (ADR-019), as :meth:`keys` lists it."""
+        return self._canon(self._lookup_key(key))
 
     def __contains__(self, key) -> bool:
         # single-key: pass the scalar; multi-key: pass a tuple, e.g. `(2, 10) in groups`.

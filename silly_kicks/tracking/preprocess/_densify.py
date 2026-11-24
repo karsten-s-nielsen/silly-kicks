@@ -87,3 +87,18 @@ def bridge_small(values: np.ndarray, max_gap_frames: int) -> np.ndarray:
         else:
             i += 1
     return out
+
+
+def sorted_group_slices(frame: pd.DataFrame, keys: list[str]) -> list[slice]:
+    """The row slices of each ``keys`` group of ``frame``, which is sorted on ``keys`` first (spec 2026-11-08
+    tracking-batch W7.3: one sort, no per-group index lists). A missing key value is its own group, as
+    ``groupby(dropna=False)`` makes it (the ball's ``player_id`` is NA)."""
+    n = len(frame)
+    if n == 0:
+        return []
+    codes = np.column_stack([pd.factorize(frame[k], use_na_sentinel=True)[0] for k in keys])
+    change = np.ones(n, dtype=bool)
+    change[1:] = (codes[1:] != codes[:-1]).any(axis=1)
+    starts = np.flatnonzero(change)
+    stops = np.append(starts[1:], n)
+    return [slice(int(lo), int(hi)) for lo, hi in zip(starts, stops, strict=True)]

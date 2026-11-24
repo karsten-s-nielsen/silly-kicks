@@ -282,23 +282,18 @@ class TestInferPositions:
             assert labels_fwd[i].vertical == "B"
             assert labels_rev[i].vertical == "F"
 
-    def test_lateral_label_is_pitch_absolute_not_team_relative(self, positions_442: np.ndarray) -> None:
-        """ADR-045 D5: the lateral (horizontal) label does NOT mirror under a direction
-        flip -- only the vertical (attacking-axis) ORDERING does. Pins the settled-by-default
-        pitch-absolute convention (infer_positions has no in-library consumer). A future
-        team-relative consumer that negates y AND face_centers_y will flip this test RED,
-        which is the intended signal.
+    def test_lateral_label_is_team_relative_under_mirror(self, positions_442: np.ndarray) -> None:
+        """Spec 2026-11-08 tracking-batch W5.6 (owner ruling R14; it replaces the ADR-045 D5 pitch-absolute pin):
+        the labels are in the team's own frame. The point-reflected formation attacking -x gets the labels of the
+        original attacking +x, and the +x team's high-y full back is "L".
         """
-        sg = compute_shape_graph(positions_442)
-        fwd = infer_positions(sg, positions_442, attacking_direction=1.0)
-        rev = infer_positions(sg, positions_442, attacking_direction=-1.0)
-        # Non-vacuity: some lateral label is non-central, so a mirror WOULD change it.
-        assert any(lbl.horizontal in {"L", "LC", "RC", "R"} for lbl in fwd)
-        for f, r in zip(fwd, rev, strict=True):
-            assert f.horizontal == r.horizontal, (
-                "lateral label mirrored under a direction flip -- that is TEAM-RELATIVE, "
-                "but the settled default is PITCH-ABSOLUTE (ADR-045 D5)"
-            )
+        mirrored = np.column_stack([105.0 - positions_442[:, 0], 68.0 - positions_442[:, 1]])
+        plus = infer_positions(compute_shape_graph(positions_442), positions_442, attacking_direction=1.0)
+        minus = infer_positions(compute_shape_graph(mirrored), mirrored, attacking_direction=-1.0)
+        # Non-vacuity: some lateral label is non-central, so a pitch-absolute label WOULD differ.
+        assert any(lbl.horizontal in {"L", "LC", "RC", "R"} for lbl in plus)
+        assert plus == minus
+        assert plus[3].horizontal == "L" and minus[3].horizontal == "L"  # the y = 58 full back, mirrored to y = 10
 
     def test_position_labels_follow_thesis_matrix(self, positions_442: np.ndarray) -> None:
         sg = compute_shape_graph(positions_442)
@@ -356,11 +351,12 @@ class TestHorizontalLevelAssignment:
     """Test the horizontal level assignment helper directly."""
 
     def test_four_players_across(self) -> None:
+        # attack-frame values (spec 2026-11-08 tracking-batch W5.6): high y is the left
         y_values = np.array([10.0, 25.0, 43.0, 58.0])
         face_centers_y = np.array([20.0, 40.0])
         levels = _assign_levels_horizontal(y_values, face_centers_y)
-        assert levels[0] == "L"
-        assert levels[3] == "R"
+        assert levels[0] == "R"
+        assert levels[3] == "L"
 
 
 # ---------------------------------------------------------------------------
@@ -635,3 +631,32 @@ class TestShapeGraphXfns:
         # 6 cols (3 metrics x 2 teams) x 3 states = 18
         assert result.shape[1] == 18
         assert result.isna().all().all()
+
+
+def test_each_opposite_angle_computed_once_per_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    """W5.1 (spec 2026-11-08 tracking-batch section 4.5): the structural proof of the shape-graph speed-up, with no
+    wall clock. Within one ``compute_shape_graph`` call no opposite angle is computed twice (the per-(edge, vertex)
+    angle cache). On these 200 team-frames the live code made 8,609 calls with no repeat when the oracles ended
+    (ruling C5); 4.139 made 21,028."""
+    from silly_kicks.tracking import _shape_graph as live
+    from tests._prod_fixtures import make_production_frames
+
+    frames = make_production_frames(seed=20261108, n_frames=100, n_periods=1)
+    outfield = frames[~frames["is_ball"].to_numpy(dtype=bool) & ~frames["is_goalkeeper"].to_numpy(dtype=bool)]
+    outfield = outfield.dropna(subset=["x", "y"])
+    real = live._angle_at_vertex
+    calls: list[tuple[bytes, bytes, bytes]] = []
+
+    def spy(vertex: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
+        calls.append((vertex.tobytes(), a.tobytes(), b.tobytes()))
+        return real(vertex, a, b)
+
+    monkeypatch.setattr(live, "_angle_at_vertex", spy)
+    n_graphs = n_calls = 0
+    for _key, grp in outfield.groupby(["frame_id", "team_id"], sort=True, observed=True):
+        calls.clear()
+        live.compute_shape_graph(grp[["x", "y"]].to_numpy(dtype="float64"))
+        assert len(calls) == len(set(calls)), "an opposite angle was computed twice in one call"
+        n_graphs += 1
+        n_calls += len(calls)
+    assert n_graphs == 200 and n_calls > 0  # non-vacuity

@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._frame_index import group_rows
+from silly_kicks._visible_area import polygons_by_action_row
 from silly_kicks.id_compat import canonical_id, ids_match
 from silly_kicks.tracking import action_ltr_goal_map as action_ltr_goal_map
 from silly_kicks.tracking import region_observed_fraction
@@ -108,13 +109,7 @@ def select_arm_a_domain(actions: pd.DataFrame, *, params: TerritorialDefensePara
     return dom.reset_index(drop=True)
 
 
-def _polygons_by_action(visible_area) -> dict:
-    if visible_area is None:
-        return {}
-    return {canonical_id(a): p for a, p in zip(visible_area["action_id"], visible_area["polygon"], strict=False)}
-
-
-def _classify_one(row, groups, polys, params, goal_map_for) -> tuple[str, int]:
+def _classify_one(row, groups, polygon, params, goal_map_for) -> tuple[str, int]:
     fr = groups.get(row.game_id, row.period_id, row.frame_id)
     if len(fr) == 0:
         return NO_ACTOR, -1
@@ -137,7 +132,7 @@ def _classify_one(row, groups, polys, params, goal_map_for) -> tuple[str, int]:
         fr, defending_team_id=row.defending_team_id, min_after=params.min_defenders_after_removal
     ):
         return REMOVAL_UNDERSUPPORTED, -1
-    poly = polys.get(canonical_id(row.action_id))
+    poly = polygon
     if poly is not None:
         d_xy = (float(fr.iloc[dpos]["x"]), float(fr.iloc[dpos]["y"]))
         if not local_completeness_ok(
@@ -170,11 +165,11 @@ def classify_arm_a_domain(
     """
     if groups is None:
         groups = group_rows(frames, _FRAME_KEYS)
-    polys = _polygons_by_action(visible_area)
+    polygons = polygons_by_action_row(domain, visible_area)  # the ONE visible-area join, by row (W9.4)
     sources: list[str] = []
     dposs: list[int] = []
-    for row in domain.itertuples():
-        src, dpos = _classify_one(row, groups, polys, params, goal_map_for)
+    for row, polygon in zip(domain.itertuples(), polygons, strict=True):
+        src, dpos = _classify_one(row, groups, polygon, params, goal_map_for)
         sources.append(src)
         dposs.append(dpos)
     out = domain.copy()

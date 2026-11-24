@@ -354,6 +354,37 @@ def test_compute_pitch_control_batch_is_subquadratic(monkeypatch):
     assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="compute_pitch_control_batch")
 
 
+class _HashCountingKey:
+    """A frame key that counts every hash: the split's set and dict probes, the suspect op of TBC-IMPL-10."""
+
+    def __init__(self, value, counts):
+        self._v = value
+        self._c = counts
+
+    def __hash__(self):
+        self._c["n"] += 1
+        return hash(self._v)
+
+    def __eq__(self, other):
+        return isinstance(other, _HashCountingKey) and self._v == other._v
+
+
+def test_requests_per_chunk_is_subquadratic():
+    from silly_kicks.tracking.pitch_control import _dispatch
+
+    def measure(n):
+        counts = {"n": 0}
+        frames = [_HashCountingKey(i, counts) for i in range(n)]
+        request_frames = [frames[i // 2] for i in range(2 * n)]  # two requests (two teams) per frame
+        chunks = list(_dispatch._chunks(frames, 16))  # many chunks: n / 16
+        counts["n"] = 0
+        rows = _dispatch._requests_per_chunk(request_frames, chunks)
+        assert [r for chunk_rows in rows for r in chunk_rows] == list(range(2 * n))  # a partition in request order
+        return counts["n"]
+
+    assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="_requests_per_chunk")
+
+
 def test_cache_warm_is_subquadratic(monkeypatch):
     from silly_kicks.tracking.pitch_control import _cache, _dispatch
 
@@ -1265,3 +1296,214 @@ def test__pre_index_frames_is_subquadratic():
         return c["n"]
 
     assert_subquadratic_growth(measure, sizes=(64, 256, 1024), label="_pre_index_frames")
+
+
+# ============================ W9.1 game-aware linker (Task 4) ============================
+def _link_inputs(n: int, per_group: int = 32) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """n actions and n frames over n // per_group games, one period each: the work must scale with n, not with
+    n times the number of (game, period) groups or n squared."""
+    n_games = max(n // per_group, 1)
+    game = np.repeat(np.arange(n_games), per_group)[:n]
+    k = np.tile(np.arange(per_group), n_games)[:n]
+    actions = pd.DataFrame({"game_id": game, "period_id": 1, "action_id": k, "time_seconds": k * 0.4 + 0.01})
+    frames = pd.DataFrame(
+        {"game_id": game, "period_id": 1, "frame_id": k, "time_seconds": k * 0.4, "source_provider": "synthetic"}
+    )
+    return actions, frames
+
+
+def test_link_actions_to_frames_is_subquadratic():
+    from silly_kicks.tracking.utils import link_actions_to_frames
+
+    def measure(n):
+        actions, frames = _link_inputs(n)
+        with rows_scanned_counter() as c:
+            link_actions_to_frames(actions, frames, on_low_coverage="ignore")
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="link_actions_to_frames")
+
+
+def _candidate_inputs(n: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    actions, frames = _link_inputs(n)
+    actions = actions.assign(_gk=actions["game_id"].astype(str))
+    frame_index = frames.assign(_gk=frames["game_id"].astype(str)).sort_values(["_gk", "period_id", "time_seconds"])
+    return actions, frame_index.reset_index(drop=True)
+
+
+def test__count_candidates_within_tolerance_is_subquadratic():
+    from silly_kicks.tracking.utils import _count_candidates_within_tolerance
+
+    def measure(n):
+        actions, frame_index = _candidate_inputs(n)
+        with rows_scanned_counter() as c:
+            _count_candidates_within_tolerance(actions, frame_index, 0.2)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="_count_candidates_within_tolerance")
+
+
+def _per_action_rescan(actions: pd.DataFrame, frame_index: pd.DataFrame, tolerance: float) -> list[int]:
+    """The 4.139 shape of the candidate count: one boolean mask over every frame per action."""
+    counts = []
+    for gk, period, t in actions[["_gk", "period_id", "time_seconds"]].itertuples(index=False, name=None):
+        near = (
+            (frame_index["_gk"] == gk)
+            & (frame_index["period_id"] == period)
+            & ((frame_index["time_seconds"] - t).abs() <= tolerance)
+        )
+        counts.append(len(frame_index[near]))
+    return counts
+
+
+def test_candidate_counter_guard_discriminates():
+    # companion: the same counter on a per-action rescan (the BASE_SHA shape) grows quadratically, so the guard above
+    # would catch a regression to it
+    def measure(n):
+        actions, frame_index = _candidate_inputs(n)
+        with rows_scanned_counter() as c:
+            _per_action_rescan(actions, frame_index, 0.2)
+        return c["n"]
+
+    with pytest.raises(AssertionError, match="super-linear"):
+        assert_subquadratic_growth(measure, sizes=(64, 256, 1024), label="old counter")
+
+
+def test_linked_frame_rows_is_subquadratic():
+    # W9.4 (Task 5): LinkedFrameRows groups the frame keys ONCE (group_rows) and takes each action's frame by an
+    # O(1) position lookup. The fixture scales the frame count in TWO games (one action per frame, every frame id
+    # in both games), so a per-action `frames[(game, period, frame) == key]` rescan would be O(actions * frames).
+    from silly_kicks.tracking._link_identity import LinkedFrameRows
+
+    def measure(n):
+        one = _batch_pc_frames(n)
+        frames = pd.concat([one, one.assign(game_id=2)], ignore_index=True)
+        actions = pd.DataFrame(
+            {
+                "game_id": np.repeat([1, 2], n),
+                "period_id": 1,
+                "action_id": np.arange(2 * n),
+                "frame_id": np.tile(np.arange(1, n + 1), 2),
+            }
+        )
+        with rows_scanned_counter() as c:
+            rows = LinkedFrameRows(actions, frames)
+            for i, fid in enumerate(actions["frame_id"].to_numpy()):
+                rows.get(i, fid)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="LinkedFrameRows")
+
+
+def test_compute_shape_graphs_is_subquadratic(monkeypatch):
+    # W5.2 (Task 11): compute_shape_graphs groups the outfield selection ONCE by (game, period, frame, team) and reads
+    # each team-frame's rows by position. The graph itself is stubbed (a per-team-frame constant), so the counter
+    # isolates the grouping and the row reads; the fixture scales the frame count, so a per-team-frame rescan of the
+    # selection would be O(team-frames * rows).
+    from silly_kicks.tracking import _shape_graph as sgm
+    from tests._prod_fixtures import make_production_frames
+
+    monkeypatch.setattr(sgm, "compute_shape_graph", lambda positions, *_a, **_k: sgm._empty_shape_graph(positions))
+
+    def measure(n):
+        frames = make_production_frames(n_frames=n, n_periods=1)
+        with rows_scanned_counter() as c:
+            sgm.compute_shape_graphs(frames, with_positions=False)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(64, 256, 1024), label="compute_shape_graphs")
+
+
+def _line_breaking_inputs(n: int):
+    """``n`` passes, one per frame of a two-team frame set (10 outfield + a keeper each), so the action count and
+    the frame count scale together; pre-linked outside the counter."""
+    from silly_kicks.spadl import config as spadlconfig
+
+    rng = np.random.default_rng(n)
+    rows = []
+    for fid in range(n):
+        for team, x0 in ((5, 30.0), (6, 70.0)):
+            for k in range(11):
+                rows.append(
+                    {
+                        "game_id": 7,
+                        "period_id": 1,
+                        "frame_id": fid,
+                        "time_seconds": fid / 25.0,
+                        "team_id": team,
+                        "player_id": team * 100 + k,
+                        "is_ball": False,
+                        "is_goalkeeper": k == 0,
+                        "x": x0 + rng.normal(0.0, 8.0),
+                        "y": rng.uniform(5.0, 63.0),
+                        "team_attacking_direction": "ltr" if team == 5 else "rtl",
+                        "source_provider": "synthetic",
+                    }
+                )
+        rows.append(
+            {"game_id": 7, "period_id": 1, "frame_id": fid, "time_seconds": fid / 25.0, "team_id": pd.NA,
+             "player_id": pd.NA, "is_ball": True, "is_goalkeeper": False, "x": 52.5, "y": 34.0,
+             "team_attacking_direction": None, "source_provider": "synthetic"}
+        )  # fmt: skip
+    frames = pd.DataFrame(rows)
+    actions = pd.DataFrame(
+        {
+            "game_id": 7,
+            "action_id": np.arange(n),
+            "period_id": 1,
+            "time_seconds": np.arange(n) / 25.0,
+            "team_id": 5,
+            "player_id": 501,
+            "type_id": spadlconfig.actiontype_id["pass"],
+            "start_x": 20.0,
+            "start_y": rng.uniform(10.0, 58.0, n),
+            "end_x": 80.0,
+            "end_y": rng.uniform(10.0, 58.0, n),
+        }
+    )
+    return actions, frames
+
+
+def test_detect_line_breaking_is_subquadratic():
+    # W6 (Task 12): one keyed opponent lookup through group_rows and a loop only over the rows that reach the
+    # straddle; the fixture scales actions and frames together, so a per-action rescan of the frames would be
+    # O(actions * frames).
+    from silly_kicks.tracking import detect_line_breaking
+    from silly_kicks.tracking.utils import link_actions_to_frames
+
+    def measure(n):
+        actions, frames = _line_breaking_inputs(n)
+        links = link_actions_to_frames(actions, frames)[0]
+        with rows_scanned_counter() as c:
+            detect_line_breaking(actions, frames, links=links)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(64, 256, 1024), label="detect_line_breaking")
+
+
+def test_line_breaking_guard_discriminates(monkeypatch):
+    # companion: a planted per-action rescan of the outfield frames (the regression the keyed lookup prevents)
+    # grows super-linearly under the same counter and fixture, so the guard above would catch it. The plan's RED
+    # premise (iterrows / drop_duplicates) does not hold: both are linear and neither is a row scan.
+    from silly_kicks._frame_index import RowGroups
+    from silly_kicks.tracking import detect_line_breaking
+    from silly_kicks.tracking.utils import link_actions_to_frames
+
+    real = RowGroups.positions
+
+    def rescan(groups, *key):
+        frame = groups.frame
+        frame[frame["frame_id"] == int(key[2])]  # the full-table filter per action (every key here has frame_id third)
+        return real(groups, *key)
+
+    monkeypatch.setattr(RowGroups, "positions", rescan)
+
+    def measure(n):
+        actions, frames = _line_breaking_inputs(n)
+        links = link_actions_to_frames(actions, frames)[0]
+        with rows_scanned_counter() as c:
+            detect_line_breaking(actions, frames, links=links)
+        return c["n"]
+
+    with pytest.raises(AssertionError, match="super-linear"):
+        assert_subquadratic_growth(measure, sizes=(64, 256, 1024), label="planted rescan")

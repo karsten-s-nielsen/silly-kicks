@@ -44,3 +44,4 @@ def test_each_leg_is_non_vacuous():
     assert "coord_rp_resultant_length" in {
         _base(c) for c in E._coordination_columns()
     }  # TF-58 compute_team_coordination
+    assert "position_label" in {_base(c) for c in E._shape_graph_batch_columns()}  # W5.2 compute_shape_graphs

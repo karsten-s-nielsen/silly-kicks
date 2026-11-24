@@ -331,6 +331,17 @@ def test_add_ball_contacts_attaches_first_contact_and_is_pure():
     pd.testing.assert_frame_equal(actions, before)  # purity
 
 
+def test_add_ball_contacts_keeps_player_ids_on_a_non_default_index():
+    # the player id column was a fresh RangeIndex Series: on an actions frame indexed otherwise every id became NA
+    actions, frames, expected_pid = _actions_and_frames()
+    base = bc.add_ball_contacts(actions, frames)
+    assert base["first_contact_player_id"].tolist() == [expected_pid]  # non-vacuity: a resolved contact exists
+    shifted = actions.set_axis(actions.index + 100, axis=0)
+    out = bc.add_ball_contacts(shifted, frames)
+    assert out.index.equals(shifted.index)
+    pd.testing.assert_frame_equal(out.reset_index(drop=True), base.reset_index(drop=True))
+
+
 def test_add_ball_contacts_nan_when_no_contact():
     actions, frames = _actions_and_frames_no_contact()
     out = bc.add_ball_contacts(actions, frames)

@@ -123,14 +123,16 @@ def extract_candidate_rows(
     a = actions.reset_index(drop=True)  # positional alignment for _resolve_next_touch_positions/receiver
     positions = _resolve_next_touch_positions(a)  # Int64 positional index of the next same-team touch
     receiver = resolve_next_touch_receiver(a, positions=positions)  # id, from that SAME action (Q1)
-    frame_of = dict(zip(links["action_id"].to_numpy(), links["frame_id"].to_numpy(), strict=True))
-    by_frame = {canonical_id(fid): g for fid, g in frames.groupby("frame_id")}
+    from silly_kicks.tracking._link_identity import linked_frame_rows
+
+    # each pass reads its OWN game's frame BY POSITION (spec 2026-11-08 tracking-batch section 4.9 W9.4, R8)
+    frames_of = linked_frame_rows(actions, frames, links)
     rows = []
     for p, (_idx, act) in enumerate(a.iterrows()):  # p is the positional index (a is reset_index)
         if act["type_id"] not in _PASS_TYPES or int(act["result_id"]) != _SUCCESS:
             continue  # train on COMPLETED passes only
-        fr = by_frame.get(canonical_id(frame_of.get(act["action_id"])))
-        if fr is None:
+        fr = frames_of[p]
+        if fr.empty:
             continue
         try:
             feats = receiver_candidate_features(act, fr, feature_set=feature_set)

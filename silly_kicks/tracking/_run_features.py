@@ -43,6 +43,7 @@ from silly_kicks.keeper_identity import (
     resolve_keeper_identities,
 )
 
+from ._link_identity import require_links_bound
 from .pitch_control import PitchControlCache
 from .utils import link_actions_to_frames
 
@@ -275,6 +276,7 @@ def run_tracking_features(
     #    placement helpers return COPIES, so the caller's actions/frames are never mutated. The frame
     #    bridge is applied ONLY on the roster path -- native frames already carry real keeper ids and
     #    stamping the per-period consensus would clobber a mid-period substitution.
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     keeper_map, keeper_report = resolve_keeper_identities(actions, frames, identity=identity, roster=roster)
     work_actions = add_defending_gk_player_id(actions, keeper_map)
     work_frames = apply_keeper_identities_to_frames(frames, keeper_map) if identity == "roster" else frames

@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.tracking._link_identity import require_links_bound
 
 _G = 9.81
 _FIELD_LENGTH = spadlconfig.field_length  # 105.0
@@ -741,8 +742,10 @@ def compute_shot_goalmouth(
 
     See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from silly_kicks.tracking._gk_geometry import _truthy_bool
     from silly_kicks.tracking._gk_resolve import resolve_defended_goals
+    from silly_kicks.tracking._link_identity import iter_games
     from silly_kicks.tracking.utils import slice_around_event
 
     _ = links  # signature parity only; see docstring
@@ -769,10 +772,19 @@ def compute_shot_goalmouth(
     goal_map = resolve_defended_goals(frames)
 
     shots = actions[is_shot]
-    sl = slice_around_event(shots, ball, pre_seconds=_PRE_SECONDS, post_seconds=params.post_window_seconds)
-    by_action = dict(iter(sl.groupby("action_id"))) if len(sl) else {}
-
-    for ridx, row in shots.iterrows():
+    # The ball window is a TIME window, not a pointer join: slice once per game, and key each window
+    # on the shot's ROW (spec 2026-11-08 tracking-batch section 4.9 W9.4). An action_id that two games
+    # share then cannot read the other game's ball.
+    window_by_shot_row: dict[int, pd.DataFrame] = {}
+    for rows, game_shots, game_ball in iter_games(shots, ball):
+        sl = slice_around_event(
+            game_shots, game_ball, pre_seconds=_PRE_SECONDS, post_seconds=params.post_window_seconds
+        )
+        by_action = dict(iter(sl.groupby("action_id"))) if len(sl) else {}
+        for shot_row, action_id in zip(rows, game_shots["action_id"], strict=True):
+            if action_id in by_action:
+                window_by_shot_row[int(shot_row)] = by_action[action_id]
+    for shot_row, (ridx, row) in enumerate(shots.iterrows()):
         # attacked goal = the goal defended by the OTHER team in this (game, period).
         # Three mutually exclusive resolution states:
         #   resolved   -- exactly 2 teams, action team identified (same_id), ends differ
@@ -791,7 +803,7 @@ def compute_shot_goalmouth(
             out.loc[ridx, "shot_crossing_source"] = "unresolved"
             out.loc[ridx, "shot_crossing_confidence"] = 0.0
             continue
-        g = by_action.get(row["action_id"])
+        g = window_by_shot_row.get(shot_row)
         if g is None or g.empty:
             out.loc[ridx, "shot_crossing_source"] = "no_ball_frames"
             out.loc[ridx, "shot_crossing_confidence"] = 0.0

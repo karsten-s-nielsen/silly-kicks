@@ -279,6 +279,45 @@ def test_a_genuinely_absent_polygon_still_reads_no_polygon():
     assert list(out["visible_area_source"]) == [VISIBLE_AREA_OBSERVED, VISIBLE_AREA_NO_POLYGON]
 
 
+def test_link_status_is_read_by_action_row_not_by_action_id_across_games():
+    """Spec W9.4: the link status of an action is its own pointer's, read by action ROW.
+
+    Two games share ``action_id`` 2. Game 1's action 2 has no frame, game 2's has one. An ``action_id``
+    join pools the two games, so game 1's action 2 read ``observed`` (0.5) where the one-game call gives
+    ``unlinked`` (NaN). Measured on whole gradientsports matches, W9.6 (2026-11-12).
+    """
+    from silly_kicks.tracking._link_identity import action_fingerprints
+
+    actions = pd.DataFrame(
+        {
+            "game_id": [1, 1, 1, 2, 2, 2],
+            "period_id": [1] * 6,
+            "action_id": [0, 1, 2, 0, 1, 2],
+            "time_seconds": [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
+            "team_id": [1] * 6,
+        }
+    )
+    visible = pd.DataFrame(
+        {"game_id": actions["game_id"], "action_id": actions["action_id"], "polygon": [LEFT_HALF] * 6}
+    )
+    links = pd.DataFrame(
+        {
+            "action_id": actions["action_id"],
+            "frame_id": [10.0, 11.0, np.nan, 20.0, 21.0, 22.0],
+            "action_row": np.arange(6, dtype=np.int64),
+            "action_fingerprint": action_fingerprints(actions),
+        }
+    )
+
+    out = add_visible_area_coverage(actions, visible_area=visible, links=links)
+    assert (
+        list(out["visible_area_source"])
+        == [VISIBLE_AREA_OBSERVED] * 2 + [VISIBLE_AREA_UNLINKED] + [VISIBLE_AREA_OBSERVED] * 3
+    )
+    assert np.isnan(out["visible_area_fraction"].iloc[2]), "game 1's action 2 has no frame, so no measurement"
+    assert out["visible_area_fraction"].iloc[5] == pytest.approx(0.5, abs=1e-9), "game 2's action 2 is linked"
+
+
 # ---------------------------------------------------------------------------
 # classify_region_observation (Task 3): (fraction, source) over the closed set
 # {observed, no_polygon, degenerate_polygon, degenerate_region}. `degenerate_region`

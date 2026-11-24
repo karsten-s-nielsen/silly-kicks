@@ -20,7 +20,7 @@ See NOTICE for full bibliographic citations.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -37,6 +37,7 @@ from silly_kicks.tracking import (
     region_observed_fraction,
     resolve_defended_goals,
 )
+from silly_kicks.tracking.utils import remap_links, resolve_link_positions
 
 from ._columns import OPTION_ROW_COLUMNS
 from ._config import GkDecisionParams
@@ -103,7 +104,10 @@ class ReconstructedOptionSet:
         # None -> resolved from frames in option_rows() (byte-identical for a whole-unit caller).
         self._goal_map = goal_map
         self._drops = {"no_frame": 0, "fov_cropped": 0, "keeper_undetected": 0}
-        self._link_cache: pd.DataFrame | None = None
+        # Per option_rows() call: the linked frame_id of each keeper decision BY ROW, and the positions of
+        # the keeper decisions in `actions` (spec 2026-11-08 tracking-batch section 4.9 W9.4).
+        self._link_cache: np.ndarray | None = None
+        self._gk_rows: np.ndarray = np.empty(0, dtype=np.intp)
 
     def drop_counts(self) -> dict[str, int]:
         """The adapter's own dropped-and-counted decisions (``no_frame`` / ``fov_cropped``).
@@ -118,16 +122,30 @@ class ReconstructedOptionSet:
 
     # -- frame resolution -------------------------------------------------------------------------
 
-    def _frame_id_for(self, gk_acts: pd.DataFrame, action_id):
-        if self._links is not None:
-            hit = self._links[ids_match(self._links["action_id"], action_id).to_numpy()]
-            return hit["frame_id"].iloc[0] if len(hit) else None
-        if self._convention == "per_action_ltr":
-            return action_id  # SB360 snapshot: frame_id == action_id (snapshot_to_tracking_frames)
+    def _frame_id_for(self, gk_acts: pd.DataFrame, action_row: int):
+        """The linked ``frame_id`` of the keeper decision at ``action_row`` of ``gk_acts``, or ``None``.
+
+        Read BY POSITION, never by ``action_id``: an ``action_id`` repeats across games. Caller ``links`` are
+        built on the full ``actions`` frame, so they follow the keeper subset through ``remap_links``.
+        """
         if self._link_cache is None:
-            self._link_cache = link_actions_to_frames(gk_acts, self._frames)[0]  # (pointers, LinkReport)
-        hit = self._link_cache[ids_match(self._link_cache["action_id"], action_id).to_numpy()]
-        return hit["frame_id"].iloc[0] if len(hit) else None
+            if self._links is None and self._convention == "per_action_ltr":
+                # SB360 snapshot: frame_id == action_id (snapshot_to_tracking_frames)
+                self._link_cache = gk_acts["action_id"].to_numpy()
+            else:
+                pointers = cast(  # self._links is not None, so remap_links returns pointers
+                    pd.DataFrame,
+                    remap_links(self._links, self._gk_rows, gk_acts, actions=self._actions)
+                    if self._links is not None
+                    else link_actions_to_frames(gk_acts, self._frames)[0],  # (pointers, LinkReport)
+                )
+                frame_ids = np.full(len(gk_acts), None, dtype=object)
+                rows = resolve_link_positions(gk_acts, pointers)
+                # written last-to-first, so the FIRST pointer of an action wins
+                frame_ids[rows[::-1]] = pointers["frame_id"].to_numpy(dtype=object)[::-1]
+                self._link_cache = frame_ids
+        fid = self._link_cache[action_row]
+        return None if pd.isna(fid) else fid
 
     def _polygon_for(self, action_id):
         if self._visible_area is None:
@@ -137,18 +155,24 @@ class ReconstructedOptionSet:
 
     # -- steps 1-3: link -> orient to action-LTR -> FOV gate (the testable framing helper) --------
 
-    def _frame_and_anchors_action_ltr(self, a: pd.Series, gk_acts: pd.DataFrame, match_map):
+    def _frame_and_anchors_action_ltr(self, a: pd.Series, gk_acts: pd.DataFrame, match_map, action_row: int):
         """Return ``(frame_ltr, keeper_xy, keeper_team, opponent_team)`` or ``None`` (drop counted).
 
         The frame is put in action-LTR (reflected iff match-LTR and the keeper attacks x=0). The keeper
         + candidates come from THIS frame; the pass end (an action anchor) is already action-LTR.
         """
         action_id, keeper_team = a["action_id"], a["team_id"]
-        fid = self._frame_id_for(gk_acts, action_id)
+        fid = self._frame_id_for(gk_acts, action_row)
         if fid is None:
             self._drops["no_frame"] += 1
             return None
-        frame = self._frames[ids_match(self._frames["frame_id"], fid).to_numpy()].copy()
+        # the frame of the decision's OWN game and period: frame_id alone repeats across games and periods
+        # copy=True: the mask is narrowed in place below, and pandas 3 copy-on-write hands back a read-only view
+        in_frame = ids_match(self._frames["frame_id"], fid).to_numpy(copy=True)
+        for key in ("game_id", "period_id"):
+            if key in a.index and key in self._frames.columns:
+                in_frame &= ids_match(self._frames[key], a[key]).to_numpy()
+        frame = self._frames[in_frame].copy()
         if frame.empty:
             self._drops["no_frame"] += 1
             return None
@@ -201,8 +225,8 @@ class ReconstructedOptionSet:
 
     # -- steps 4-8: value every option -> reachability -> assemble (the valuation core) -----------
 
-    def _rows_for_decision(self, a: pd.Series, gk_acts: pd.DataFrame, match_map):
-        got = self._frame_and_anchors_action_ltr(a, gk_acts, match_map)
+    def _rows_for_decision(self, a: pd.Series, gk_acts: pd.DataFrame, match_map, action_row: int):
+        got = self._frame_and_anchors_action_ltr(a, gk_acts, match_map, action_row)
         if got is None:
             return None
         frame, keeper_xy, keeper_team, opp_team = got
@@ -270,13 +294,19 @@ class ReconstructedOptionSet:
 
             rows = reconstructed_option_set.option_rows()
         """
-        acts = self._actions[ids_isin(self._actions["player_id"], self._keeper_ids).to_numpy()]
+        is_keeper = ids_isin(self._actions["player_id"], self._keeper_ids).to_numpy()
+        acts = self._actions[is_keeper]
         self._drops = {"no_frame": 0, "fov_cropped": 0, "keeper_undetected": 0}
         self._link_cache = None
+        self._gk_rows = np.flatnonzero(is_keeper)
         match_map = None
         if self._convention == "match_ltr":
             match_map = self._goal_map if self._goal_map is not None else resolve_defended_goals(self._frames)
-        out = [rows for _, a in acts.iterrows() if (rows := self._rows_for_decision(a, acts, match_map)) is not None]
+        out = [
+            rows
+            for action_row, (_, a) in enumerate(acts.iterrows())
+            if (rows := self._rows_for_decision(a, acts, match_map, action_row)) is not None
+        ]
         if not out:
             return pd.DataFrame(columns=list(OPTION_ROW_COLUMNS))
         return pd.concat(out, ignore_index=True)[list(OPTION_ROW_COLUMNS)]

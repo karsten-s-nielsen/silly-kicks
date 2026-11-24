@@ -1,0 +1,239 @@
+{
+  "memo": "docs/research/tracking-compute-perf/README.md",
+  "harness": "docs/research/tracking-compute-perf/harness/c1_record.py",
+  "ruling": "C1 (owner, 2026-11-18): the lakehouse's own calls on the DGX, the frozen tree against main, one input, with a bit compare",
+  "run": "the rerun after implementation review round 1 (owner, 2026-11-23: 'Fix all, one full rerun'); it replaces the round-0 run on code identity ba77a3b6 (run_commit d94022f3), which gave the same bit compare",
+  "run_commit": "9adae310e089cbb5fb910074f4ac49ee22cfb5a4",
+  "run_tree_dirty": false,
+  "trees": {
+    "main": {
+      "commit": "6eee84ce",
+      "code_identity": "55f11bdf4c4e8981e67dac5118f7d81c6d199d82"
+    },
+    "frozen": {
+      "commit": "9adae310e089cbb5fb910074f4ac49ee22cfb5a4",
+      "commit_note": "the DGX-local commit that holds the shipped copy of the frozen tree (no remote); the harness ran from it, and its status was clean",
+      "code_identity": "c64baa6699d5f1983f6067553655c4f19d102e4b",
+      "note": "FREEZE_ID: git_tree_hash(paths=CODE_IDENTITY_PATHS) of the uncommitted branch tree; the DGX copy was verified equal"
+    }
+  },
+  "machine": {
+    "name": "DGX Spark",
+    "cpu": "aarch64, 20 cores (10 Cortex-X925 + 10 Cortex-A725)",
+    "memory_gb": 119,
+    "load_avg_1min_during_run": {
+      "mean": 1.29,
+      "max": 2.41,
+      "samples": 65
+    }
+  },
+  "env": {
+    "main": {
+      "machine": "aarch64",
+      "node": "DGX-Spark",
+      "python": "3.12.14",
+      "numpy": "2.4.4",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "numba": "0.65.1",
+      "silly_kicks_version": "4.144.0",
+      "OMP_NUM_THREADS": "1"
+    },
+    "frozen": {
+      "machine": "aarch64",
+      "node": "DGX-Spark",
+      "python": "3.12.14",
+      "numpy": "2.4.4",
+      "pandas": "2.3.3",
+      "scipy": "1.17.1",
+      "numba": "0.65.1",
+      "silly_kicks_version": "4.144.0",
+      "OMP_NUM_THREADS": "1"
+    }
+  },
+  "input": {
+    "actions_sha256": "4384214cd54b74f2f1d7272a8c54db6de1e338e27127948c40bb0c4cfd21934f",
+    "away_team_id": 363,
+    "frames_sha256": "11d87aa81ba5f6ee707d6f7427d8c7a85eb5c9226dcdd51d8627f151b1d75b9d",
+    "home_team_id": 364,
+    "match": "10517",
+    "n_actions": 1802,
+    "n_frames": 254242,
+    "n_rows": 5746254,
+    "provider": "gradientsports",
+    "synthetic": 0
+  },
+  "bit_compare": {
+    "preprocess_columns_equal": [
+      "accel",
+      "accel_var",
+      "accel_x",
+      "accel_y",
+      "frame_rate",
+      "pos_var",
+      "speed",
+      "team_id",
+      "time_seconds",
+      "vel_var",
+      "vx",
+      "vy",
+      "x",
+      "x_smoothed",
+      "y",
+      "y_smoothed",
+      "z"
+    ],
+    "preprocess_columns_differ": [],
+    "pc_loop_main_vs_frozen": {
+      "n": 254242,
+      "n_equal": 254242,
+      "shape_match": 1
+    },
+    "pc_batch_vs_loop_main": {
+      "n": 254242,
+      "n_equal": 254242,
+      "shape_match": 1
+    },
+    "pc_batch_vs_loop_frozen": {
+      "n": 254242,
+      "n_equal": 254242,
+      "shape_match": 1
+    },
+    "pc_batch_frozen_vs_loop_main": {
+      "n": 254242,
+      "n_equal": 254242,
+      "shape_match": 1
+    },
+    "sg_graphs_main_vs_frozen": {
+      "n": 508484,
+      "n_equal": 508484,
+      "shape_match": 1
+    },
+    "sg_labels_constant_direction_main_vs_frozen": {
+      "changed_by_team": {
+        "363": 2094849,
+        "364": 2122398
+      },
+      "n_both": 5085212,
+      "n_changed": 4217247,
+      "n_changed_lateral_mirror_only": 4217247,
+      "n_equal": 867965,
+      "n_rows_frozen": 5085212,
+      "n_rows_main": 5085212
+    },
+    "sg_batch_vs_framedir_loop_frozen": {
+      "n_batch": 5085212,
+      "n_both": 5085212,
+      "n_equal": 5085212,
+      "n_loop": 5085212
+    }
+  },
+  "steps": {
+    "main": {
+      "smooth_frames_s": 0.08997851423919201,
+      "derive_velocities_s": 134.1809405758977,
+      "pc_loop": {
+        "ms_per_frame": 1.4393583213045418,
+        "n_frames": 254242,
+        "seconds": 365.94533832510933
+      },
+      "pc_batch": {
+        "equal_to_loop_in_this_tree": 254242,
+        "ms_per_frame": 1.3804485844001233,
+        "n_frames": 254242,
+        "seconds": 350.96800899505615
+      },
+      "sg_loop": {
+        "ms_per_frame": 2.758101495306806,
+        "ms_per_team_frame": 1.379050747653403,
+        "n_team_frames": 508484,
+        "seconds": 701.225240369793
+      },
+      "sg_loop_framedir": null,
+      "sg_batch": null,
+      "link_actions_to_frames_s": 1.1540867979638278
+    },
+    "frozen": {
+      "smooth_frames_s": 0.08881160290911794,
+      "derive_velocities_s": 41.47079450218007,
+      "pc_loop": {
+        "ms_per_frame": 1.2958527495465868,
+        "n_frames": 254242,
+        "seconds": 329.4601947502233
+      },
+      "pc_batch": {
+        "equal_to_loop_in_this_tree": 254242,
+        "ms_per_frame": 0.5064509781499718,
+        "n_frames": 254242,
+        "seconds": 128.7611095868051
+      },
+      "sg_loop": {
+        "ms_per_frame": 1.3808100629628115,
+        "ms_per_team_frame": 0.6904050314814058,
+        "n_team_frames": 508484,
+        "seconds": 351.05991202779114
+      },
+      "sg_loop_framedir": {
+        "n_team_frames": 508484,
+        "seconds": 352.1020842590369
+      },
+      "sg_batch": {
+        "ms_per_frame": 1.1779656441969626,
+        "seconds": 299.48834131192416
+      },
+      "link_actions_to_frames_s": 0.256286412011832
+    }
+  },
+  "peak_batch_tracemalloc": {
+    "numba": {
+      "n_requests": 254242,
+      "active_backend": "numba",
+      "tracemalloc_peak_bytes": 7002823212,
+      "seconds_under_trace": 197.95932135218754
+    },
+    "numpy": {
+      "n_requests": 254242,
+      "active_backend": "numpy",
+      "tracemalloc_peak_bytes": 9805360989,
+      "seconds_under_trace": 367.04840263770893
+    }
+  },
+  "process": {
+    "build": {
+      "wall_s": 44.8,
+      "max_rss_gb": 14.49
+    },
+    "main": {
+      "wall_s": 1599.7,
+      "max_rss_gb": 84.3
+    },
+    "frozen": {
+      "wall_s": 1582.0,
+      "max_rss_gb": 12.88
+    },
+    "peak_numba": {
+      "wall_s": 243.9,
+      "max_rss_gb": 10.03
+    },
+    "peak_numpy": {
+      "wall_s": 412.4,
+      "max_rss_gb": 12.74
+    }
+  },
+  "fingerprint": {
+    "fingerprint_s": 0.0019186967983841896,
+    "max_ratio": 0.02160412305977201,
+    "n_actions": 1802,
+    "ratio_to_step": {
+      "derive_velocities": 4.6266217501170036e-05,
+      "link_actions_to_frames": 0.007486533458104712,
+      "pc_batch": 1.4901213608218313e-05,
+      "pc_loop": 5.823759073046226e-06,
+      "sg_batch": 6.406582606786091e-06,
+      "sg_loop": 5.465439751583766e-06,
+      "smooth_frames": 0.02160412305977201
+    },
+    "within_2_percent_of_every_step": false,
+    "owner_ruling": "2026-11-23: accepted ('Accept, record it (Recommended)'); spec section 7"
+  }
+}

@@ -33,8 +33,9 @@ from silly_kicks._polygon import (
     point_in_polygon,
     shoelace_area,
 )
-from silly_kicks.id_compat import canonical_id
+from silly_kicks._visible_area import polygons_by_action_row
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.tracking._link_identity import require_links_bound, resolve_link_positions
 
 #: Closed vocabulary for ``visible_area_source`` (the ``DAS_SOURCE_VALUES`` /
 #: ``GHOST_GK_SOURCE_VALUES`` pattern). Each token is exported so a consumer enum pins to this
@@ -215,24 +216,6 @@ def classify_region_observation(polygon, region) -> tuple[float, str]:
     return region_observed_fraction(poly, reg), VISIBLE_AREA_OBSERVED
 
 
-def _polygons_by_action(visible_area) -> dict:
-    """``canonical_id(action_id)`` -> polygon: the ONE ADR-019-safe visible-area join.
-
-    Shared by :func:`add_visible_area_coverage` and ``add_action_context``'s companions so the two
-    cannot disagree about how a polygon is looked up. ``action_id`` joins THREE separately-sourced
-    frames (the caller's ``actions``, the provider's ``visible_area``, and ``links``), so the key
-    MUST be canonicalized: a plain dict keyed on the raw id MISSES SILENTLY across dtypes, and the
-    miss is indistinguishable from a genuine absence -- measured, an int64 ``actions.action_id``
-    against an object ``visible_area.action_id`` reported ``no_polygon`` for EVERY row while every
-    polygon had in fact been supplied.
-    """
-    by_action: dict = {}
-    if visible_area is not None and len(visible_area) > 0:
-        for row in visible_area[["action_id", "polygon"]].itertuples(index=False):
-            by_action[canonical_id(row.action_id)] = row.polygon
-    return by_action
-
-
 @nan_safe_enrichment
 def add_visible_area_coverage(
     actions: pd.DataFrame,
@@ -283,6 +266,7 @@ def add_visible_area_coverage(
 
     See NOTICE for full bibliographic citations.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     out = actions.copy()
     pitch = np.array(
         [
@@ -294,30 +278,31 @@ def add_visible_area_coverage(
     )
     pitch_area = shoelace_area(pitch)
 
-    # ADR-019: `action_id` joins THREE separately-sourced frames here -- the caller's `actions`,
-    # the provider's `visible_area` (from `shape_snapshots`) and `links` -- so the keys must be
-    # canonicalized. A plain dict keyed on the raw id MISSES SILENTLY across dtypes, and the miss
-    # is indistinguishable from a genuine absence: measured, an int64 `actions.action_id` against
-    # an object `visible_area.action_id` reported `no_polygon` for EVERY row while every polygon
-    # had in fact been supplied. That is precisely the confusion this module exists to remove.
-    by_action = _polygons_by_action(visible_area)
+    # ADR-019 + spec W9.4: the ONE visible-area join, by action ROW (`silly_kicks._visible_area`). A raw-id
+    # dict MISSES SILENTLY across dtypes: measured, an int64 `actions.action_id` against an object
+    # `visible_area.action_id` reported `no_polygon` for EVERY row while every polygon had been supplied. An
+    # `action_id`-only dict also lets one game's polygon stand in for another's in a multi-game call.
+    polygons = polygons_by_action_row(actions, visible_area)
 
-    linked_ids: set | None = None
+    # Spec W9.4: an action's link status is its OWN pointer's, read by action ROW. An `action_id` set pools
+    # the games of a multi-game call: game 1's unlinked action 2 read `observed` because game 2's action 2
+    # had a frame (measured, W9.6 on whole gradientsports matches).
+    linked: np.ndarray | None = None
     if links is not None and len(links) > 0:
-        ok = links[links["frame_id"].notna()] if "frame_id" in links.columns else links
-        linked_ids = {canonical_id(a) for a in ok["action_id"]}
+        has_frame = links["frame_id"].notna().to_numpy() if "frame_id" in links.columns else np.ones(len(links), bool)
+        linked = np.zeros(len(out), dtype=bool)
+        linked[resolve_link_positions(actions, links)[has_frame]] = True
 
     fractions = np.full(len(out), np.nan)
     sources: list[str] = []
-    for i, aid in enumerate(out["action_id"]):
-        key = canonical_id(aid)
-        if linked_ids is not None and key not in linked_ids:
+    for i, polygon in enumerate(polygons):
+        if linked is not None and not linked[i]:
             sources.append(VISIBLE_AREA_UNLINKED)
             continue
-        if key not in by_action:
+        if polygon is None:
             sources.append(VISIBLE_AREA_NO_POLYGON)
             continue
-        poly = as_polygon(by_action[key])
+        poly = as_polygon(polygon)
         if len(poly) < MIN_VERTICES:
             sources.append(VISIBLE_AREA_DEGENERATE_POLYGON)
             continue

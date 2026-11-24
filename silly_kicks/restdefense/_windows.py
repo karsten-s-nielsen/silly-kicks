@@ -17,7 +17,9 @@ import pandas as pd
 
 from silly_kicks.id_compat import align_join_keys, canonical_id_series, ids_equal
 from silly_kicks.spadl import add_possessions
+from silly_kicks.spadl.utils import _chronological_order
 from silly_kicks.tracking import link_actions_to_frames
+from silly_kicks.tracking.utils import remap_links, resolve_link_positions
 
 from ._columns import RD_FRAME_KEYS, RD_SAMPLE_KEYS
 from ._config import RestDefenseParams
@@ -83,33 +85,46 @@ def select_rest_defense_samples(
     the linked frame), ``own_goal_x`` / ``attacked_goal_x`` (from ``goal_map``), ``is_possession_loss``
     (bool), and ``gate_drop_reason`` (``pd.NA`` on scored rows; else a :data:`GATE_DROP_REASONS` token).
     """
+    order = _chronological_order(actions)  # the re-sort that add_possessions applies
     acts = add_possessions(actions).reset_index(drop=True)
 
     # --- team in possession (the possession owner) + moment-of-loss flag ------------------------
-    owner_by_poss = acts.groupby("possession_id")["team_id"].agg(_possession_owner)
-    owner = acts["possession_id"].map(owner_by_poss)
+    # A possession is (game, possession_id): add_possessions restarts its counter per game, so
+    # possession_id alone merges possession k of every game (spec 2026-11-08 tracking-batch section 4.9,
+    # the W9.6 game-split property). The game key is the canonical id (ADR-019).
+    poss_key = acts[["possession_id"]].assign(_game=canonical_id_series(acts["game_id"]).to_numpy())
+    poss_cols = ["_game", "possession_id"]
+    owner = acts.groupby([poss_key["_game"], poss_key["possession_id"]], sort=False)["team_id"].transform(
+        _possession_owner
+    )
     in_possession = ids_equal(acts["team_id"], owner)
 
     is_loss = pd.Series(False, index=acts.index)
-    inposs_order = acts[in_possession.to_numpy()].sort_values(["possession_id", "time_seconds", "action_id"])
+    inposs_order = acts.assign(_game=poss_key["_game"])[in_possession.to_numpy()].sort_values(
+        [*poss_cols, "time_seconds", "action_id"]
+    )
     if not inposs_order.empty:
-        terminal_idx = inposs_order.groupby("possession_id").tail(1).index
+        terminal_idx = inposs_order.groupby(poss_cols, sort=False).tail(1).index
         is_loss.loc[terminal_idx] = True
 
     # --- stride subsampling (cost control): keep every Nth in-possession action, but always keep
     #     the possession's terminal loss snapshot ------------------------------------------------
     stride_skip = pd.Series(False, index=acts.index)
     if params.possession_stride > 1 and not inposs_order.empty:
-        ordinal = inposs_order.groupby("possession_id").cumcount()
+        ordinal = inposs_order.groupby(poss_cols, sort=False).cumcount()
         skip_idx = inposs_order.index[(ordinal % params.possession_stride) != 0]
         stride_skip.loc[skip_idx] = True
         stride_skip &= ~is_loss
 
     # --- link each action to its frame ----------------------------------------------------------
+    # W9.5: the caller's links bind to the row order of `actions`; map them through the re-sort. Each
+    # action then reads its pointer BY POSITION (W9.4), never by action_id.
+    links = remap_links(links, order, acts, actions=actions)
     if links is None:
         links = link_actions_to_frames(acts, frames, on_low_coverage="ignore")[0]
-    la, lr = align_join_keys(acts, links[_LINK_COLS], ["action_id"])
-    acts = la.merge(lr, on="action_id", how="left").reset_index(drop=True)
+    link_cols = links[_LINK_COLS[1:]].set_axis(resolve_link_positions(acts, links), axis=0)
+    link_cols = link_cols[~link_cols.index.duplicated(keep="first")]
+    acts = acts.merge(link_cols, left_index=True, right_index=True, how="left").reset_index(drop=True)
     # merge re-orders nothing (how="left" preserves left order) but recompute the row-aligned masks
     in_possession = in_possession.to_numpy()
     is_loss = is_loss.to_numpy()

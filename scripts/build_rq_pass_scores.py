@@ -27,6 +27,7 @@ from silly_kicks.tracking import (
 )
 from silly_kicks.tracking._cover_shadows import CoverShadowParams, lane_control
 from silly_kicks.tracking._geometry import GEOMETRY_VERSION
+from silly_kicks.tracking._link_identity import LinkedFrameRows
 
 _SHARD_SCHEMA_VERSION = "rq-scores-2"  # +p_received_{center,left,right}, +n_blocked (margin-based score)
 _EMITTED_SHARD_COLUMNS = [
@@ -82,12 +83,17 @@ def score_match(actions: pd.DataFrame, frames: pd.DataFrame, *, receiver_model=N
         return pd.DataFrame(columns=_EMITTED_SHARD_COLUMNS)
     gm = resolve_defended_goals(frames)
     control = pitch_control_at_target(actions, frames, links=links, method="spearman")  # SHARED link
-    ctrl_by_aid = pd.Series(control.to_numpy(), index=actions["action_id"].to_numpy())
-    by_frame = {canonical_id(fid): g for fid, g in frames.groupby("frame_id")}  # index ONCE per match
+    # A pass is (game, action_id): action_id repeats across games (spec 2026-11-08 tracking-batch section 4.9,
+    # R8). The frame is read on the pass's own (game, period, frame).
+    ctrl_by_key = {
+        (canonical_id(g), canonical_id(a)): v
+        for g, a, v in zip(actions["game_id"], actions["action_id"], control.to_numpy(), strict=True)
+    }
+    frame_rows = LinkedFrameRows(passes, frames)  # index ONCE per match
     recs = []
-    for _, p in passes.iterrows():
-        fr = by_frame.get(canonical_id(p["frame_id"]))
-        if fr is None:  # symmetry with extract_played_passes
+    for i, (_, p) in enumerate(passes.iterrows()):
+        fr = frame_rows.get(i, p["frame_id"])
+        if fr.empty:  # symmetry with extract_played_passes
             continue
         r = lane_control(
             fr,
@@ -116,7 +122,7 @@ def score_match(actions: pd.DataFrame, frames: pd.DataFrame, *, receiver_model=N
                 "p_received_right": r.p_received_right,
                 "n_blocked": n_blocked,
                 "is_blocked_majority": bool(r.is_blocked_majority),
-                "control": float(ctrl_by_aid.get(p["action_id"], np.nan)),
+                "control": float(ctrl_by_key.get((canonical_id(p["game_id"]), canonical_id(p["action_id"])), np.nan)),
             }
         )
     if not recs:  # passes non-empty but every frame missing -> an empty shard with the declared columns

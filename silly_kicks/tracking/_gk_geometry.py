@@ -17,6 +17,8 @@ import pandas as pd
 from silly_kicks.id_compat import ids_match
 from silly_kicks.spadl import config as spadlconfig
 
+from ._link_identity import LinkedFrameRows, game_keys, has_game_key, require_links_bound
+
 _GOALKICK = spadlconfig.actiontype_id["goalkick"]
 _GOAL_AREA_DEPTH = 16.5  # m from own goal line; tracking-GK beyond this is "off position" (measured 48%)
 _RULE_POINT = (5.5, 34.0)  # 6-yard-box centre, LTR
@@ -132,7 +134,8 @@ def _tracking_gk_xy(
     n = len(actions)
     res = np.full((n, 2), np.nan, dtype=float)
     fid = resolve_frame_ids_by_position(actions, frames, links=links)
-    fg = frames.groupby("frame_id")
+    # the frame of the action's OWN game and period (W9.4): frame_id alone repeats across periods and games
+    frame_rows = LinkedFrameRows(actions, frames)
     team_ids = actions["team_id"].to_numpy()
     # ADR-028 per-action re-projection flag (True => acting team attacks RTL in the frames => the
     # frame-sampled GK position must be point-reflected to land in action-LTR). Mirrors the sibling
@@ -147,9 +150,8 @@ def _tracking_gk_xy(
     for i in range(n):
         if not np.isfinite(fid[i]):
             continue
-        try:
-            fr = fg.get_group(int(fid[i]))
-        except KeyError:
+        fr = frame_rows.get(i, fid[i])
+        if fr.empty:
             continue
         gk = fr[
             fr["is_goalkeeper"].astype(bool) & (~fr["is_ball"].astype(bool)) & ids_match(fr["team_id"], team_ids[i])
@@ -224,6 +226,10 @@ def _tracking_gk_xy_detected(
     act_period = actions["period_id"].to_numpy() if "period_id" in actions.columns else np.zeros(n)
     gk_t = gk["time_seconds"].to_numpy(float)
     gk_period = gk["period_id"].to_numpy() if "period_id" in gk.columns else np.zeros(len(gk))
+    # the window searches the action's OWN game (W9.4); without a game key the call is one game
+    same_game = has_game_key(actions, gk)
+    act_game = game_keys(actions["game_id"]) if same_game else None
+    gk_game = game_keys(gk["game_id"]) if same_game else None
 
     for i in range(n):
         t0 = act_t[i]
@@ -234,6 +240,8 @@ def _tracking_gk_xy_detected(
             & (gk_period == act_period[i])
             & (np.abs(gk_t - t0) <= window_s)
         )
+        if gk_game is not None and act_game is not None:
+            sel &= gk_game == act_game[i]
         if not sel.any():
             continue
         cand = gk[sel]
@@ -286,7 +294,8 @@ def _tracking_ball_xy(
     fid = resolve_frame_ids_by_position(actions, frames, links=links)
     is_ball = _truthy_bool(frames["is_ball"])  # coerce (ADR-019; never .astype(bool) a string)
     ball_frames = frames[is_ball]
-    fg = ball_frames.groupby("frame_id")
+    # the frame of the action's OWN game and period (W9.4): frame_id alone repeats across periods and games
+    frame_rows = LinkedFrameRows(actions, ball_frames)
     # ADR-028: the ball row is frame-LTR like every other frame quantity; the restart spot this
     # feeds is an action-LTR quantity. NOTE there is deliberately NO clamp here (unlike
     # `_tracking_gk_xy`), so an unreprojected away ball moved by up to a full pitch length rather
@@ -295,10 +304,7 @@ def _tracking_ball_xy(
     for i in range(n):
         if not np.isfinite(fid[i]):
             continue
-        try:
-            fr = fg.get_group(int(fid[i]))
-        except KeyError:
-            continue
+        fr = frame_rows.get(i, fid[i])
         if fr.empty:
             continue
         bx, by = float(fr.iloc[0]["x"]), float(fr.iloc[0]["y"])
@@ -378,6 +384,7 @@ def resolve_restart_geometry(
 
     See NOTICE; spec 2026-06-10-general-restart-coordinate-enrichment-design.md.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     n = len(actions)
     out = pd.DataFrame(index=actions.index)
     sx = actions["start_x"].to_numpy(float)

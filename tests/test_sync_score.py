@@ -102,3 +102,50 @@ def test_nan_link_score_treated_as_below_threshold():
     df = sync_score(links, high_quality_threshold=0.85)
     # min/mean drop NaN by default
     assert pd.notna(df.loc[1, "sync_score_min"])
+
+
+def test_add_sync_score_legacy_links_refuse_an_ambiguous_action_id_join():
+    """Legacy links (no ``action_row``) merge on ``action_id`` only when that names one action (spec W9.5)."""
+    two_games = pd.DataFrame({"game_id": [7, 7, 8, 8], "action_id": [1, 2, 1, 2]})
+    with pytest.raises(ValueError, match="re-link with link_actions_to_frames"):
+        add_sync_score(two_games, _toy_links())
+    repeated = pd.DataFrame({"game_id": [7, 7, 7], "action_id": [1, 1, 2]})
+    with pytest.raises(ValueError, match="re-link with link_actions_to_frames"):
+        add_sync_score(repeated, _toy_links())
+    # one game with unique ids: the join is unambiguous, and a link of an action outside the frame is ignored
+    one_game = pd.DataFrame({"game_id": [7, 7], "action_id": [1, 2]})
+    out = add_sync_score(one_game, _toy_links())
+    assert len(out) == 2 and out["sync_score_min"].notna().all()
+
+
+def test_sync_score_rows_follow_the_action_rows_in_one_game():
+    """Review A-01 item 1 (owner ruling 2026-11-23): on one game, ``sync_score`` rows follow the action rows that
+    the links were built on, and the index is still ``action_id``. 4.144 sorted the rows by ``action_id``."""
+    from silly_kicks.tracking.utils import link_actions_to_frames
+    from tests._prod_fixtures import make_single_game_inputs
+
+    actions, frames = make_single_game_inputs()
+    shuffled = actions.iloc[np.random.default_rng(7).permutation(len(actions))].reset_index(drop=True)
+    assert not shuffled["action_id"].is_monotonic_increasing  # non-vacuity: the rows are not in id order
+    assert not shuffled["action_id"].duplicated().any()
+    links, _ = link_actions_to_frames(shuffled, frames, on_low_coverage="ignore")
+    scores = sync_score(links)
+    assert scores.index.name == "action_id"
+    assert scores.index.tolist() == shuffled["action_id"].tolist()
+
+
+def test_add_sync_score_joins_current_pointers_by_action_row():
+    """Two games that share action ids: each action reads the score of its OWN pointer."""
+    from silly_kicks.tracking.utils import link_actions_to_frames
+    from tests._prod_fixtures import make_two_game_inputs
+
+    actions, frames = make_two_game_inputs()
+    assert actions["action_id"].duplicated().any()  # non-vacuity: the ids collide across the games
+    links, _ = link_actions_to_frames(actions, frames, on_low_coverage="ignore")
+    out = add_sync_score(actions, links)
+    assert len(out) == len(actions) and out.index.equals(actions.index)
+    want = links.sort_values("action_row")["link_quality_score"].to_numpy()
+    np.testing.assert_array_equal(out["sync_score_min"].to_numpy(), want)
+    scores = sync_score(links)
+    assert len(scores) == len(actions) and scores.index.name == "action_id"
+    assert scores.index.tolist() == actions["action_id"].tolist()

@@ -16,7 +16,7 @@ import pandas as pd
 from scipy.signal import savgol_filter
 
 from ._config_dataclass import PreprocessConfig
-from ._densify import bridge_small, segments
+from ._densify import bridge_small, segments, sorted_group_slices
 from ._guard import apply_plausibility_guard
 from ._kalman import kalman_ca
 
@@ -35,7 +35,7 @@ def _parse_method(frames: pd.DataFrame, cfg: PreprocessConfig) -> str:
     return cfg.smoothing_method or "savgol"
 
 
-def _derive_group_dense(fids, xs_sm, ys_sm, raw_x, raw_y, method, window, poly, cfg, hz):
+def _derive_group_dense(fids, xs_sm, ys_sm, raw_x, raw_y, method, window, poly, cfg, hz, *, cov_cache=None):
     """Per-group velocity/acceleration + per-frame uncertainty on the dense frame grid (TF-65).
 
     Velocity/acceleration come from the active smoother (savgol derivative, or finite differences of
@@ -62,8 +62,8 @@ def _derive_group_dense(fids, xs_sm, ys_sm, raw_x, raw_y, method, window, poly, 
 
     # Always-run CA Kalman/RTS on the RAW positions: the uncertainty source (decoupled from the point
     # smoother), and the coherent point estimate when smoothing_method="kalman".
-    kx = kalman_ca(xd_r, dt, cfg)
-    ky = kalman_ca(yd_r, dt, cfg)
+    kx = kalman_ca(xd_r, dt, cfg, cov_cache=cov_cache)
+    ky = kalman_ca(yd_r, dt, cfg, cov_cache=cov_cache)
     pos_var = kx.pos_var + ky.pos_var
     vel_var = kx.vel_var + ky.vel_var
     acc_var = kx.acc_var + ky.acc_var
@@ -174,23 +174,26 @@ def derive_velocities(
     vel_var = np.full(n, np.nan)
     acc_var = np.full(n, np.nan)
 
-    for _key, idx in sorted_frames.groupby(_GROUP_KEYS, dropna=False).groups.items():
-        idx_arr = np.asarray(list(idx), dtype=int)
+    # W7.3 (spec 2026-11-08 tracking-batch): each group is one contiguous slice of the sorted frames; one
+    # covariance cache per call (W7.1).
+    cov_cache: dict = {}
+    for rows in sorted_group_slices(sorted_frames, _GROUP_KEYS):
         gvx, gvy, gax, gay, gpv, gvv, gav = _derive_group_dense(
-            fid_all[idx_arr],
-            x_sm[idx_arr],
-            y_sm[idx_arr],
-            raw_x[idx_arr],
-            raw_y[idx_arr],
+            fid_all[rows],
+            x_sm[rows],
+            y_sm[rows],
+            raw_x[rows],
+            raw_y[rows],
             method_used,
             window_frames,
             cfg.sg_poly_order,
             cfg,
             hz,
+            cov_cache=cov_cache,
         )
-        vx[idx_arr], vy[idx_arr] = gvx, gvy
-        ax[idx_arr], ay[idx_arr] = gax, gay
-        pos_var[idx_arr], vel_var[idx_arr], acc_var[idx_arr] = gpv, gvv, gav
+        vx[rows], vy[rows] = gvx, gvy
+        ax[rows], ay[rows] = gax, gay
+        pos_var[rows], vel_var[rows], acc_var[rows] = gpv, gvv, gav
 
     # F1b (ADR-106): kinematic STORAGE is float32 (compute upcasts at kernel boundaries). NaN preserved.
     sorted_frames["vx"] = np.asarray(vx, dtype=np.float32)

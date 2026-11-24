@@ -83,24 +83,47 @@ def trajectory_weak_labels(
     ``covered`` iff the ball travelled >= ``min_travel_m`` toward an unambiguous teammate on the
     forward-projected release->intercept ray (R4). Uncovered rows are the R1 hard tail.
     """
-    from scripts._rq_corpus import _acting_attacks_rtl, to_frame_coords
 
     if links is None:
         links, _ = link_actions_to_frames(actions, frames)
-    fmode = dict(zip(actions["action_id"].to_numpy(), classify_failure_mode(actions).to_numpy(), strict=True))
-    frame_of = dict(zip(links["action_id"].to_numpy(), links["frame_id"].to_numpy(), strict=True))
-    by_frame = {canonical_id(fid): g for fid, g in frames.groupby("frame_id")}
+    labels, _rows = _weak_labels_by_row(actions, frames, links, min_travel_m=min_travel_m)
+    return labels
+
+
+def _failure_modes_by_row(actions: pd.DataFrame) -> np.ndarray:
+    """``classify_failure_mode`` per ``actions`` ROW. Its values follow the chronological sort, and its index is
+    ``action_id``, which repeats across games, so the values go back to the rows through the sort permutation."""
+    from silly_kicks.spadl.utils import _chronological_order
+
+    by_row = np.empty(len(actions), dtype=object)
+    by_row[_chronological_order(actions)] = classify_failure_mode(actions).to_numpy(dtype=object)
+    return by_row
+
+
+def _weak_labels_by_row(
+    actions: pd.DataFrame, frames: pd.DataFrame, pointers: pd.DataFrame, *, min_travel_m: float
+) -> tuple[pd.DataFrame, list[int]]:
+    """``trajectory_weak_labels`` and the ``actions`` row of each label row (spec 2026-11-08 tracking-batch
+    section 4.9 W9.4, R8: each pass reads its own game's frame by position, never by ``action_id``).
+
+    ``pointers`` are the linker's output for ``actions``; the public callers link first."""
+    from scripts._rq_corpus import _acting_attacks_rtl, to_frame_coords
+    from silly_kicks.tracking._link_identity import linked_frame_rows
+
+    fmode = _failure_modes_by_row(actions)
+    frames_of = linked_frame_rows(actions, frames, pointers)
     rows = []
-    for _, act in actions.iterrows():
+    label_rows: list[int] = []
+    for row, (_, act) in enumerate(actions.iterrows()):
         aid = act["action_id"]
-        if fmode.get(aid) != "intercepted":
+        if fmode[row] != "intercepted":
             continue
         start = np.array([float(act["start_x"]), float(act["start_y"])], dtype=np.float64)
         end = np.array([float(act["end_x"]), float(act["end_y"])], dtype=np.float64)
         travel = float(np.linalg.norm(end - start))  # magnitude is reflection-invariant -> gate in either frame
         weak_id, covered = pd.NA, False
-        fr = by_frame.get(canonical_id(frame_of.get(aid)))
-        if travel >= min_travel_m and fr is not None:
+        fr = frames_of[row]
+        if travel >= min_travel_m and not fr.empty:
             # Reproject the action-LTR release+end into the FRAME convention (ADR-028) so the ray and the
             # frame teammates share one coordinate system; otherwise an away action mixes an action-LTR
             # release with frame teammates and weak-labels the wrong lane (C-H1).
@@ -120,23 +143,26 @@ def trajectory_weak_labels(
             if best_id is not pd.NA and best_perp <= min_travel_m:  # unambiguous: within a lane width
                 weak_id, covered = best_id, True
         rows.append({"action_id": aid, "weak_receiver_id": weak_id, "covered": covered})
-    return pd.DataFrame(rows, columns=["action_id", "weak_receiver_id", "covered"])
+        label_rows.append(row)
+    return pd.DataFrame(rows, columns=["action_id", "weak_receiver_id", "covered"]), label_rows
 
 
 def receiver_failed_pass_accuracy(model, actions: pd.DataFrame, frames: pd.DataFrame, *, links=None) -> dict:
     """Model vs geometric-proxy top-1 on the trajectory-validated failed subset (H1) -- an UPPER BOUND (R1)."""
+    from silly_kicks.tracking._link_identity import linked_frame_rows
+
     if links is None:
         links, _ = link_actions_to_frames(actions, frames)
-    labels = trajectory_weak_labels(actions, frames, links=links)
+    labels, label_rows = _weak_labels_by_row(actions, frames, links, min_travel_m=5.0)
     covered = labels[labels["covered"]]
-    frame_of = dict(zip(links["action_id"].to_numpy(), links["frame_id"].to_numpy(), strict=True))
-    by_frame = {canonical_id(fid): g for fid, g in frames.groupby("frame_id")}
-    act_of = {a["action_id"]: a for _, a in actions.iterrows()}
+    frames_of = linked_frame_rows(actions, frames, links)  # each label reads its OWN game's frame by row (R8)
     n = model_hits = proxy_hits = 0
-    for _, lab in covered.iterrows():
-        fr = by_frame.get(canonical_id(frame_of.get(lab["action_id"])))
-        act = act_of.get(lab["action_id"])
-        if fr is None or act is None:
+    for (_, lab), row in zip(labels.iterrows(), label_rows, strict=True):
+        if not lab["covered"]:
+            continue
+        fr = frames_of[row]
+        act = actions.iloc[row]
+        if fr.empty:
             continue
         ranked = model.rank(act, fr)
         if ranked.empty:

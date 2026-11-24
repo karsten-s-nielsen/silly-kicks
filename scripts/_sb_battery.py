@@ -211,6 +211,8 @@ def visible_area_coverage(fn):
 
     def call(actions, frames, links, home_team_id):
         visible = pd.DataFrame({"action_id": list(actions["action_id"]), "polygon": [half] * len(actions)})
+        if "game_id" in actions.columns:  # the polygon join is per game (W9.4): a two-game call needs the key
+            visible.insert(0, "game_id", list(actions["game_id"]))
         return fn(actions, visible_area=visible, links=links)
 
     return call

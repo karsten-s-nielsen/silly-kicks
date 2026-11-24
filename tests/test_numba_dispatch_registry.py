@@ -27,6 +27,7 @@ KERNEL_MODULES = frozenset(
         "tracking/_ghost_gk_numba.py",
         "tracking/_das_numba.py",
         "tracking/pitch_control/_numba_kernels.py",
+        "tracking/pitch_control/_batch_numba_kernels.py",
         "tracking/_ball_carrier_numba.py",
         "coordination/_kernels/_numba.py",
         "xtgk/_turnover.py",
@@ -171,6 +172,7 @@ ENTRIES = {
         [
             ("silly_kicks.tracking.pitch_control._numba_kernels", "tti_numba"),
             ("silly_kicks.tracking.pitch_control._numba_kernels", "influence_numba"),
+            ("silly_kicks.tracking.pitch_control._batch_numba_kernels", "influence_rows_numba"),
         ],
     ),
     "PITCH_CONTROL_FB": (

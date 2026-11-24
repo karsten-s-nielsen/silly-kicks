@@ -39,7 +39,7 @@ def ctx_three_defenders():
     pointers = pd.DataFrame({"action_id": [1], "frame_id": [1000]})
     actor_rows = pd.DataFrame(
         {
-            "action_id": [1],
+            "action_row": [0],
             "x": [50.0],
             "y": [34.0],
             "speed": [1.5],
@@ -47,7 +47,7 @@ def ctx_three_defenders():
     )
     opposite = pd.DataFrame(
         {
-            "action_id": [1, 1, 1],
+            "action_row": [0, 0, 0],
             "x": [52.0, 55.0, 60.0],
             "y": [34.0, 34.0, 34.0],
             "team_id_frame": [2, 2, 2],
@@ -108,11 +108,11 @@ def test_defenders_in_triangle_to_goal_kernel():
             "player_id": [11],
         }
     )
-    actor_rows = pd.DataFrame({"action_id": [1], "x": [50.0], "y": [34.0], "speed": [1.5]})
+    actor_rows = pd.DataFrame({"action_row": [0], "x": [50.0], "y": [34.0], "speed": [1.5]})
     pointers = pd.DataFrame({"action_id": [1], "frame_id": [1000]})
     opposite = pd.DataFrame(
         {
-            "action_id": [1, 1],
+            "action_row": [0, 0],
             "x": [80.0, 60.0],
             "y": [34.0, 60.0],
             "team_id_frame": [2, 2],
@@ -145,8 +145,8 @@ def test_unlinked_action_returns_nan():
         }
     )
     pointers = pd.DataFrame({"action_id": [1], "frame_id": [pd.NA]}, dtype="object")
-    actor_rows = pd.DataFrame({"action_id": [1], "x": [float("nan")], "y": [float("nan")], "speed": [float("nan")]})
-    opposite = pd.DataFrame({"action_id": [], "x": [], "y": [], "team_id_frame": []}, dtype="float64")
+    actor_rows = pd.DataFrame({"action_row": [0], "x": [float("nan")], "y": [float("nan")], "speed": [float("nan")]})
+    opposite = pd.DataFrame({"action_row": [], "x": [], "y": [], "team_id_frame": []}, dtype="float64")
     ctx = ActionFrameContext(
         actions=actions,
         pointers=pointers,
@@ -173,10 +173,10 @@ def test_receiver_zone_density_zero_when_no_defenders_in_radius():
             "player_id": [11],
         }
     )
-    actor_rows = pd.DataFrame({"action_id": [1], "x": [50.0], "y": [34.0], "speed": [1.5]})
+    actor_rows = pd.DataFrame({"action_row": [0], "x": [50.0], "y": [34.0], "speed": [1.5]})
     pointers = pd.DataFrame({"action_id": [1], "frame_id": [1000]})
     # Defender far away: dist = 100 m from end (60, 34)
-    opposite = pd.DataFrame({"action_id": [1], "x": [160.0], "y": [34.0], "team_id_frame": [2]})
+    opposite = pd.DataFrame({"action_row": [0], "x": [160.0], "y": [34.0], "team_id_frame": [2]})
     ctx = ActionFrameContext(
         actions=actions,
         pointers=pointers,
@@ -196,7 +196,7 @@ def test_receiver_zone_density_zero_when_no_defenders_in_radius():
 def _stub_ctx(actions, defending_gk_rows):
     """Helper: minimal ActionFrameContext for kernel tests with action_id pointers."""
     pointers = pd.DataFrame({"action_id": actions["action_id"], "frame_id": [1000] * len(actions)})
-    actor_rows = pd.DataFrame({"action_id": actions["action_id"]})
+    actor_rows = pd.DataFrame({"action_row": range(len(actions))})
     return ActionFrameContext(
         actions=actions,
         pointers=pointers,
@@ -221,7 +221,7 @@ def test_pre_shot_gk_position_shot_with_gk_in_frame_emits_exact_values():
             "defending_gk_player_id": [99.0],
         }
     )
-    gk_rows = pd.DataFrame({"action_id": [1], "x": [104.0], "y": [34.0]})
+    gk_rows = pd.DataFrame({"action_row": [0], "x": [104.0], "y": [34.0]})
     ctx = _stub_ctx(actions, gk_rows)
     out = _pre_shot_gk_position(actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS)
     assert float(out["pre_shot_gk_x"].iloc[0]) == pytest.approx(104.0)
@@ -242,7 +242,7 @@ def test_pre_shot_gk_position_non_shot_row_emits_all_nan():
             "defending_gk_player_id": [99.0],
         }
     )
-    gk_rows = pd.DataFrame({"action_id": [1], "x": [104.0], "y": [34.0]})
+    gk_rows = pd.DataFrame({"action_row": [0], "x": [104.0], "y": [34.0]})
     ctx = _stub_ctx(actions, gk_rows)
     out = _pre_shot_gk_position(actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS)
     assert pd.isna(out["pre_shot_gk_x"].iloc[0])
@@ -265,7 +265,7 @@ def test_pre_shot_gk_position_shot_with_nan_defending_gk_player_id_emits_all_nan
         }
     )
     # gk_rows is empty (the resolver would have produced empty since gk_id is NaN).
-    gk_rows = pd.DataFrame(columns=["action_id", "x", "y"])
+    gk_rows = pd.DataFrame(columns=["action_row", "x", "y"])
     ctx = _stub_ctx(actions, gk_rows)
     out = _pre_shot_gk_position(actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS)
     assert pd.isna(out["pre_shot_gk_x"].iloc[0])
@@ -284,7 +284,7 @@ def test_pre_shot_gk_position_shot_with_gk_absent_from_frame_emits_all_nan():
             "defending_gk_player_id": [99.0],
         }
     )
-    gk_rows = pd.DataFrame(columns=["action_id", "x", "y"])
+    gk_rows = pd.DataFrame(columns=["action_row", "x", "y"])
     ctx = _stub_ctx(actions, gk_rows)
     out = _pre_shot_gk_position(actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS)
     assert pd.isna(out["pre_shot_gk_x"].iloc[0])
@@ -304,7 +304,7 @@ def test_pre_shot_gk_position_unlinked_action_emits_all_nan():
         }
     )
     # GK row only for action 1; action 2 unlinked.
-    gk_rows = pd.DataFrame({"action_id": [1], "x": [104.0], "y": [34.0]})
+    gk_rows = pd.DataFrame({"action_row": [0], "x": [104.0], "y": [34.0]})
     ctx = _stub_ctx(actions, gk_rows)
     out = _pre_shot_gk_position(actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS)
     assert not pd.isna(out["pre_shot_gk_x"].iloc[0])
@@ -325,7 +325,7 @@ def test_pre_shot_gk_position_off_pitch_gk_passes_through_no_clamping():
         }
     )
     # GK at x=107 (off pitch by 2m); y=-1 (off pitch by 1m below).
-    gk_rows = pd.DataFrame({"action_id": [1], "x": [107.0], "y": [-1.0]})
+    gk_rows = pd.DataFrame({"action_row": [0], "x": [107.0], "y": [-1.0]})
     ctx = _stub_ctx(actions, gk_rows)
     out = _pre_shot_gk_position(actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS)
     assert float(out["pre_shot_gk_x"].iloc[0]) == pytest.approx(107.0)

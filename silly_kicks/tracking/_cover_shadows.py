@@ -382,7 +382,7 @@ def _classify_man_markers(
         toward_own_goal = np.array([1.0, 0.0])
 
     # F1b (ADR-106): upcast float32-stored coords to float64 at the compute boundary (single
-    # deterministic drift source = storage-rounding; matches the _extract_frame_players idiom).
+    # deterministic drift source = storage-rounding; matches the spearman frame index, pitch_control/_index.py).
     att_pos = attackers[["x", "y"]].to_numpy(dtype="float64")
     def_pos = defenders[["x", "y"]].to_numpy(dtype="float64")
     def_ids = defenders["player_id"].to_numpy()

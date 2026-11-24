@@ -191,9 +191,9 @@ def test_gate_a_mirror_invariance(name):
 def test_gate_a_enforces_the_mirrored_pitch_absolute_contract():
     """Witness: the class has NO real member today, so only a plant can exercise it.
 
-    ``add_shape_graph`` emits six NUMERIC columns; the pitch-absolute lateral label ADR-045 D5
-    settled lives in ``infer_positions``, which ``_shape_graph.py:877-880`` records as having "no
-    in-library consumer" -- it is not surfaced by any ``add_*``. Without this witness the whole
+    ``add_shape_graph`` emits six NUMERIC columns; the lateral label of ``infer_positions`` (once
+    pitch-absolute under ADR-045 D5, team-relative since spec 2026-11-08 tracking-batch W5.6) is not
+    surfaced by any ``add_*``. Without this witness the whole
     enforcement path (``reflections``, the Gate A branch, the declaration test) would ship correct
     but NEVER EXERCISED, which is the failure detection-first exists to prevent.
 

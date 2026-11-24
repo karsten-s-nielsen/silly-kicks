@@ -32,6 +32,7 @@ from silly_kicks.id_compat import canonical_id, canonical_id_series, ids_equal, 
 
 from ..spadl import config as spadlconfig
 from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH, acting_team_attacks_rtl
+from ._link_identity import require_links_bound
 from ._off_ball_runs import _prepare_run_candidates
 from ._warnings import RunValueCoverageWarning
 
@@ -496,6 +497,7 @@ def value_off_ball_runs(
         valued = value_off_ball_runs(runs, actions, frames, xt)
         valued[["player_id", "role", "run_value"]].head()
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from ..xthreat import require_fitted_xt
     from . import _kernels
     from .pitch_control import PitchControlCache as _PitchControlCache

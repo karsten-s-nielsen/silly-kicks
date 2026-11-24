@@ -24,7 +24,16 @@ _NUMBA: ModuleType | None = None  # the imported numba module, once probed
 
 
 class NumbaUnavailableError(ImportError):
-    """numba is a core dependency of silly-kicks but cannot be imported: the installation is broken."""
+    """numba is a core dependency of silly-kicks but cannot be imported: the installation is broken.
+
+    Examples
+    --------
+    It is an ``ImportError``, so a caller that catches ``ImportError`` also catches it:
+
+    >>> from silly_kicks.backends import NumbaUnavailableError
+    >>> issubclass(NumbaUnavailableError, ImportError)
+    True
+    """
 
 
 def _import_numba() -> ModuleType:
@@ -41,14 +50,31 @@ def _import_numba() -> ModuleType:
     return _NUMBA
 
 
+def _forced_numpy(family: str) -> bool:
+    """True when ``SILLY_KICKS_<FAMILY>_FORCE_NUMPY=1`` forces the family onto its numpy reference kernel. The one
+    copy of the rule: :func:`use_numba` and ``backends.backend_report`` both read it (review A-04)."""
+    return os.environ.get(f"SILLY_KICKS_{family}_FORCE_NUMPY") == "1"
+
+
 def use_numba(family: str) -> bool:
     """True when the family's numba kernel must run; False only under ``SILLY_KICKS_<FAMILY>_FORCE_NUMPY=1``.
 
     Raises :class:`NumbaUnavailableError` when numba cannot be imported, and ``ValueError`` for an unknown family.
+
+    Examples
+    --------
+    >>> import os
+    >>> from unittest import mock
+    >>> from silly_kicks._numba_dispatch import use_numba
+    >>> use_numba("XTGK")
+    True
+    >>> with mock.patch.dict(os.environ, {"SILLY_KICKS_XTGK_FORCE_NUMPY": "1"}):  # restored on exit
+    ...     use_numba("XTGK")
+    False
     """
     if family not in FAMILIES:
         raise ValueError(f"unknown numba kernel family {family!r}; expected one of {FAMILIES}")
-    if os.environ.get(f"SILLY_KICKS_{family}_FORCE_NUMPY") == "1":
+    if _forced_numpy(family):
         return False
     _import_numba()
     return True
@@ -57,6 +83,12 @@ def use_numba(family: str) -> bool:
 def require_numba() -> None:
     """For an explicit numba request (``engine="numba"``, ``kde_backend="cpu-numba"``): import numba or raise
     :class:`NumbaUnavailableError`. The explicit argument is the more specific request, so the switches are ignored.
+
+    Examples
+    --------
+    >>> from silly_kicks._numba_dispatch import require_numba
+    >>> require_numba() is None  # numba imports; a broken installation raises NumbaUnavailableError
+    True
     """
     _import_numba()
 
@@ -66,6 +98,13 @@ def import_kernels(module: str) -> ModuleType:
 
     The kernel modules raise ``ImportError`` at import when numba is missing; that becomes
     :class:`NumbaUnavailableError` here, so no caller can turn it into a silent numpy fallback.
+
+    Examples
+    --------
+    >>> from silly_kicks._numba_dispatch import import_kernels
+    >>> kernels = import_kernels("silly_kicks.tracking.pitch_control._batch_numba_kernels")
+    >>> kernels.__name__
+    'silly_kicks.tracking.pitch_control._batch_numba_kernels'
     """
     try:
         return importlib.import_module(module)
@@ -79,7 +118,15 @@ def import_kernels(module: str) -> ModuleType:
 
 
 def numba_version() -> str:
-    """numba's version for log lines, or ``"absent"``. Never raises."""
+    """numba's version for log lines, or ``"absent"``. Never raises.
+
+    Examples
+    --------
+    >>> import numba
+    >>> from silly_kicks._numba_dispatch import numba_version
+    >>> numba_version() == numba.__version__
+    True
+    """
     try:
         return str(_import_numba().__version__)
     except ImportError:

@@ -138,6 +138,36 @@ def test_engine_conserves_frames_dropped_and_counted():
     assert report.drop_reasons.get("fov_cropped_local", 0) == 1  # SPEC-02
 
 
+def test_engine_reads_each_games_own_polygon():
+    """Spec W9.4 / owner ruling 2026-11-12: two games share ``action_id`` 0 and 3 but swap their polygons.
+
+    With a ``game_id`` column in ``visible_area``, each game's classification equals its one-game call; game 2's
+    action 0 is cropped and its action 3 is observed. Without ``game_id``, the two-game call refuses.
+    """
+    import pytest
+
+    actions, frames, visible_area = _mixed_domain_and_frames()
+    game2_actions, game2_frames = actions.assign(game_id=2), frames.assign(game_id=2)
+    game2_visible = visible_area.assign(polygon=visible_area["polygon"].iloc[::-1].to_list())
+    games = [
+        (actions, frames, visible_area.assign(game_id=1)),
+        (game2_actions, game2_frames, game2_visible.assign(game_id=2)),
+    ]
+
+    def classify(acts, frs, va):
+        gm = resolve_defended_goals(frs)
+        return classify_arm_a_domain(select_arm_a_domain(acts), frs, visible_area=va, goal_map_for=lambda *a: gm)
+
+    parts = [classify(*g) for g in games]
+    whole = classify(*(pd.concat(list(cols), ignore_index=True) for cols in zip(*games, strict=True)))
+    assert whole["td_source"].tolist() == parts[0]["td_source"].tolist() + parts[1]["td_source"].tolist()
+    assert parts[0]["td_source"].tolist() != parts[1]["td_source"].tolist(), "non-vacuity: the swap moved a token"
+
+    both = pd.concat([visible_area, game2_visible], ignore_index=True)
+    with pytest.raises(ValueError, match="game_id"):
+        classify(pd.concat([actions, game2_actions]), pd.concat([frames, game2_frames]), both)
+
+
 def test_action_ltr_goal_map_resolves_both_ends():
     # per-action-LTR convention: acting team attacks x=105 (defends 0); opponent defends 105.
     gm = action_ltr_goal_map(7, 1, acting_team_id=1, opponent_team_id=2)

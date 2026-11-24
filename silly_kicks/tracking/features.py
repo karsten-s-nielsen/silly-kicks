@@ -39,6 +39,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from ._link_identity import require_links_bound
+
 if TYPE_CHECKING:
     from silly_kicks.xthreat import ExpectedThreat
 
@@ -52,6 +54,7 @@ from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.id_compat import (
     align_join_keys,
     canonical_id,
+    canonical_id_series,
     ids_differ,
     ids_match,
     restore_id_dtype,
@@ -84,6 +87,17 @@ from ._gk_resolve import (
     defending_gk_from_frames,
     gk_distribution_mask,
     resolve_defended_goals,
+)
+from ._link_identity import (
+    LinkedFrameRows,
+    append_columns_by_action_row,
+    append_pointer_columns,
+    assemble_by_game,
+    frame_join_keys,
+    has_game_key,
+    iter_games,
+    pointers_by_action_row,
+    pointers_with_action_columns,
 )
 from ._packing import PackingParams, secured_reception
 from ._provider_visibility import keeper_detected
@@ -263,6 +277,7 @@ def ball_carrier_at_action(
 
     See NOTICE for full bibliographic citations.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     import numpy as np
 
     pid_dtype = frames["player_id"].dtype
@@ -284,12 +299,8 @@ def ball_carrier_at_action(
     else:
         pointers, _report = link_actions_to_frames(actions, frames, tolerance_seconds=tolerance_seconds)
 
-    # Join pointers with actions to get period_id + game_id
-    ptr = pointers.merge(
-        actions[["action_id", "period_id", "game_id"]],
-        on="action_id",
-        how="left",
-    )
+    # Each pointer reads its action's period_id + game_id BY POSITION (W9.4), never by action_id
+    ptr = pointers_with_action_columns(actions, pointers, ["period_id", "game_id"])
     linked = ptr[ptr["frame_id"].notna()].copy()
     if linked.empty:
         return out
@@ -312,15 +323,12 @@ def ball_carrier_at_action(
         how="left",
     )
 
-    # Deduplicate: one carrier per action_id (take first)
-    merged = merged.drop_duplicates("action_id", keep="first")
+    # Deduplicate: one carrier per action row (take first)
+    merged = merged.drop_duplicates("action_row", keep="first")
 
-    # Map back to actions index
-    action_to_idx = pd.Series(actions.index, index=actions["action_id"].to_numpy())
+    # Map back to the action rows by position
     for _, row in merged.iterrows():
-        aid = row["action_id"]
-        if aid in action_to_idx.index:
-            out.loc[action_to_idx.loc[aid]] = row["ball_carrier_player_id"]
+        out.iloc[int(row["action_row"])] = row["ball_carrier_player_id"]
 
     # Restore the frames dtype (shared rule -- see restore_id_dtype).
     out = restore_id_dtype(out, pid_dtype)
@@ -438,19 +446,6 @@ def defenders_in_triangle_to_goal(
     return _kernels._defenders_in_triangle_to_goal(actions["start_x"], actions["start_y"], ctx)
 
 
-def _fov_linked_action_ids(ctx) -> set:
-    """The canonical action-ids that link to a frame -- the FOV companion link overlay.
-
-    Used by :func:`_append_engine_companions`: overlays the action<->frame link the same way the
-    primary ``frame_id`` provenance does, so an action linking to no frame classifies ``unlinked``.
-    """
-    return {
-        canonical_id(a)
-        for a, f in zip(ctx.pointers["action_id"], ctx.pointers["frame_id"], strict=False)
-        if pd.notna(f)
-    }
-
-
 def _append_engine_companions(
     out: pd.DataFrame,
     actions: pd.DataFrame,
@@ -481,7 +476,9 @@ def _append_engine_companions(
     """
     if ctx is None:
         ctx = _resolve_action_frame_context(actions, frames, links=links)
-    linked = _fov_linked_action_ids(ctx)
+    # The FOV companion link overlay, by action ROW: it overlays the action<->frame link the same way
+    # the primary ``frame_id`` provenance does, so an action linking to no frame classifies ``unlinked``.
+    linked = ctx.linked_rows
 
     def _coord(arr, col):
         return actions[col].to_numpy(dtype=float) if arr is None else arr
@@ -499,7 +496,7 @@ def _append_engine_companions(
         actions,
         entries=_fov_registry.OBSERVABILITY_REGISTRY[registry_key],
         visible_area=visible_area,
-        linked_ids=linked,
+        linked=linked,
         ctx=region_ctx,
     )
 
@@ -567,6 +564,7 @@ def add_action_context(
         from silly_kicks.tracking.features import add_action_context
         enriched = add_action_context(actions, frames, receiver_zone_radius=5.0)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     ctx = _resolve_action_frame_context(actions, frames, links=links)
     out = actions.copy()
     out["nearest_defender_distance"] = _kernels._nearest_defender_distance(actions["start_x"], actions["start_y"], ctx)
@@ -589,8 +587,7 @@ def add_action_context(
     # Provenance: skip if already present (idempotent with other add_* enrichments)
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     if not any(c in out.columns for c in provenance_cols):
-        pointer_cols = ctx.pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+        out = append_pointer_columns(out, actions, ctx.pointers, provenance_cols)
     return out
 
 
@@ -768,6 +765,7 @@ def add_pre_shot_gk_position(
         actions = add_pre_shot_gk_context(actions)            # populates defending_gk_player_id
         enriched = add_pre_shot_gk_position(actions, frames)  # adds 4 GK + 4 provenance columns
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     if "defending_gk_player_id" not in actions.columns:
         raise ValueError(
             "add_pre_shot_gk_position: actions missing required column "
@@ -784,8 +782,7 @@ def add_pre_shot_gk_position(
     # Provenance: skip if already present (idempotent with other add_* enrichments)
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     if not any(c in out.columns for c in provenance_cols):
-        pointer_cols = ctx.pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+        out = append_pointer_columns(out, actions, ctx.pointers, provenance_cols)
     return out
 
 
@@ -878,6 +875,7 @@ def add_pre_shot_gk_angle(
     --------
     >>> # See tests/test_pre_shot_gk_angle.py for a runnable example.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     if "defending_gk_player_id" not in actions.columns:
         raise ValueError(
             "add_pre_shot_gk_angle: actions missing required column 'defending_gk_player_id'. "
@@ -1004,6 +1002,7 @@ def add_actor_pre_window(
     >>> from silly_kicks.tracking.features import add_actor_pre_window
     >>> # See tests/tracking/test_pre_window_features.py for runnable examples.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     df = _kernels._actor_pre_window_kernel(actions, frames, pre_seconds=pre_seconds)
     out = actions.copy()
     out["actor_arc_length_pre_window"] = df["actor_arc_length_pre_window"]
@@ -1015,8 +1014,7 @@ def add_actor_pre_window(
             pointers = links
         else:
             pointers, _report = link_actions_to_frames(actions, frames)
-        pointer_cols = pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 
@@ -1035,15 +1033,17 @@ def _build_ball_xy_v_per_action(
 ) -> pd.DataFrame:
     """Build per-action ball position+velocity at the linked frame.
 
-    Joins on ``(period_id, frame_id)`` jointly -- ``frame_id`` alone is not
-    unique across periods (PR-S25 e2e regression).
+    Joins on ``(game_id, period_id, frame_id)`` jointly -- ``frame_id`` alone is not
+    unique across periods (PR-S25 e2e regression), and ``(period_id, frame_id)`` is not unique
+    across games. Each pointer reads its action's keys by position, and the result keys on
+    ``action_row`` (spec 2026-11-08 tracking-batch section 4.9 W9.4).
     """
-    pointers = ctx.pointers
-    actions_with_period = actions[["action_id", "period_id"]]
-    pointers_with_period = pointers.merge(actions_with_period, on="action_id", how="left")
-    ball_rows = frames.loc[frames["is_ball"], ["period_id", "frame_id", "x", "y", "vx", "vy"]]
-    merged = pointers_with_period.merge(ball_rows, on=["period_id", "frame_id"], how="left")
-    out = merged[["action_id", "x", "y", "vx", "vy"]]
+    frame_keys = frame_join_keys(actions, frames)
+    pointers_with_period = pointers_with_action_columns(actions, ctx.pointers, frame_keys[:-1])
+    ball_rows = frames.loc[frames["is_ball"], [*frame_keys, "x", "y", "vx", "vy"]]
+    pointers_with_period, ball_rows = align_join_keys(pointers_with_period, ball_rows, frame_keys)
+    merged = pointers_with_period.merge(ball_rows, on=frame_keys, how="left")
+    out = merged[["action_row", "x", "y", "vx", "vy"]]
 
     # ADR-045 D2: the ball never entered ActionFrameContext, so _reproject_rows never
     # saw it -- it reached _pressure_bekkers in FRAME coordinates while the defenders
@@ -1052,7 +1052,7 @@ def _build_ball_xy_v_per_action(
     # Read the flip from ctx (Task 5 put it there); do NOT recompute
     # acting_team_attacks_rtl. One orientation decision, one place -- otherwise the ball
     # and the players agree only by coincidence, which is the drift this PR removes.
-    row_flip = out["action_id"].map(ctx.flip_by_action).fillna(False).astype(bool)
+    row_flip = out["action_row"].map(ctx.flip_by_action).fillna(False).astype(bool)
     row_flip.index = out.index
     return reproject_to_action_ltr(out, row_flip, x_cols=["x"], y_cols=["y"], vx_cols=["vx"], vy_cols=["vy"])
 
@@ -1093,6 +1093,7 @@ def pressure_on_actor(
     >>> from silly_kicks.tracking.features import pressure_on_actor
     >>> # See tests/tracking/test_pressure_*.py for runnable examples per method.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     validate_params_for_method(method, params)
     # Dup-action_id safety (ADR): VAEP shifted gamestate slots repeat the boundary
     # action, so action_id is non-unique. The pressure kernels are action_id-indexed
@@ -1230,6 +1231,7 @@ def add_pressure_on_actor(
     >>> from silly_kicks.tracking.features import add_pressure_on_actor
     >>> # See tests/tracking/test_pressure_*.py for runnable examples.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     if params_per_method is None:
         params_per_method = {}
     # Validate all upfront (transactional)
@@ -1267,8 +1269,7 @@ def add_pressure_on_actor(
             pointers = links
         else:
             pointers, _report = link_actions_to_frames(actions, frames)
-        pointer_cols = pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 
@@ -1477,6 +1478,7 @@ def add_defensive_line(
     >>> from silly_kicks.tracking.features import add_defensive_line
     >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     try:
         df = _kernels._defensive_line_at_actions(
             actions, frames, goal_map=_goal_map_for(frames, goal_map), n=n, links=links
@@ -1505,8 +1507,7 @@ def add_defensive_line(
             pointers = links
         else:
             pointers, _report = link_actions_to_frames(actions, frames)
-        pointer_cols = pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 
@@ -1543,8 +1544,8 @@ def defensive_line_xfns(
         out = pd.DataFrame(index=states[0].index)
         for i, slot in enumerate(states[:3]):
             batch = _kernels._defensive_line_at_actions(slot, frames, goal_map=_goal_map_for(frames, goal_map), n=n)
-            for col in col_names:
-                out[f"{col}_a{i}"] = batch[col].to_numpy()
+            for col in col_names:  # float64 whatever the data: an Int64 column with no NA would give int64 (W9.6)
+                out[f"{col}_a{i}"] = batch[col].to_numpy(dtype="float64", na_value=np.nan)
         return out
 
     _defensive_line_transformer._frame_aware = True  # type: ignore[attr-defined]
@@ -1569,6 +1570,7 @@ def add_structural_pass(
 
     See NOTICE for full bibliographic citations.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     batch = _kernels._structural_pass_at_actions(actions, frames, params=params, links=links)
     out = actions.copy()
     # House Int64 idiom (float Series w/ NaN -> Int64 <NA>) preserves the LBS=0-vs-NaN
@@ -1582,8 +1584,7 @@ def add_structural_pass(
     if not existing:
         pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
         if len(pointers) > 0:
-            ptr_cols = pointers.set_index("action_id")[provenance_cols]
-            out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+            out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 
@@ -1686,6 +1687,7 @@ def add_packing(
         out = add_packing(actions, frames)
         out[["packing_made", "packing_net", "packing_goal_threat"]].describe()
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     if params is None:
         params = PackingParams()
     from silly_kicks.spadl.utils import _resolve_next_touch_positions, resolve_next_touch_receiver
@@ -1763,8 +1765,7 @@ def add_packing(
     if not existing:
         pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
         if len(pointers) > 0:
-            ptr_cols = pointers.set_index("action_id")[provenance_cols]
-            out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+            out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 
@@ -1918,6 +1919,7 @@ def add_line_break(
     >>> from silly_kicks.tracking.features import add_line_break
     >>> # See tests/tracking/test_line_breaking.py for runnable examples.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     if method == "threshold":
         from ._off_ball_runs import _line_break_kernel
 
@@ -1968,6 +1970,7 @@ def add_off_ball_context(
     >>> from silly_kicks.tracking.features import add_off_ball_context
     >>> # See tests/tracking/test_off_ball_runs.py for runnable examples.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from ._off_ball_runs import _line_break_kernel, _off_ball_runs_kernel
 
     # `_off_ball_runs_kernel`'s `home_team_id` is DEAD (ADR-042 re-keyed the goalward test onto
@@ -2029,10 +2032,12 @@ def off_ball_context_xfns(
                 min_displacement_m=min_displacement_m,
             )
             lb = _line_break_kernel(slot, frames, goal_map=_goal_map_for(frames, goal_map), n=n)
+            # float64 whatever the data: Int64 / boolean columns would give int64 / bool with no NA and
+            # float64 / object with one (W9.6); line_break is 1.0 / 0.0 / NaN
             for col in _OFF_BALL_RUNS_COLS:
-                out[f"{col}_a{i}"] = runs[col].to_numpy()
+                out[f"{col}_a{i}"] = runs[col].to_numpy(dtype="float64", na_value=np.nan)
             for col in _LINE_BREAK_COLS:
-                out[f"{col}_a{i}"] = lb[col].to_numpy()
+                out[f"{col}_a{i}"] = lb[col].to_numpy(dtype="float64", na_value=np.nan)
         return out
 
     _off_ball_context_transformer._frame_aware = True  # type: ignore[attr-defined]
@@ -2237,6 +2242,7 @@ def add_off_ball_run_values(
         out = add_off_ball_run_values(actions, frames, xt)
         out[["run_value_target", "n_disruptive_runs"]].head()
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     batch = _run_values_at_actions(
         actions,
         frames,
@@ -2264,8 +2270,7 @@ def add_off_ball_run_values(
             # drop_duplicates before the merge (ADR-020, matching add_obso / add_space_creation):
             # a non-unique action_id in the pointers FANS OUT the merge, returning more rows
             # than the caller passed in.
-            ptr_cols = pointers.drop_duplicates("action_id").set_index("action_id")[provenance_cols]
-            out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+            out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 
@@ -2408,6 +2413,7 @@ def add_team_shape(
     >>> from silly_kicks.tracking.features import add_team_shape
     >>> # See tests/tracking/test_team_shape.py for runnable examples.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from ._team_shape import compute_team_shape
 
     out = actions.copy()
@@ -2467,11 +2473,8 @@ def add_team_shape(
         return out
 
     linked["frame_id_int"] = linked["frame_id"].astype("int64")
-    linked = linked.merge(
-        actions[["action_id", "team_id", "period_id", "game_id"]],
-        on="action_id",
-        how="left",
-    )
+    # each pointer reads its action's team, period, and game BY POSITION (W9.4)
+    linked = pointers_with_action_columns(actions, linked, ["team_id", "period_id", "game_id"])
 
     # Align game_id dtype between linked (from actions) and shape_indexed keys
     # (from frames) — int64 vs object mismatch causes silent dict-key miss.
@@ -2483,13 +2486,8 @@ def add_team_shape(
             if not isinstance(linked_gid_sample, type(sample_key_gid)):
                 linked["game_id"] = linked["game_id"].astype(str)
 
-    aid_to_idx = pd.Series(actions.index, index=actions["action_id"].to_numpy())
-
     for _, row in linked.iterrows():
-        aid = row["action_id"]
-        if aid not in aid_to_idx.index:
-            continue
-        idx = aid_to_idx.loc[aid]
+        idx = actions.index[int(row["action_row"])]
         action_team = row["team_id"]
         if pd.isna(action_team):
             continue
@@ -2517,8 +2515,7 @@ def add_team_shape(
     ]
     existing_provenance = [c for c in provenance_cols if c in out.columns]
     if not existing_provenance:
-        pointer_cols = pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
     out = _reproject_team_shape(out, actions, frames)  # ADR-028
     return out
 
@@ -2615,20 +2612,15 @@ def _team_shape_at_actions(
     if n == 0 or len(frames) == 0:
         return empty
 
-    actions_with_idx = actions.copy()
-    actions_with_idx["_row_idx"] = np.arange(n)
-    pointers, _report = link_actions_to_frames(actions_with_idx, frames)
+    pointers, _report = link_actions_to_frames(actions, frames)
     linked = pointers[pointers["frame_id"].notna()].copy()
     if linked.empty:
         return empty
 
     linked["frame_id_int"] = linked["frame_id"].astype("int64")
-    linked = linked.merge(
-        actions_with_idx[["action_id", "_row_idx", "team_id", "period_id", "game_id"]],
-        on="action_id",
-        how="left",
-    )
-    linked = linked.drop_duplicates("_row_idx", keep="first")
+    # each pointer reads its action's team, period, and game BY POSITION (action_row, W9.4)
+    linked = pointers_with_action_columns(actions, linked, ["team_id", "period_id", "game_id"])
+    linked = linked.drop_duplicates("action_row", keep="first")
 
     # Align game_id dtype between linked (from actions) and shape_indexed keys
     # (from frames) — int64 vs object mismatch causes silent dict-key miss.
@@ -2643,7 +2635,7 @@ def _team_shape_at_actions(
     out = empty.copy()
 
     for _, row in linked.iterrows():
-        pos = int(row["_row_idx"])
+        pos = int(row["action_row"])
         idx = actions.index[pos]
         action_team = row["team_id"]
         if pd.isna(action_team):
@@ -2761,6 +2753,7 @@ def pitch_control_at_target(
         from silly_kicks.tracking.features import pitch_control_at_target
         pc = pitch_control_at_target(actions, frames, method="spearman")
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     import numpy as np
 
     col_name = f"pitch_control_at_target__{method}"
@@ -2819,19 +2812,15 @@ def pitch_control_at_target(
     # the add_pitch_control aggregator path is unchanged.
     fid_by_pos = _kernels.resolve_frame_ids_by_position(actions, frames, links=links)
 
-    # Group frames by (period_id, frame_id) for efficient lookup
-    frame_groups = frames.groupby(["period_id", "frame_id"])
+    # Index the frames once: each action reads the frame of its OWN game and period (W9.4)
+    frame_rows = LinkedFrameRows(actions, frames)
 
     for i, (_idx, action_row) in enumerate(actions.iterrows()):
         if np.isnan(fid_by_pos[i]):
             continue
 
-        period_id = int(action_row["period_id"])
-        frame_id_int = int(fid_by_pos[i])
-
-        try:
-            frame_data = frame_groups.get_group((period_id, frame_id_int))
-        except KeyError:
+        frame_data = frame_rows.get(i, int(fid_by_pos[i]))
+        if frame_data.empty:
             continue
 
         team_id = action_row["team_id"]
@@ -2866,6 +2855,7 @@ def add_pitch_control(
         from silly_kicks.tracking.features import add_pitch_control
         enriched = add_pitch_control(actions, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     out = actions.copy()
     s = pitch_control_at_target(actions, frames, links=links, method=method, pitch_control_cache=pitch_control_cache)
     out[s.name] = s.values
@@ -3064,9 +3054,17 @@ def _precompute_das_lookup(
     player_rows = das_frames[das_frames["is_ball"] != True]  # noqa: E712
     # Drop NaN-DAS rows (non-scoreable frames) before summing; without this the lookup would store NaN.
     valid_rows = player_rows.dropna(subset=["DAS"])
+    # Keyed on (game, period_id, frame_id): (period_id, frame_id) names a frame of EVERY game in
+    # `frames`, and a sum over it adds the DAS of two matches (spec 2026-11-08 tracking-batch
+    # section 4.9 W9.4). The game is the canonical id (ADR-019), or None without a game_id column.
     lookup: dict[tuple, dict] = {}
-    for (pid, fid, tid), grp in valid_rows.groupby(["period_id", "frame_id", "team_id"], observed=True):
-        lookup.setdefault((pid, fid), {})[tid] = float(grp["DAS"].sum())
+    if "game_id" not in valid_rows.columns:
+        for (pid, fid, tid), grp in valid_rows.groupby(["period_id", "frame_id", "team_id"], observed=True):
+            lookup.setdefault((None, pid, fid), {})[tid] = float(grp["DAS"].sum())
+        return lookup
+    das_keys = ["game_id", "period_id", "frame_id", "team_id"]
+    for (gid, pid, fid, tid), grp in valid_rows.groupby(das_keys, observed=True):
+        lookup.setdefault((canonical_id(gid), pid, fid), {})[tid] = float(grp["DAS"].sum())
     return lookup
 
 
@@ -3098,11 +3096,19 @@ def _map_das_to_actions(
     opp_vals = np.full(len(actions), np.nan)
     sources = np.full(len(actions), DAS_SOURCE_UNLINKED, dtype=object)
 
+    # The frame key carries the action's own game. Without a game key the call is one game
+    # (`has_game_key`), and the game part of the lookup key is dropped.
+    game_keyed = has_game_key(actions, frames)
+    if not game_keyed:
+        das_lookup = {k[1:]: v for k, v in das_lookup.items()}
+
     for i, (_idx, row) in enumerate(actions.iterrows()):
         fid_raw = frame_ids[i]
         if np.isnan(fid_raw):
             continue
         key = (row["period_id"], int(fid_raw))
+        if game_keyed:
+            key = (canonical_id(row["game_id"]), *key)
         if key not in das_lookup:
             # The action DID link; the frame carries no DAS (accessible-space returned
             # NaN there, or the _has_simulatable_frame guard NaN-ed the whole subset).
@@ -3166,6 +3172,7 @@ def das_at_action(
         from silly_kicks.tracking.features import das_at_action
         das = das_at_action(actions, frames, links=links)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     import numpy as np
 
     if frames is None:
@@ -3292,6 +3299,7 @@ def add_das(
         # caller-supplied per-frame numeric direction (skips the GoalMap):
         enriched = add_das(actions, frames, attacking_direction_col="attacking_direction")
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     import numpy as np
 
     out = actions.copy()
@@ -3463,7 +3471,7 @@ def _gk_influence_at_actions(
         pointers = links
     else:
         pointers, _ = link_actions_to_frames(actions, frames)
-    pointer_lookup = pointers.set_index("action_id")
+    link_frame_id = pointers_by_action_row(actions, pointers)["frame_id"]  # by action ROW (W9.4)
     # ONCE per match, from the FULL frames: the seam's quantity is the MEAN GK x per
     # (game, period, team), and a per-frame map is a different estimator -- unresolvable for
     # 35.7% of SkillCorner team-frames, 0.0% on dense tracking (ADR-055). Caller-supplied maps
@@ -3471,30 +3479,26 @@ def _gk_influence_at_actions(
     # pattern -- which is also what makes the mirror registry's Gate C possible: a gate
     # that VARIES the map needs a seam to inject one through.
     _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
-    frame_groups = frames.groupby(["period_id", "frame_id"])
+    frame_rows = LinkedFrameRows(actions, frames)  # the frame of the action's own game and period
 
-    # Cache: (period_id, frame_id, team_id) -> GkInfluence | None
+    # Cache: (game, period_id, frame_id, team_id) -> GkInfluence | None
     cache: dict[tuple, GkInfluence | None] = {}
 
     for i, (_idx, action_row) in enumerate(actions.iterrows()):
-        aid = action_row["action_id"]
         tid = action_row["team_id"]
         if pd.isna(tid):
             continue
-        if aid not in pointer_lookup.index:
-            continue
-        fid_raw = pointer_lookup.at[aid, "frame_id"]
+        fid_raw = link_frame_id.iat[i]
         if pd.isna(fid_raw):
             continue
 
         pid = action_row["period_id"]
         fid = int(float(fid_raw))  # type: ignore[arg-type]
-        cache_key = (pid, fid, tid)
+        cache_key = (*frame_rows.key(action_row.get("game_id"), pid, fid), tid)
 
         if cache_key not in cache:
-            try:
-                frame_data = frame_groups.get_group((pid, fid))
-            except KeyError:
+            frame_data = frame_rows.get(i, fid)
+            if frame_data.empty:
                 cache[cache_key] = None
                 continue
 
@@ -3750,28 +3754,26 @@ def _closing_time_per_series(
 
     pointers, _ = link_actions_to_frames(actions, frames)
     results = np.full(len(actions), np.nan)
-    pointer_lookup = pointers.set_index("action_id")
+    link_frame_id = pointers_by_action_row(actions, pointers)["frame_id"]  # by action ROW (W9.4)
     # ONCE per match, from the FULL frames -- see `_gk_influence_at_actions`. Re-keyed onto the
     # map here too, deliberately: Gate C expects the closing-time columns to MOVE when the map
     # is swapped, so leaving this path building its own map would show up as a 1-column result
     # that reads like success.
     _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
-    frame_groups = frames.groupby(["period_id", "frame_id"])
+    frame_rows = LinkedFrameRows(actions, frames)  # the frame of the action's own game and period
 
     for i, (_idx, row) in enumerate(actions.iterrows()):
         aid = row["action_id"]
         tid = row["team_id"]
-        if pd.isna(tid) or aid not in pointer_lookup.index:
+        if pd.isna(tid):
             continue
-        fid_raw = pointer_lookup.at[aid, "frame_id"]
+        fid_raw = link_frame_id.iat[i]
         if pd.isna(fid_raw):
             continue
 
-        pid = row["period_id"]
         fid = int(float(fid_raw))  # type: ignore[arg-type]
-        try:
-            frame_data = frame_groups.get_group((pid, fid))
-        except KeyError:
+        frame_data = frame_rows.get(i, fid)
+        if frame_data.empty:
             continue
 
         gk_rows = frame_data[
@@ -3869,6 +3871,7 @@ def add_gk_influence(
 
     See NOTICE for full bibliographic citations.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     out = actions.copy()
     batch, pointers = _gk_influence_at_actions(
         actions,
@@ -3893,13 +3896,7 @@ def add_gk_influence(
     ]
     existing = [c for c in provenance_cols if c in out.columns]
     if not existing and len(pointers) > 0:
-        ptr_cols = pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(
-            ptr_cols,
-            left_on="action_id",
-            right_index=True,
-            how="left",
-        )
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
 
     return out
 
@@ -3991,16 +3988,16 @@ def gk_influence_xfns(
         # ONCE per match, from the FULL frames: the seam's quantity is the MEAN GK x per
         # (game, period, team), and a per-frame map is a different estimator.
         _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
-        frame_groups = frames.groupby(["period_id", "frame_id"])
+        # frames indexed once on (game, period_id, frame_id): a slot row gives its own key (W9.4)
+        frame_rows = LinkedFrameRows(states[0], frames)
 
-        def _get_gi(period_id, frame_id_int, team_id):
-            key = (period_id, frame_id_int, team_id)
+        def _get_gi(game_id, period_id, frame_id_int, team_id):
+            key = (*frame_rows.key(game_id, period_id, frame_id_int), team_id)
             if key in cache:
                 return cache[key]
 
-            try:
-                frame_data = frame_groups.get_group((period_id, frame_id_int))
-            except KeyError:
+            frame_data = frame_rows.at(game_id, period_id, frame_id_int)
+            if frame_data.empty:
                 cache[key] = None
                 return None
 
@@ -4083,7 +4080,7 @@ def gk_influence_xfns(
                 pid = int(row["period_id"])
                 fid = int(fid_by_pos[j])
 
-                gi = _get_gi(pid, fid, tid)
+                gi = _get_gi(row.get("game_id"), pid, fid, tid)
                 if gi is None:
                     continue
 
@@ -4167,6 +4164,7 @@ def add_cover_shadows(
 
     See NOTICE for full bibliographic citations.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from . import _cover_shadows as _cs_mod
     from ._velocity_availability import zero_velocity_if_unavailable
     from .pitch_control import PitchControlCache as _PitchControlCache
@@ -4200,8 +4198,8 @@ def add_cover_shadows(
         pointers = links
     else:
         pointers, _ = link_actions_to_frames(actions, frames)
-    pointer_lookup = pointers.set_index("action_id")
-    frame_groups = frames.groupby(["period_id", "frame_id"])
+    link_frame_id = pointers_by_action_row(actions, pointers)["frame_id"]  # by action ROW (W9.4)
+    frame_rows = LinkedFrameRows(actions, frames)  # the frame of the action's own game and period
 
     # ADR-028 (RC1): `start_x`/`start_y` are ACTION-LTR, while every position `passer_xy` is
     # compared against below -- defenders, receivers, the ball -- is FRAME-LTR. Reproject the
@@ -4212,9 +4210,8 @@ def add_cover_shadows(
     _flip = acting_team_attacks_rtl(actions, frames)
 
     for j, (_idx, row) in enumerate(actions.iterrows()):
-        aid = row["action_id"]
         tid = row["team_id"]
-        if pd.isna(tid) or aid not in pointer_lookup.index:
+        if pd.isna(tid):
             continue
         if pd.isna(_flip.iloc[j]):
             # Unresolved direction -> NaN row, the same outcome this loop already gives an
@@ -4222,16 +4219,14 @@ def add_cover_shadows(
             # is the ANCHOR every shadow is measured from, so placing it in the wrong convention
             # does not degrade the numbers -- it moves the anchor up to a full pitch length.
             continue
-        fid_raw = pointer_lookup.at[aid, "frame_id"]
+        fid_raw = link_frame_id.iat[j]
         if pd.isna(fid_raw):
             continue
 
-        pid_period = row["period_id"]
         fid = int(float(fid_raw))  # type: ignore[arg-type]
 
-        try:
-            frame_data = frame_groups.get_group((pid_period, fid))
-        except KeyError:
+        frame_data = frame_rows.get(j, fid)
+        if frame_data.empty:
             continue
 
         passer_xy = (float(row["start_x"]), float(row["start_y"]))
@@ -4286,13 +4281,7 @@ def add_cover_shadows(
     ]
     existing = [c for c in provenance_cols if c in out.columns]
     if not existing and len(pointers) > 0:
-        ptr_cols = pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(
-            ptr_cols,
-            left_on="action_id",
-            right_index=True,
-            how="left",
-        )
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
 
     return out
 
@@ -4367,19 +4356,17 @@ def cover_shadow_xfns(
         cache: dict[tuple, _cs_mod._CoverShadowDict | None] = {}
         # ONCE per match, from the FULL frames -- see `add_cover_shadows`.
         _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
-        frame_groups = frames.groupby(["period_id", "frame_id"])
+        # frames indexed once on (game, period_id, frame_id): a slot row gives its own key (W9.4)
+        frame_rows = LinkedFrameRows(states[0], frames)
 
-        def _get_cs(period_id, frame_id_int, team_id, passer_xy):
+        def _get_cs(game_id, period_id, frame_id_int, team_id, passer_xy):
             passer_key = (round(passer_xy[0], 0), round(passer_xy[1], 0))
-            key = (period_id, frame_id_int, team_id, passer_key)
+            key = (*frame_rows.key(game_id, period_id, frame_id_int), team_id, passer_key)
             if key in cache:
                 return cache[key]
 
-            try:
-                frame_data = frame_groups.get_group(
-                    (period_id, frame_id_int),
-                )
-            except KeyError:
+            frame_data = frame_rows.at(game_id, period_id, frame_id_int)
+            if frame_data.empty:
                 cache[key] = None
                 return None
 
@@ -4444,7 +4431,7 @@ def cover_shadow_xfns(
                 # NOTE: `_get_cs` rounds `passer_xy` INTO its cache key, so the reprojection must
                 # happen BEFORE this call. Reprojecting after would serve a home-oriented surface
                 # to an away action while looking correct at the call site.
-                cs = _get_cs(pid, fid, tid, passer_xy)
+                cs = _get_cs(row.get("game_id"), pid, fid, tid, passer_xy)
                 if cs is None:
                     continue
 
@@ -4518,22 +4505,16 @@ def _player_influence_at_actions(
     # Nullable: <NA> marks an action whose direction the frames do not resolve. This is THE site
     # the ADR-055 amendment cites -- an xT grid exists whether or not any single action links, so
     # a defaulted flip here emitted a real, plausible number computed against a mirrored surface.
-    _pi_flip = dict(
-        zip(
-            actions["action_id"],
-            acting_team_attacks_rtl(actions, frames),
-            strict=False,
-        )
-    )
+    _pi_flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=object)  # by action ROW
 
     if links is not None:
         pointers = links
     else:
         pointers, _ = link_actions_to_frames(actions, frames)
-    pointer_lookup = pointers.set_index("action_id")
-    frame_groups = frames.groupby(["period_id", "frame_id"])
+    link_frame_id = pointers_by_action_row(actions, pointers)["frame_id"]  # by action ROW (W9.4)
+    frame_rows = LinkedFrameRows(actions, frames)  # the frame of the action's own game and period
 
-    # Cache: (period_id, frame_id, attacking_team_id) -> dict | None
+    # Cache: (game, period_id, frame_id, attacking_team_id) -> dict | None
     cache: dict[tuple, dict[int | str, PlayerInfluence] | None] = {}
 
     # Build player -> team_id lookup from PC surface (populated on first call)
@@ -4550,14 +4531,11 @@ def _player_influence_at_actions(
     _ci_area_diff = _cols.index("reachable_area_diff")
 
     for i, (_idx, action_row) in enumerate(actions.iterrows()):
-        aid = action_row["action_id"]
         tid = action_row["team_id"]
         actor_pid = action_row["player_id"]
         if pd.isna(tid):
             continue
-        if aid not in pointer_lookup.index:
-            continue
-        fid_raw = pointer_lookup.at[aid, "frame_id"]
+        fid_raw = link_frame_id.iat[i]
         if pd.isna(fid_raw):
             continue
         # Unresolved direction (<NA> from the single orientation authority). Do NOT skip the
@@ -4570,16 +4548,15 @@ def _player_influence_at_actions(
         # the xT grid both exist regardless, so an unblanked row would carry a confident number
         # built on a guessed orientation. That is the measured case behind the 4.80.0 contract
         # change (P0.4 / the ADR-055 amendment).
-        direction_unresolved = pd.isna(_pi_flip.get(aid))
+        direction_unresolved = pd.isna(_pi_flip[i])
 
         pid = action_row["period_id"]
         fid = int(float(str(fid_raw)))
-        cache_key = (pid, fid, tid)
+        cache_key = (*frame_rows.key(action_row.get("game_id"), pid, fid), tid)
 
         if cache_key not in cache:
-            try:
-                frame_data = frame_groups.get_group((pid, fid))
-            except KeyError:
+            frame_data = frame_rows.get(i, fid)
+            if frame_data.empty:
                 cache[cache_key] = None
                 continue
 
@@ -4590,7 +4567,7 @@ def _player_influence_at_actions(
                     attacking_team_id=tid,
                     # `bool(pd.NA)` RAISES ("boolean value of NA is ambiguous"), so the
                     # unresolved case must be branched on, never coerced.
-                    attacks_rtl=False if direction_unresolved else bool(_pi_flip[aid]),
+                    attacks_rtl=False if direction_unresolved else bool(_pi_flip[i]),
                     method=method,
                     tau_seconds=tau_seconds,
                     pitch_control_cache=pitch_control_cache,
@@ -4886,6 +4863,7 @@ def add_player_influence(
 
     See NOTICE for full bibliographic citations.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     out = actions.copy()
     batch, pointers = _player_influence_at_actions(
         actions,
@@ -4913,13 +4891,7 @@ def add_player_influence(
     ]
     existing = [c for c in provenance_cols if c in out.columns]
     if not existing and len(pointers) > 0:
-        ptr_cols = pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(
-            ptr_cols,
-            left_on="action_id",
-            right_index=True,
-            how="left",
-        )
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
 
     return out
 
@@ -4999,17 +4971,17 @@ def player_influence_xfns(
 
         # Shared cache across all 3 slots
         cache: dict[tuple, dict[int | str, PlayerInfluence] | None] = {}
-        frame_groups = frames.groupby(["period_id", "frame_id"])
+        # frames indexed once on (game, period_id, frame_id): a slot row gives its own key (W9.4)
+        frame_rows = LinkedFrameRows(states[0], frames)
         player_team_lookup: dict[int | str, int | str] = {}
 
-        def _get_pi(period_id, frame_id_int, team_id):
-            key = (period_id, frame_id_int, team_id)
+        def _get_pi(game_id, period_id, frame_id_int, team_id):
+            key = (*frame_rows.key(game_id, period_id, frame_id_int), team_id)
             if key in cache:
                 return cache[key]
 
-            try:
-                frame_data = frame_groups.get_group((period_id, frame_id_int))
-            except KeyError:
+            frame_data = frame_rows.at(game_id, period_id, frame_id_int)
+            if frame_data.empty:
                 cache[key] = None
                 return None
 
@@ -5097,7 +5069,7 @@ def player_influence_xfns(
                 fid = int(fid_by_pos[j])
                 actor_pid = row["player_id"]
 
-                pi_dict = _get_pi(period, fid, tid)
+                pi_dict = _get_pi(row.get("game_id"), period, fid, tid)
                 agg = _aggregate(pi_dict, tid, actor_pid)
                 for col in col_names:
                     slot_results[col][j] = agg[col]
@@ -5181,6 +5153,7 @@ def add_ghost_gk(
 
     See NOTICE for full bibliographic citations.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from ._ghost_gk import (
         GHOST_GK_COMPUTED,
         GHOST_GK_DIRECTION_UNRESOLVED,
@@ -5261,11 +5234,8 @@ def add_ghost_gk(
         & ghost_frames["ghost_gk_x"].notna()
     ][["game_id", "period_id", "frame_id", "team_id", "ghost_gk_x", "ghost_gk_y"]].copy()
 
-    # Build linked lookup
-    linked = pointers.merge(
-        actions[["action_id", "game_id", "period_id", "team_id"]],
-        on="action_id",
-    )
+    # Build linked lookup: each pointer reads its action's game, period, and team BY POSITION (W9.4)
+    linked = pointers_with_action_columns(actions, pointers, ["game_id", "period_id", "team_id"])
 
     # Align id-valued join keys before the merge so a string-id caller does not raise (ADR-019;
     # replaces the prior ad-hoc game_id.astype(str) hand-patch).
@@ -5281,11 +5251,10 @@ def add_ghost_gk(
     # Defending GK = opposite team (ids_differ requires both present: an unmatched left-join row
     # with NaN team_id_gk is correctly excluded, not treated as opposite).
     defending = merged[ids_differ(merged["team_id_action"], merged["team_id_gk"])]
-    deduped = defending.drop_duplicates(subset=["action_id"], keep="first")
+    deduped = defending.drop_duplicates(subset=["action_row"], keep="first")
 
-    # Join back to actions
-    ghost_cols = deduped.set_index("action_id")[["ghost_gk_x", "ghost_gk_y"]]
-    out = out.merge(ghost_cols, left_on="action_id", right_index=True, how="left")
+    # Join back to the action rows by position
+    out = append_columns_by_action_row(out, deduped.set_index("action_row")[["ghost_gk_x", "ghost_gk_y"]])
 
     # ADR-028 + ADR-089: emit in action-LTR. The model now serves BOTH-AXES goal-relative coords
     # (defended goal at x=0, AND y point-reflected for a high-x defended goal per ADR-089 -- gr_y is
@@ -5314,7 +5283,8 @@ def add_ghost_gk(
     # `no_keeper` and `unlinked` are distinct facts with distinct remedies: an action that reached
     # a frame carrying no DEFENDING keeper did reach a frame, and calling it "unlinked" states
     # something the data refutes. They separate on frame linkage.
-    has_frame = out["action_id"].isin(linked["action_id"])
+    has_frame = np.zeros(len(out), dtype=bool)
+    has_frame[linked["action_row"].to_numpy()] = True
 
     # ADR-055 third branch: a DEFENDING keeper was present but its end does not resolve, so the
     # goal-relative frame the model is fitted in does not exist for that row. Decided by RE-ASKING
@@ -5335,11 +5305,11 @@ def add_ghost_gk(
     _m = _linked_gk.merge(_all_gk, on=["game_id", "period_id", "frame_id"], how="left", suffixes=("_action", "_gk"))
     _def_gk = _m[ids_differ(_m["team_id_action"], _m["team_id_gk"])]
     _unresolved_gk = {
-        r.action_id
-        for r in _def_gk[["action_id", "game_id", "period_id", "team_id_gk"]].itertuples(index=False)
+        r.action_row
+        for r in _def_gk[["action_row", "game_id", "period_id", "team_id_gk"]].itertuples(index=False)
         if _gm.get(r.game_id, r.period_id, r.team_id_gk, allow_guess=True) is None
     }
-    goal_end_unresolved = out["action_id"].isin(_unresolved_gk)
+    goal_end_unresolved = np.isin(np.arange(len(out)), np.fromiter(_unresolved_gk, dtype=np.int64))
 
     # `direction_unresolved` is tested BEFORE the goal-end branch: a row can satisfy both, and
     # this one describes what actually stopped it. The ghost WAS computed; it simply cannot be
@@ -5467,6 +5437,41 @@ def ghost_gk_xfns(
 _SHAPE_GRAPH_METRICS = ("density", "n_edges", "mean_stability")
 
 
+def _canonical_game_index(sg_indexed: dict) -> dict:
+    """``sg_indexed`` with the game level of each (game_id, period_id, frame_id) index as the canonical id
+    string (ADR-019), so a lookup keyed on ``canonical_id(game_id)`` finds the game whatever its dtype."""
+    out = {}
+    for tid, sdf in sg_indexed.items():
+        levels = [sdf.index.get_level_values(i) for i in range(sdf.index.nlevels)]
+        levels[0] = pd.Index(canonical_id_series(pd.Series(levels[0])).to_numpy(), name=levels[0].name)
+        out[tid] = sdf.set_axis(pd.MultiIndex.from_arrays(levels), axis=0)
+    return out
+
+
+def _shape_graph_metrics_by_team(frames: pd.DataFrame) -> dict:
+    """``team_id -> DataFrame`` of ``density`` / ``n_edges`` / ``mean_stability`` indexed by (game_id, period_id,
+    frame_id), from the per-team-frame core of ``compute_shape_graphs`` (spec 2026-11-08 tracking-batch W5.3: one
+    source). The core never reads the direction, so no direction value can raise here (A7-SPEC-90)."""
+    from ._shape_graph import _team_frame_graphs
+
+    sel, team_frames = _team_frame_graphs(frames)
+    key_rows = sel[["game_id", "period_id", "frame_id", "team_id"]]
+    by_team: dict = {}
+    for _key, tf in team_frames:
+        gid, pid, fid, tid = key_rows.iloc[int(tf.rows[0])]
+        by_team.setdefault(tid, []).append(
+            {
+                "game_id": gid,
+                "period_id": pid,
+                "frame_id": fid,
+                "density": tf.density,
+                "n_edges": tf.n_edges,
+                "mean_stability": tf.mean_stability,
+            }
+        )
+    return {tid: pd.DataFrame(rows).set_index(["game_id", "period_id", "frame_id"]) for tid, rows in by_team.items()}
+
+
 @nan_safe_enrichment
 def add_shape_graph(
     actions: pd.DataFrame,
@@ -5488,7 +5493,7 @@ def add_shape_graph(
     >>> from silly_kicks.tracking.features import add_shape_graph
     >>> # See tests/tracking/test_shape_graph.py for runnable examples.
     """
-    from ._shape_graph import compute_shape_graph
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
 
     out = actions.copy()
     col_names = []
@@ -5507,58 +5512,13 @@ def add_shape_graph(
     # loop to them. The metric depends solely on a single frame's positions, so
     # this is bit-identical. Gate on links is not None so the no-links path is
     # unchanged for other consumers.
-    restrict_frame_ids: set | None = None
+    graph_frames = frames
     if links is not None and "frame_id" in links.columns:
         restrict_frame_ids = set(links["frame_id"].dropna().astype("int64").tolist())
+        graph_frames = frames[frames["frame_id"].isin(restrict_frame_ids)]
 
-    # Pre-compute shape graph metrics indexed by (game_id, period_id, frame_id, team_id)
-    sg_indexed: dict = {}
-    for tid in teams:
-        team_frames = frames[
-            (frames["team_id"] == tid)
-            & (~frames["is_ball"].astype(bool))
-            & (~frames["is_goalkeeper"].astype(bool))
-            & frames["x"].notna()
-            & frames["y"].notna()
-        ]
-        if restrict_frame_ids is not None:
-            team_frames = team_frames[team_frames["frame_id"].isin(restrict_frame_ids)]
-        if team_frames.empty:
-            continue
-        frame_metrics: list[dict] = []
-        for (gid, pid, fid), grp in team_frames.groupby(["game_id", "period_id", "frame_id"], dropna=False):
-            positions = grp[["x", "y"]].to_numpy(dtype="float64")
-            n = len(positions)
-            if n < 3:
-                frame_metrics.append(
-                    {
-                        "game_id": gid,
-                        "period_id": pid,
-                        "frame_id": fid,
-                        "density": np.nan,
-                        "n_edges": 0,
-                        "mean_stability": np.nan,
-                    }
-                )
-                continue
-            sg = compute_shape_graph(positions)
-            max_edges = n * (n - 1) / 2
-            density = float(len(sg.edges)) / max_edges if max_edges > 0 else 0.0
-            n_edges = len(sg.edges)
-            mean_stab = float(np.mean(sg.stabilities)) if n_edges > 0 else np.nan
-            frame_metrics.append(
-                {
-                    "game_id": gid,
-                    "period_id": pid,
-                    "frame_id": fid,
-                    "density": density,
-                    "n_edges": n_edges,
-                    "mean_stability": mean_stab,
-                }
-            )
-        if frame_metrics:
-            sdf = pd.DataFrame(frame_metrics).set_index(["game_id", "period_id", "frame_id"])
-            sg_indexed[tid] = sdf
+    # Shape graph metrics indexed by (game_id, period_id, frame_id), per team (the compute_shape_graphs core)
+    sg_indexed = _shape_graph_metrics_by_team(graph_frames)
 
     if not sg_indexed:
         return out
@@ -5573,28 +5533,16 @@ def add_shape_graph(
         return out
 
     linked["frame_id_int"] = linked["frame_id"].astype("int64")
-    linked = linked.merge(
-        actions[["action_id", "team_id", "period_id", "game_id"]],
-        on="action_id",
-        how="left",
-    )
+    # each pointer reads its action's team, period, and game BY POSITION (W9.4)
+    linked = pointers_with_action_columns(actions, linked, ["team_id", "period_id", "game_id"])
 
-    # Align game_id dtype
-    if len(linked) > 0 and sg_indexed:
-        sample_sdf = next(iter(sg_indexed.values()))
-        if len(sample_sdf) > 0:
-            sample_key_gid = sample_sdf.index[0][0]
-            linked_gid_sample = linked["game_id"].iloc[0]
-            if not isinstance(linked_gid_sample, type(sample_key_gid)):
-                linked["game_id"] = linked["game_id"].astype(str)
-
-    aid_to_idx = pd.Series(actions.index, index=actions["action_id"].to_numpy())
+    # The game key is canonical on BOTH sides (ADR-019; spec 2026-11-08 tracking-batch section 4.9, R2): an
+    # int game_id on one side and a str on the other is the same game. Never an astype(str) re-key.
+    sg_indexed = _canonical_game_index(sg_indexed)
+    linked["game_id"] = canonical_id_series(linked["game_id"]).to_numpy()
 
     for _, row in linked.iterrows():
-        aid = row["action_id"]
-        if aid not in aid_to_idx.index:
-            continue
-        idx = aid_to_idx.loc[aid]
+        idx = actions.index[int(row["action_row"])]
         action_team = row["team_id"]
         if pd.isna(action_team):
             continue
@@ -5617,8 +5565,7 @@ def add_shape_graph(
     ]
     existing_provenance = [c for c in provenance_cols if c in out.columns]
     if not existing_provenance:
-        pointer_cols = pointers.set_index("action_id")[provenance_cols]
-        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 
@@ -5636,8 +5583,6 @@ def shape_graph_xfns() -> list:
         xfns = tracking_default_xfns + shape_graph_xfns()
         X = compute_features(actions, xfns=xfns, frames=frames)
     """
-    from ._shape_graph import compute_shape_graph
-
     col_names = []
     for metric in _SHAPE_GRAPH_METRICS:
         for suffix in ("attacking", "defending"):
@@ -5652,49 +5597,8 @@ def shape_graph_xfns() -> list:
                     out[f"{col}_a{i}"] = np.nan
             return out
 
-        # Pre-compute shape graph metrics per (team, frame)
-        teams = frames[~frames["is_ball"].astype(bool)]["team_id"].dropna().unique()
-        sg_indexed: dict = {}
-        for tid in teams:
-            team_outfield = frames[
-                (frames["team_id"] == tid)
-                & (~frames["is_ball"].astype(bool))
-                & (~frames["is_goalkeeper"].astype(bool))
-                & frames["x"].notna()
-                & frames["y"].notna()
-            ]
-            if team_outfield.empty:
-                continue
-            rows_list: list[dict] = []
-            for (gid, pid, fid), grp in team_outfield.groupby(["game_id", "period_id", "frame_id"], dropna=False):
-                positions = grp[["x", "y"]].to_numpy(dtype="float64")
-                n = len(positions)
-                if n < 3:
-                    rows_list.append(
-                        {
-                            "game_id": gid,
-                            "period_id": pid,
-                            "frame_id": fid,
-                            "density": np.nan,
-                            "n_edges": 0,
-                            "mean_stability": np.nan,
-                        }
-                    )
-                    continue
-                sg = compute_shape_graph(positions)
-                max_edges = n * (n - 1) / 2
-                rows_list.append(
-                    {
-                        "game_id": gid,
-                        "period_id": pid,
-                        "frame_id": fid,
-                        "density": float(len(sg.edges)) / max_edges if max_edges > 0 else 0.0,
-                        "n_edges": len(sg.edges),
-                        "mean_stability": float(np.mean(sg.stabilities)) if len(sg.edges) > 0 else np.nan,
-                    }
-                )
-            if rows_list:
-                sg_indexed[tid] = pd.DataFrame(rows_list).set_index(["game_id", "period_id", "frame_id"])
+        # Shape graph metrics per (team, frame), from the compute_shape_graphs core (spec W5.3: one source)
+        sg_indexed = _shape_graph_metrics_by_team(frames)
 
         for i, slot in enumerate(states[:3]):
             slot_result = _shape_graph_at_actions(slot, frames, sg_indexed)
@@ -5724,34 +5628,25 @@ def _shape_graph_at_actions(
     if n == 0 or len(frames) == 0:
         return empty
 
-    actions_with_idx = actions.copy()
-    actions_with_idx["_row_idx"] = np.arange(n)
-    pointers, _report = link_actions_to_frames(actions_with_idx, frames)
+    pointers, _report = link_actions_to_frames(actions, frames)
     linked = pointers[pointers["frame_id"].notna()].copy()
     if linked.empty:
         return empty
 
     linked["frame_id_int"] = linked["frame_id"].astype("int64")
-    linked = linked.merge(
-        actions_with_idx[["action_id", "_row_idx", "team_id", "period_id", "game_id"]],
-        on="action_id",
-        how="left",
-    )
-    linked = linked.drop_duplicates("_row_idx", keep="first")
+    # each pointer reads its action's team, period, and game BY POSITION (action_row, W9.4)
+    linked = pointers_with_action_columns(actions, linked, ["team_id", "period_id", "game_id"])
+    linked = linked.drop_duplicates("action_row", keep="first")
 
-    # Align game_id dtype
-    if len(linked) > 0 and sg_indexed:
-        sample_sdf = next(iter(sg_indexed.values()))
-        if len(sample_sdf) > 0:
-            sample_key_gid = sample_sdf.index[0][0]
-            linked_gid_sample = linked["game_id"].iloc[0]
-            if not isinstance(linked_gid_sample, type(sample_key_gid)):
-                linked["game_id"] = linked["game_id"].astype(str)
+    # The game key is canonical on BOTH sides (ADR-019; spec 2026-11-08 tracking-batch section 4.9, R2): an
+    # int game_id on one side and a str on the other is the same game. Never an astype(str) re-key.
+    sg_indexed = _canonical_game_index(sg_indexed)
+    linked["game_id"] = canonical_id_series(linked["game_id"]).to_numpy()
 
     out = empty.copy()
 
     for _, row in linked.iterrows():
-        pos = int(row["_row_idx"])
+        pos = int(row["action_row"])
         idx = actions.index[pos]
         action_team = row["team_id"]
         if pd.isna(action_team):
@@ -5872,6 +5767,7 @@ def obso_actual(
         from silly_kicks.tracking.features import obso_actual
         s = obso_actual(actions, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     col_name = "obso_actual"
     if frames is None:
         return pd.Series(np.nan, index=actions.index, name=col_name)
@@ -5913,6 +5809,7 @@ def obso_peak(
         from silly_kicks.tracking.features import obso_peak
         s = obso_peak(actions, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     col_name = "obso_peak"
     if frames is None:
         return pd.Series(np.nan, index=actions.index, name=col_name)
@@ -5954,6 +5851,7 @@ def obso_optimal(
         from silly_kicks.tracking.features import obso_optimal
         s = obso_optimal(actions, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     col_name = "obso_optimal"
     if frames is None:
         return pd.Series(np.nan, index=actions.index, name=col_name)
@@ -6042,8 +5940,8 @@ def _precompute_obso_lookup(
     transition_grid, epv_grid = _get_default_grids(transition_grid, epv_grid)
     epv_grid_rtl = np.ascontiguousarray(np.asarray(epv_grid)[::-1, ::-1])
 
-    # Group frames for windowing
-    frame_groups = frames.groupby(["period_id", "frame_id"])
+    # Index frames for windowing: each pass reads the frames of its OWN game and period (W9.4)
+    frame_rows = LinkedFrameRows(actions, frames)
 
     # Identify pass actions
     pass_mask = actions["type_id"].isin(_PASS_TYPE_IDS)
@@ -6051,9 +5949,13 @@ def _precompute_obso_lookup(
     # Loop-invariant hoist: precompute one sorted (frame_id, time_seconds) table
     # per period once, instead of rebuilding it for every pass action (was
     # O(passes x frames)). Identical output.
+    # One table per (game, period): a period_id alone names a period of every game in `frames`.
+    _window_cols = [*frame_join_keys(actions, frames)[:-1]]
     period_frame_times: dict = {
-        pid: grp.drop_duplicates("frame_id")[["frame_id", "time_seconds"]].sort_values("time_seconds")
-        for pid, grp in frames.groupby("period_id")
+        frame_rows.group_key(wkey[0] if len(wkey) == 2 else None, wkey[-1]): grp.drop_duplicates("frame_id")[
+            ["frame_id", "time_seconds"]
+        ].sort_values("time_seconds")
+        for wkey, grp in frames.groupby(_window_cols, dropna=False)
     }
 
     lookup: dict[int, dict[str, float]] = {}
@@ -6086,7 +5988,7 @@ def _precompute_obso_lookup(
             epv_for_action = epv_grid
 
         # Build frame window around the pass (per-period table precomputed above)
-        unique_frame_times = period_frame_times.get(period_id)
+        unique_frame_times = period_frame_times.get(frame_rows.group_key(action_row.get("game_id"), period_id))
         if unique_frame_times is None:
             continue
         t_min = action_time - pre_seconds
@@ -6103,12 +6005,11 @@ def _precompute_obso_lookup(
         event_idx = 0
         closest_dist = float("inf")
         for w_idx, wfid in enumerate(window_fids):
-            try:
-                wf = frame_groups.get_group((period_id, int(wfid)))
-                window_frames.append(wf)
-            except KeyError:
+            wf = frame_rows.get(i, int(wfid))
+            if wf.empty:
                 window_frames.append(pd.DataFrame())
                 continue
+            window_frames.append(wf)
 
             # Find closest frame to action time
             wf_time = wf["time_seconds"].iloc[0] if len(wf) > 0 else float("inf")
@@ -6201,6 +6102,7 @@ def add_obso(
         from silly_kicks.tracking.features import add_obso
         enriched = add_obso(actions, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="add_obso")
     if epv_source == "synthetic":
         _warn_synthetic_epv("add_obso")
@@ -6248,17 +6150,12 @@ def add_obso(
     # Add provenance if not already present
     if not has_provenance and links is None:
         pointers, _report = link_actions_to_frames(actions, frames)
-        # drop_duplicates: shifted gamestate slots repeat the boundary action_id, so a
-        # raw merge would fan out (ADR: dup-action_id safety). One provenance row per id.
-        pointers = pointers.drop_duplicates("action_id")
+        # One provenance row per action ROW, by position (W9.4): an action_id that repeats (a
+        # shifted gamestate slot, a second game) cannot fan out or cross over.
+        by_row = pointers_by_action_row(actions, pointers)
         for pc in provenance_cols:
-            if pc in pointers.columns:
-                merged = actions[["action_id"]].merge(
-                    pointers[["action_id", pc]],
-                    on="action_id",
-                    how="left",
-                )
-                out[pc] = merged[pc].values
+            if pc in by_row.columns:
+                out[pc] = by_row[pc].values
 
     return out
 
@@ -6530,6 +6427,7 @@ def add_space_creation(
         from silly_kicks.tracking.features import add_space_creation
         enriched = add_space_creation(actions, frames, home_team_id=1)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="add_space_creation")
     if epv_source == "synthetic":
         _warn_synthetic_epv("add_space_creation")
@@ -6566,7 +6464,7 @@ def add_space_creation(
     # frame_id by position; reached with non-unique action_id via space_creation_xfns).
     # Equivalent to the old .at lookup on unique ids (test_resolve_frame_ids_by_position).
     fid_by_pos = _kernels.resolve_frame_ids_by_position(actions, frames, links=links)
-    frame_groups = frames.groupby(["period_id", "frame_id"])
+    frame_rows = LinkedFrameRows(actions, frames)  # the frame of the action's own game and period (W9.4)
 
     # ADR-028 (RC3) per-action re-projection flag, computed ONCE for the whole call and derived from
     # the FRAMES -- never from `home_team_id`, which carries identity rather than direction (D1).
@@ -6605,12 +6503,8 @@ def add_space_creation(
             # _SPACE_CREATION_COLUMNS rather than emitting two columns that may be swapped.
             continue
 
-        period_id = int(action_row["period_id"])
-        frame_id_int = int(fid_by_pos[i])
-
-        try:
-            frame = frame_groups.get_group((period_id, frame_id_int))
-        except KeyError:
+        frame = frame_rows.get(i, int(fid_by_pos[i]))
+        if frame.empty:
             continue
 
         result = _compute_space_creation_for_action(
@@ -6634,17 +6528,12 @@ def add_space_creation(
     out.loc[out[_SPACE_CREATION_COLUMNS[0]].notna(), _EPV_SOURCE_COLUMN] = epv_source
 
     if not has_provenance and links is None:
-        # drop_duplicates: shifted gamestate slots repeat the boundary action_id, so a
-        # raw merge would fan out (ADR: dup-action_id safety). One provenance row per id.
-        pointers_unique = pointers.drop_duplicates("action_id")
+        # One provenance row per action ROW, by position (W9.4): an action_id that repeats (a
+        # shifted gamestate slot, a second game) cannot fan out or cross over.
+        by_row = pointers_by_action_row(actions, pointers)
         for pc in provenance_cols:
-            if pc in pointers_unique.columns:
-                merged = actions[["action_id"]].merge(
-                    pointers_unique[["action_id", pc]],
-                    on="action_id",
-                    how="left",
-                )
-                out[pc] = merged[pc].values
+            if pc in by_row.columns:
+                out[pc] = by_row[pc].values
 
     return out
 
@@ -6783,6 +6672,7 @@ def add_pausa(
         from silly_kicks.tracking.features import add_pausa
         enriched = add_pausa(actions, frames)
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     from ._pausa import compute_pausa_batch
 
     out = actions.copy()
@@ -6942,10 +6832,23 @@ def add_elastic_sync(
         # start: elastic_frame_id / elastic_confidence / elastic_error_seconds
         # end:   elastic_receive_frame_id / elastic_receive_confidence / elastic_receive_error_seconds
     """
-    from ._elastic_sync import ElasticSyncParams, align_events_to_frames
+    from ._elastic_sync import ElasticSyncParams
 
     if params is None:
         params = ElasticSyncParams()
+
+    # One game at a time (spec 2026-11-08 tracking-batch section 4.9 W9.4): the alignment table keys on
+    # action_id, which names one action only inside a game.
+    parts = [
+        (rows, _add_elastic_sync_one_game(game_actions, game_frames, params=params))
+        for rows, game_actions, game_frames in iter_games(actions, frames)
+    ]
+    return assemble_by_game(parts)
+
+
+def _add_elastic_sync_one_game(actions: pd.DataFrame, frames: pd.DataFrame, *, params) -> pd.DataFrame:
+    """The body of :func:`add_elastic_sync` for the actions and frames of ONE game."""
+    from ._elastic_sync import align_events_to_frames
 
     alignment = align_events_to_frames(actions, frames, params=params)
     out = actions.copy()
@@ -6972,6 +6875,9 @@ def add_elastic_sync(
             out.loc[mask, col] = out.loc[mask, f"_{col}"]
             out.drop(columns=f"_{col}", inplace=True)
 
+    # the alignment merge resets the index; an add_* result is aligned with ``actions.index`` (the producer
+    # assigns its columns by index, and the per-game parts are assembled by it)
+    out.index = actions.index
     return out
 
 
@@ -7053,6 +6959,7 @@ def add_shot_goalmouth(
 
     See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     out = actions.copy()
     comp = compute_shot_goalmouth(actions, frames, links=links, params=params)
     for c in comp.columns:
@@ -7073,8 +6980,7 @@ def add_shot_goalmouth(
     if not any(c in out.columns for c in provenance_cols):
         pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
         if len(pointers) > 0:
-            ptr_cols = pointers.set_index("action_id")[provenance_cols]
-            out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+            out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 
@@ -7187,6 +7093,7 @@ def add_defensive_credit(
         out = add_defensive_credit(actions, frames, xg_column="xg", xt=xt)
         out[["defensive_credit_net", "defensive_credit_plus", "n_defensive_credits"]].head()
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]  # the ONE link
     out = _aggregate_defensive_credit(
         actions,
@@ -7201,8 +7108,7 @@ def add_defensive_credit(
     )
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     if not any(c in out.columns for c in provenance_cols) and len(pointers) > 0:
-        ptr = pointers.drop_duplicates("action_id").set_index("action_id")[provenance_cols]
-        out = out.merge(ptr, left_on="action_id", right_index=True, how="left")
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out
 
 
@@ -7232,6 +7138,7 @@ def add_press_commitment(
         out = add_press_commitment(actions, frames)
         out[["press_commitment", "press_commitment_source"]].head()
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
     out = actions.copy()
     cue = compute_press_commitment(actions, frames, links=pointers, params=params)
@@ -7239,6 +7146,5 @@ def add_press_commitment(
         out[c] = cue[c]
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     if not any(c in out.columns for c in provenance_cols) and len(pointers) > 0:
-        ptr = pointers.drop_duplicates("action_id").set_index("action_id")[provenance_cols]
-        out = out.merge(ptr, left_on="action_id", right_index=True, how="left")
+        out = append_pointer_columns(out, actions, pointers, provenance_cols)
     return out

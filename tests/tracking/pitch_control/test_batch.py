@@ -105,24 +105,27 @@ def test_batch_byte_identical_to_loop():
 
 
 def test_batch_dedups_repeated_requests(monkeypatch):
-    # ADR-105: spearman routes through the vectorized `compute_spearman_batch`, so the dedup is asserted
-    # on the DISTINCT requests the kernel receives (2), not a per-request `compute_pitch_control` count.
-    from silly_kicks.tracking.pitch_control import _spearman_batch
+    # ADR-105 / spec 2026-11-08 tracking-batch section 4.2: spearman routes through the batched core over a
+    # keyed frame index, so the dedup is asserted on the DISTINCT requests (2) and DISTINCT frames (2) the core
+    # receives, not a per-request `compute_pitch_control` count.
+    from silly_kicks.tracking.pitch_control import _dispatch
 
     frames = _frames((10, 11))
     # 4 requests but only 2 distinct (frame,team,decompose) keys
     reqs = [((1, 1, 10), 1, False), ((1, 1, 10), 1, False), ((1, 1, 11), 1, False), ((1, 1, 11), 1, False)]
     seen: dict[str, int] = {}
-    orig = _spearman_batch.compute_spearman_batch
+    orig = _dispatch._spearman_batch_core
 
-    def _spy(frame_slices, *a, **k):
-        seen["n_distinct"] = len(frame_slices)
-        return orig(frame_slices, *a, **k)
+    def _spy(index, requests, params):
+        seen["n_distinct"] = len(requests)
+        seen["n_frames"] = index.n_frames
+        return orig(index, requests, params)
 
-    monkeypatch.setattr(_spearman_batch, "compute_spearman_batch", _spy)
+    monkeypatch.setattr(_dispatch, "_spearman_batch_core", _spy)  # as the dispatch resolves it
     out = compute_pitch_control_batch(frames, reqs, method="spearman")
     assert len(out) == 4
     assert seen["n_distinct"] == 2  # 4 requests, 2 distinct -> the kernel receives 2 (dedup)
+    assert seen["n_frames"] == 2  # each distinct frame is extracted once
 
 
 def test_cache_warm_makes_surface_calls_hit():

@@ -123,17 +123,13 @@ def test_batch_byte_identical_larger_but_subthreshold_playercount():
 def test_row_order_alignment_is_load_bearing():
     """Non-vacuity (VKS-SPEC-02): the combine is order-sensitive, so a mis-aligned team mask MOVES the
     surface -- proving the byte-identity parity gate above is discriminating, not vacuous."""
-    from silly_kicks.id_compat import ids_match
-    from silly_kicks.tracking.pitch_control._grids import pitch_grid
+    import dataclasses
+
+    from silly_kicks.tracking.pitch_control._index import _SpearmanFrameIndex
     from silly_kicks.tracking.pitch_control._params import SpearmanParams
-    from silly_kicks.tracking.pitch_control._spearman import (
-        _extract_frame_players,
-        _spearman_combine,
-        compute_tti,
-    )
+    from silly_kicks.tracking.pitch_control._spearman_batch import _spearman_batch_core
 
     sp = SpearmanParams()
-    gx, gy, targets = pitch_grid(sp.grid_cells_x, sp.grid_cells_y)
     frame = _frame(
         50,
         [
@@ -143,13 +139,11 @@ def test_row_order_alignment_is_load_bearing():
             (4, 2, False, 70, 34, 0, 0),
         ],
     )
-    _extracted = _extract_frame_players(frame)
-    assert _extracted is not None
-    pos, vel, is_gk, pids, team_s = _extracted
-    tti = compute_tti(pos, vel, targets, sp.reaction_time, sp.max_acceleration)
-    is_att = ids_match(team_s, 1).to_numpy()
-    good = _spearman_combine(tti, is_att, is_gk, pids, team_s.to_numpy(), None, sp, gx, gy, targets, 1, False)
-    bad = _spearman_combine(tti, is_att[::-1], is_gk, pids, team_s.to_numpy(), None, sp, gx, gy, targets, 1, False)
+    index = _SpearmanFrameIndex.from_slices([frame])
+    team = index.team_parts[0]
+    misaligned = dataclasses.replace(index, team_parts=(pd.Series(team.to_numpy()[::-1], index=team.index),))
+    good = _spearman_batch_core(index, [(0, 1, False, None)], sp)[0]
+    bad = _spearman_batch_core(misaligned, [(0, 1, False, None)], sp)[0]
     assert not np.array_equal(good.surface, bad.surface)  # a permutation bug WOULD be caught
 
 

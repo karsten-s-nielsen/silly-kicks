@@ -215,6 +215,19 @@ def _raw_comparable(a: pd.Series, b: pd.Series) -> bool:
     return _directly_comparable(a.dtype, b.dtype)
 
 
+def _ids_match_path_is_content_free(series) -> bool:
+    """Whether :func:`ids_match` takes the same path (raw or canonical) on every slice of ``series``, for any scalar.
+
+    :func:`_raw_comparable` decides by the dtypes alone unless both sides are object, and then by content: every
+    value of both sides a genuine string. So no slice can change the path when the column is not object (after
+    :func:`_decat`), or when it holds only strings: a slice of such a column holds only strings, or only missing
+    values, which match nothing on either path. The batched pitch control calls ``ids_match`` once per index part
+    and team when this is True (owner ruling 2026-11-18, TBC-PERF-03). Keep it in step with ``_raw_comparable``.
+    """
+    s = _decat(pd.Series(series))
+    return s.dtype.kind != "O" or _all_genuine_strings(s)
+
+
 def _boxed_object_pair(a: pd.Series, b: pd.Series) -> bool:
     """Both sides object, but at least one holds BOXED NON-STRINGS -> a merge silently misses.
 

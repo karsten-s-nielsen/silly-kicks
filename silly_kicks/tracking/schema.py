@@ -297,6 +297,13 @@ class LinkReport:
     catastrophically-unlinked period is never laundered behind a healthy one.
     Empty for an empty-actions call. See ADR-017."""
 
+    per_game_period_link_rate: dict[tuple[str, int], float] = dataclasses.field(default_factory=dict)
+    """(canonical game_id, period_id) -> linked / actions-in-that-(game, period). The game key is
+    ``id_compat.canonical_id(game_id)``, and ``"<NA>"`` for an NA game. The low-coverage floor
+    applies to the worst (game, period) of a multi-game call, so one game's bad link is never
+    laundered behind another game's good one (spec 2026-11-08 tracking-batch W9.1). Empty for an
+    empty-actions call."""
+
     @property
     def link_rate(self) -> float:
         return self.n_actions_linked / max(self.n_actions_in, 1)

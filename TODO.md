@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current — 4.144.0: one open-play cross definition for every provider (ADR-133).** Every converter types an open-play `cross` by one geometric rule (`classify_deliveries`); the provider's own label is the new SPADL column `cross_native`; `cross_blocked` and open-play TF-51 bravery key to it (`<NA>` where a game has no label); set pieces keep their type, and set-piece bravery does not change. Gradient Sports and SkillCorner actions are timed at the action's own moment (native event timing). The bundled weights do not change: the models that read the changed type or times are owed a retrain (CHANGELOG). Detail in [CHANGELOG.md](CHANGELOG.md).
+**Current — 4.145.0: tracking batch seams, multi-game linking, team-relative shape-graph labels, DFL event derivation (ADR-137).** Pitch control and shape graphs gain batch calls (`compute_pitch_control_batch_from_index`, `compute_shape_graphs`) that are bit-identical to the per-frame calls. The linkers link within each (game, period) and stamp each pointer with `action_row` and `action_fingerprint`; every `links=` acceptor checks them. `infer_positions` lateral labels are team-relative: for a team that attacks +x, L and R swap (the W5.7 role gate on the 20 public SkillCorner matches passed). The DFL parser runs on a public event contract, and `silly_kicks.backends` reports the numba backend. Values change only for the input classes in the CHANGELOG's approved list. Detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

@@ -15,10 +15,13 @@ from __future__ import annotations
 
 from ._cache import PitchControlCache
 from ._dispatch import (
+    PitchControlFrameIndex,
     PitchControlRequest,
+    build_pitch_control_index,
     compute_pitch_control,
     compute_pitch_control_at_points,
     compute_pitch_control_batch,
+    compute_pitch_control_batch_from_index,
 )
 from ._params import (
     FernandezBornnParams,
@@ -35,14 +38,17 @@ __all__ = [
     "FernandezBornnParams",
     "Method",
     "PitchControlCache",
+    "PitchControlFrameIndex",
     "PitchControlParams",
     "PitchControlRequest",
     "PitchControlSurface",
     "SpearmanParams",
     "VoronoiParams",
+    "build_pitch_control_index",
     "compute_pitch_control",
     "compute_pitch_control_at_points",
     "compute_pitch_control_batch",
+    "compute_pitch_control_batch_from_index",
     "compute_tti",
     "validate_params_for_method",
 ]

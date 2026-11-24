@@ -30,7 +30,8 @@ _PKG = pathlib.Path(silly_kicks.__file__).parent
 #: "<relpath>::<enclosing function>" -> why an action_id-PRIMARY sort is correct here
 #: (i.e. NOT an order-sensitive action-mart chronological scan).
 _EXEMPT: dict[str, str] = {
-    "silly_kicks/tracking/_kernels.py::_actor_pre_window_kernel": (
+    # the body moved into the per-game helper (spec 2026-11-08 tracking-batch W9: one game per call)
+    "silly_kicks/tracking/_kernels.py::_actor_pre_window_one_game": (
         "frame-grouping, not an action-mart scan: sort_values(['action_id','time_seconds']) "
         "co-locates each action's FRAMES and orders them by time WITHIN groupby('action_id'); the "
         "within-group chronology is the time_seconds SECONDARY key, so a non-chronological action_id "

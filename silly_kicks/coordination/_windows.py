@@ -11,7 +11,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -22,6 +22,11 @@ from silly_kicks.coordination._config import CoordinationParams
 from silly_kicks.coordination._report import CoordinationCoverageWarning
 from silly_kicks.id_compat import canonical_id, same_id
 from silly_kicks.tracking._provider_visibility import dead_ball_observed
+from silly_kicks.tracking.utils import remap_links, resolve_link_positions
+
+#: The temporary column that carries each action's position in the caller's frame through the filter and the
+#: sorts of ``possession_windows_from_actions`` (never a column of a result).
+_CALLER_ROW = "__silly_kicks_caller_row__"
 
 RESTART_TYPES = (
     "throw_in",
@@ -230,6 +235,11 @@ def possession_windows_from_actions(
     from silly_kicks.spadl.base import sort_actions_chronologically
 
     check_n_phases(n_phases, where="possession_windows_from_actions")
+    caller_actions = actions
+    if links is not None:
+        # W9.5: `links` bind to the row order of the caller's `actions`. The filter and the two sorts below
+        # change it, so each row carries its original position, and the links are remapped through it.
+        actions = actions.assign(**{_CALLER_ROW: np.arange(len(actions), dtype=np.int64)})
     actions, skipped = _actions_with_tracking(actions, frames)
     if skipped:
         warnings.warn(
@@ -246,12 +256,16 @@ def possession_windows_from_actions(
     times = ctx["time_seconds"].to_numpy(dtype=np.float64).copy()
     if links is not None:
         time_of = _frame_time_lookup(frames)
-        frame_by_action = {
-            str(canonical_id(a)): fid for a, fid in zip(links["action_id"], links["frame_id"], strict=True)
-        }
+        # each action reads its pointer BY POSITION (spec 2026-11-08 tracking-batch section 4.9 W9.4), never by
+        # action_id: an action_id repeats across games
+        # links is not None, so remap_links returns pointers
+        bound = cast(pd.DataFrame, remap_links(links, ctx.pop(_CALLER_ROW).to_numpy(), ctx, actions=caller_actions))
+        linked_fid = np.full(len(ctx), None, dtype=object)
+        link_rows = resolve_link_positions(ctx, bound)
+        linked_fid[link_rows[::-1]] = bound["frame_id"].to_numpy(dtype=object)[::-1]  # the first pointer wins
         for pos in range(len(ctx)):
-            fid = frame_by_action.get(str(canonical_id(ctx.at[pos, "action_id"])))
-            if fid is not None:
+            fid = linked_fid[pos]
+            if fid is not None and not pd.isna(fid):
                 key = _frame_key(ctx.at[pos, "game_id"], ctx.at[pos, "period_id"], fid)
                 if key in time_of:
                     times[pos] = time_of[key]

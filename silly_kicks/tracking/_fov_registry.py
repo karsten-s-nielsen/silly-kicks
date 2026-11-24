@@ -9,10 +9,10 @@ builder, :data:`OBSERVABILITY_REGISTRY` lists the entries per aggregator, and
 ``_observed_source`` pair for each. The completeness gate (Task 8) reads every companioned column
 from :func:`companioned_columns`, so the registry is the single source of truth.
 
-Neutral by construction: this module imports ONLY ``_visibility``, ``_kernels``,
-``silly_kicks.id_compat`` and the two neutral root primitives ``silly_kicks._polygon`` (the
-convexity check the Andrienko oval needs) and ``silly_kicks.spadl.config`` (pitch dimensions for
-the packing band) -- none of which reach ``pitch_control`` or ``_das`` (``_kernels``' own
+Neutral by construction: this module imports ONLY ``_visibility``, ``_kernels`` and the three
+neutral root primitives ``silly_kicks._polygon`` (the convexity check the Andrienko oval needs),
+``silly_kicks._visible_area`` (the ONE visible-area join) and ``silly_kicks.spadl.config`` (pitch
+dimensions for the packing band) -- none of which reach ``pitch_control`` or ``_das`` (``_kernels``' own
 top-level import closure -- ``_action_orientation`` / ``_gk_resolve`` / ``_gk_geometry`` /
 ``utils`` / ``feature_framework`` -- reaches neither either). It must NOT import ``pitch_control``
 / ``_das`` / ``features``, so those layers may depend on it without a cycle.
@@ -30,14 +30,13 @@ import numpy.typing as npt
 
 import silly_kicks.spadl.config as spadlconfig
 from silly_kicks._polygon import is_convex
-from silly_kicks.id_compat import canonical_id
+from silly_kicks._visible_area import polygons_by_action_row
 
 from . import _kernels
 from ._visibility import (
     REGION_OBSERVATION_DEGENERATE_REGION,
     VISIBLE_AREA_OBSERVED,
     VISIBLE_AREA_UNLINKED,
-    _polygons_by_action,
     classify_region_observation,
 )
 
@@ -450,29 +449,29 @@ def _rollup_credit_observed_fraction(observations):
     return float("nan"), region_bearing[0][2]
 
 
-def append_observability_companions(out, actions, *, entries, visible_area, linked_ids, ctx: RegionCtx):
+def append_observability_companions(out, actions, *, entries, visible_area, linked, ctx: RegionCtx):
     """Emit ``<column>_observed_fraction`` / ``_observed_source`` for each ``entry``.
 
-    One engine for every FOV companion. For each entry and each action: an action absent from
-    ``linked_ids`` is ``unlinked`` (fraction stays NaN); a :data:`_NO_REGION` builder result is
+    One engine for every FOV companion. ``linked`` is a boolean array with one value per ``actions``
+    row (True where the action links to a frame), or ``None``. For each entry and each action: an
+    action whose ``linked`` value is False is ``unlinked`` (fraction stays NaN); a :data:`_NO_REGION` builder result is
     ``degenerate_region`` (NaN); otherwise :func:`classify_region_observation` scores the region
     against the action's polygon (a missing polygon classifies as ``no_polygon``).
     """
-    polygons = _polygons_by_action(visible_area)
+    polygons = polygons_by_action_row(actions, visible_area)  # the ONE join, by action ROW (W9.4)
     n = len(actions)
     for e in entries:
         fracs = np.full(n, np.nan)
         sources: list[str] = []
-        for i, aid in enumerate(actions["action_id"]):
-            key = canonical_id(aid)
-            if linked_ids is not None and key not in linked_ids:
+        for i in range(n):
+            if linked is not None and not linked[i]:
                 sources.append(VISIBLE_AREA_UNLINKED)
                 continue
             region = e.region(i, ctx)
             if region is _NO_REGION:  # identity, NEVER == (P2)
                 sources.append(REGION_OBSERVATION_DEGENERATE_REGION)
                 continue
-            frac, s = classify_region_observation(polygons.get(key), region)  # polygon None -> no_polygon
+            frac, s = classify_region_observation(polygons[i], region)  # polygon None -> no_polygon
             fracs[i] = frac
             sources.append(s)
         out[f"{e.column}_observed_fraction"] = fracs

@@ -19,6 +19,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from silly_kicks.id_compat import (
+    align_join_keys,
     canonical_id,
     canonical_id_series,
     ids_differ,
@@ -29,6 +30,7 @@ from silly_kicks.id_compat import (
 from silly_kicks.spadl import config as spadlconfig
 
 from ._gk_geometry import _truthy_bool
+from ._link_identity import frame_join_keys, pointers_with_action_columns, require_links_bound
 from .utils import link_actions_to_frames
 
 _GOALKICK = spadlconfig.actiontype_id["goalkick"]
@@ -161,22 +163,24 @@ def _gk_from_frames_linked(
     if gk_rows.empty:
         return out
 
-    ptr = pointers.merge(
-        actions[["action_id", "team_id", "period_id"]],
-        on="action_id",
-        how="left",
-    )
+    # Each pointer reads its action's team and frame keys BY POSITION, and the frame join keys on
+    # (game_id, period_id, frame_id) with the action's own game (spec 2026-11-08 tracking-batch
+    # section 4.9 W9.4). Without a game key the call is one game (`frame_join_keys`).
+    frame_keys = frame_join_keys(actions, gk_rows)
+    ptr = pointers_with_action_columns(actions, pointers, ["team_id", *frame_keys[:-1]])
     linked = ptr[ptr["frame_id"].notna()].copy()
     if linked.empty:
         return out
 
     linked["frame_id_int"] = linked["frame_id"].astype("int64")
+    gk_proj = gk_rows[[*frame_keys, "team_id", "player_id"]].rename(
+        columns={"team_id": "gk_team_id", "player_id": "gk_player_id"}
+    )
+    linked, gk_proj = align_join_keys(linked, gk_proj, [*frame_keys[:-1], ("frame_id_int", "frame_id")])
     gk_in_frame = linked.merge(
-        gk_rows[["period_id", "frame_id", "team_id", "player_id"]].rename(
-            columns={"team_id": "gk_team_id", "player_id": "gk_player_id"}
-        ),
-        left_on=["period_id", "frame_id_int"],
-        right_on=["period_id", "frame_id"],
+        gk_proj,
+        left_on=[*frame_keys[:-1], "frame_id_int"],
+        right_on=frame_keys,
         how="inner",
     )
 
@@ -197,14 +201,11 @@ def _gk_from_frames_linked(
     if picked.empty:
         return out
 
-    # Deterministic tiebreak: lowest player_id per action
-    best = picked.sort_values("gk_player_id").drop_duplicates("action_id", keep="first")
+    # Deterministic tiebreak: lowest player_id per action row
+    best = picked.sort_values("gk_player_id").drop_duplicates("action_row", keep="first")
 
-    action_to_idx = pd.Series(actions.index, index=actions["action_id"].to_numpy())
     for _, row in best.iterrows():
-        aid = row["action_id"]
-        if aid in action_to_idx.index:
-            out.loc[action_to_idx.loc[aid]] = row["gk_player_id"]
+        out.iloc[int(row["action_row"])] = row["gk_player_id"]
 
     # Restore the frames dtype (shared rule -- see restore_id_dtype).
     out = restore_id_dtype(out, pid_dtype)
@@ -253,6 +254,7 @@ def defending_gk_from_frames(
 
     See NOTICE for full bibliographic citations.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     return _gk_from_frames_linked(actions, frames, same_team=False, tolerance_seconds=tolerance_seconds, links=links)
 
 
@@ -296,6 +298,7 @@ def acting_gk_from_frames(
 
     See NOTICE for full bibliographic citations.
     """
+    require_links_bound(actions, links)  # W9.5: caller links bind to `actions`
     out = _gk_from_frames_linked(actions, frames, same_team=True, tolerance_seconds=tolerance_seconds, links=links)
     need = out.isna().to_numpy()
     if not need.any() or len(frames) == 0:
